@@ -5,6 +5,181 @@ const PUBLIC: PortSecurity = PortSecurity {
     confidentiality: Classification::Public,
     integrity: IntegrityClass::Untrusted,
 };
+
+pub(super) fn join_fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
+    let (mut d, p) = merge_fixture();
+    let join = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/merge")
+        .unwrap();
+    join.kind = NodeKind::Join {
+        policy: JoinPolicy::All,
+    };
+    join.inputs[0].name = "left".into();
+    let mut right = join.inputs[0].clone();
+    right.name = "right".into();
+    join.inputs.push(right);
+    let schema = ValueSchema::Struct(
+        join.inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.schema.clone()))
+            .collect(),
+    );
+    join.outputs[0].schema = schema.clone();
+    let sink = d[0]
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/sink")
+        .unwrap();
+    sink.inputs[0].schema = schema.clone();
+    sink.outputs[0].schema = schema;
+    for edge in &mut d[0].edges {
+        if let EdgeKind::Flow { from, to } = &mut edge.kind {
+            if edge.id == "alpha/a" {
+                to.port = "left".into();
+            }
+            if edge.id == "alpha/b" {
+                from.node = "alpha/source".into();
+                to.port = "right".into();
+            }
+        }
+    }
+    (d, p)
+}
+
+#[test]
+fn join_sources_dormancy_order_and_candidate_limits() {
+    let (mut d, p) = join_fixture();
+    let graph = run(&d, &p).unwrap();
+    assert_eq!(
+        graph.join_satisfiability()["alpha/merge"],
+        Satisfiability::ProvenSatisfiable
+    );
+    d[0].nodes.reverse();
+    d[0].edges.reverse();
+    assert_eq!(graph.identity(), run(&d, &p).unwrap().identity());
+    assert_eq!(
+        graph.join_satisfiability(),
+        run(&d, &p).unwrap().join_satisfiability()
+    );
+    let (mut d, p) = join_fixture();
+    let EdgeKind::Flow { from, .. } = &mut d[0].edges[1].kind else {
+        panic!()
+    };
+    from.node = "alpha/alternative-source".into();
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/order".into(),
+        kind: EdgeKind::Order {
+            before: "alpha/source".into(),
+            after: "alpha/alternative-source".into(),
+        },
+    });
+    assert!(run(&d, &p)
+        .unwrap_err()
+        .message
+        .contains("disjoint input sources"));
+    d[0].edges.remove(1);
+    assert_eq!(
+        run(&d, &p).unwrap().join_satisfiability()["alpha/merge"],
+        Satisfiability::Dormant
+    );
+    let (mut d, p) = join_fixture();
+    let mut duplicate = d[0].edges[0].clone();
+    duplicate.id = "alpha/duplicate".into();
+    d[0].edges.push(duplicate);
+    assert!(run(&d, &p).unwrap_err().message.contains("at most one"));
+}
+
+#[test]
+fn join_direct_switch_exclusion_and_nested_unknown() {
+    let (mut d, mut p) = join_fixture();
+    let tagged = ValueSchema::Tagged(BTreeMap::from([
+        ("one".into(), Some(ValueSchema::String)),
+        ("two".into(), Some(ValueSchema::String)),
+    ]));
+    d[0].sources[0].payload = tagged.clone();
+    d[0].nodes[0].outputs[0].schema = tagged.clone();
+    let mut switch = d[0].nodes[2].clone();
+    switch.id = "alpha/switch".into();
+    switch.kind = NodeKind::Switch {
+        tagged_schema: tagged.id().unwrap(),
+    };
+    switch.inputs = vec![InputPort {
+        name: "in".into(),
+        schema: tagged,
+        readiness: InputReadiness::One,
+        security: PUBLIC,
+    }];
+    switch.outputs = ["one", "two"]
+        .into_iter()
+        .map(|name| OutputPort {
+            name: name.into(),
+            schema: ValueSchema::String,
+            security: PUBLIC,
+        })
+        .collect();
+    d[0].nodes.push(switch);
+    for edge in &mut d[0].edges[..2] {
+        let EdgeKind::Flow { from, to } = &mut edge.kind else {
+            panic!()
+        };
+        from.node = "alpha/switch".into();
+        from.port = if to.port == "left" { "one" } else { "two" }.into();
+    }
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/start".into(),
+        kind: EdgeKind::Flow {
+            from: OutPortRef {
+                node: "alpha/source".into(),
+                port: "out".into(),
+            },
+            to: InPortRef {
+                node: "alpha/switch".into(),
+                port: "in".into(),
+            },
+        },
+    });
+    assert!(run(&d, &p)
+        .unwrap_err()
+        .message
+        .contains("Switch case exclusion"));
+    let mut merge = d[0].nodes[3].clone();
+    merge.id = "alpha/intermediate".into();
+    merge.inputs[0].schema = ValueSchema::String;
+    merge.outputs[0].schema = ValueSchema::String;
+    d[0].nodes.push(merge);
+    let EdgeKind::Flow { to, .. } = &mut d[0].edges[1].kind else {
+        panic!()
+    };
+    to.node = "alpha/intermediate".into();
+    to.port = "in".into();
+    d[0].edges.push(EdgeDecl {
+        id: "alpha/nested".into(),
+        kind: EdgeKind::Flow {
+            from: OutPortRef {
+                node: "alpha/intermediate".into(),
+                port: "out".into(),
+            },
+            to: InPortRef {
+                node: "alpha/merge".into(),
+                port: "right".into(),
+            },
+        },
+    });
+    let graph = run(&d, &p).unwrap();
+    assert_eq!(
+        graph.join_satisfiability()["alpha/merge"],
+        Satisfiability::Unknown
+    );
+    d[0].nodes.reverse();
+    d[0].edges.reverse();
+    p.topology.clear();
+    assert_eq!(
+        graph.join_satisfiability(),
+        run(&d, &p).unwrap().join_satisfiability()
+    );
+}
 pub(super) fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
     let execution = ExecutionPolicy {
         on_domain_error: DomainErrorPolicy::RouteErr,
@@ -118,6 +293,222 @@ pub(super) fn fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) 
         );
     }
     (declarations, policy)
+}
+
+pub(super) fn merge_fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
+    let (mut declarations, mut policy) = fixture();
+    declarations.truncate(1);
+    let d = &mut declarations[0];
+    d.nodes.truncate(1);
+    d.edges.clear();
+    let mut second = d.sources[0].clone();
+    second.id = "alpha/alternative".into();
+    second.kind = SourceKind::ExternalAction {
+        action: "alternative".into(),
+    };
+    policy.sources.insert(second.id.clone(), second.security);
+    d.sources.push(second);
+    let mut source = d.nodes[0].clone();
+    source.id = "alpha/alternative-source".into();
+    source.kind = NodeKind::Source {
+        source: "alpha/alternative".into(),
+    };
+    d.nodes.push(source);
+    for id in ["alpha/merge", "alpha/sink"] {
+        d.nodes.push(NodeDecl {
+            id: id.into(),
+            kind: NodeKind::Merge {
+                policy: MergePolicy::ExactlyOne,
+            },
+            inputs: vec![InputPort {
+                name: "in".into(),
+                schema: ValueSchema::String,
+                readiness: InputReadiness::One,
+                security: PUBLIC,
+            }],
+            outputs: vec![OutputPort {
+                name: "out".into(),
+                schema: ValueSchema::String,
+                security: PUBLIC,
+            }],
+            execution: d.nodes[0].execution,
+        });
+    }
+    for (id, from, to) in [
+        ("alpha/a", "alpha/source", "alpha/merge"),
+        ("alpha/b", "alpha/alternative-source", "alpha/merge"),
+        ("alpha/c", "alpha/merge", "alpha/sink"),
+    ] {
+        d.edges.push(EdgeDecl {
+            id: id.into(),
+            kind: EdgeKind::Flow {
+                from: OutPortRef {
+                    node: from.into(),
+                    port: "out".into(),
+                },
+                to: InPortRef {
+                    node: to.into(),
+                    port: "in".into(),
+                },
+            },
+        });
+    }
+    (declarations, policy)
+}
+
+pub(super) fn switch_merge_fixture(
+    classification: Classification,
+) -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
+    let (mut d, mut p) = merge_fixture();
+    let label = PortSecurity {
+        confidentiality: classification,
+        integrity: IntegrityClass::Untrusted,
+    };
+    let tagged = ValueSchema::Tagged(BTreeMap::from([
+        ("one".into(), Some(ValueSchema::String)),
+        ("two".into(), Some(ValueSchema::String)),
+    ]));
+    d[0].sources.truncate(1);
+    d[0].sources[0].payload = tagged.clone();
+    d[0].sources[0].security = label;
+    p.sources.insert("alpha/submit".into(), label);
+    let ceilings = p.source_owners.get_mut("alpha").unwrap();
+    ceilings.owner_ceiling = classification;
+    ceilings.composition_ceiling = classification;
+    d[0].nodes.retain(|n| n.id != "alpha/alternative-source");
+    let mut switch = d[0].nodes[1].clone();
+    switch.id = "alpha/switch".into();
+    switch.kind = NodeKind::Switch {
+        tagged_schema: tagged.id().unwrap(),
+    };
+    switch.inputs[0].schema = tagged.clone();
+    switch.outputs = ["one", "two"]
+        .into_iter()
+        .map(|name| OutputPort {
+            name: name.into(),
+            schema: ValueSchema::String,
+            security: label,
+        })
+        .collect();
+    d[0].nodes[0].outputs[0].schema = tagged;
+    let mut sink = d[0].nodes.pop().unwrap();
+    sink.id = "beta/sink".into();
+    d[0].nodes.push(switch);
+    for node in d[0].nodes.iter_mut().chain(std::iter::once(&mut sink)) {
+        for port in &mut node.inputs {
+            port.security = label;
+        }
+        for port in &mut node.outputs {
+            port.security = label;
+        }
+    }
+    d.push(GraphContributionV2 {
+        contributor: "beta".into(),
+        sources: vec![],
+        nodes: vec![sink],
+        edges: vec![],
+        patches: vec![],
+    });
+    d[0].edges.clear();
+    for (id, from, port, to) in [
+        ("alpha/start", "alpha/source", "out", "alpha/switch"),
+        ("alpha/one", "alpha/switch", "one", "alpha/merge"),
+        ("alpha/two", "alpha/switch", "two", "alpha/merge"),
+        ("alpha/two-duplicate", "alpha/switch", "two", "alpha/merge"),
+        ("alpha/export", "alpha/merge", "out", "beta/sink"),
+    ] {
+        d[0].edges.push(EdgeDecl {
+            id: id.into(),
+            kind: EdgeKind::Flow {
+                from: OutPortRef {
+                    node: from.into(),
+                    port: port.into(),
+                },
+                to: InPortRef {
+                    node: to.into(),
+                    port: "in".into(),
+                },
+            },
+        });
+    }
+    p.topology.insert(("alpha".into(), "beta/sink".into()));
+    p.delivery.insert(
+        (
+            "alpha/merge".into(),
+            "out".into(),
+            "beta/sink".into(),
+            "in".into(),
+        ),
+        FlowGrant {
+            resources: BTreeSet::from(["a".into(), "b".into()]),
+            maximum_classification: classification,
+        },
+    );
+    (d, p)
+}
+
+#[test]
+fn confidential_switch_control_cannot_export_merge_outcome_to_public_sink() {
+    let (mut d, p) = switch_merge_fixture(Classification::Confidential);
+    // one produces one candidate; two produces two candidates and a cardinality failure.
+    assert!(run(&d, &p).is_ok());
+    let graph = run(&d, &p).unwrap();
+    for id in ["alpha/switch", "alpha/merge"] {
+        let node = graph.declarations()[0]
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .unwrap();
+        assert!(node
+            .outputs
+            .iter()
+            .all(|port| port.security.confidentiality == Classification::Confidential));
+    }
+    let sink = &mut d[1].nodes[0];
+    sink.inputs[0].security = PUBLIC;
+    sink.outputs[0].security = PUBLIC;
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::Denied);
+}
+
+#[test]
+fn cross_source_merge_is_canonical_and_security_joins_every_candidate() {
+    let (mut d, mut p) = merge_fixture();
+    let graph = run(&d, &p).unwrap();
+    assert_eq!(graph.source_reachability()["alpha/merge"].len(), 2);
+    d[0].nodes.reverse();
+    d[0].edges.reverse();
+    assert_eq!(graph.identity(), run(&d, &p).unwrap().identity());
+    let label = PortSecurity {
+        confidentiality: Classification::Confidential,
+        integrity: IntegrityClass::Untrusted,
+    };
+    d[0].sources[0].security = label;
+    d[0].nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/source")
+        .unwrap()
+        .outputs[0]
+        .security = label;
+    p.sources.insert("alpha/submit".into(), label);
+    let ceilings = p.source_owners.get_mut("alpha").unwrap();
+    ceilings.owner_ceiling = Classification::Secret;
+    ceilings.composition_ceiling = Classification::Secret;
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::Denied);
+    for node in &mut d[0].nodes {
+        if matches!(node.kind, NodeKind::Merge { .. }) {
+            node.inputs[0].security = label;
+            node.outputs[0].security = label;
+        }
+    }
+    assert!(run(&d, &p).is_ok());
+    d[0].nodes
+        .iter_mut()
+        .find(|n| n.id == "alpha/merge")
+        .unwrap()
+        .inputs[0]
+        .security
+        .integrity = IntegrityClass::Trusted;
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::Denied);
 }
 pub(super) fn run(
     d: &[GraphContributionV2],

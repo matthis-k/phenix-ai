@@ -7,6 +7,11 @@ use phenix_kernel::graph::v2::{
 use phenix_kernel::Outcome;
 use std::collections::BTreeMap;
 
+#[path = "v2/join.rs"]
+mod join;
+#[path = "v2/operators.rs"]
+mod operators;
+
 const A: &str = "example.graph-a";
 const B: &str = "example.graph-b";
 const FIRST: &str = "example.graph-a/producer";
@@ -600,4 +605,6 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
     }
     std::env::remove_var("PHENIX_GRAPH_B_CONSUME_WITNESS");
     fs::write(output.join("graph-v2-evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.graph-v2-evidence.v1", "acceptance":"V1 partial", "p1_parity":false, "cases":cases, "limits":["initial finite wave only", "no operators, patches or deferred waves", "no SDK or P1 migration parity"]})).unwrap()).unwrap();
+    operators::run(packages, output);
+    join::run(packages, output);
 }

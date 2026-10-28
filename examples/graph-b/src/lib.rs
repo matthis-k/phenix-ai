@@ -1,4 +1,4 @@
-use example_graph_contracts::{Consume, ReferenceConsumer, Start, Task};
+use example_graph_contracts::{Consume, JoinConsumer, JoinRequest, ReferenceConsumer, Start, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -21,15 +21,37 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     id = "example.graph-b",
     define(Task),
     define(Consume),
+    define(JoinConsumer),
     define(ReferenceConsumer),
     provide(Task, slot = "task"),
     provide(Consume, slot = "consume"),
+    provide(JoinConsumer, slot = "join_consumer"),
     provide(ReferenceConsumer, slot = "reference_consumer"),
     profile = "state",
     graph(GRAPH)
 )]
 mod provider {
     use super::*;
+    #[provide(JoinConsumer::run)]
+    fn join_consumer(_state: &mut State, input: JoinRequest) -> CallResult<String, String> {
+        assert_eq!(input.fast, "join-value");
+        assert_eq!(input.slow, "join-value");
+        let joined = format!("joined:fast={};slow={}", input.fast, input.slow);
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_B_JOIN_WITNESS") {
+            use std::io::Write;
+            writeln!(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap(),
+                "{joined}"
+            )
+            .unwrap();
+        }
+        Ok(joined)
+    }
+
     #[provide(ReferenceConsumer::run)]
     fn reference_consumer(
         _state: &mut State,

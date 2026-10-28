@@ -1,25 +1,18 @@
-# Candidate only. The existing minimal-kernel.yml remains the shipping gate.
-# All execution, caching, sharding and evidence logic lives in phenix-flake-ci.
-# This immutable library revision batches each shard into one Nix DAG build
-# and restores the compatible trusted-main Nix closure read-only;
-# it retains the complete exact-head inventory and credential-free PR boundary.
-name: Minimal kernel flake-aware matrix candidate
+name: "Minimal kernel flake-aware matrix candidate"
 on:
   pull_request:
-  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
-# Only the newest source commit needs PR evidence. Manual and push runs
-# retain independent identities and are never cancelled by a PR update.
-concurrency:
-  group: p1-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@c4467d7dc233ada85ea49823561ee8be57089591
+  flake-checks:
+    if: ${{ github.event_name == 'pull_request' && !(github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')) }}
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@cd2403a45333a5211775bdf01b3ce45f28e02e5f
     with:
-      config: ci/flake-check-config.nix
-      library_ref: c4467d7dc233ada85ea49823561ee8be57089591
+      config: "ci/flake-check-config.nix"
+      library_ref: "cd2403a45333a5211775bdf01b3ce45f28e02e5f"

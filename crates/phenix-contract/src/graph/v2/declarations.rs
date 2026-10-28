@@ -289,8 +289,66 @@ impl GraphContributionV2 {
                         return Err(bad("Constant control input cannot downgrade security"));
                     }
                 }
-                NodeKind::Switch { .. } | NodeKind::Merge { .. } | NodeKind::Join { .. } => {
-                    return Err(bad("unsupported graph-v2 intrinsic"))
+                NodeKind::Switch { tagged_schema } => {
+                    if node.inputs.len() != 1 || node.inputs[0].name != "in" {
+                        return Err(bad("Switch requires one One in"));
+                    }
+                    let input = &node.inputs[0];
+                    let ValueSchema::Tagged(cases) = &input.schema else {
+                        return Err(bad("Switch requires Tagged input"));
+                    };
+                    if input.schema.id()? != *tagged_schema
+                        || node.outputs.len() != cases.len()
+                        || node.outputs.iter().any(|output| {
+                            cases.get(&output.name).is_none_or(|schema| {
+                                output.schema
+                                    != schema
+                                        .clone()
+                                        .unwrap_or_else(|| ValueSchema::Struct(Default::default()))
+                            }) || !input.security.can_flow_to(output.security)
+                        })
+                    {
+                        return Err(bad(
+                            "Switch requires exhaustive matching case schemas and security",
+                        ));
+                    }
+                }
+                NodeKind::Merge {
+                    policy: MergePolicy::ExactlyOne,
+                } => {
+                    if node.inputs.len() != 1
+                        || node.inputs[0].name != "in"
+                        || node.outputs.len() != 1
+                        || node.outputs[0].name != "out"
+                        || node.inputs[0].schema != node.outputs[0].schema
+                        || !node.inputs[0]
+                            .security
+                            .can_flow_to(node.outputs[0].security)
+                    {
+                        return Err(bad(
+                            "Merge requires matching One in and out without security downgrade",
+                        ));
+                    }
+                }
+                NodeKind::Join {
+                    policy: JoinPolicy::All,
+                } => {
+                    let fields = node
+                        .inputs
+                        .iter()
+                        .map(|p| (p.name.clone(), p.schema.clone()))
+                        .collect();
+                    if node.inputs.is_empty()
+                        || node.outputs.len() != 1
+                        || node.outputs[0].name != "out"
+                        || node.outputs[0].schema != ValueSchema::Struct(fields)
+                        || node
+                            .inputs
+                            .iter()
+                            .any(|p| !p.security.can_flow_to(node.outputs[0].security))
+                    {
+                        return Err(bad("Join All requires named One inputs and exact struct out without security downgrade"));
+                    }
                 }
             }
         }
@@ -538,7 +596,19 @@ fn encode_node(n: &NodeDecl) -> Result<Value, Failure> {
         NodeKind::Constant { value } => {
             Value::map([("kind", string("constant")), ("value", value.clone())])
         }
-        _ => return Err(bad("unsupported graph-v2 intrinsic")),
+        NodeKind::Switch { tagged_schema } => Value::map([
+            ("kind", string("switch")),
+            (
+                "tagged_schema",
+                Value::Bytes(tagged_schema.as_bytes().to_vec()),
+            ),
+        ]),
+        NodeKind::Merge {
+            policy: MergePolicy::ExactlyOne,
+        } => Value::map([("kind", string("merge")), ("policy", string("exactly-one"))]),
+        NodeKind::Join {
+            policy: JoinPolicy::All,
+        } => Value::map([("kind", string("join")), ("policy", string("all"))]),
     };
     let inputs = n
         .inputs
@@ -595,6 +665,24 @@ fn decode_node(value: Value) -> Result<NodeDecl, Failure> {
         },
         "constant" => NodeKind::Constant {
             value: take(&mut k, "value")?,
+        },
+        "switch" => NodeKind::Switch {
+            tagged_schema: match take(&mut k, "tagged_schema")? {
+                Value::Bytes(bytes) => SchemaId::from_bytes(&bytes)?,
+                _ => return Err(bad("Switch schema ID must be bytes")),
+            },
+        },
+        "merge" => NodeKind::Merge {
+            policy: match text(&mut k, "policy")?.as_str() {
+                "exactly-one" => MergePolicy::ExactlyOne,
+                _ => return Err(bad("unsupported Merge policy")),
+            },
+        },
+        "join" => NodeKind::Join {
+            policy: match text(&mut k, "policy")?.as_str() {
+                "all" => JoinPolicy::All,
+                _ => return Err(bad("unsupported Join policy")),
+            },
         },
         _ => return Err(bad("unknown or unsupported graph-v2 intrinsic")),
     };

@@ -14,6 +14,86 @@ fn input(name: &str, schema: ValueSchema) -> InputPort {
         security: PUBLIC,
     }
 }
+
+#[test]
+fn switch_merge_roundtrip_permutations_and_security() {
+    let schema = ValueSchema::Tagged(std::collections::BTreeMap::from([
+        ("empty".into(), None),
+        ("payload".into(), Some(ValueSchema::String)),
+    ]));
+    let switch = NodeDecl {
+        id: "demo/switch".into(),
+        kind: NodeKind::Switch {
+            tagged_schema: schema.id().unwrap(),
+        },
+        inputs: vec![input("in", schema)],
+        outputs: vec![
+            output("empty", ValueSchema::Struct(Default::default())),
+            output("payload", ValueSchema::String),
+        ],
+        execution: ExecutionPolicy {
+            on_domain_error: DomainErrorPolicy::RouteErr,
+        },
+    };
+    let merge = NodeDecl {
+        id: "demo/merge".into(),
+        kind: NodeKind::Merge {
+            policy: MergePolicy::ExactlyOne,
+        },
+        inputs: vec![input("in", ValueSchema::String)],
+        outputs: vec![output("out", ValueSchema::String)],
+        execution: switch.execution,
+    };
+    let mut graph = GraphContributionV2 {
+        contributor: "demo".into(),
+        sources: vec![],
+        nodes: vec![switch.clone(), merge.clone()],
+        edges: vec![],
+        patches: vec![],
+    };
+    let bytes = graph.encode().unwrap();
+    assert_eq!(
+        GraphContributionV2::decode(&bytes).unwrap(),
+        graph.normalized().unwrap()
+    );
+    graph.nodes.reverse();
+    graph.nodes[1].outputs.reverse();
+    assert_eq!(bytes, graph.encode().unwrap());
+    for malformed in 0..9 {
+        let mut node = switch.clone();
+        match malformed {
+            0 => node.inputs.clear(),
+            1 => node.inputs[0].name = "wrong".into(),
+            2 => node.inputs[0].schema = ValueSchema::String,
+            3 => {
+                node.kind = NodeKind::Switch {
+                    tagged_schema: SchemaId::from_bytes(&[1; 32]).unwrap(),
+                }
+            }
+            4 => {
+                node.outputs.pop();
+            }
+            5 => node.outputs[0].schema = ValueSchema::String,
+            6 => node.outputs[0].name = "unknown".into(),
+            7 => node.inputs[0].security.confidentiality = Classification::Confidential,
+            _ => node.outputs[0].security.integrity = IntegrityClass::Trusted,
+        }
+        graph.nodes = vec![node];
+        assert!(graph.encode().is_err(), "malformed {malformed}");
+    }
+    for malformed in 0..5 {
+        let mut node = merge.clone();
+        match malformed {
+            0 => node.inputs[0].name = "other".into(),
+            1 => node.outputs[0].name = "other".into(),
+            2 => node.outputs[0].schema = ValueSchema::Bool,
+            3 => node.inputs[0].security.confidentiality = Classification::Confidential,
+            _ => node.outputs[0].security.integrity = IntegrityClass::Trusted,
+        }
+        graph.nodes = vec![node];
+        assert!(graph.encode().is_err());
+    }
+}
 fn output(name: &str, schema: ValueSchema) -> OutputPort {
     OutputPort {
         name: name.into(),
@@ -104,6 +184,108 @@ fn wire(g: &GraphContributionV2) -> Fields {
 }
 fn rejects(f: Fields) {
     assert!(GraphContributionV2::decode(&Value::Map(f).encode().unwrap()).is_err());
+}
+
+#[test]
+fn intrinsic_wire_fields_ids_policies_and_security_reject() {
+    let tagged = ValueSchema::Tagged(std::collections::BTreeMap::from([(
+        "case".into(),
+        Some(ValueSchema::Bool),
+    )]));
+    for switch in [false, true] {
+        let mut node = constant();
+        node.inputs = vec![input(
+            "in",
+            if switch {
+                tagged.clone()
+            } else {
+                ValueSchema::Bool
+            },
+        )];
+        node.kind = if switch {
+            NodeKind::Switch {
+                tagged_schema: tagged.id().unwrap(),
+            }
+        } else {
+            NodeKind::Merge {
+                policy: MergePolicy::ExactlyOne,
+            }
+        };
+        node.outputs[0].name = if switch { "case" } else { "out" }.into();
+        let graph = GraphContributionV2 {
+            contributor: "demo".into(),
+            sources: vec![],
+            nodes: vec![node],
+            edges: vec![],
+            patches: vec![],
+        };
+        let key = if switch { "tagged_schema" } else { "policy" };
+        for missing in ["kind", key] {
+            let mut root = wire(&graph);
+            let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+                panic!()
+            };
+            let Value::Map(node) = &mut nodes[0] else {
+                panic!()
+            };
+            let Value::Map(kind) = node.get_mut("kind").unwrap() else {
+                panic!()
+            };
+            kind.remove(missing);
+            rejects(root);
+        }
+        let mut replacements = vec![("extra", Value::Null), ("kind", Value::Null)];
+        if switch {
+            replacements.extend([
+                (key, string("not-bytes")),
+                (key, Value::Bytes(vec![1; 31])),
+                (key, Value::Bytes(vec![1; 33])),
+                (key, Value::Bytes(vec![0; 32])),
+                (key, Value::Bytes(vec![1; 32])),
+            ]);
+        } else {
+            replacements.push((key, string("first-value")));
+        }
+        for (key, value) in replacements {
+            let mut root = wire(&graph);
+            let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+                panic!()
+            };
+            let Value::Map(node) = &mut nodes[0] else {
+                panic!()
+            };
+            let Value::Map(kind) = node.get_mut("kind").unwrap() else {
+                panic!()
+            };
+            kind.insert(key.into(), value);
+            rejects(root);
+        }
+        for (ports, key, value) in [
+            ("inputs", "confidentiality", "confidential"),
+            ("outputs", "integrity", "trusted"),
+            ("outputs", "confidentiality", "unknown"),
+            ("inputs", "integrity", "unknown"),
+        ] {
+            let mut root = wire(&graph);
+            let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+                panic!()
+            };
+            let Value::Map(node) = &mut nodes[0] else {
+                panic!()
+            };
+            let Value::List(ports) = node.get_mut(ports).unwrap() else {
+                panic!()
+            };
+            let Value::Map(port) = &mut ports[0] else {
+                panic!()
+            };
+            let Value::Map(security) = port.get_mut("security").unwrap() else {
+                panic!()
+            };
+            security.insert(key.into(), string(value));
+            rejects(root);
+        }
+    }
 }
 
 #[test]
@@ -370,21 +552,6 @@ fn constants_require_unit_one_start_and_public_untrusted_literal() {
 
 #[test]
 fn unsupported_profiles_fail_explicitly() {
-    for kind in [
-        NodeKind::Switch {
-            tagged_schema: SchemaId::from_bytes(&[1; 32]).unwrap(),
-        },
-        NodeKind::Merge {
-            policy: MergePolicy::ExactlyOne,
-        },
-        NodeKind::Join {
-            policy: JoinPolicy::All,
-        },
-    ] {
-        let mut g = sample();
-        g.nodes[1].kind = kind;
-        assert!(g.encode().unwrap_err().message.contains("unsupported"));
-    }
     for readiness in [
         InputReadiness::Optional,
         InputReadiness::StaticMany { min: 0, max: 2 },
@@ -406,6 +573,105 @@ fn unsupported_profiles_fail_explicitly() {
         next: DeferredWave::Next,
     };
     assert!(g.encode().unwrap_err().message.contains("unsupported"));
+}
+
+#[test]
+fn join_exact_struct_security_and_canonical_wire() {
+    let inputs = vec![
+        input("left", ValueSchema::String),
+        input("right", ValueSchema::Bool),
+    ];
+    let node = NodeDecl {
+        id: "demo/join".into(),
+        kind: NodeKind::Join {
+            policy: JoinPolicy::All,
+        },
+        outputs: vec![output(
+            "out",
+            ValueSchema::Struct(
+                inputs
+                    .iter()
+                    .map(|p| (p.name.clone(), p.schema.clone()))
+                    .collect(),
+            ),
+        )],
+        inputs,
+        execution: constant().execution,
+    };
+    let mut graph = GraphContributionV2 {
+        contributor: "demo".into(),
+        sources: vec![],
+        nodes: vec![node.clone()],
+        edges: vec![],
+        patches: vec![],
+    };
+    let bytes = graph.encode().unwrap();
+    assert_eq!(GraphContributionV2::decode(&bytes).unwrap(), graph);
+    graph.nodes[0].inputs.reverse();
+    assert_eq!(graph.encode().unwrap(), bytes);
+    for malformed in 0..9 {
+        graph.nodes = vec![node.clone()];
+        let n = &mut graph.nodes[0];
+        match malformed {
+            0 => n.inputs.clear(),
+            1 => n.outputs.clear(),
+            2 => n.outputs[0].name = "other".into(),
+            3 => n.outputs[0].schema = ValueSchema::String,
+            4 => n.inputs[1].schema = ValueSchema::String,
+            5 => n.inputs[1].name = "other".into(),
+            6 => n.inputs[1].security.confidentiality = Classification::Secret,
+            7 => n.outputs[0].security.integrity = IntegrityClass::Trusted,
+            _ => n.inputs[0].readiness = InputReadiness::Optional,
+        }
+        assert!(graph.encode().is_err(), "malformed {malformed}");
+    }
+    graph.nodes = vec![node.clone()];
+    for index in 0..2 {
+        let mut n = node.clone();
+        n.inputs[index].security.confidentiality = Classification::Confidential;
+        n.outputs[0].security.confidentiality = Classification::Secret;
+        graph.nodes = vec![n];
+        assert!(graph.encode().is_ok());
+        graph.nodes[0].outputs[0].security.confidentiality = Classification::Public;
+        assert!(graph.encode().is_err());
+    }
+    // A single named field is still an explicit assembled struct, not a pass-through.
+    let mut single = node.clone();
+    single.inputs.pop();
+    single.outputs[0].schema = ValueSchema::Struct(std::collections::BTreeMap::from([(
+        "left".into(),
+        ValueSchema::String,
+    )]));
+    graph.nodes = vec![single];
+    assert!(graph.encode().is_ok());
+    graph.nodes = vec![node];
+    for (key, value) in [
+        ("policy", None),
+        ("kind", None),
+        ("policy", Some(string("any"))),
+        ("policy", Some(Value::Null)),
+        ("kind", Some(string("Join"))),
+        ("extra", Some(Value::Null)),
+    ] {
+        let mut root = wire(&graph);
+        let Value::List(nodes) = root.get_mut("nodes").unwrap() else {
+            panic!()
+        };
+        let Value::Map(node) = &mut nodes[0] else {
+            panic!()
+        };
+        let Value::Map(kind) = node.get_mut("kind").unwrap() else {
+            panic!()
+        };
+        assert_eq!(kind["kind"], string("join"));
+        assert_eq!(kind["policy"], string("all"));
+        if let Some(value) = value {
+            kind.insert(key.into(), value);
+        } else {
+            kind.remove(key);
+        }
+        rejects(root);
+    }
 }
 
 #[test]
