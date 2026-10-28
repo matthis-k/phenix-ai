@@ -1,6 +1,6 @@
 # Usage-first plugin APIs and derived architecture
 
-Status: **design proposal**, not implemented Rust APIs. Built against the 2026-10-24 main tree 00598cedf0a345934098d950881a702110001f83. This document **starts with user and author usage**, then derives architecture. The first priority is to preserve existing M1 guarantees and successful P1 auth, graph, and interruption behavior, not to add plugin count.
+Status: **dated design proposal with partially implemented slices**. Based on the 24 October 2026 tree `00598cedf0a345934098d950881a702110001f83`; verify current code and merged PRs before reusing examples. The graph-v2 migration target is [Graph Architecture v2.4](graph-architecture-v2.4.md), not this pre-v2.4 design. This document **starts with user and author usage**, then derives architecture. The first priority is to preserve existing M1 guarantees and successful P1 auth, graph, and interruption behavior, not to add plugin count.
 
 Related: [plugin inventory](plugin-responsibility-audit.md), [state ownership](plugin-state-ownership.md), [M1 authoring](m1-contract-authoring-contract.md), [P2 preparation contract](../crates/phenix-advanced-contracts/src/model_preparation.rs).
 
@@ -93,7 +93,7 @@ agent.submit(prompt);
 
 Basic Agent owns AgentRun: session, run identity, pending model import, turn/tool budget, history/call recovery state. It exposes typed prepare/advance/cancel/snapshot operations and read-only watched pending requests. The kernel owns graph scheduling, authority and cancellation. No caller selects a parallel "default loop" versus "staged loop" algorithm. No Model plugin writes a Basic assistant tool-call receipt.
 
-**Current boundary:** BasicInput::submit and BasicTurnPrepare/BasicTurnAdvance are separate implementations; staged-graph is feature-selected. Converge on one canonical two-wave flow only after product parity and restart/cancel/duplicate-effect verification.
+**Baseline at the original audit commit:** BasicInput::submit and BasicTurnPrepare/BasicTurnAdvance were separate implementations; staged-graph was feature-selected. Converge on one canonical two-wave flow only after product parity and restart/cancel/duplicate-effect verification.
 
 ### 2.4 Request preparation and model execution
 
@@ -160,7 +160,7 @@ Evidence consumer invokes EvidenceStore::put/get/search with typed source refere
 | Dispatch | selected auth strategy, discovery strategy, credential backend, Model session | selected ToolExecute import for corresponding tool identity |
 | Security | account, credential and method resource grants | registered tool ID, arguments, selected handler and session grant |
 
-The names ProviderRegistrations/ToolRegistrations are **proposed domain contracts**, not existing code. Keep their payloads typed and immutable; each contributor's list operation is invoked **only after** the kernel has verified descriptor/package identity, selected imports and applicable authority. Multiple contributors use the already supported M1 many(min=0) import and deterministic slot indexing (see the working imports::all::invoke_at fixture in examples/authoring-client/src/lib.rs); duplicate IDs, ambiguous owner routes and unsupported adapter configurations fail at composition/registry setup. For tools, pair each registration with its preselected executable ToolExecute binding by verified contributor identity and an explicit composition-approved route; never trust a contributor-supplied artifact path or handler index. If a registrant and executor cannot be matched unambiguously, the tool is not offered. A registration is data, never a grant.
+`ProviderRegistrations` (`phenix.provider.registrations@1`) and `ToolRegistrations` (`phenix.basic.tool-registrations@1`) **already exist on `main`**. They are not proposed new contracts. The provider contribution path entered with merged [#1128](https://github.com/matthis-k/phenix-ai/pull/1128), and builtin tools were consolidated in merged [#1129](https://github.com/matthis-k/phenix-ai/pull/1129). The current `ToolRegistrations` interface includes both `list` and `execute`; its proposed list-only form below is obsolete. The one-manager/event-driven contribution redesign remains subject to its open implementation PRs. Do not infer it ships from this proposal. Keep their payloads typed and immutable; each contributor's list operation is invoked **only after** the kernel has verified descriptor/package identity, selected imports and applicable authority. Multiple contributors use the already supported M1 many(min=0) import and deterministic slot indexing (see the working imports::all::invoke_at fixture in examples/authoring-client/src/lib.rs); duplicate IDs, ambiguous owner routes and unsupported adapter configurations fail at composition/registry setup. For tools, pair each registration with its preselected executable ToolExecute binding by verified contributor identity and an explicit composition-approved route; never trust a contributor-supplied artifact path or handler index. If a registrant and executor cannot be matched unambiguously, the tool is not offered. A registration is data, never a grant.
 
 The author syntax may look like providers.register(...) but implementation should lower to a generated **normal contributor** with a read-only registration-list operation; it is not an implicit executable callback before dlopen and not a fourth kernel declaration role. If all registrations can be expressed in currently verified static package data without a new ABI, prefer that as an optimization, not as a prerequisite.
 
@@ -188,9 +188,9 @@ The author syntax may look like providers.register(...) but implementation shoul
 | --- | --- | --- |
 | ProviderCatalog, ProviderAuth, ProviderCredentials | Existing | Rebind exports to one manager; preserve request/error schemas initially |
 | ProviderDeclaration/AdapterBinding | Existing library values | Reuse as contributor payload, add immutable registration wrapper only if needed |
-| ProviderRegistrations | Proposed | list() -> typed immutable declaration page/snapshot, no authority-bearing fields |
+| ProviderRegistrations | Implemented (merged #1128) | `list() -> Result<ProviderPage, ProviderError>`; registration grants no authority |
 | ToolCatalog, ToolExecute | Existing | Keep external API; ToolExecute implementations selected through prebound routes |
-| ToolRegistrations | Proposed | list() -> typed schema/handler identity descriptors, no executable closure over ABI |
+| ToolRegistrations | Implemented (on current main) | `list()` and `execute(ToolRequest)`; separate future manager/event hook remains proposed |
 | BasicInput, BasicTurnPrepare, BasicTurnAdvance | Existing | Converge behavior, decide public revision cleanup only after parity |
 | ModelPreparation, ModelPreparationChange | Existing | Reuse, make changed candidates admissible only after source/epoch/CAS validation |
 | ModelTokenMeter | Existing | Bind to pinned selected Model; enforce final immutable request bytes |
@@ -198,7 +198,7 @@ The author syntax may look like providers.register(...) but implementation shoul
 | Storage, Session, EventJournal, EvidenceStore | Existing | Keep; use shared internal Rust record helper, no new universal storage contract |
 | Frontend | Existing | Reuse decode/render; deprecate redundant cancel only in separately tested revision |
 
-There are at most **two likely new domain contracts**: immutable provider and tool registration contributors. Do not add a generic Registry<T> kernel contract, a new tool transport protocol, or a universal plugin state service.
+The two registration contracts discussed here are **already implemented** in their current forms. Future proposed graph and manager contracts must be justified against the current source and [v2.4 target design](graph-architecture-v2.4.md). Do not add a generic Registry<T> kernel contract, a new tool transport protocol, or a universal plugin state service.
 
 ### 3.4 Initialization and lifecycle rules
 

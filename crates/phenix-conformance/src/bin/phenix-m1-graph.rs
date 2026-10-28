@@ -8,6 +8,9 @@ const TASK: &str = "example.graph.task@1";
 const EVENT: &str = "example.graph.start";
 const KEY: &str = "example.graph.task@1/run";
 
+#[path = "phenix-m1-graph/v2.rs"]
+mod v2;
+
 fn composition(artifacts: Vec<String>) -> Composition {
     let ids = ["example.graph-a", "example.graph-b", "example.graph-c"];
     let mut resources: BTreeSet<_> = ids[..2]
@@ -1132,4 +1135,5 @@ fn main() {
     )
     .unwrap();
     println!("G2/G3 native graph preparation and serial execution passed");
+    v2::run(&packages[..2], &args[4], output);
 }

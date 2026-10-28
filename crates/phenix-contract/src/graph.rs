@@ -3,6 +3,8 @@
 //! selected bindings; none of these strings grant execution rights.
 use crate::{identifier, operation_key, Code, Failure, Value, ValueSchema, MAX_COUNT};
 
+pub mod v2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventDefinition {
     /// Stable semantic event identity, shared across contributing plugins.
