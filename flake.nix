@@ -2084,10 +2084,12 @@
             provider-loopback = {
               management = "${providerLoopbackManagementComposition}";
             };
-            graph-v2-python-poc = {
-              kind = "standalone-experiment";
+            graph = agentMixes.testing.graph;
+            storage = agentMixes.testing.storage;
+            frontend = agentMixes.testing.frontend;
+            advanced = agentMixes.testing.advanced;
+            graph-v2-python-poc = agentMixes.testing.pythonPoc {
               source = "${pythonPrototypeSource}";
-              production = false;
             };
           };
         });

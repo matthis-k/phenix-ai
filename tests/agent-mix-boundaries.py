@@ -66,8 +66,28 @@ def main():
     require(catalog["format"] == "phenix.domain-testing-mixes.v1",
             "unexpected domain testing mix format")
     domains = catalog["domains"]
-    require(set(domains) == {"model-history", "provider-loopback", "graph-v2-python-poc"},
-            "testing domains must be explicitly enumerated")
+    require(set(domains) == {
+        "model-history", "provider-loopback", "graph-v2-python-poc",
+        "graph", "storage", "frontend", "advanced",
+    }, "testing domains must be explicitly enumerated")
+    expected_checks = {
+        "graph": {"m1-graph"},
+        "storage": {
+            "b2-sqlite", "p2-project-storage-product",
+            "p2-project-membership-product", "p2-project-source-product",
+        },
+        "frontend": {"f1-frontends", "f2-acp", "basic-host-smoke"},
+        "advanced": {
+            "p2-model-adapter-product", "p2-compaction-checkpoints-product",
+            "p2-evidence-store-product",
+        },
+    }
+    for domain, checks in expected_checks.items():
+        item = domains[domain]
+        require(item["kind"] == "native-check-domain"
+                and set(item["checks"]) == checks
+                and len(item["checks"]) == len(checks),
+                f"{domain}: invalid domain check selection")
     require(domains["model-history"] == {
         "basic": basic_test_path,
         "advanced": advanced_test_path,
