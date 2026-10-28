@@ -22,13 +22,6 @@ jobs:
         with:
           toolchain: "1.96.1"
           components: rustfmt
-      - name: Temporary reconcile clean rewrite Cargo.lock
-        run: |
-          set -euo pipefail
-          cargo update --workspace
-          echo '<<<BEGIN_REWRITE_LOCK_DIFF>>>'
-          git diff -- Cargo.lock
-          echo '<<<END_REWRITE_LOCK_DIFF>>>'
       - name: Check workspace, examples and ACP SDK formatting
         run: |
           set -euo pipefail
