@@ -1,6 +1,8 @@
 //! Generation-local staging for existing M1 provider-population graph events.
 //! A declaration is data, not authorization or an executable provider.
-use phenix_provider_builtins::merge_registration_pages;
+use phenix_provider_builtins::{
+    merge_registration_pages, MAX_REGISTERED_CONNECTIONS, MAX_REGISTERED_PROVIDERS,
+};
 use phenix_provider_contracts::{
     ProviderDescriptor, ProviderError, ProviderErrorCode, ProviderPage,
 };
@@ -84,10 +86,32 @@ impl Registry {
                 "provider population is not active",
             ));
         };
-        let mut candidate = pending.clone();
-        candidate.push(provider);
-        merge_registration_pages([ProviderPage {
-            providers: candidate.clone(),
+        // The staged catalog is already validated by induction. Only the
+        // incoming provider (and the prior fragment with the same identity)
+        // can introduce a new connection conflict. Do not clone or
+        // revalidate every unrelated provider for every registration.
+        let previous = pending.iter().position(|item| item.id == provider.id);
+        let connection_count = pending
+            .iter()
+            .try_fold(0usize, |total, item| {
+                total.checked_add(item.connections.len())
+            })
+            .and_then(|total| total.checked_add(provider.connections.len()));
+        if connection_count.is_none_or(|count| count > MAX_REGISTERED_CONNECTIONS)
+            || (previous.is_none() && pending.len() >= MAX_REGISTERED_PROVIDERS)
+        {
+            return Err(issue(
+                ProviderErrorCode::InvalidInput,
+                "invalid or conflicting provider declaration",
+            ));
+        }
+        let mut fragment = Vec::with_capacity(if previous.is_some() { 2 } else { 1 });
+        if let Some(index) = previous {
+            fragment.push(pending[index].clone());
+        }
+        fragment.push(provider);
+        let mut merged = merge_registration_pages([ProviderPage {
+            providers: fragment,
             revision: 1,
         }])
         .map_err(|_| {
@@ -96,7 +120,14 @@ impl Registry {
                 "invalid or conflicting provider declaration",
             )
         })?;
-        *pending = candidate;
+        let normalized = merged
+            .pop()
+            .expect("validated nonempty registration yields one provider");
+        if let Some(index) = previous {
+            pending[index] = normalized;
+        } else {
+            pending.push(normalized);
+        }
         Ok(())
     }
 
@@ -229,6 +260,76 @@ mod tests {
                 .unwrap_err()
                 .code,
             ProviderErrorCode::Conflict
+        );
+    }
+
+    #[test]
+    fn incremental_registration_matches_full_canonical_merge_in_any_order() {
+        let input = registrations();
+        for order in [[0, 1, 2, 3, 4, 5], [5, 2, 0, 4, 1, 3]] {
+            let mut registry = Registry::default();
+            registry.begin().unwrap();
+            for index in order {
+                registry.register(input[index].clone()).unwrap();
+            }
+            let page = registry.publish().unwrap();
+            assert_eq!(
+                page.providers,
+                merge_registration_pages([ProviderPage {
+                    providers: input.clone(),
+                    revision: 1,
+                }])
+                .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_staging_enforces_shared_provider_limit_before_mutation() {
+        let source = registrations().into_iter().next().unwrap();
+        let mut registry = Registry::default();
+        registry.begin().unwrap();
+        for index in 0..MAX_REGISTERED_PROVIDERS {
+            let mut declaration = source.clone();
+            declaration.id = format!("test-{index:03}");
+            registry.register(declaration).unwrap();
+        }
+        let mut extra = source.clone();
+        extra.id = "over-limit".into();
+        assert_eq!(
+            registry.register(extra).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
+        let published = registry.publish().unwrap();
+        assert_eq!(published.providers.len(), MAX_REGISTERED_PROVIDERS);
+        assert!(published
+            .providers
+            .iter()
+            .all(|provider| provider.id.starts_with("test-")));
+    }
+
+    #[test]
+    fn incremental_rejection_retains_entire_previous_catalog() {
+        let input = registrations();
+        let mut registry = Registry::default();
+        registry.begin().unwrap();
+        registry.register(input[0].clone()).unwrap();
+        registry.register(input[1].clone()).unwrap();
+        let mut duplicate = input[0].clone();
+        duplicate.connections[0].label.push_str(" spoofed");
+        assert_eq!(
+            registry.register(duplicate).unwrap_err().code,
+            ProviderErrorCode::InvalidInput
+        );
+        let published = registry.publish().unwrap();
+        assert_eq!(published.providers.len(), 2);
+        assert_eq!(
+            published.providers,
+            merge_registration_pages([ProviderPage {
+                providers: vec![input[0].clone(), input[1].clone()],
+                revision: 1,
+            }])
+            .unwrap()
         );
     }
 

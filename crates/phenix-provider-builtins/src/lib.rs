@@ -532,11 +532,13 @@ mod declaration_tests {
 /// registration contributors. Provider IDs must be globally unique, including
 /// across two independently valid contributors. No registration grants model,
 /// authentication, credential, or invocation authority.
+/// Limits shared by declarative contribution staging and canonical merge.
+pub const MAX_REGISTERED_PROVIDERS: usize = 256;
+pub const MAX_REGISTERED_CONNECTIONS: usize = 1024;
+
 pub fn merge_registration_pages(
     pages: impl IntoIterator<Item = ProviderPage>,
 ) -> Result<Vec<ProviderDescriptor>, &'static str> {
-    const MAX_PROVIDERS: usize = 256;
-    const MAX_CONNECTIONS: usize = 1024;
     let mut merged: BTreeMap<String, ProviderDescriptor> = BTreeMap::new();
     let mut connections = 0usize;
     for page in pages {
@@ -550,7 +552,7 @@ pub fn merge_registration_pages(
             connections = connections
                 .checked_add(provider.connections.len())
                 .ok_or("provider registration limit exceeded")?;
-            if connections > MAX_CONNECTIONS {
+            if connections > MAX_REGISTERED_CONNECTIONS {
                 return Err("provider registration limit exceeded");
             }
             if let Some(existing) = merged.get_mut(&provider.id) {
@@ -559,7 +561,7 @@ pub fn merge_registration_pages(
                 }
                 existing.connections.append(&mut provider.connections);
             } else {
-                if merged.len() >= MAX_PROVIDERS {
+                if merged.len() >= MAX_REGISTERED_PROVIDERS {
                     return Err("provider registration limit exceeded");
                 }
                 merged.insert(provider.id.clone(), provider);
