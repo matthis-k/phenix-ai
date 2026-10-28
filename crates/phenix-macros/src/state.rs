@@ -43,7 +43,7 @@ fn arguments(
                     .map(|segment| segment.ident.to_string())
                     .as_deref()
                 {
-                    Some(name) if name == state_type.to_string() => ("state", quote!(state)),
+                    Some(name) if state_type == name => ("state", quote!(state)),
                     Some("Host") if host_allowed && reference.mutability.is_none() => {
                         ("host", quote!(&host))
                     }

@@ -10,6 +10,39 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Clean rewrite CI repair (28 October 2026)
+
+Baseline #1171 head `607db15175ea833a287e4a8b91fd5966857bde0b`
+inherits main `dbfe3476f50e` but its Nix inventory still names deleted
+plugins, failing evaluation at `phenix-plugin-event-journal`.
+The clean branch now declares its own workspace, public SDK, native examples,
+ABI/schema negatives, descriptor retention variants and four native fixture
+checks. Per-package Cargo source closures exclude unrelated plugins.
+The generated CI adapter no longer prebuilds deleted P1 packages.
+
+The four P1-only standalone workflows (Basic history, legacy-plugin cache
+isolation, ACP SDK and ACP v2 frontend) are removed on this rewrite branch
+because their implementations were deleted. They remain on main and must be
+restored with native product parity, not reported as passing clean checks.
+Full P1/shipping conformance is still absent. This is not P1 acceptance.
+
+Local evaluation covers 14 checks and 13 package attributes. Native fixture
+builds, all 56 kernel tests, 36 SDK compile-fail doc tests, schema/wire negatives
+and the C/Rust ABI harness (17 rejected tables) passed during repair.
+Strict quality checks exposed existing lint errors; these are corrected rather
+than suppressed. Exact committed-head full CI acceptance is still required.
+An isolated model-fixture source edit changes its derivation but leaves the
+counter, session and reverse-tool fixture derivations unchanged; physical
+distributed rebuild scope and cross-run cache reuse remain unverified.
+
+Provider `phenix-flake-ci` main `cd2403a45333a5211775bdf01b3ce45f28e02e5f`
+already contains the declarative assertion API (#43-#45) and native coordinator.
+Its #36 head `8a55da7382d346e2ed8a3cd221078b2ab3592f66` is an open,
+divergent build/join experiment, not accepted performance evidence. No
+10-minute result, physical deduplication or Graph-v2 product parity is claimed.
+Next: pass exact-head clean CI, reconcile #36 with the merged provider, then
+measure cold/warm/single-plugin runs before substantial Graph-v2 restoration.
+
 ### Graph-v2 implementation-gap matrix (27 October 2026)
 
 Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.

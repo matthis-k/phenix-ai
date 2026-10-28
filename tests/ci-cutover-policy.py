@@ -19,11 +19,10 @@ def files():
         read("ci/flake-check-config.nix"),
         read("flake.nix"),
         read(".github/workflows/minimal-kernel-dag.yml"),
-        read(".github/workflows/p1-acp-sdk-interop.yml"),
         read(".github/workflows/verify-generated-flake-ci.yml"),
     ]
 
-def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
+def verify(trusted, pr, renderer, config, flake, fallback, verifier):
     require("mkFlakeCiWorkflows" in renderer,
             "consumer must generate both workflows from the library API")
     require("ci = (import ./flake-check-config.nix).ci;" in renderer,
@@ -106,24 +105,22 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     require("      publish:" not in pr and "secrets: inherit" not in pr,
             "PR backend may publish or inherit secrets")
 
-    for check in ("kernel-inspect-contract", "kernel-invalid-composition",
-                  "p1-release-preflight", "m1-shipping", "basic-host-smoke",
-                  "basic-pending-http-product", "m1-imports", "m1-public-sdk"):
-        require(check in flake, "missing required complete Nix check: " + check)
+    for check in ("clean-workspace", "quality", "public-sdk", "native-examples",
+                  "native-session", "contract-boundaries", "metadata-retention",
+                  "pending-metadata-retention", "example-revision-a", "example-revision-b"):
+        require(f"        {check} = " in flake,
+                "missing required clean Nix check: " + check)
     require(f'inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/{PIN}";' in flake,
             "declarative tests must use exactly the workflow-pinned CI library")
-    require('testLib.mkTestCases' in flake and 'testLib.testAssert' in flake,
-            "declarative checks or shared assertion constructors removed")
+    require("prebuildTargets = [];" in config,
+            "clean inventory must not prebuild retired P1 products")
+    require('keyPrefix = "phenix-clean";' in config,
+            "clean cache namespace must remain isolated from P1")
     require("  pull_request:" not in fallback
             and "  workflow_dispatch:" in fallback
             and "id-token: write" not in fallback
             and "    secrets:" not in fallback,
             "fallback diagnostic obtained automatic authority")
-    require("P1 official ACP SDK interop" in acp
-            and "  pull_request:" in acp
-            and "remote-phenix-m1-x86_64-linux-" in acp
-            and "save: false" in acp,
-            "independent ACP gate or read-only cache removed")
     require("ci/render-flake-workflows.nix" in verifier
             and "w: w.trusted" in verifier and "w: w.pullRequest" in verifier
             and "diff -u .github/workflows/minimal-kernel-flake.yml" in verifier
@@ -160,10 +157,12 @@ def self_test():
              'branches = [ "main" "ci/untrusted" ];'),
         (3, 'pullRequestAuthors = [ "matthis-k" ];',
              'pullRequestAuthors = [ "untrusted" ];'),
-        (4, "m1-shipping", "not-a-real-shipping-check"),
+        (3, "prebuildTargets = [];", 'prebuildTargets = [ "phenix-m1-release" ];'),
+        (3, 'keyPrefix = "phenix-clean";', 'keyPrefix = "phenix-m1";'),
+        (4, "clean-workspace = workspace;", "retired-workspace = workspace;"),
+        (4, "public-sdk = publicSdkCheck;", "retired-sdk = publicSdkCheck;"),
         (5, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
-        (6, "save: false", "save: true"),
-        (7, "w: w.pullRequest", "w: w.trusted"),
+        (6, "w: w.pullRequest", "w: w.trusted"),
     ]
     for index, old, new in mutations:
         require(old in good[index], "bad adversarial fixture: " + old)

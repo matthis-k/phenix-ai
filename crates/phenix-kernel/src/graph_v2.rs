@@ -150,14 +150,11 @@ impl PreparedFlowV2 {
         }
         // Ready nodes are chosen by stable node identity, not declaration order.
         // No unbounded waves or synthesized input defaults.
-        loop {
-            let Some(node) = self.plan.nodes.iter().find(|node| {
-                matches!(node.kind, NodeKindV2::Invoke { .. })
-                    && !emitted.contains(node.id.as_str())
-                    && pending.contains_key(&node.id)
-            }) else {
-                break;
-            };
+        while let Some(node) = self.plan.nodes.iter().find(|node| {
+            matches!(node.kind, NodeKindV2::Invoke { .. })
+                && !emitted.contains(node.id.as_str())
+                && pending.contains_key(&node.id)
+        }) {
             let request = pending.remove(&node.id).expect("ready node input");
             let contract = self
                 .selected
@@ -306,10 +303,9 @@ impl Prepared {
                 operation: operation.into(),
                 provider,
             };
-            if self
+            if !self
                 .operations
-                .get(&(selected.provider.clone(), key.to_owned()))
-                .is_none()
+                .contains_key(&(selected.provider.clone(), key.to_owned()))
             {
                 return Err(Failure::new(
                     Code::MissingBinding,
@@ -553,7 +549,7 @@ mod live_session_handoff_tests {
     use super::*;
     use crate::resolve::{Composition, ScopedGrant};
     use phenix_artifact::{digest, extract, PackageRecord};
-    use phenix_basic_shell::{Prompt, Session, SessionTurn};
+    use phenix_basic_shell::{Prompt, SessionTurn};
     use phenix_contract::{Authority, Portable};
     use std::{collections::BTreeSet, fs, path::Path};
 
