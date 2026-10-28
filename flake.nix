@@ -444,6 +444,33 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
+      # Extra standard providers register through the same generic populate
+      # trigger; the OpenAI declaration plugin remains its separate owner.
+      providerStandardDeclarationsSource = subset (publicPaths ++ [
+        ./crates/phenix-plugin-provider-standards
+        ./crates/phenix-provider-builtins
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-basic-contracts
+      ]);
+      providerStandardDeclarationsPlugin = rust.buildRustPackage {
+        pname = "phenix-plugin-provider-standards";
+        version = "0.1.0";
+        src = providerStandardDeclarationsSource;
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-plugin-provider-standards" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-provider-standards" ];
+        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
+        doCheck = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp target/*/release/libphenix_plugin_provider_standards.so $out/lib/plugin.so
+        '';
+        postFixup = ''
+          ${describe}/bin/phenix-describe $out/lib/plugin.so $out/descriptor.bin > digests.json
+          ${pkgs.python3}/bin/python ${recordWriter} "$out"
+        '';
+      };
       providerHostApiKeyProductCheck = pkgs.runCommand "phenix-provider-host-api-key-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1035,11 +1062,21 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 8, report["definitions"]
+        expected = {
+            "phenix.provider.catalog@1",
+            "phenix.provider.registrations@1",
+            "phenix.provider.registry@1",
+            "phenix.provider.startup@1",
+            "phenix.provider.settlement@1",
+            "phenix.provider.populate@1",
+            "phenix.provider.auth@1",
+            "phenix.provider.runtime@1",
+            "phenix.provider.credentials@1",
+            "phenix.provider.http-model-session@1",
+        }
+        assert set(report["definitions"]) == expected, report["definitions"]
         assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
-        assert "phenix.provider.registry@1" in report["definitions"], report
-        assert "phenix.provider.populate@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
         assert "phenix.provider.http-model-session@1" in report["definitions"]
         assert report["plugin"] == "phenix.provider-contracts"
@@ -1644,6 +1681,7 @@
         ${providerPopulationTestBinary}/bin/phenix-provider-population-test \
           ${providerHostPlugin} \
           ${providerOpenAiDeclarationPlugin} \
+          ${providerStandardDeclarationsPlugin} \
           ${providerDefinitions} > $out/verified.json
         test -s $out/verified.json
       '';
@@ -1769,12 +1807,16 @@
             { interface = "phenix.provider.auth@1"; operation = "poll"; }
             { interface = "phenix.provider.auth@1"; operation = "cancel"; }
             { interface = "phenix.provider.catalog@1"; operation = "models"; }
-          ] ++ [{
+          ] ++ map (binding: {
             caller = "phenix.provider.host";
-            interface = "phenix.provider.registrations@1";
-            operation = "list";
+            interface = binding.interface;
+            operation = binding.operation;
             resources = [ "phenix.providers.user" ];
-          }];
+          }) [
+            { interface = "phenix.provider.registrations@1"; operation = "list"; }
+            { interface = "phenix.provider.startup@1"; operation = "begin"; }
+            { interface = "phenix.provider.settlement@1"; operation = "complete"; }
+          ];
           excluded = [];
           substitutions = [];
           authority = {
@@ -1787,6 +1829,8 @@
               "phenix.provider.auth@1/cancel"
               "phenix.provider.catalog@1/models"
               "phenix.provider.registrations@1/list"
+              "phenix.provider.startup@1/begin"
+              "phenix.provider.settlement@1/complete"
             ];
             resources = [ "phenix.providers.user" ];
           };
@@ -1806,7 +1850,11 @@
           ) providerManagementCompositionSpec.grants;
           authority = providerManagementCompositionSpec.authority // {
             operations = builtins.filter (op:
-              op != "phenix.provider.registrations@1/list"
+              !(builtins.elem op [
+                "phenix.provider.registrations@1/list"
+                "phenix.provider.startup@1/begin"
+                "phenix.provider.settlement@1/complete"
+              ])
             ) providerManagementCompositionSpec.authority.operations;
           };
         }));
@@ -2923,6 +2971,7 @@
         # Temporary packaging alias; same executable, not a second plugin.
         phenix-plugin-provider-host = providerHostPlugin;
         phenix-plugin-provider-openai = providerOpenAiDeclarationPlugin;
+        phenix-plugin-provider-standards = providerStandardDeclarationsPlugin;
         phenix-plugin-provider-openai-api = providerOpenAiApi;
         phenix-plugin-provider-chatgpt = providerChatGpt;
         phenix-plugin-provider-credential-files = providerCredentialStore;
@@ -3171,6 +3220,7 @@
         provider-builtins-plugin = providerBuiltinsPluginCheck;
         provider-population-product = providerPopulationProductCheck;
         provider-openai-declaration = providerOpenAiDeclarationPlugin;
+        provider-standard-declarations = providerStandardDeclarationsPlugin;
         provider-host-plugin = providerHostPlugin;
         provider-host-api-key-product = providerHostApiKeyProductCheck;
         provider-openai-api = providerOpenAiApi;

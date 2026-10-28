@@ -120,12 +120,19 @@ def probe(managed: bool):
         scope="user", provider_id="openai", connection_id="chatgpt"))
     assert subscription["result"]["profiles"] == []
 
-    # Actual model discovery is not installed: no invented models from
-    # provider metadata, even if a caller supplies a forged profile.
+    # An ACP management root cannot use an invented account identity.
+    # It lacks the exact selected credential resource, even if a profile
+    # is named. Do not weaken the domain's Denied result to a catalog read.
     models = call(9, "_phenix/providers/models", dict(
         scope="user", provider_id="openai", connection_id="api",
         profile_id="forged", cursor=None, limit=20))
-    assert models["error"]["data"]["code"] == "AuthenticationRequired", models
+    assert models["error"]["data"]["code"] == "Denied", models
+    # Without a selected account the same management root may inspect
+    # discovery readiness but must not invent authenticated model entries.
+    unbound_models = call(90, "_phenix/providers/models", dict(
+        scope="user", provider_id="openai", connection_id="api",
+        profile_id=None, cursor=None, limit=20))
+    assert unbound_models["error"]["data"]["code"] == "AuthenticationRequired", unbound_models
     wrong_scope = call(10, "_phenix/providers/auth/status", dict(
         scope="foreign", provider_id="openai", connection_id="api"))
     assert wrong_scope["error"]["code"] == -32602

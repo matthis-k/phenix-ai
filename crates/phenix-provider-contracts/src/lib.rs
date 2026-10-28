@@ -449,6 +449,20 @@ impl<'host, 'call> Providers<'host, 'call> {
             },
         )
     }
+
+    /// Register a static declaration bundle using the same per-definition
+    /// contract and validation path. No second registry or private protocol.
+    /// A graph-failed wave will not be published by the owner.
+    pub fn register_all<I, P>(&self, providers: I) -> CallResult<(), ProviderError>
+    where
+        I: IntoIterator<Item = P>,
+        P: ProviderDefinition,
+    {
+        for provider in providers {
+            self.register(provider)?;
+        }
+        Ok(())
+    }
 }
 
 /// A provider-facing authentication operation. Interactive flows return a

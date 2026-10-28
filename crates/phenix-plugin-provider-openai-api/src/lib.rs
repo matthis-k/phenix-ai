@@ -88,6 +88,28 @@ fn selected_profile_from_resource(
     Ok(identity)
 }
 
+#[cfg(feature = "c11-loopback-test")]
+fn relocate_loopback_endpoints(
+    connection: &mut phenix_provider_contracts::ConnectionDescriptor,
+    base: &str,
+) -> Result<(), ProviderError> {
+    // The fixture substitutes one credential origin, including *all*
+    // protocol endpoints. A mixed loopback/production origin is invalid.
+    connection.base_url = Some(base.into());
+    for protocol in &mut connection.protocols {
+        if let Some(endpoint) = protocol.endpoint.as_deref() {
+            let suffix = endpoint
+                .strip_prefix("https://api.openai.com/v1/")
+                .ok_or_else(|| error(ProviderErrorCode::Denied, "unexpected protocol endpoint"))?;
+            protocol.endpoint = Some(format!("{base}/{suffix}"));
+        }
+    }
+    for source in &mut connection.model_sources {
+        source.endpoint = Some(format!("{base}/models"));
+    }
+    Ok(())
+}
+
 fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
     let mut provider = registrations()
         .into_iter()
@@ -110,16 +132,7 @@ fn descriptor() -> Result<ProviderDescriptor, ProviderError> {
     #[cfg(feature = "c11-loopback-test")]
     {
         let base = test_base()?;
-        let c = &mut provider.connections[0];
-        c.base_url = Some(base.clone());
-        for protocol in &mut c.protocols {
-            if protocol.id == "openai-responses" {
-                protocol.endpoint = Some(format!("{base}/responses"));
-            }
-        }
-        for source in &mut c.model_sources {
-            source.endpoint = Some(format!("{base}/models"));
-        }
+        relocate_loopback_endpoints(&mut provider.connections[0], &base)?;
     }
     Ok(provider)
 }
@@ -436,6 +449,32 @@ mod plugin {
 mod tests {
     use super::*;
     use phenix_sdk::ContractMetadata;
+
+    #[cfg(feature = "c11-loopback-test")]
+    #[test]
+    fn loopback_fixture_keeps_all_declared_protocols_on_one_origin() {
+        let mut provider = registrations()
+            .into_iter()
+            .find(|item| item.id == PROVIDER)
+            .unwrap();
+        provider.connections.retain(|item| item.id == CONNECTION);
+        let connection = &mut provider.connections[0];
+        relocate_loopback_endpoints(connection, "http://127.0.0.1:18181").unwrap();
+        assert_eq!(connection.protocols.len(), 2);
+        assert_eq!(
+            connection.protocols[0].endpoint.as_deref(),
+            Some("http://127.0.0.1:18181/responses")
+        );
+        assert_eq!(
+            connection.protocols[1].endpoint.as_deref(),
+            Some("http://127.0.0.1:18181/chat/completions")
+        );
+        assert_eq!(
+            connection.model_sources[0].endpoint.as_deref(),
+            Some("http://127.0.0.1:18181/models")
+        );
+        phenix_provider_builtins::validate_registrations(&[provider]).unwrap();
+    }
 
     #[test]
     fn catalog_requires_real_ids_and_no_fake_entitlement() {
