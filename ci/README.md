@@ -56,7 +56,7 @@ Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.
 
 The paired user-facing API is merged in `phenix-flake-ci` PR #37 and
-pinned to its immutable squash commit `29292dde595a11d6636c87bc5121c861cb1e1b0f`. Both generated workflows
+pinned to its immutable squash commit `070cb93f5972147ab0ed6efd1019e11ef6112a93`. Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
 
 ## Automatically discovered runnable tests
