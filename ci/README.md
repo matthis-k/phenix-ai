@@ -28,4 +28,4 @@ The staged PR shared prebuild additionally restores compatible verified-main
 Nix outputs read-only from `remote-phenix-m1-*` before building new
 PR-specific derivations, while its primary key and all leaf/join caches
 remain `phenix-m1-*` and cannot publish to the trusted namespace.
-This is the change in `phenix-flake-ci` PR #35.
+The cache restoration is merged in `phenix-flake-ci` PR #35 and pinned to its immutable squash commit.

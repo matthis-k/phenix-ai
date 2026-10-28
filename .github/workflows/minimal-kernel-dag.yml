@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   generated:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@3f7674445f47a45d0d4241d63a964e7bee388a74
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@b364f404e47bd25f4f69a4349f8e42620ea18dc2
     with:
       config: ci/flake-check-config.nix
-      library_ref: 3f7674445f47a45d0d4241d63a964e7bee388a74
+      library_ref: b364f404e47bd25f4f69a4349f8e42620ea18dc2
