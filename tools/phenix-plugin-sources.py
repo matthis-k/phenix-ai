@@ -212,7 +212,7 @@ def package(binary, describe, staging, cache, store):
     return final.resolve(strict=True)
 
 
-def prepare(config_file, output_file, describe, cache, store):
+def prepare(config_file, output_file, describe, cache, store, extra_sources=None):
     spec = json.loads(config_file.read_text(encoding="utf-8"))
     if (not isinstance(spec, dict) or spec.get("format") != COMPOSITION or
             not isinstance(spec.get("artifacts"), list) or
@@ -220,6 +220,15 @@ def prepare(config_file, output_file, describe, cache, store):
         raise ValueError("expected only phenix.composition.v3 with artifacts array")
     sources = spec.pop("plugin_sources", [])
     builders = spec.pop("builders", {})
+    # CLI flags are a convenience for constructing the same canonical file.
+    # They never synthesize authority, grants, or slot bindings.
+    if extra_sources is not None:
+        if not isinstance(extra_sources, list) or not all(
+                isinstance(x, str) and x for x in extra_sources):
+            raise ValueError("--plugin requires nonempty source paths")
+        if not isinstance(sources, list):
+            raise ValueError("plugin_sources must be an array")
+        sources = sources + [{"source": value} for value in extra_sources]
     if not isinstance(sources, list) or not isinstance(builders, dict):
         raise ValueError("plugin_sources must be an array, builders must be an object")
     packages = []
@@ -247,6 +256,9 @@ def main():
     parser.add_argument("composition", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--describe", default="phenix-describe")
+    parser.add_argument("--plugin", action="append", default=[], metavar="SOURCE",
+                        help="Append a plugin package, shared object, or source project; "
+                             "repeatable. Never infers composition authority or bindings.")
     parser.add_argument("--store", choices=("local", "nix"), default="local")
     parser.add_argument("--cache-dir", type=Path,
                         default=Path(os.environ.get("PHENIX_PLUGIN_CACHE_DIR",
@@ -254,7 +266,7 @@ def main():
     args = parser.parse_args()
     try:
         prepare(args.composition.resolve(strict=True), args.output.resolve(),
-                args.describe, args.cache_dir, args.store)
+                args.describe, args.cache_dir, args.store, args.plugin)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
             json.JSONDecodeError) as error:
         parser.exit(1, f"phenix-plugin-sources: {error}\n")
