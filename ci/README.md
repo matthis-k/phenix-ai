@@ -79,6 +79,24 @@ commit `47ef08d2ad20038e0e4dfb5138d448c5c567f715`.
 Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
 
+## Declarative test checks
+
+`flake.nix` now locks `phenix-flake-ci` as a Nix input at
+`cd2403a45333a5211775bdf01b3ce45f28e02e5f`. That same immutable revision
+is used by the generated CI workflows and workflow verification checkout.
+The public `mkTestCases` and `testAssert` helpers create actual
+`checks.x86_64-linux.kernel-inspect-contract` and
+`checks.x86_64-linux.kernel-invalid-composition` derivations.
+
+The first invokes the already-built kernel's `inspect` operation once and
+checks its exit code and JSON format. The second checks that inspecting a
+nonexistent composition returns a nonzero exit code. Both are ordinary
+`checks`, so they are automatically included in the full Nix inventory.
+No shell assertion script, new CI registry, or second kernel/plugin build is
+introduced. See the upstream
+[declarative tests](https://github.com/matthis-k/phenix-flake-ci/blob/cd2403a45333a5211775bdf01b3ce45f28e02e5f/docs/declarative-tests.md)
+for further examples, file-content assertions and grouped artifacts.
+
 ## Automatically discovered runnable tests
 
 The existing complete 86-check Nix DAG remains mandatory. As an additional

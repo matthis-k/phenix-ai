@@ -1,11 +1,14 @@
 {
   description = "Phenix M1 typed contract kernel";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/cd2403a45333a5211775bdf01b3ce45f28e02e5f";
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, phenix-flake-ci }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
+      testLib = phenix-flake-ci.lib;
+      a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
       subset =
@@ -2741,6 +2744,26 @@
           "$TMPDIR/source-config.json" > "$out/terminal.txt"
         grep -F 'answer: mock:hello' "$out/terminal.txt"
       '';
+      # Test definitions refer only to existing immutable packages.
+      # All checks are discovered from checks.${system} by the same CI planner.
+      declarativeCliChecks = testLib.mkTestCases {
+        inherit pkgs;
+        namePrefix = "phenix-";
+        defaults.command.program = "${kernel}/bin/phenix-kernel";
+        cases = {
+          kernel-inspect-contract = {
+            command.args = [ "inspect" "${basicComposition}" ];
+            expect = {
+              exitCode = a.eq 0;
+              stdout.json."/format" = a.eq "phenix.inspect.v2";
+            };
+          };
+          kernel-invalid-composition = {
+            command.args = [ "inspect" "/not-a-phenix-composition.json" ];
+            expect.exitCode = a.ne 0;
+          };
+        };
+      };
     in
     {
       packages.${system} = {
@@ -3099,7 +3122,7 @@
         m1-pending-product = pendingProduct;
         m1-lifecycle = lifecycleCheck;
         m1-lifecycle-product = lifecycleProduct;
-      };
+      } // declarativeCliChecks;
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo
