@@ -170,6 +170,19 @@ impl Drop for CredentialImportRequest {
     }
 }
 
+/// Introspect allowed connection-level actions before any session exists.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/control/state", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct ControlStateRequest {}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
+#[request(method = "_phenix/models/select", response = serde_json::Value)]
+#[serde(deny_unknown_fields)]
+struct DefaultModelSelectRequest {
+    value: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, acp::JsonRpcRequest)]
 #[request(method = "_phenix/credentials/env-bind", response = serde_json::Value)]
 #[serde(deny_unknown_fields)]
@@ -213,6 +226,8 @@ enum Command {
     ProviderAuthPoll(ProviderAuthPollRequest, Reply<serde_json::Value>),
     ProviderAuthCancel(ProviderAuthCancelRequest, Reply<serde_json::Value>),
     ProviderModels(ProviderModelsRequest, Reply<serde_json::Value>),
+    ControlState(ControlStateRequest, Reply<serde_json::Value>),
+    DefaultModelSelect(DefaultModelSelectRequest, Reply<serde_json::Value>),
     CredentialCapabilities(CredentialCapabilitiesRequest, Reply<serde_json::Value>),
     CredentialImport(CredentialImportRequest, Reply<serde_json::Value>),
     CredentialEnvironment(CredentialEnvironmentRequest, Reply<serde_json::Value>),
@@ -234,6 +249,8 @@ impl Command {
             Self::ProviderAuthPoll(_, reply) => reply.respond_with_error(error),
             Self::ProviderAuthCancel(_, reply) => reply.respond_with_error(error),
             Self::ProviderModels(_, reply) => reply.respond_with_error(error),
+            Self::ControlState(_, reply) => reply.respond_with_error(error),
+            Self::DefaultModelSelect(_, reply) => reply.respond_with_error(error),
             Self::CredentialCapabilities(_, reply) => reply.respond_with_error(error),
             Self::CredentialImport(_, reply) => reply.respond_with_error(error),
             Self::CredentialEnvironment(_, reply) => reply.respond_with_error(error),
@@ -280,6 +297,121 @@ fn internal_basic(problem: BasicError) -> acp::Error {
         "message": problem.message,
     }))
 }
+/// Only machine-readable classifications of native failures cross the ACP
+/// boundary. Error prose can include provider response bodies and credentials.
+fn prompt_failure(phase: &'static str, reason: impl ToString) -> acp::Error {
+    prompt_failure_details(phase, &reason.to_string(), None, None, None)
+}
+
+fn prompt_failure_details(
+    phase: &'static str,
+    reason: &str,
+    basic_code: Option<&ErrorCode>,
+    kernel_code: Option<&phenix_contract::Code>,
+    node: Option<&str>,
+) -> acp::Error {
+    let from_model = basic_code.is_some_and(|code| *code == ErrorCode::ModelFailed);
+    let model_text = if from_model {
+        Some(reason)
+    } else {
+        reason.strip_prefix("ModelFailed: ")
+    };
+    let status = model_text
+        .and_then(|message| message.strip_prefix("HTTP model status "))
+        .filter(|digits| digits.len() == 3 && digits.bytes().all(|digit| digit.is_ascii_digit()))
+        .and_then(|digits| digits.parse::<u16>().ok())
+        .filter(|code| (100..600).contains(code));
+    let known_model_code = match model_text {
+        Some(
+            "subscription_sharing_user_not_eligible"
+            | "subscription_sharing_usage_limit_exceeded"
+            | "subscription_sharing_usage_unavailable"
+            | "subscription_sharing_unsupported_capability"
+            | "subscription_sharing_route_not_supported"
+            | "subscription_sharing_invalid_user"
+            | "chatpass_v2_scope_not_authorized"
+            | "chatpass_v2_invalid_authorization_context"
+            | "subscription_sharing_user_unavailable",
+        ) => model_text,
+        _ => None,
+    };
+    // These are exact local implementation literals. Do not forward any
+    // substring of an untrusted provider failure.
+    let reason_code = match reason {
+        "HTTP model reported an error" => Some("provider_stream_error"),
+        "HTTP transport failed" => Some("http_transport_failed"),
+        "HTTP model cancelled" => Some("model_cancelled"),
+        "HTTP response is not an event stream" => Some("unexpected_http_content_type"),
+        "incomplete model stream" => Some("incomplete_model_stream"),
+        "missing model usage" => Some("missing_model_usage"),
+        "invalid Responses creation" => Some("invalid_responses_creation"),
+        "Responses completion disagrees with streamed output" => {
+            Some("responses_completion_mismatch")
+        }
+        "HTTP worker failed" => Some("http_worker_failed"),
+        "missing HTTP worker result" => Some("missing_http_worker_result"),
+        "HTTP progress queue failed" => Some("http_progress_failed"),
+        "reply exceeds portable bounds" => Some("reply_exceeds_inline_abi"),
+        "SSE frame exceeds portable bounds" => Some("sse_frame_exceeds_inline_abi"),
+        "request exceeds portable payload bounds" => Some("request_exceeds_inline_abi"),
+        "selected HTTP model is not installed for session" => Some("model_not_installed"),
+        _ => None,
+    };
+    let safe_node = node.filter(|id| {
+        !id.is_empty()
+            && id.len() <= 96
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    });
+    acp::Error::internal_error().data(serde_json::json!({
+        "format": "phenix.prompt.failure.v1",
+        "phase": phase,
+        "http_status": status,
+        "provider_code": known_model_code,
+        "basic_code": basic_code,
+        "kernel_code": kernel_code,
+        "reason_code": reason_code,
+        "node": safe_node,
+    }))
+}
+
+/// Unlike the Terminal compatibility result formatter, ACP must retain the
+/// typed domain/kernel distinction through graph finalization.
+fn finish_submission_acp(execution: &GraphExecution<'_>) -> acp::Result<bool> {
+    let cancelled = match execution.completion() {
+        Some(GraphCompletion::Success | GraphCompletion::Domain) => false,
+        Some(GraphCompletion::Cancelled) => true,
+        Some(GraphCompletion::Failure(failure)) => {
+            return Err(prompt_failure_details(
+                "graph_result",
+                "",
+                None,
+                Some(&failure.code),
+                None,
+            ));
+        }
+        None => return Err(prompt_failure("graph_result", "graph not finished")),
+    };
+    if execution.steps().is_empty() && !cancelled {
+        return Err(prompt_failure("graph_result", "graph had no active node"));
+    }
+    for step in execution.steps() {
+        if let Outcome::Domain(value) = &step.outcome {
+            let problem = BasicError::from_value(value.clone())
+                .map_err(|_| prompt_failure("graph_result", "invalid graph domain error"))?;
+            return Err(prompt_failure_details(
+                "graph_result",
+                &problem.message,
+                Some(&problem.code),
+                None,
+                Some(&step.node),
+            ));
+        }
+    }
+    Ok(cancelled)
+}
+
 fn internal_storage(reason: impl ToString) -> acp::Error {
     internal_basic(BasicError {
         code: ErrorCode::StorageFailed,
@@ -373,12 +505,13 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
+#[path = "model_control_state.rs"]
+mod model_control_state;
 #[path = "acp_provider_management.rs"]
 mod provider_management;
+use model_control_state::{ControlAction, ControlState, DenialCode};
 #[cfg(test)]
-use provider_management::{
-    charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
-};
+use provider_management::{is_missing_model_discovery, ModelPageAccumulator};
 use provider_management::{
     is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
     stale_native_model_choice, ProviderManagement, ProviderManagementGroup,
@@ -707,6 +840,8 @@ struct Controller {
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
     selected_http_seen: std::collections::BTreeSet<String>,
+    default_model_selection: Option<ModelSelection>,
+    default_model_revision: u64,
     initialized: bool,
     issued: u64,
     queued: Arc<PendingPrompts>,
@@ -730,11 +865,82 @@ impl Controller {
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
             selected_http_seen: std::collections::BTreeSet::new(),
+            default_model_selection: None,
+            default_model_revision: 0,
             initialized: false,
             issued: 0,
             queued,
             closed,
         }
+    }
+
+    /// Startup restores non-secret user preference intent from Basic Storage.
+    /// Credential data remains private in ProviderCredentials. Restoration
+    /// never opens a browser, fetches the provider catalog, or grants a Model.
+    fn restore_default_model(&mut self) -> acp::Result<()> {
+        if !can_switch_native_model(&self.composition) {
+            return Ok(());
+        }
+        let kernel = scoped_kernel(
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        )
+        .map_err(internal)?;
+        let recorded = super::model_selection_state::read(
+            &kernel,
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        );
+        kernel.shutdown().map_err(internal)?;
+        let recorded = recorded.map_err(internal)?;
+        self.default_model_revision = recorded.as_ref().map_or(0, |(_, revision)| *revision);
+        self.default_model_selection = recorded.map(|(selection, _)| selection);
+        Ok(())
+    }
+
+    /// A validated, explicitly selected Model becomes the next connection's
+    /// default as a CAS-checked user preference. Never persist credentials
+    /// here or use a stored intent as authorization for model execution.
+    fn remember_default_model(&mut self, checked: &HttpModelBinding) -> acp::Result<()> {
+        if !can_switch_native_model(&self.composition) {
+            return Err(Self::control_denial(DenialCode::ModelControlNotInstalled));
+        }
+        let kernel = scoped_kernel(
+            &self.composition,
+            super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+        )
+        .map_err(internal)?;
+        let result = (|| {
+            let record = super::model_selection_state::read(
+                &kernel,
+                &self.composition,
+                super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+            )
+            .map_err(internal)?;
+            let expected = record.as_ref().map_or(0, |(_, revision)| *revision);
+            if expected != self.default_model_revision {
+                return Err(stale_model_conflict());
+            }
+            if record
+                .as_ref()
+                .is_some_and(|(stored, _)| stored == checked.selection())
+            {
+                return Ok(expected);
+            }
+            super::model_selection_state::compare_and_swap(
+                &kernel,
+                &self.composition,
+                super::frontend_defaults::MODEL_PREFERENCE_SCOPE,
+                checked,
+                expected,
+            )
+            .map_err(|_| invalid("default model preference could not be persisted"))
+        })();
+        kernel.shutdown().map_err(internal)?;
+        let revision = result?;
+        self.default_model_revision = revision;
+        self.default_model_selection = Some(checked.selection().clone());
+        Ok(())
     }
 
     fn dispatch(&mut self, command: Command) {
@@ -750,12 +956,18 @@ impl Controller {
                     // This handler is v1-only. A higher client version may
                     // negotiate down to stable v1, never silently activate
                     // the SDK's separate draft-v2 lifecycle.
-                    self.initialized = true;
-                    Ok(InitializeResponse::new(ProtocolVersion::V1)
-                        .agent_capabilities(AgentCapabilities::new().load_session(true))
-                        .agent_info(
-                            Implementation::new("phenix-basic", "0.1.0").title("Phenix Basic"),
-                        ))
+                    match self.restore_default_model() {
+                        Ok(()) => {
+                            self.initialized = true;
+                            Ok(InitializeResponse::new(ProtocolVersion::V1)
+                                .agent_capabilities(AgentCapabilities::new().load_session(true))
+                                .agent_info(
+                                    Implementation::new("phenix-basic", "0.1.0")
+                                        .title("Phenix Basic"),
+                                ))
+                        }
+                        Err(error) => Err(error),
+                    }
                 };
                 let _ = reply.respond_with_result(result);
             }
@@ -829,6 +1041,14 @@ impl Controller {
                 } else {
                     self.provider_models(request)
                 };
+                let _ = reply.respond_with_result(result);
+            }
+            Command::ControlState(_, reply) => {
+                let result = self.describe_control_state();
+                let _ = reply.respond_with_result(result);
+            }
+            Command::DefaultModelSelect(request, reply) => {
+                let result = self.select_default_model(request);
                 let _ = reply.respond_with_result(result);
             }
             Command::CredentialCapabilities(_, reply) => {
@@ -1025,6 +1245,125 @@ impl Controller {
             request.attempt_id,
             "cancel",
         )
+    }
+
+    fn control_denial(code: DenialCode) -> acp::Error {
+        acp::Error::invalid_params().data(serde_json::json!({
+            "format": "phenix.control.denial.v1",
+            "code": code,
+            "message": code.message(),
+        }))
+    }
+
+    fn pre_session_offers(&self) -> acp::Result<Vec<provider_management::NativeModelOffer>> {
+        if !can_switch_native_model(&self.composition) {
+            return Err(Self::control_denial(DenialCode::ModelControlNotInstalled));
+        }
+        self.management
+            .as_ref()
+            .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
+            .authorized_http_offers(&self.resolvers)
+    }
+
+    fn describe_control_state(&self) -> acp::Result<serde_json::Value> {
+        let discovered = if !self.initialized || self.closed.load(Ordering::Acquire) {
+            Err(Self::control_denial(if self.initialized {
+                DenialCode::ConnectionClosed
+            } else {
+                DenialCode::NotInitialized
+            }))
+        } else if can_switch_native_model(&self.composition) {
+            self.management
+                .as_ref()
+                .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))
+                .and_then(|manager| manager.authorized_http_offers_report(&self.resolvers))
+        } else {
+            Err(Self::control_denial(DenialCode::ModelControlNotInstalled))
+        };
+        let (offers, denials, discovery_failure) = match discovered {
+            Ok((offers, denials)) => (offers, denials, None),
+            Err(_) => (
+                Vec::new(),
+                Vec::new(),
+                Some("provider_catalog_denied_or_unavailable"),
+            ),
+        };
+        let state = ControlState {
+            initialized: self.initialized,
+            closed: self.closed.load(Ordering::Acquire),
+            provider_management: self.management.is_some(),
+            credential_management: !self.credentials.is_empty(),
+            model_control: can_switch_native_model(&self.composition) && self.management.is_some(),
+            available_models: offers.len(),
+            default_model_selected: self.default_model_selection.is_some(),
+            session_active: !self.sessions.is_empty(),
+        };
+        let mut value = state.describe();
+        value["revision"] = serde_json::json!(self.default_model_revision);
+        value["models"] = serde_json::Value::Array(
+            offers
+                .iter()
+                .map(|offer| {
+                    Ok(serde_json::json!({
+                        "id": native_model_option_id(&offer.selected, self.default_model_revision)?,
+                        "name": offer.label,
+                        "authorized": true,
+                    }))
+                })
+                .collect::<acp::Result<Vec<_>>>()?,
+        );
+        value["selected"] = match &self.default_model_selection {
+            Some(selected) => serde_json::json!(native_model_option_id(
+                selected,
+                self.default_model_revision
+            )?),
+            None => serde_json::Value::Null,
+        };
+        value["model_denials"] = serde_json::json!(denials);
+        value["model_discovery_error"] = serde_json::json!(discovery_failure);
+        Ok(value)
+    }
+
+    fn select_default_model(
+        &mut self,
+        request: DefaultModelSelectRequest,
+    ) -> acp::Result<serde_json::Value> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(Self::control_denial(DenialCode::ConnectionClosed));
+        }
+        if !self.initialized {
+            return Err(Self::control_denial(DenialCode::NotInitialized));
+        }
+        let offers = self.pre_session_offers()?;
+        let state = ControlState {
+            initialized: self.initialized,
+            closed: self.closed.load(Ordering::Acquire),
+            provider_management: self.management.is_some(),
+            credential_management: !self.credentials.is_empty(),
+            model_control: true,
+            available_models: offers.len(),
+            default_model_selected: self.default_model_selection.is_some(),
+            session_active: !self.sessions.is_empty(),
+        };
+        if let Some(reason) = state.deny(ControlAction::ModelsSelect) {
+            return Err(Self::control_denial(reason));
+        }
+        let mut candidates = offers.into_iter().filter(|offer| {
+            native_model_option_id(&offer.selected, self.default_model_revision)
+                .is_ok_and(|id| id == request.value)
+        });
+        let selected = candidates.next().ok_or_else(stale_model_conflict)?;
+        if candidates.next().is_some() {
+            return Err(invalid("ambiguous default model selection"));
+        }
+        // Selection is intent, never a credential or installation grant.
+        let binding = self
+            .management
+            .as_ref()
+            .ok_or_else(|| Self::control_denial(DenialCode::ProviderManagementNotInstalled))?
+            .current_http_binding(&selected.selected)?;
+        self.remember_default_model(&binding)?;
+        self.describe_control_state()
     }
 
     fn provider_models(&self, request: ProviderModelsRequest) -> acp::Result<serde_json::Value> {
@@ -1406,6 +1745,9 @@ impl Controller {
         // If installation fails, the selected intent remains fail-closed;
         // subsequent prompts must revalidate and reinstall, never use preset.
         self.install_current_http_model(&session, &desired)?;
+        // Explicit session model selection updates the next-session default,
+        // so the user does not have to repeat the same choice after restart.
+        self.remember_default_model(&checked)?;
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
@@ -1430,8 +1772,48 @@ impl Controller {
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
         self.sessions.insert(session.clone(), kernel);
         self.offsets.insert(session.clone(), 0);
-        let options = self.model_options(&session)?;
-        Ok(NewSessionResponse::new(session).config_options(options))
+        // Creating a session is transactional from the ACP client's point of
+        // view: failing default selection or model admission must not leave
+        // an unacknowledged session counted as active in control state.
+        let initialized = (|| {
+            // The connection-level default becomes independently persisted
+            // session intent, never a global bearer installation or grant.
+            if let Some(desired) = self.default_model_selection.clone() {
+                let management = self.management.as_ref().ok_or_else(|| {
+                    Self::control_denial(DenialCode::ProviderManagementNotInstalled)
+                })?;
+                let binding = management.current_http_binding(&desired)?;
+                // An interrupted persistence/install must never fall back
+                // to the old HTTP preset for this new session.
+                self.selected_http_seen.insert(session.clone());
+                super::model_selection_state::compare_and_swap(
+                    self.sessions
+                        .get(&session)
+                        .ok_or_else(|| invalid("new session unavailable"))?,
+                    &self.composition,
+                    &session,
+                    &binding,
+                    0,
+                )
+                .map_err(|_| invalid("default model persistence denied"))?;
+                self.install_current_http_model(&session, &desired)?;
+            }
+            self.model_options(&session)
+        })();
+        match initialized {
+            Ok(options) => Ok(NewSessionResponse::new(session).config_options(options)),
+            Err(error) => {
+                // Do not expose a phantom active session after a failed
+                // session/new response. Shutdown is best-effort; preserve
+                // the actionable admission/persistence error for the caller.
+                self.offsets.remove(&session);
+                self.selected_http_seen.remove(&session);
+                if let Some(kernel) = self.sessions.remove(&session) {
+                    let _ = kernel.shutdown();
+                }
+                Err(error)
+            }
+        }
     }
 
     fn load_session(
@@ -1544,8 +1926,9 @@ impl Controller {
         let mut payload = install.to_value();
         let result = root.invoke(&payload);
         scrub_portable_secret_bytes(&mut payload);
-        match result.map_err(internal)? {
-            Outcome::Success(value) => <() as Portable>::from_value(value).map_err(internal),
+        match result.map_err(|failure| prompt_failure("model_install", failure))? {
+            Outcome::Success(value) => <() as Portable>::from_value(value)
+                .map_err(|failure| prompt_failure("model_install", failure)),
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
                 Err(provider_rejection(problem))
@@ -1565,7 +1948,7 @@ impl Controller {
         };
         if has_model_selection_storage(&self.composition) {
             match super::model_selection_state::read(kernel, &self.composition, &session)
-                .map_err(internal)?
+                .map_err(|failure| prompt_failure("model_state", failure))?
             {
                 Some((stored, _revision)) => {
                     // A once-selected native transport cannot silently return
@@ -1591,7 +1974,7 @@ impl Controller {
                 line: serde_json::json!({"prompt": request}).to_string(),
             },
         )
-        .map_err(internal)?
+        .map_err(|failure| prompt_failure("frontend_decode", failure))?
         .map_err(|cause| {
             if cause.code == ErrorCode::InvalidInput {
                 invalid(&cause.message)
@@ -1599,11 +1982,13 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        let mut owner = session_lock(&session).map_err(internal_storage)?;
-        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
+        let mut owner =
+            session_lock(&session).map_err(|failure| prompt_failure("session_lock", failure))?;
+        recover_owned_run(kernel, &session, &mut owner)
+            .map_err(|failure| prompt_failure("session_recovery", failure))?;
         let execution =
             begin_submission(kernel, submission, basic_scope(&self.composition, &session))
-                .map_err(internal)?;
+                .map_err(|failure| prompt_failure("graph_begin", failure))?;
         let offset = self.offsets.entry(session.clone()).or_default();
         Self::drive(
             kernel,
@@ -1634,26 +2019,35 @@ impl Controller {
             if !stopping
                 && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
             {
-                execution.cancel().map_err(internal)?;
+                execution
+                    .cancel()
+                    .map_err(|failure| prompt_failure("graph_cancel", failure))?;
                 stopping = true;
             }
-            let status = execution.pump(|_| {}).map_err(internal)?;
+            let status = execution
+                .pump(|_| {})
+                .map_err(|failure| prompt_failure("graph_pump", failure))?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
+                marked = mark_admitted_run(kernel, &execution, session, owner)
+                    .map_err(|failure| prompt_failure("graph_admission", failure))?;
             }
             if !closed.load(Ordering::Acquire) {
-                send_updates(kernel, Some(&execution), session, after, peer, closed)?;
+                send_updates(kernel, Some(&execution), session, after, peer, closed)
+                    .map_err(|_| prompt_failure("frontend_render", "redacted"))?;
             }
             if status == GraphStatus::Finished {
-                let cancelled = finish_submission(&execution).map_err(internal)?;
+                let cancelled = finish_submission_acp(&execution)?;
                 drop(execution);
                 if cancelled {
-                    record_cancelled(kernel, session).map_err(internal)?;
+                    record_cancelled(kernel, session)
+                        .map_err(|failure| prompt_failure("graph_cancel_record", failure))?;
                     if !closed.load(Ordering::Acquire) {
-                        send_updates(kernel, None, session, after, peer, closed)?;
+                        send_updates(kernel, None, session, after, peer, closed)
+                            .map_err(|_| prompt_failure("frontend_render", "redacted"))?;
                     }
                 }
-                set_owner_marker(owner, None).map_err(internal)?;
+                set_owner_marker(owner, None)
+                    .map_err(|failure| prompt_failure("owner_checkpoint", failure))?;
                 return Ok(PromptResponse::new(if cancelled {
                     StopReason::Cancelled
                 } else {
@@ -1781,6 +2175,8 @@ pub(super) fn run(
     let provider_auth_poll = tx.clone();
     let provider_auth_cancel = tx.clone();
     let provider_models = tx.clone();
+    let control_state = tx.clone();
+    let default_model_select = tx.clone();
     let credential_capabilities = tx.clone();
     let credential_import = tx.clone();
     let credential_environment = tx.clone();
@@ -1862,6 +2258,21 @@ pub(super) fn run(
         .on_receive_request(
             async move |request: ProviderModelsRequest, reply, _peer| {
                 submit(&provider_models, Command::ProviderModels(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ControlStateRequest, reply, _peer| {
+                submit(&control_state, Command::ControlState(request, reply))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: DefaultModelSelectRequest, reply, _peer| {
+                submit(
+                    &default_model_select,
+                    Command::DefaultModelSelect(request, reply),
+                )
             },
             acp::on_receive_request!(),
         )
@@ -2037,15 +2448,6 @@ mod tests {
         assert_eq!(methods[0]["environment_variable"], "ANTHROPIC_API_KEY");
         assert!(methods[1].get("environment_variable").is_none());
         assert!(!wire.to_string().contains("Bearer secret"));
-    }
-
-    #[test]
-    fn model_picker_budgets_all_connections_and_pages_globally() {
-        let mut inspected = 0;
-        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
-        assert!(charge_model_option_budget(&mut inspected, 2).is_ok());
-        assert!(charge_model_option_budget(&mut inspected, 2).is_err());
-        assert_eq!(inspected, 2);
     }
 
     #[test]
@@ -2239,7 +2641,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_model_pages_bound_revision_cursor_profile_and_size() {
+    fn provider_model_pages_reject_invalid_revision_or_cursors_without_count_caps() {
         use phenix_provider_contracts::{ModelOrigin, ProviderModel};
 
         let fixture = |revision, profile: Option<&str>, next: Option<&str>| ModelPage {
@@ -2414,6 +2816,78 @@ mod tests {
         let mut forged = spec.clone();
         forged.entry.operation = "revoke".into();
         assert!(validate_model_resolver_spec(&forged).is_err());
+    }
+
+    #[test]
+    fn prompt_diagnostics_are_phase_scoped_and_redacted() {
+        for phase in ["frontend_decode", "graph_begin", "graph_result"] {
+            let error = prompt_failure(phase, "ModelFailed: response contains TOKEN=private");
+            let visible = format!("{error:?}");
+            assert!(!visible.contains("TOKEN=private"));
+            assert!(visible.contains("phenix.prompt.failure.v1"));
+            assert!(visible.contains(phase));
+        }
+        let status = prompt_failure("graph_result", "ModelFailed: HTTP model status 401");
+        assert!(format!("{status:?}").contains("401"));
+        let selected = prompt_failure(
+            "graph_result",
+            "ModelFailed: subscription_sharing_usage_limit_exceeded",
+        );
+        assert!(format!("{selected:?}").contains("subscription_sharing_usage_limit_exceeded"));
+        let forged = prompt_failure(
+            "graph_result",
+            "ModelFailed: subscription_sharing_unrecognized_TOKEN=private",
+        );
+        assert!(!format!("{forged:?}").contains("TOKEN=private"));
+        let malformed = prompt_failure(
+            "graph_result",
+            "ModelFailed: HTTP model status 401 TOKEN=private",
+        );
+        assert!(!format!("{malformed:?}").contains("TOKEN=private"));
+    }
+
+    #[test]
+    fn graph_result_diagnostics_preserve_basic_code_and_node_without_untrusted_text() {
+        let problem = ErrorCode::ModelFailed;
+        let error = prompt_failure_details(
+            "graph_result",
+            "HTTP model reported an error",
+            Some(&problem),
+            None,
+            Some("model.complete"),
+        );
+        let visible = format!("{error:?}");
+        assert!(visible.contains("ModelFailed"));
+        assert!(visible.contains("model.complete"));
+        assert!(visible.contains("provider_stream_error"));
+        let unknown = prompt_failure_details(
+            "graph_result",
+            "TOKEN=secret private provider body",
+            Some(&problem),
+            None,
+            Some("model.complete SECRET=secret"),
+        );
+        let redacted = format!("{unknown:?}");
+        assert!(!redacted.contains("TOKEN=secret"));
+        assert!(!redacted.contains("SECRET=secret"));
+        assert!(redacted.contains("ModelFailed"));
+        let status = prompt_failure_details(
+            "graph_result",
+            "HTTP model status 403",
+            Some(&problem),
+            None,
+            Some("model.complete"),
+        );
+        assert!(format!("{status:?}").contains("403"));
+        let kernel = prompt_failure_details(
+            "graph_result",
+            "secret",
+            None,
+            Some(&phenix_contract::Code::ScopeRejected),
+            None,
+        );
+        assert!(format!("{kernel:?}").contains("ScopeRejected"));
+        assert!(!format!("{kernel:?}").contains("secret"));
     }
 
     #[test]

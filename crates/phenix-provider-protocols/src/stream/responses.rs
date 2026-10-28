@@ -30,7 +30,35 @@ impl Stream {
             serde_json::from_str(data).map_err(|_| invalid("malformed Responses JSON"))?;
         let kind = string(&frame, "type")?;
         if matches!(kind, "error" | "response.failed") {
-            return Err(failed("HTTP model reported an error"));
+            // Subscription-plan errors may arrive *inside* an SSE stream,
+            // after an HTTP 200. Keep only explicitly documented machine
+            // codes; raw provider text must not reach graph or ACP errors.
+            let error = if kind == "response.failed" {
+                &frame["response"]["error"]
+            } else {
+                &frame["error"]
+            };
+            let code = error["code"].as_str();
+            let documented = matches!(
+                code,
+                Some(
+                    "subscription_sharing_user_not_eligible"
+                        | "subscription_sharing_usage_limit_exceeded"
+                        | "subscription_sharing_usage_unavailable"
+                        | "subscription_sharing_unsupported_capability"
+                        | "subscription_sharing_route_not_supported"
+                        | "subscription_sharing_invalid_user"
+                        | "chatpass_v2_scope_not_authorized"
+                        | "chatpass_v2_invalid_authorization_context"
+                        | "subscription_sharing_user_unavailable"
+                )
+            );
+            let message = if documented {
+                code.unwrap_or("HTTP model reported an error")
+            } else {
+                "HTTP model reported an error"
+            };
+            return Err(failed(message));
         }
         if kind == "response.incomplete" {
             return Err(

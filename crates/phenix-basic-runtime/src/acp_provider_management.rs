@@ -19,21 +19,18 @@ pub(super) struct ProviderManagementGroup {
 /// Multiple connection implementations may contribute to the same displayed
 /// provider, but claiming the same provider+connection is ambiguous and denied.
 fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
-    if pages.is_empty() || pages.len() > 32 {
+    if pages.is_empty() {
         return Err(invalid("provider management root count is invalid"));
     }
     if pages.len() == 1 {
         let page = &pages[0];
-        if page.revision == 0 || page.providers.len() > 32 {
+        if page.revision == 0 {
             return Err(invalid("provider catalog is invalid"));
         }
         let mut seen = std::collections::BTreeSet::new();
         let mut provider_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.connections.len() > 32
-                || provider.id.is_empty()
-                || !provider_ids.insert(provider.id.clone())
-            {
+            if provider.id.is_empty() || !provider_ids.insert(provider.id.clone()) {
                 return Err(invalid("invalid registered provider"));
             }
             for connection in &provider.connections {
@@ -48,7 +45,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
     let mut identities = std::collections::BTreeSet::new();
     let mut digest = 14695981039346656037u64;
     for page in pages {
-        if page.revision == 0 || page.providers.len() > 32 {
+        if page.revision == 0 {
             return Err(invalid("provider catalog has invalid revision or size"));
         }
         for byte in page.revision.to_le_bytes() {
@@ -56,10 +53,7 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
         }
         let mut source_ids = std::collections::BTreeSet::new();
         for provider in &page.providers {
-            if provider.id.is_empty()
-                || provider.connections.len() > 32
-                || !source_ids.insert(provider.id.clone())
-            {
+            if provider.id.is_empty() || !source_ids.insert(provider.id.clone()) {
                 return Err(invalid("invalid registered provider"));
             }
             if let Some(existing) = merged.iter_mut().find(|item| item.id == provider.id) {
@@ -84,9 +78,6 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
                 digest = (digest ^ u64::from(byte)).wrapping_mul(1099511628211);
             }
         }
-    }
-    if merged.len() > 32 || identities.len() > 32 {
-        return Err(invalid("combined provider catalog exceeds limits"));
     }
     Ok(ProviderPage {
         providers: merged,
@@ -164,20 +155,31 @@ impl ProviderManagementGroup {
         &self,
         resolvers: &[ModelCredentialResolver],
     ) -> acp::Result<Vec<NativeModelOffer>> {
-        // Verify installation identity before allowing any provider to
-        // publish an executable choice. A duplicate is always a hard error.
+        self.authorized_http_offers_report(resolvers)
+            .map(|(offers, _)| offers)
+    }
+
+    /// Merge only authority-checked offers while retaining bounded,
+    /// account-scoped reasons for missing offers from every installed root.
+    pub(super) fn authorized_http_offers_report(
+        &self,
+        resolvers: &[ModelCredentialResolver],
+    ) -> acp::Result<(Vec<NativeModelOffer>, Vec<serde_json::Value>)> {
         self.list()?;
         let mut offers = Vec::new();
+        let mut denials = Vec::new();
         let mut ids = std::collections::BTreeSet::new();
         for root in &self.roots {
-            for offer in root.authorized_http_offers(resolvers)? {
-                if offers.len() >= 128 || !ids.insert(offer.id.clone()) {
-                    return Err(invalid("ambiguous or oversized native model options"));
+            let (source_offers, source_denials) = root.authorized_http_offers_report(resolvers)?;
+            for offer in source_offers {
+                if !ids.insert(offer.id.clone()) {
+                    return Err(invalid("ambiguous native model options"));
                 }
                 offers.push(offer);
             }
+            denials.extend(source_denials);
         }
-        Ok(offers)
+        Ok((offers, denials))
     }
 
     pub(super) fn shutdown(self) -> Result<(), String> {
@@ -207,7 +209,6 @@ pub(super) struct ModelPageAccumulator {
     pub(super) models: Vec<phenix_provider_contracts::ProviderModel>,
     pub(super) revision: Option<u64>,
     pub(super) cursors: std::collections::BTreeSet<String>,
-    pub(super) pages: usize,
 }
 
 impl ModelPageAccumulator {
@@ -216,22 +217,12 @@ impl ModelPageAccumulator {
         page: ModelPage,
         profile: &Option<String>,
     ) -> acp::Result<Option<String>> {
-        if self.pages >= 64
-            || page.revision == 0
+        if page.revision == 0
             || self.revision.is_some_and(|prev| prev != page.revision)
             || &page.profile_id != profile
-            || page.models.len() > 256
-            || self
-                .models
-                .len()
-                .checked_add(page.models.len())
-                .is_none_or(|count| count > 4096)
         {
-            return Err(invalid(
-                "provider catalog page changed or exceeded its budget",
-            ));
+            return Err(invalid("provider catalog page changed"));
         }
-        self.pages += 1;
         self.revision = Some(page.revision);
         let next = page.next_cursor;
         if let Some(cursor) = &next {
@@ -409,9 +400,6 @@ pub(super) fn native_model_option_id(
 /// current runtime-issued catalog choices ever reach native installation.
 pub(super) fn stale_native_model_choice(chosen: &str, current_revision: u64) -> bool {
     const PREFIX: &str = "phenix.native-model@1:";
-    if chosen.len() > 4096 {
-        return false;
-    }
     chosen
         .strip_prefix(PREFIX)
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
@@ -443,18 +431,6 @@ pub(super) fn is_previous_native_selection(
     Ok(native_model_option_id(current, previous)? == chosen)
 }
 
-/// One controller model-menu refresh must have a global bound, not one
-/// budget independently repeated for every provider and connection.
-pub(super) fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
-    if *used >= maximum {
-        return Err(invalid(
-            "provider model selection exceeded discovery budget",
-        ));
-    }
-    *used += 1;
-    Ok(())
-}
-
 /// Only explicitly unavailable/not-yet-discovered provider catalogs are
 /// absent choices. A transport/authority denial, malformed typed reply or
 /// conflicting revision must not be confused with an empty model list.
@@ -464,34 +440,101 @@ pub(super) fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
         ProviderErrorCode::Unavailable
             | ProviderErrorCode::AuthenticationRequired
             | ProviderErrorCode::NotFound
+            | ProviderErrorCode::DiscoveryNetwork
+            | ProviderErrorCode::DiscoveryTimeout
+            | ProviderErrorCode::DiscoveryUnauthorized
+            | ProviderErrorCode::DiscoveryRateLimited
+            | ProviderErrorCode::DiscoveryServerError
+            | ProviderErrorCode::DiscoveryInvalidResponse
+            | ProviderErrorCode::DiscoveryIssuerUnavailable
+            | ProviderErrorCode::DiscoveryRejected
+            | ProviderErrorCode::DiscoveryTooLarge
     )
 }
 
-// Missing discovery is a permitted optional capability, not a malformed
-// success reply or a blanket suppression of provider/authority denials.
-fn classify_model_page(result: Result<ModelPage, ProviderError>) -> acp::Result<Option<ModelPage>> {
+// The runtime emits allowlisted explanations based only on the typed code.
+// Provider-supplied messages or response bodies must never reach Neovim.
+fn model_discovery_denial(code: &ProviderErrorCode) -> (&'static str, &'static str) {
+    match code {
+        ProviderErrorCode::DiscoveryNetwork => (
+            "catalog_network",
+            "Catalog network or TLS connection failed; check DNS, VPN or proxy",
+        ),
+        ProviderErrorCode::DiscoveryTimeout => {
+            ("catalog_timeout", "Catalog request timed out; retry")
+        }
+        ProviderErrorCode::DiscoveryUnauthorized => (
+            "catalog_unauthorized",
+            "ChatGPT catalog rejected the OAuth token; reauthenticate the ChatGPT account",
+        ),
+        ProviderErrorCode::DiscoveryRateLimited => (
+            "catalog_rate_limited",
+            "Model catalog rate limited this account; retry later",
+        ),
+        ProviderErrorCode::DiscoveryServerError => (
+            "catalog_server_error",
+            "Model catalog returned HTTP 5xx; retry later",
+        ),
+        ProviderErrorCode::DiscoveryInvalidResponse => (
+            "catalog_invalid_response",
+            "Model catalog response did not match the expected format",
+        ),
+        ProviderErrorCode::DiscoveryIssuerUnavailable => (
+            "catalog_issuer_unavailable",
+            "Cannot verify ChatGPT issuer signing keys",
+        ),
+        ProviderErrorCode::DiscoveryRejected => (
+            "catalog_rejected",
+            "Catalog rejected the request or redirected unexpectedly",
+        ),
+        ProviderErrorCode::DiscoveryTooLarge => (
+            "catalog_too_large",
+            "Model catalog response exceeded safety limits",
+        ),
+        ProviderErrorCode::AuthenticationRequired => (
+            "account_not_authenticated",
+            "The selected account requires authentication",
+        ),
+        ProviderErrorCode::NotFound => (
+            "catalog_unavailable",
+            "Provider model discovery is not installed",
+        ),
+        _ => (
+            "catalog_unavailable",
+            "Provider model discovery is unavailable or denied",
+        ),
+    }
+}
+
+// Missing discovery is optional, but its *reason* is not discarded. Invalid
+// provider replies, authority denials and conflicts still reject the read.
+fn classify_model_page(
+    result: Result<ModelPage, ProviderError>,
+) -> acp::Result<Result<ModelPage, ProviderErrorCode>> {
     match result {
-        Ok(page) => Ok(Some(page)),
-        Err(problem) if is_missing_model_discovery(&problem.code) => Ok(None),
+        Ok(page) => Ok(Ok(page)),
+        Err(problem) if is_missing_model_discovery(&problem.code) => Ok(Err(problem.code)),
         Err(problem) => Err(provider_rejection(problem)),
     }
 }
 
 impl ProviderManagement {
-    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
+    fn optional_model_page(
+        &self,
+        query: &ModelQuery,
+    ) -> acp::Result<Result<ModelPage, ProviderErrorCode>> {
         let reply = self
             .invoke_typed("phenix.provider.catalog@1", "models", query)
             .map_err(internal)?;
         classify_model_page(reply)
     }
 
-    /// Enumerate only models executable with the launcher's exact credential
-    /// identity (or explicit no-auth). A stored key/profile is not itself a
-    /// capability. Each choice is checked again before native install.
-    pub(super) fn authorized_http_offers(
+    /// Audit each missing model surface without exposing provider responses,
+    /// tokens or other accounts. An empty model picker is not a success claim.
+    pub(super) fn authorized_http_offers_report(
         &self,
         resolvers: &[ModelCredentialResolver],
-    ) -> acp::Result<Vec<NativeModelOffer>> {
+    ) -> acp::Result<(Vec<NativeModelOffer>, Vec<serde_json::Value>)> {
         let listed: ProviderPage = self.read(
             "phenix.provider.catalog@1",
             "list",
@@ -499,18 +542,15 @@ impl ProviderManagement {
                 scope: "user".into(),
             },
         )?;
-        if listed.revision == 0 || listed.providers.len() > 32 {
-            return Err(invalid(
-                "provider selection catalog is invalid or too large",
-            ));
+        if listed.revision == 0 {
+            return Err(invalid("provider selection catalog has invalid revision"));
         }
         let mut ids = std::collections::BTreeSet::new();
         let mut offered = Vec::new();
-        let mut inspected_connections = 0;
-        let mut inspected_pages = 0;
+        let mut denials = Vec::new();
         for provider in listed.providers {
-            if provider.connections.len() > 32 || !ids.insert(provider.id.clone()) {
-                return Err(invalid("ambiguous or oversized provider selection"));
+            if !ids.insert(provider.id.clone()) {
+                return Err(invalid("ambiguous provider selection"));
             }
             let exact: ProviderDescriptor = self.read(
                 "phenix.provider.catalog@1",
@@ -525,7 +565,6 @@ impl ProviderManagement {
             }
             let mut connections = std::collections::BTreeSet::new();
             for connection in &exact.connections {
-                charge_model_option_budget(&mut inspected_connections, 32)?;
                 if !connections.insert(&connection.id) {
                     return Err(invalid("duplicate provider connection"));
                 }
@@ -545,6 +584,12 @@ impl ProviderManagement {
                         .collect::<Vec<_>>()
                 };
                 if profiles.is_empty() {
+                    denials.push(serde_json::json!({
+                        "provider_id": exact.id,
+                        "connection_id": connection.id,
+                        "code": "no_authorized_account_resolver",
+                        "message": "No exact-account model credential resolver was installed",
+                    }));
                     continue;
                 }
                 let auth: AuthenticationStatus = self.read(
@@ -559,6 +604,13 @@ impl ProviderManagement {
                 for profile in profiles {
                     if let Some(profile_id) = profile.as_deref() {
                         if !auth.profile_is_valid_for(&exact.id, connection, profile_id) {
+                            denials.push(serde_json::json!({
+                                "provider_id": exact.id,
+                                "connection_id": connection.id,
+                                "profile_id": profile_id,
+                                "code": "account_not_authenticated",
+                                "message": "Account is not authenticated or its grant has expired",
+                            }));
                             continue;
                         }
                     }
@@ -566,19 +618,26 @@ impl ProviderManagement {
                     let mut collected = ModelPageAccumulator::default();
                     let mut cursor = None;
                     let full = loop {
-                        charge_model_option_budget(&mut inspected_pages, 128)?;
-                        let Some(page) = self.optional_model_page(&ModelQuery {
+                        let page = match self.optional_model_page(&ModelQuery {
                             scope: "user".into(),
                             provider_id: exact.id.clone(),
                             connection_id: connection.id.clone(),
                             profile_id: profile.clone(),
                             cursor: cursor.clone(),
                             limit: 256,
-                        })?
-                        else {
-                            // Registration without discovery is not a selectable
-                            // model or a reason to break unrelated ACP sessions.
-                            break None;
+                        })? {
+                            Ok(page) => page,
+                            Err(reason) => {
+                                let (code, message) = model_discovery_denial(&reason);
+                                denials.push(serde_json::json!({
+                                    "provider_id": exact.id,
+                                    "connection_id": connection.id,
+                                    "profile_id": profile,
+                                    "code": code,
+                                    "message": message,
+                                }));
+                                break None;
+                            }
                         };
                         cursor = collected.push(page, &profile)?;
                         if cursor.is_none() {
@@ -588,6 +647,16 @@ impl ProviderManagement {
                     let Some(full) = full else {
                         continue;
                     };
+                    if full.models.is_empty() {
+                        denials.push(serde_json::json!({
+                            "provider_id": exact.id,
+                            "connection_id": connection.id,
+                            "profile_id": profile,
+                            "code": "catalog_empty",
+                            "message": "The provider returned no selectable models",
+                        }));
+                    }
+                    let before_count = offered.len();
                     for model in &full.models {
                         if !model.selectable || model.connection_id != connection.id {
                             continue;
@@ -626,9 +695,6 @@ impl ProviderManagement {
                         {
                             continue;
                         }
-                        if offered.len() >= 128 {
-                            return Err(invalid("too many selectable HTTP models"));
-                        }
                         offered.push(NativeModelOffer {
                             id: native_model_option_id(&desired, 0)?,
                             label: format!(
@@ -641,6 +707,15 @@ impl ProviderManagement {
                             selected: desired,
                         });
                     }
+                    if !full.models.is_empty() && offered.len() == before_count {
+                        denials.push(serde_json::json!({
+                            "provider_id": exact.id,
+                            "connection_id": connection.id,
+                            "profile_id": profile,
+                            "code": "model_admission_denied",
+                            "message": "Discovered models did not pass executable model or credential admission",
+                        }));
+                    }
                 }
             }
         }
@@ -648,7 +723,7 @@ impl ProviderManagement {
         if offered.iter().any(|entry| !distinct.insert(&entry.id)) {
             return Err(invalid("duplicate native model option"));
         }
-        Ok(offered)
+        Ok((offered, denials))
     }
 }
 
@@ -673,13 +748,56 @@ mod typed_result_tests {
             code: ProviderErrorCode::AuthenticationRequired,
             message: "no credentials".into(),
         };
-        assert!(classify_model_page(Err(missing)).unwrap().is_none());
+        assert_eq!(
+            classify_model_page(Err(missing)).unwrap().unwrap_err(),
+            ProviderErrorCode::AuthenticationRequired
+        );
 
         let denied = ProviderError {
             code: ProviderErrorCode::Denied,
             message: "access denied".into(),
         };
         assert!(classify_model_page(Err(denied)).is_err());
+    }
+
+    #[test]
+    fn catalog_failures_are_preserved_as_safe_typed_denials() {
+        for (reason, code) in [
+            (ProviderErrorCode::DiscoveryNetwork, "catalog_network"),
+            (ProviderErrorCode::DiscoveryTimeout, "catalog_timeout"),
+            (
+                ProviderErrorCode::DiscoveryUnauthorized,
+                "catalog_unauthorized",
+            ),
+            (
+                ProviderErrorCode::DiscoveryRateLimited,
+                "catalog_rate_limited",
+            ),
+            (
+                ProviderErrorCode::DiscoveryServerError,
+                "catalog_server_error",
+            ),
+            (
+                ProviderErrorCode::DiscoveryInvalidResponse,
+                "catalog_invalid_response",
+            ),
+            (
+                ProviderErrorCode::DiscoveryIssuerUnavailable,
+                "catalog_issuer_unavailable",
+            ),
+            (ProviderErrorCode::DiscoveryRejected, "catalog_rejected"),
+            (ProviderErrorCode::DiscoveryTooLarge, "catalog_too_large"),
+        ] {
+            let failure = ProviderError {
+                code: reason.clone(),
+                message: "potentially secret provider response; never emit".into(),
+            };
+            let rejected = classify_model_page(Err(failure)).unwrap().unwrap_err();
+            assert_eq!(rejected, reason);
+            let (actual, safe_message) = model_discovery_denial(&rejected);
+            assert_eq!(actual, code);
+            assert!(!safe_message.contains("potentially secret"));
+        }
     }
 
     #[test]

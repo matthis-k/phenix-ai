@@ -2,6 +2,7 @@
 //! only this frontend executable reads stdin and submits graph actions.
 
 mod acp_sdk;
+mod frontend_defaults;
 mod model_selection_state;
 mod provider_deployment;
 use phenix_basic_contracts::{
@@ -777,10 +778,17 @@ fn run_console(
 
 fn jsonl_session(line: &str) -> Result<String, String> {
     let frame: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
-    let session = frame
-        .get("session")
-        .and_then(|value| value.as_str())
-        .ok_or("JSONL session is required")?;
+    let supplied = match frame.get("session") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) => Some(value.as_str()),
+        _ => return Err("JSONL session must be a string when supplied".into()),
+    };
+    let session = match frontend_defaults::session_for_input(supplied, None, false) {
+        frontend_defaults::SessionDecision::Existing(id) => id,
+        frontend_defaults::SessionDecision::Create => {
+            return Err("unexpected JSONL session creation decision".into());
+        }
+    };
     phenix_basic_contracts::session_resource(session)
         .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
     Ok(session.into())
@@ -796,7 +804,10 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
     let mut queued = VecDeque::<String>::new();
     let mut output = io::stdout().lock();
     let mut sessions = BTreeMap::<String, Kernel>::new();
-    sessions.insert("s1".into(), scoped_kernel(composition, "s1")?);
+    sessions.insert(
+        frontend_defaults::INPUT_SESSION.into(),
+        scoped_kernel(composition, frontend_defaults::INPUT_SESSION)?,
+    );
 
     // Retain the existing no-input behavior: replay undelivered events from
     // the default session when a JSONL host starts solely as an observer.
@@ -865,7 +876,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             "phenix.basic.frontend@1/decode",
             ClientInput {
                 session: session.clone(),
-                line,
+                line: frontend_defaults::jsonl_with_session(&line, &session)?,
             },
         ))?;
         if input.is_cancel() {
@@ -908,7 +919,10 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                             "phenix.basic.frontend@1/decode",
                             ClientInput {
                                 session: session.clone(),
-                                line: pending_line,
+                                line: frontend_defaults::jsonl_with_session(
+                                    &pending_line,
+                                    &session,
+                                )?,
                             },
                         ))?;
                         if cancellation.is_cancel() {

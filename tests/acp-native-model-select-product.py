@@ -188,6 +188,41 @@ def load(process, session, number):
 
 
 try:
+    # Verify the positive connection-level path against an executable
+    # test-only model provider, not just a static state-machine unit test.
+    # Choosing a default never creates a session implicitly.
+    pre_session = start()
+    initialize(pre_session)
+    control = request(pre_session, 2, "_phenix/control/state", {})
+    assert control["result"]["format"] == "phenix.control.state.v1", control
+    assert control["result"]["phase"] == "models_available", control
+    assert control["result"]["session_active"] is False, control
+    assert control["result"]["selected"] is None, control
+    actions = {entry["action"]: entry for entry in control["result"]["actions"]}
+    assert actions["models_select"]["allowed"], control
+    assert not actions["session_prompt"]["allowed"], control
+    offers = {item["id"]: item["name"] for item in control["result"]["models"]}
+    assert len(offers) == 2, control
+    preselected = chosen(offers, "fixture-b")
+    default = request(pre_session, 3, "_phenix/models/select", {
+        "value": preselected,
+    })
+    assert default["result"]["phase"] == "model_selected", default
+    assert identity(default["result"]["selected"])["model_id"] == "fixture-b"
+    assert identity(default["result"]["selected"])["session_revision"] == 1
+    assert "session_active" not in str(default["result"]["phase"])
+    created_default = request(pre_session, 4, "session/new", {
+        "cwd": "/tmp", "mcpServers": [],
+    })
+    default_session = created_default["result"]["sessionId"]
+    effective_default, _ = confirmed(created_default, "fixture-b", 1)
+    assert identity(effective_default)["model_id"] == "fixture-b"
+    prompt(pre_session, default_session, 5, "pre-session default used in first turn")
+    assert received == ["fixture-b"], received
+    close(pre_session)
+    # Preserve the existing isolated session-CAS/restart assertions below.
+    received.clear()
+
     original = start()
     initialize(original)
     created = request(original, 2, "session/new", {
