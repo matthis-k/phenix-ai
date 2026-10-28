@@ -36,4 +36,10 @@ Local embedding evidence (28 October 2026, Linux x86_64, Rust 1.96.1):
 | Full graph runner with release native artifacts after `strip --strip-all` | Passed, including descriptor-derived embedded graph equality and schema-spoof rejection |
 | Offline release provider extraction with constructor witness enabled | Passed without creating the witness file |
 
-These are bounded local results, not a full release/LTO/linker matrix or complete repository acceptance. This base has no `maintenance.nix`, `.stitch.json` or devenv configuration; `devenv test` and canonical `nix flake check -L` were not run. Native-drain fixes from independent branches are not included.
+These are bounded local results, not a full release/LTO/linker matrix or complete repository acceptance. This base has no `maintenance.nix`, `.stitch.json` or devenv configuration; `devenv test` and canonical `nix flake check -L` were not run. PR #1186 integrates the adapter native-drain fix (#1185) and readiness audit fixes (#1184); fresh exact-head full-DAG CI remains required before acceptance.
+
+## Native panic drain regression
+
+The direct Rust provider `panic` regression from #1183 remains enabled. Generated synchronous exports now report quiescent failure (ABI status 5) after unwinding; generated pending exports still report non-quiescent failure (status 2), since their workers may remain alive. The kernel continues to retain imported child leases independently of the parent's native completion. No failed-ticket shortcut is used.
+
+Local validation on the fix branch passed the real native Python-to-Rust runner, including direct Rust panic, all 66 kernel unit tests, SDK and macro tests, and Nix checks `m1-pending`, `m1-pending-product`, `m1-imports`, `m1-lifecycle`, and `m1-lifecycle-product`. This is local evidence, not exact-head CI acceptance or full graph-v2/P1 parity. The workflow's existing experiment path filter covers this README change; SDK/runtime paths alone do not trigger it.

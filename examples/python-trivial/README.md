@@ -113,3 +113,18 @@ does not add a graph; the generated Python artifact is the graph execution targe
 This base contains no `maintenance.nix`, `.stitch.json` or devenv configuration.
 The focused commands above are not a claim that canonical `nix flake check -L`
 or `devenv test` has passed.
+
+## Parent Integration Evidence
+
+PR #1187 integrates #1186 head `b39624392ddcee7ee23238c99e081a1fe270341c`
+by normal merge, including #1184 readiness audit fixes, #1185 native failure
+draining and the restored direct Rust panic regression. The merge was
+conflict-free; the latest normative design and bounded Python limits above
+remain unchanged.
+
+Local post-merge checks on 28 October 2026 passed both verifier profiles above,
+all eight frontend tests, runner formatting, and unit/integration/doc tests for
+`phenix-contract`, `phenix-artifact`, `phenix-sdk`, `phenix-macros` and
+`phenix-kernel` (71 kernel tests). This includes the generated native-authoring
+synchronous/pending failure regression. Exact integration SHA and remote CI
+status are recorded in #1187; these local results are not full-DAG CI acceptance.
