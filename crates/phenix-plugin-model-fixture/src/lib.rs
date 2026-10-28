@@ -78,6 +78,16 @@ mod tests {
     }
 
     #[test]
+    fn exact_output_budget_is_admitted_but_one_less_is_rejected() {
+        let mut req = request("boundary");
+        let tokens = respond(&req).unwrap().usage.output_tokens;
+        req.limits.model_tokens = Some(tokens);
+        assert_eq!(respond(&req).unwrap().usage.output_tokens, tokens);
+        req.limits.model_tokens = Some(tokens - 1);
+        assert_eq!(respond(&req).unwrap_err().code, ErrorCode::TurnLimit);
+    }
+
+    #[test]
     fn invalid_caller_input_is_rejected() {
         let mut req = request("hi");
         req.run.clear();
