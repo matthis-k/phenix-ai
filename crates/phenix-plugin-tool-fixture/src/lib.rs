@@ -1,27 +1,55 @@
 //! Opt-in external tool contributor proving that the stock Basic tool manager
 //! can offer and execute another plugin without editing its builtin table.
 use phenix_basic_contracts::{error, BasicError, ErrorCode, ToolInfo, ToolRequest, ToolResult};
-use phenix_sdk::{CallError, CallResult, Host};
+use phenix_sdk::{CallError, CallResult, Host, StaticGraphContribution, StaticGraphNode};
+
+/// Event registration is only a hook: the tool manager declares the event
+/// and owns the catalog; this plugin owns only the reverse tool's execution.
+pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
+    plugin: "phenix.tool.fixture-reverse",
+    events: &[],
+    actions: &[],
+    nodes: &[StaticGraphNode::on(
+        "populate",
+        &["phenix.tools.populate"],
+        "phenix.tools.populate@1/register",
+    )],
+};
+
+fn definition() -> ToolInfo {
+    ToolInfo {
+        id: ID.into(),
+        description: "Reverse Unicode scalar values".into(),
+        arguments_schema: r#"{"type":"string"}"#.into(),
+        idempotent: true,
+    }
+}
 
 const ID: &str = "fixture.reverse";
 
 #[phenix_sdk::plugin(
     id = "phenix.tool.fixture-reverse",
     version = "1.0.0",
-    provide(phenix_basic_contracts::ToolRegistrations, slot = "Registrations")
+    provide(phenix_basic_contracts::ToolRegistrations, slot = "Registrations"),
+    provide(phenix_basic_contracts::ToolPopulate, slot = "Populate"),
+    // The registry import is used by a post-start graph event callback.
+    // It is not a startup dependency: manager -> executor remains required,
+    // while the selected reverse registration call is checked at invocation.
+    require(phenix_basic_contracts::ToolRegistry, slot = "Registry", optional),
+    graph(super::GRAPH)
 )]
 mod plugin {
     use super::*;
-    use phenix_basic_contracts::ToolRegistrations;
+    use phenix_basic_contracts::{ToolPopulate, ToolRegistrations, Tools, ToolsPopulate};
 
     #[provide(ToolRegistrations::list)]
     fn list() -> CallResult<Vec<ToolInfo>, BasicError> {
-        Ok(vec![ToolInfo {
-            id: ID.into(),
-            description: "Reverse Unicode scalar values".into(),
-            arguments_schema: r#"{"type":"string"}"#.into(),
-            idempotent: true,
-        }])
+        Ok(vec![definition()])
+    }
+
+    #[provide(ToolPopulate::register)]
+    fn register(host: &Host<'_>, _: ToolsPopulate) -> CallResult<(), BasicError> {
+        Tools::new(host, "Registry").register(definition())
     }
 
     #[provide(ToolRegistrations::execute)]
@@ -56,7 +84,15 @@ mod tests {
     #[test]
     fn contributor_has_only_one_typed_registration_contract() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
-        assert_eq!(metadata.provides.len(), 1);
-        assert_eq!(metadata.requires.len(), 0);
+        assert_eq!(metadata.provides.len(), 2);
+        assert_eq!(metadata.requires.len(), 1);
+        assert_eq!(metadata.requires[0].contract, "phenix.tools.registry@1");
+        assert_eq!(
+            metadata.requires[0].cardinality,
+            phenix_sdk::Cardinality::Optional
+        );
+        assert_eq!(GRAPH.nodes[0].triggers, ["phenix.tools.populate"]);
+        assert!(GRAPH.events.is_empty());
+        assert!(GRAPH.actions.is_empty());
     }
 }

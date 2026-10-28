@@ -43,12 +43,33 @@ with tempfile.TemporaryDirectory(prefix="phenix-tool-registrations-") as temp:
         slots = []
         grants = [
             dict(caller="root", interface=contract, operation=operation,
-                 resources=[resource if granted else "phenix.session.foreign"])
+                 resources=[resource if granted else "phenix.session.foreign"]),
+            # Kernel lifecycle graph handlers are explicitly granted even
+            # for the legacy pull-only invoke test; no event is emitted here.
+            dict(caller=service, interface="phenix.tools.startup@1",
+                 operation="begin", resources=[resource]),
+            dict(caller=service, interface="phenix.tools.settlement@1",
+                 operation="complete", resources=[resource]),
         ]
+        ops += ["phenix.tools.startup@1/begin", "phenix.tools.settlement@1/complete"]
         if selected:
-            slots = [dict(caller=service, slot="Contributors", index=0,
-                          provider="phenix.tool.fixture-reverse",
-                          export="Registrations")]
+            slots = [
+                dict(caller=service, slot="Contributors", index=0,
+                     provider="phenix.tool.fixture-reverse",
+                     export="Registrations"),
+                dict(caller="phenix.tool.fixture-reverse", slot="Registry",
+                     index=0, provider=service, export="Registry"),
+            ]
+            grants += [
+                dict(caller="phenix.tool.fixture-reverse",
+                     interface="phenix.tools.registry@1",
+                     operation="register", resources=[resource]),
+                dict(caller="phenix.tool.fixture-reverse",
+                     interface="phenix.tools.populate@1",
+                     operation="register", resources=[resource]),
+            ]
+            ops += ["phenix.tools.registry@1/register",
+                    "phenix.tools.populate@1/register"]
             for operation_name in ("list", "execute"):
                 grants.append(dict(
                     caller=service,
@@ -77,7 +98,16 @@ with tempfile.TemporaryDirectory(prefix="phenix-tool-registrations-") as temp:
         )
         if not run.stdout:
             raise AssertionError((run.returncode, run.stderr))
-        return json.loads(run.stdout).get("outcome"), run.returncode
+        report = json.loads(run.stdout)
+        if "outcome" not in report:
+            raise AssertionError({
+                "operation": contract + "/" + operation,
+                "selected": selected,
+                "exit_code": run.returncode,
+                "last_failure": report.get("last_failure"),
+                "stderr": run.stderr[-4000:],
+            })
+        return report["outcome"], run.returncode
 
     listed, code = invoke(catalog, "list", dict(
         session=session, query="", cursor=None, limit=32
