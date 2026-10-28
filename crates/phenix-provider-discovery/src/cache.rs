@@ -481,7 +481,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut invalid_pages = vec![
+        let invalid_pages = vec![
             CatalogPage {
                 models: vec![CatalogModel {
                     id: String::new(),
