@@ -77,6 +77,12 @@ pub(super) struct State {
     pub(super) stack: Vec<Frame>,
     stopped: bool,
     stop_failures: Vec<StopFailure>,
+    // Reserved graph lifecycle sources are generation-scoped and one-shot.
+    pub(super) kernel_begin: bool,
+    pub(super) kernel_loaded: std::collections::BTreeSet<String>,
+    pub(super) kernel_unloaded: std::collections::BTreeSet<String>,
+    pub(super) kernel_reloaded: std::collections::BTreeSet<String>,
+    pub(super) kernel_shutdown: bool,
 }
 #[derive(Clone, Copy)]
 pub(super) enum Caller<'a> {

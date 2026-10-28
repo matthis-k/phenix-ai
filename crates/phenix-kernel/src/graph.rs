@@ -8,8 +8,9 @@ use crate::{
     Call, Poll, Ticket,
 };
 use phenix_contract::{
-    graph_node_key, state_change_property, state_change_schema, ActionDefinition, Code,
-    EventDefinition, Failure, GraphContribution, GraphNode, ScopedRequest, Value, ValueSchema,
+    graph_node_key, standard_kernel_events, state_change_property, state_change_schema,
+    ActionDefinition, Code, EventDefinition, Failure, GraphContribution, GraphNode, KernelEvent,
+    ScopedRequest, Value, ValueSchema,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,7 +84,12 @@ impl CompiledGraph {
         {
             return Err(invalid("duplicate contributing plugin"));
         }
-        let mut events = BTreeMap::new();
+        // Intrinsic source vertices are present in every graph. Plugins may
+        // subscribe but cannot redefine their identity or request schema.
+        let mut events: BTreeMap<String, EventDefinition> = standard_kernel_events()
+            .into_iter()
+            .map(|event| (event.id.clone(), event))
+            .collect();
         let mut action_defs = BTreeMap::<String, ActionDefinition>::new();
         let mut nodes = BTreeMap::new();
         let mut predecessors = BTreeMap::new();
@@ -539,6 +545,97 @@ impl Kernel {
         self.begin_action_inner(action_id, payload, scope, true)
     }
 
+    /// Host-only admission of a fixed lifecycle source. It uses the same
+    /// graph executor and grants as every action, but cannot be submitted via
+    /// the public action catalog. Begin may *initialize* the agent's main-loop
+    /// state; with one serial root it must finish or be cancelled before other
+    /// actions (including shutdown) can be admitted. The trusted host owns
+    /// pumping and orderly lifecycle sequencing.
+    pub fn begin_kernel_event(&self, event: KernelEvent) -> Result<GraphExecution<'_>, Failure> {
+        self.check_thread()?;
+        match &event {
+            KernelEvent::PluginLoaded { plugin } | KernelEvent::PluginReloaded { plugin, .. } => {
+                if !self.images.borrow().contains_key(plugin) {
+                    return Err(Failure::new(
+                        Code::MissingBinding,
+                        "plugin lifecycle event references an unloaded plugin",
+                    ));
+                }
+            }
+            KernelEvent::PluginUnloaded { plugin } => {
+                // A genuine unloaded notification is only valid after a
+                // corresponding loaded notification and native removal.
+                let state = self.state.borrow();
+                if self.images.borrow().contains_key(plugin)
+                    || !state.kernel_loaded.contains(plugin)
+                {
+                    return Err(Failure::new(
+                        Code::ScopeRejected,
+                        "plugin-unloaded requires completed native unload",
+                    ));
+                }
+            }
+            KernelEvent::Begin | KernelEvent::Shutdown => {}
+        }
+        if let KernelEvent::PluginReloaded {
+            previous_generation,
+            generation,
+            ..
+        } = &event
+        {
+            if previous_generation.is_empty()
+                || generation.is_empty()
+                || previous_generation == generation
+            {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "plugin-reloaded requires distinct generation identities",
+                ));
+            }
+        }
+        {
+            let state = self.state.borrow();
+            let already_emitted = match &event {
+                KernelEvent::Begin => state.kernel_begin,
+                KernelEvent::PluginLoaded { plugin } => state.kernel_loaded.contains(plugin),
+                KernelEvent::PluginUnloaded { plugin } => state.kernel_unloaded.contains(plugin),
+                KernelEvent::PluginReloaded { plugin, .. } => {
+                    state.kernel_reloaded.contains(plugin)
+                }
+                KernelEvent::Shutdown => state.kernel_shutdown,
+            };
+            if already_emitted {
+                return Err(Failure::new(
+                    Code::ScopeRejected,
+                    "lifecycle source already admitted in this generation",
+                ));
+            }
+        }
+        let id = event.id();
+        let scope = ScopedRequest {
+            authority: self.prepared.authority.clone(),
+            resource: self.prepared.resource.clone(),
+        };
+        let execution = self.begin_event_inner(id, id, &event.payload(), scope, true)?;
+        // Admit before committing the one-shot marker. A denied/busy attempt
+        // must remain retryable with a correct scope after its root is dropped.
+        let mut state = self.state.borrow_mut();
+        match event {
+            KernelEvent::Begin => state.kernel_begin = true,
+            KernelEvent::PluginLoaded { plugin } => {
+                state.kernel_loaded.insert(plugin);
+            }
+            KernelEvent::PluginUnloaded { plugin } => {
+                state.kernel_unloaded.insert(plugin);
+            }
+            KernelEvent::PluginReloaded { plugin, .. } => {
+                state.kernel_reloaded.insert(plugin);
+            }
+            KernelEvent::Shutdown => state.kernel_shutdown = true,
+        }
+        Ok(execution)
+    }
+
     fn begin_action_inner(
         &self,
         action_id: &str,
@@ -589,6 +686,7 @@ impl Kernel {
             return Ok(GraphExecution {
                 root,
                 action: action_id.into(),
+                event: action_id.into(),
                 payload: payload.clone(),
                 v2: Some(wave),
                 node_requests: BTreeMap::new(),
@@ -653,13 +751,40 @@ impl Kernel {
             return Err(Failure::new(Code::Denied, "action resource is not granted"));
         }
 
-        let active = graph.activation_order(&BTreeSet::from([action.event.clone()]))?;
+        self.begin_event_inner(action_id, &action.event, payload, scope, pending_allowed)
+    }
+
+    fn begin_event_inner(
+        &self,
+        action_id: &str,
+        event: &str,
+        payload: &Value,
+        scope: ScopedRequest,
+        pending_allowed: bool,
+    ) -> Result<GraphExecution<'_>, Failure> {
+        let graph = self
+            .prepared
+            .graph
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "no prepared graph"))?;
+        if !graph
+            .events
+            .get(event)
+            .is_some_and(|declared| declared.payload.accepts(payload))
+        {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "graph event payload does not match its schema",
+            ));
+        }
+        let active = graph.activation_order(&BTreeSet::from([event.into()]))?;
         let epoch_cursor = self.cells.borrow().epoch().0;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
         Ok(GraphExecution {
             v2: None,
             root,
             action: action_id.into(),
+            event: event.into(),
             payload: payload.clone(),
             node_requests: BTreeMap::new(),
             state_cursor: epoch_cursor,
@@ -733,6 +858,7 @@ pub struct GraphExecution<'a> {
     v2: Option<v2::execute::Wave>,
     root: Root<'a>,
     action: String,
+    event: String,
     payload: Value,
     /// Event nodes use the action payload; state hooks get scoped epoch data.
     node_requests: BTreeMap<String, Value>,
@@ -966,7 +1092,7 @@ impl GraphExecution<'_> {
                 self.emit(
                     GraphEvent::Admitted {
                         action: &self.action,
-                        event: &self.action,
+                        event: &self.event,
                         graph: graph.identity(),
                         resource: self.root.scope.resource.as_deref(),
                     },
@@ -974,11 +1100,11 @@ impl GraphExecution<'_> {
                 );
             } else {
                 let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
-                let action = &graph.actions[&self.action];
+                // Kernel lifecycle events are not public actions.
                 self.emit(
                     GraphEvent::Admitted {
-                        action: &action.id,
-                        event: &action.event,
+                        action: &self.action,
+                        event: &self.event,
                         graph: &graph.identity,
                         resource: self.root.scope.resource.as_deref(),
                     },
@@ -1192,6 +1318,127 @@ mod tests {
             contribution("delta", false, vec![node("d", &[], &["beta/b"], &[])]),
         ]
     }
+    #[test]
+    fn intrinsic_lifecycle_sources_are_not_public_actions() {
+        let graph = compile(&[contribution(
+            "alpha",
+            false,
+            vec![node("a", &[phenix_contract::KERNEL_BEGIN], &[], &[])],
+        )])
+        .unwrap();
+        assert_eq!(
+            graph
+                .activation_order(&BTreeSet::from([phenix_contract::KERNEL_BEGIN.into(),]))
+                .unwrap(),
+            ["alpha/a"]
+        );
+        assert!(graph.discover().next().is_none());
+        assert!(graph.actions.is_empty());
+    }
+
+    #[test]
+    fn intrinsic_lifecycle_sources_activate_without_plugin_event_definitions() {
+        let declarations = [
+            contribution(
+                "alpha",
+                false,
+                vec![node("a", &[phenix_contract::KERNEL_BEGIN], &[], &[])],
+            ),
+            contribution(
+                "beta",
+                false,
+                vec![node(
+                    "b",
+                    &[phenix_contract::KERNEL_PLUGIN_LOADED],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "gamma",
+                false,
+                vec![node("c", &[phenix_contract::KERNEL_SHUTDOWN], &[], &[])],
+            ),
+            contribution(
+                "delta",
+                false,
+                vec![node(
+                    "d",
+                    &[phenix_contract::KERNEL_PLUGIN_UNLOADED],
+                    &[],
+                    &[],
+                )],
+            ),
+            contribution(
+                "epsilon",
+                false,
+                vec![node(
+                    "e",
+                    &[phenix_contract::KERNEL_PLUGIN_RELOADED],
+                    &[],
+                    &[],
+                )],
+            ),
+        ];
+        let graph = compile(&declarations).unwrap();
+        assert_eq!(graph.events.len(), 5);
+        assert!(graph.actions.is_empty());
+        for (event, expected) in [
+            (phenix_contract::KERNEL_BEGIN, "alpha/a"),
+            (phenix_contract::KERNEL_PLUGIN_LOADED, "beta/b"),
+            (phenix_contract::KERNEL_SHUTDOWN, "gamma/c"),
+            (phenix_contract::KERNEL_PLUGIN_UNLOADED, "delta/d"),
+            (phenix_contract::KERNEL_PLUGIN_RELOADED, "epsilon/e"),
+        ] {
+            assert_eq!(
+                graph
+                    .activation_order(&BTreeSet::from([event.into()]))
+                    .unwrap(),
+                [expected]
+            );
+        }
+        let mut invalid = declarations.to_vec();
+        invalid[0].events.push(EventDefinition {
+            id: phenix_contract::KERNEL_BEGIN.into(),
+            payload: ValueSchema::String,
+        });
+        assert!(compile(&invalid)
+            .unwrap_err()
+            .message
+            .contains("plugin cannot declare kernel lifecycle events"));
+    }
+
+    #[test]
+    fn arbitrary_plugin_events_preserve_existing_graph_contracts() {
+        let declarations = vec![
+            GraphContribution {
+                plugin: "phenix.providers".into(),
+                events: vec![EventDefinition {
+                    id: "phenix.providers.populate".into(),
+                    payload: ValueSchema::String,
+                }],
+                actions: vec![],
+                nodes: vec![],
+            },
+            contribution(
+                "openai",
+                false,
+                vec![node("register", &["phenix.providers.populate"], &[], &[])],
+            ),
+        ];
+        let graph = compile(&declarations).unwrap();
+        assert_eq!(
+            graph
+                .activation_order(&BTreeSet::from(["phenix.providers.populate".into(),]))
+                .unwrap(),
+            ["openai/register"]
+        );
+        assert!(graph.actions.is_empty());
+        let mut bad = declarations;
+        bad[0].events[0].id = "phenix.kernel.fabricated".into();
+        assert!(compile(&bad).is_err());
+    }
+
     #[test]
     fn independently_contributed_multi_root_graph_is_permutation_invariant() {
         let nodes = fixtures();
