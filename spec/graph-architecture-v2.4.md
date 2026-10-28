@@ -930,7 +930,14 @@ graph-section envelope. Build tooling may use public contract dependencies and
 generated operation metadata, then include those bytes in an exported retained
 link-time static. This does not grant authority or replace offline verification.
 The `experiments/graph-v2-python` fixture exercises this path with manually authored
-graph structure; Python annotations do not yet generate graphs or schemas. The
+graph structure; that experiment's Python annotations do not generate graphs or
+schemas. The bounded `tools/phenix_python` frontend and `examples/python-trivial`
+instead generate Rust Portable/contract/plugin macro input from one synchronous,
+host-free Python operation with string or flat string-dataclass annotations, plus
+a Source -> Invoke contribution using this same embedding helper. Python does
+not encode ValueSchema or ContractMetadata. Unsupported annotations and async/Host
+signatures reject; trusted composition policy remains outside authored metadata.
+This slice is not a general graph builder or a language sandbox. The
 typed builder and handles below remain proposed, not implemented by embedding.
 
 The SDK should **reuse** the current `phenix_contract::Operation` trait as the only native handler contract abstraction. New authoring traits and typed handles exist exclusively in Rust SDK/build tooling; they lower to portable IR rather than crossing the ABI.

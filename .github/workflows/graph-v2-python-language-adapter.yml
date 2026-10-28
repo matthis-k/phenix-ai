@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - "experiments/graph-v2-python/**"
+      - "examples/python-trivial/**"
+      - "tools/phenix_python/**"
+      - "crates/phenix-sdk/**"
+      - "crates/phenix-macros/**"
       - "crates/phenix-contract/**"
       - ".github/workflows/graph-v2-python-language-adapter.yml"
   workflow_dispatch:
@@ -60,3 +64,9 @@ jobs:
           set -euo pipefail
           cargo run --manifest-path experiments/graph-v2-python/Cargo.toml -p phenix-python-kernel-verification -- \
             /tmp/phenix-v2-python-package /tmp/phenix-v2-rust-package /tmp/phenix-v2-graph-artifacts
+      - name: Verify annotation-authored trivial Python plugin through the real kernel
+        env:
+          PYTHONPATH: tools
+        run: |
+          python3 -m unittest phenix_python.test_frontend
+          python3 examples/python-trivial/verify.py /tmp/phenix-python-trivial

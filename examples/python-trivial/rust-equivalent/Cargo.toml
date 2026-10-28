@@ -1,0 +1,9 @@
+[workspace]
+[package]
+name = "phenix-rust-greeter"
+version = "0.1.0"
+edition = "2021"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+phenix-sdk = { path = "../../../crates/phenix-sdk" }

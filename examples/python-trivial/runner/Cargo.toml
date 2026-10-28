@@ -1,0 +1,9 @@
+[workspace]
+[package]
+name = "phenix-python-trivial-verification"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+phenix-contract = { path = "../../../crates/phenix-contract" }
+phenix-artifact = { path = "../../../crates/phenix-artifact" }
+phenix-kernel = { path = "../../../crates/phenix-kernel" }
