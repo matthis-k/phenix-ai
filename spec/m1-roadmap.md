@@ -43,6 +43,37 @@ divergent build/join experiment, not accepted performance evidence. No
 Next: pass exact-head clean CI, reconcile #36 with the merged provider, then
 measure cold/warm/single-plugin runs before substantial Graph-v2 restoration.
 
+Verified CI repair at `b2875f7486e9d7ddce13eb04e49e409fd2684d6e`:
+[run 40772149093, attempt 1](https://github.com/matthis-k/phenix-ai/actions/runs/40772149093/attempts/1)
+passed all 14 checks in 642 seconds end to end (562.60 seconds in the DAG).
+This was a GitHub store-cache miss, not an isolated cold Nix ecosystem:
+NixOS binary substitutions remained enabled. Logs show 68 distinct remote
+derivation dispatches, zero repeated dispatches, and eight overlapping build
+phases across four authenticated hosts. These counts do not imply compiler
+process CPU utilization or eliminate repeated Cargo compilation inside distinct
+Nix derivations.
+[Unchanged attempt 2](https://github.com/matthis-k/phenix-ai/actions/runs/40772149093/attempts/2)
+passed in 82 seconds end to end (1.46 seconds in the DAG), with an exact store
+cache hit, zero project builds and all 14 check outputs reused.
+
+Single-plugin experiment `54b3a8200b0a9149e4902dfb663df43a4295376e` adds
+only an exact-budget negative/boundary test to the model fixture.
+[Run 40774572757](https://github.com/matthis-k/phenix-ai/actions/runs/40774572757)
+passed in 353 seconds end to end (240.87 seconds in the DAG). Five distinct
+derivations were dispatched once each: model source, model artifact, quality,
+workspace tests and native-session check. The other three plugin artifacts
+were reused unchanged; 10 of 14 check output paths were unchanged. The broader
+workspace/native-session source inputs still cause avoidable recompilation.
+
+Those runs discovered zero standalone runnable tests; cached Nix checks do not
+prove fresh test execution. The next increment declares 11 independently
+executable Cargo test packages using the existing provider adapter and one
+shared compiled corpus. Every wrapper supplies the real session cdylib, so
+the native handoff cannot skip for a missing environment variable. All 137
+tests passed locally through these installed executables. Existing checks,
+including compile-fail docs and ABI negatives, are retained. Exact-head remote
+fan-out verification is required before accepting this increment.
+
 ### Graph-v2 implementation-gap matrix (27 October 2026)
 
 Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.

@@ -2,7 +2,7 @@
   description = "Phenix clean kernel, SDK and native fixtures";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
   inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/cd2403a45333a5211775bdf01b3ce45f28e02e5f";
-  outputs = { nixpkgs, ... }:
+  outputs = { nixpkgs, phenix-flake-ci, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
@@ -93,6 +93,31 @@
         '';
       }));
       session = "${fixtures.phenix-plugin-session-fixture}/lib/libphenix_plugin_session_fixture.so";
+      testPackages = lib.mapAttrs (name: package: pkgs.writeShellApplication {
+        name = "cargo-test-${lib.removePrefix "test.cargo-" name}";
+        text = ''
+          export PHENIX_SESSION_FIXTURE_NATIVE=${session}
+          test -s "$PHENIX_SESSION_FIXTURE_NATIVE"
+          exec ${lib.getExe package} "$@"
+        '';
+        meta.mainProgram = "cargo-test-${lib.removePrefix "test.cargo-" name}";
+      }) (phenix-flake-ci.lib.mkCargoTestPackages {
+        pkgs = pkgs // {
+          rustPlatform = pkgs.rustPlatform // {
+            buildRustPackage = args: pkgs.rustPlatform.buildRustPackage (args // {
+              # This nixpkgs pin writes its vendor config beside sourceRoot.
+              preBuild = ''
+                export CARGO_HOME="$TMPDIR/cargo-home"
+                mkdir -p "$CARGO_HOME"
+                cp ../.cargo/config.toml "$CARGO_HOME/config.toml"
+              '';
+            });
+          };
+        };
+        src = source;
+        lockFile = ./Cargo.lock;
+        compiledName = "phenix-clean-workspace-test-corpus";
+      });
       workspace = pkgs.rustPlatform.buildRustPackage {
         pname = "phenix-clean-workspace-tests";
         version = "0.1.0";
@@ -242,7 +267,7 @@
         installPhase = ''mkdir -p "$out"; cp Cargo.toml "$out/checked-workspace.toml"'';
       });
     in {
-      packages.${system} = binaries // fixtures // {
+      packages.${system} = binaries // fixtures // testPackages // {
         default = binaries.phenix-kernel;
         phenix-sdk = sdk;
         phenix-native-examples = examples;
