@@ -1,6 +1,6 @@
-# Experimental generated dependency DAG CI. The existing canonical and
-# full-matrix workflows remain intact for same-head evidence comparison.
-name: Phenix generated Nix DAG candidate
+# Manual full-DAG diagnostic, retained after PR cutover to staged fan-out.
+# No secrets or remote builder credentials; not an automatic PR gate.
+name: Phenix full single-store Nix DAG (manual)
 on:
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   generated:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@1d67b9f1bad2b5dce10ad1934023e02016f84ccd
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@25029578a370c0b1f57ae88881b6018ed1ac08df
     with:
       config: ci/flake-check-config.nix
-      library_ref: 1d67b9f1bad2b5dce10ad1934023e02016f84ccd
+      library_ref: 25029578a370c0b1f57ae88881b6018ed1ac08df

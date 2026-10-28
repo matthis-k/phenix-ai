@@ -1,8 +1,8 @@
-# Candidate only. The existing minimal-kernel.yml remains the shipping gate.
-# All execution, caching and evidence logic lives in phenix-flake-ci.
-# The exact-head check inventory runs as one deduplicated native Nix DAG.
-# Retain read-only trusted-main cache restore, credential-free PR authority,
-# all product/security checks and fail-closed exact-head evidence verification.
+# Untrusted PR gate: same complete flake-defined check inventory and
+# exact-head evidence, but restore the proven staged/fan-out Nix DAG.
+# Shared prebuild, parallel ready checks and dependent shipping join;
+# no Tailscale/OIDC credentials, cache publisher or reduced check list.
+# The single-runner full DAG remains available for manual diagnosis.
 name: Minimal kernel flake-aware matrix candidate
 on:
   pull_request:
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-local-dag.yml@25029578a370c0b1f57ae88881b6018ed1ac08df
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@25029578a370c0b1f57ae88881b6018ed1ac08df
     with:
       config: ci/flake-check-config.nix
       library_ref: 25029578a370c0b1f57ae88881b6018ed1ac08df
