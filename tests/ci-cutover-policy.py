@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_SOURCE_PIN = 'c4467d7dc233ada85ea49823561ee8be57089591'
 # Reviewed immutable phenix-flake-ci revision; PRs use its credential-free staged DAG.
-EXPECTED_CANDIDATE_PIN = 'b364f404e47bd25f4f69a4349f8e42620ea18dc2'
+EXPECTED_CANDIDATE_PIN = 'd7b6a65c2702fa86c764a338630467930ebb3889'
+EXPECTED_FALLBACK_PIN = 'b364f404e47bd25f4f69a4349f8e42620ea18dc2'
 
 
 def require(condition, message):
@@ -59,7 +60,7 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
             'unprivileged PR DAG must use the explicit reviewed candidate workflow/runtime pin')
     require(matrix.split('\njobs:\n', 1)[1:] == [
         '  candidate:\n'
-        '    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@'
+        '    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-build-then-test.yml@'
         + EXPECTED_CANDIDATE_PIN + '\n'
         '    with:\n'
         '      config: ci/flake-check-config.nix\n'
@@ -69,7 +70,7 @@ def verify(generated, renderer, backend, check_config, flake, canonical, matrix,
     # The slow local DAG remains manual-only, with no credential delegation.
     fallback_refs = re.findall(r'flake-local-dag\.yml@([0-9a-f]{40})', dag)
     fallback_libraries = re.findall(r'(?m)^      library_ref: ([0-9a-f]{40})$', dag)
-    require(fallback_refs == [EXPECTED_CANDIDATE_PIN]
+    require(fallback_refs == [EXPECTED_FALLBACK_PIN]
             and fallback_libraries == fallback_refs,
             'manual single-store DAG must retain the reviewed immutable library pin')
     require('  pull_request:' not in dag and '  workflow_dispatch:' in dag,
@@ -152,18 +153,20 @@ def self_test():
              '      - ci/unknown-benchmark'),
         (8, 'save: false', 'save: true'),
         (8, 'remote-phenix-m1-x86_64-linux-', 'phenix-m1-x86_64-linux-'),
-        (6, 'flake-dag-staged.yml@' + EXPECTED_CANDIDATE_PIN,
-             'flake-dag-staged.yml@' + 'f' * 40),
+        (6, 'flake-build-then-test.yml@' + EXPECTED_CANDIDATE_PIN,
+             'flake-build-then-test.yml@' + 'f' * 40),
         (6, 'library_ref: ' + EXPECTED_CANDIDATE_PIN,
              'library_ref: ' + 'f' * 40),
         (6, EXPECTED_CANDIDATE_PIN, EXPECTED_SOURCE_PIN),
         (6, EXPECTED_CANDIDATE_PIN, 'f' * 40),
-        (6, 'flake-dag-staged.yml@' + EXPECTED_CANDIDATE_PIN, 'flake-dag-staged.yml@main'),
+        (6, 'flake-build-then-test.yml@' + EXPECTED_CANDIDATE_PIN, 'flake-build-then-test.yml@main'),
         (6, 'library_ref: ' + EXPECTED_CANDIDATE_PIN, 'library_ref: main'),
-        (6, 'flake-dag-staged.yml@', 'flake-local-dag.yml@'),
-        (6, 'flake-dag-staged.yml@', 'flake-checks.yml@'),
+        (6, 'flake-build-then-test.yml@', 'flake-local-dag.yml@'),
+        (6, 'flake-build-then-test.yml@', 'flake-checks.yml@'),
         (6, 'matthis-k/phenix-flake-ci/', 'untrusted/phenix-flake-ci/'),
-        (7, 'flake-local-dag.yml@', 'flake-dag-staged.yml@'),
+        (7, 'flake-local-dag.yml@' + EXPECTED_FALLBACK_PIN,
+             'flake-local-dag.yml@' + EXPECTED_CANDIDATE_PIN),
+        (7, 'flake-local-dag.yml@', 'flake-build-then-test.yml@'),
         (7, '  workflow_dispatch:', '  pull_request:\n  workflow_dispatch:'),
         (6, '  contents: read', '  contents: read\n  id-token: write'),
         (6, '    with:\n', '    permissions:\n      id-token: write\n    with:\n'),

@@ -1,6 +1,6 @@
 # Untrusted PR gate: same complete flake-defined check inventory and
-# exact-head evidence, but restore the proven staged/fan-out Nix DAG.
-# Shared prebuild, parallel ready checks and dependent shipping join;
+# exact-head evidence with the isolated build-then-test candidate.
+# Four build owners, one verified join, parallel ready tests and dependent shipping;
 # no Tailscale/OIDC credentials, cache publisher or reduced check list.
 # The single-runner full DAG remains available for manual diagnosis.
 name: Minimal kernel flake-aware matrix candidate
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   candidate:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@b364f404e47bd25f4f69a4349f8e42620ea18dc2
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-build-then-test.yml@d7b6a65c2702fa86c764a338630467930ebb3889
     with:
       config: ci/flake-check-config.nix
-      library_ref: b364f404e47bd25f4f69a4349f8e42620ea18dc2
+      library_ref: d7b6a65c2702fa86c764a338630467930ebb3889

@@ -29,3 +29,18 @@ Nix outputs read-only from `remote-phenix-m1-*` before building new
 PR-specific derivations, while its primary key and all leaf/join caches
 remain `phenix-m1-*` and cannot publish to the trusted namespace.
 The cache restoration is merged in `phenix-flake-ci` PR #35 and pinned to its immutable squash commit.
+
+## Four-builder build-then-test benchmark
+
+This child branch of #1191 pins the opt-in `phenix-flake-ci` #36
+four-build-owner workflow. The build phase derives all pure-build input
+frontiers from actual Nix derivations (not a manual package list), assigns
+unique root ownership to four compilation jobs, joins verified Nix store
+closures before admitting independent check workers, then executes dependent
+shipping acceptance after all ready checks. The build planner reports
+transitive cross-worker overlap so duplication can be quantified and reduced.
+
+This is experimental until exact-head Nix outputs, 86-check inventory,
+actual build events and elapsed time match expected acceptance. The previous
+staged PR mode (#1191) remains unchanged for comparison; no privileged
+Tailscale credentials or trusted cache writer are exposed to PR code.
