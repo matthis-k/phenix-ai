@@ -149,9 +149,75 @@ pub fn parse_standard_openai_model_ids(bytes: &[u8]) -> Result<Vec<String>, Cata
     Ok(ids)
 }
 
+/// Conservative OpenAI Responses model-family convention, shared by
+/// built-in concrete adapters and the generic provider host.
+///
+/// A `GET /models` entry does not prove that a model supports conversation:
+/// embeddings, transcription, image generation, fine-tuning, and moderation
+/// identifiers must never become selectable just because they were listed.
+/// This classification is *not* authorization, entitlement or execution proof.
+pub fn standard_openai_responses_model(model: &str) -> bool {
+    const FAMILIES: &[&str] = &["gpt-4.1", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "o4"];
+    FAMILIES.iter().any(|family| {
+        let Some(suffix) = model.strip_prefix(*family) else {
+            return false;
+        };
+        if suffix.is_empty() || suffix.starts_with('-') {
+            return true;
+        }
+        // Dotted model versions such as gpt-5.2 are distinct from gpt-50
+        // and unrelated model families. Never match arbitrary suffixes.
+        let Some(version) = suffix.strip_prefix('.') else {
+            return false;
+        };
+        let numeric = version.split_once('-').map_or(version, |(v, _)| v);
+        numeric
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|digit| digit.is_ascii_digit()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_openai_responses_eligibility_excludes_non_conversational_models() {
+        for model in [
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-5",
+            "gpt-5.2",
+            "gpt-5.2-mini",
+            "gpt-6",
+            "o1",
+            "o3-mini",
+            "o4-mini",
+        ] {
+            assert!(standard_openai_responses_model(model), "{model}");
+        }
+        for model in [
+            "",
+            "gpt-50",
+            "gpt-4",
+            "gpt-4omni",
+            "o4not",
+            "text-embedding-3-large",
+            "whisper-1",
+            "tts-1",
+            "dall-e-3",
+            "omni-moderation-latest",
+            "ft:gpt-5:org:custom",
+            "gpt-5/embedding",
+            "gpt-5:other",
+            "gpt-5_preview",
+            "gpt-5.2embedding",
+            "gpt-5.x",
+        ] {
+            assert!(!standard_openai_responses_model(model), "{model}");
+        }
+    }
 
     #[test]
     fn standard_openai_ids_validate_envelope_and_deterministic_order() {

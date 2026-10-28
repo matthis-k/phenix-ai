@@ -14,7 +14,7 @@ use phenix_provider_contracts::{
 };
 use phenix_provider_discovery::{
     http::{fetch_bearer_catalog, CatalogFetchError},
-    parse_standard_openai_model_ids,
+    parse_standard_openai_model_ids, standard_openai_responses_model,
 };
 
 const PROVIDER: &str = "openai";
@@ -183,11 +183,6 @@ fn parse_model_ids(body: &[u8]) -> Result<Vec<String>, ProviderError> {
 /// Supported Responses families, rather than treating image, embedding,
 /// moderation, speech and fine-tuning models as executable chat models.
 /// Listing still does not guarantee account-specific inference quota.
-fn supports_responses(model: &str) -> bool {
-    ["gpt-4.1", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "o4"]
-        .iter()
-        .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
-}
 #[phenix_sdk::plugin(
     id = "phenix.provider.openai-api",
     version = "1.0.0",
@@ -337,7 +332,7 @@ mod plugin {
             "responses",
             query.limit,
             ids.into_iter().map(|id| (id.clone(), id)),
-            supports_responses,
+            standard_openai_responses_model,
         )
         .map_err(CallError::Domain)
     }
@@ -444,10 +439,10 @@ mod tests {
             parse_model_ids(data).unwrap(),
             vec!["gpt-5", "o3", "text-embedding-3-large"],
         );
-        assert!(supports_responses("gpt-5"));
-        assert!(supports_responses("o3"));
-        assert!(!supports_responses("text-embedding-3-large"));
-        assert!(!supports_responses("dall-e-3"));
+        assert!(standard_openai_responses_model("gpt-5"));
+        assert!(standard_openai_responses_model("o3"));
+        assert!(!standard_openai_responses_model("text-embedding-3-large"));
+        assert!(!standard_openai_responses_model("dall-e-3"));
         // Account catalog may contain non-chat fine-tune IDs with colons.
         // They must not invalidate an otherwise verified profile.
         assert_eq!(
