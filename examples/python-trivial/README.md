@@ -62,13 +62,16 @@ rejection (`PluginFailed`) and malformed kernel request rejection
 explicitly supplied by the trusted harness, never by the Python author.
 
 The `regressions` runner additionally dispatches two independently generated
-artifacts concurrently. The internal `tools/phenix_python/testdata/concurrent.py` fixture uses top-level filesystem rendezvous and
-GIL-releasing sleeps, then checks separate global tokens and instance counters.
+artifacts concurrently. The internal fixture
+`tools/phenix_python/testdata/concurrent.py` uses top-level filesystem
+rendezvous and GIL-releasing sleeps, then checks separate global tokens and
+instance counters.
 It also replaces its own `sys.modules` entry and verifies cleanup leaves that
 replacement untouched. Runtime module names use Python UUIDs, not image-local
 counters; each module executes in its own dictionary. Both artifacts compile
 dataclasses named `Operation` and `ValueSchema`, which must not collide with
-build-tool imports. The internal `tools/phenix_python/testdata/scalar.py` fixture provides repeated `str -> str` dispatch.
+build-tool imports. The internal `tools/phenix_python/testdata/scalar.py`
+fixture provides repeated `str -> str` dispatch.
 The same assertions run against debug and release/stripped plugin artifacts;
 the kernel verification binaries themselves run in debug mode.
 

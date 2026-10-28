@@ -492,11 +492,10 @@ impl Wave {
                 .into_iter()
                 .flatten()
             {
-                let Some(EdgeDecl {
-                    kind: EdgeKind::Flow { from, .. },
-                    ..
-                }) = self.edges.get(id)
-                else {
+                let Some(edge) = self.edges.get(id) else {
+                    continue;
+                };
+                let EdgeKind::Flow { from, .. } = &edge.kind else {
                     continue;
                 };
                 if let Some((_, selected, failed)) =
