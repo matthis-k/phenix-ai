@@ -131,7 +131,7 @@ def self_test():
         (1, 'config: "ci/flake-check-config.nix"', 'config: "ci/reduced.nix"'),
         (2, "mkFlakeCiWorkflows", "mkFlakeCiWorkflow"),
         (2, "libraryRef = \"" + PIN + "\";", "libraryRef = \"main\";"),
-        (3, 'branches = [ "main" "' + f'"{BENCHMARK}"' + ' ];',
+        (3, f'branches = [ "main" "{BENCHMARK}" ];',
              'branches = [ "main" "ci/untrusted" ];'),
         (4, "m1-shipping", "not-a-real-shipping-check"),
         (5, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
