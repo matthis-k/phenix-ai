@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "557deb346279aa92ce5c75550e2050da0761a61c"
+PIN = "a0460dd78cd03478f906421844d769dddc66a69c"
 
 def require(ok, message):
     if not ok:

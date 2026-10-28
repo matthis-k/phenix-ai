@@ -68,8 +68,8 @@ Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.
 
 The paired API originally merged in `phenix-flake-ci` PR #37. Owner PR
-routing is implemented in library PR #41 and currently pinned to review
-commit `557deb346279aa92ce5c75550e2050da0761a61c`. Once merged, re-pin to its immutable merge revision.
+routing was merged in library PR #41 and is pinned to immutable squash
+commit `a0460dd78cd03478f906421844d769dddc66a69c`.
 Both generated workflows
 are verified byte-for-byte against that exact merged library revision.
 
