@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_SOURCE_PIN = 'c4467d7dc233ada85ea49823561ee8be57089591'
 # Reviewed immutable phenix-flake-ci revision; PRs use its credential-free staged DAG.
-EXPECTED_CANDIDATE_PIN = '618701fe80c572ff4504d65b22faa5df937edc1f'
+EXPECTED_CANDIDATE_PIN = '8a55da7382d346e2ed8a3cd221078b2ab3592f66'
 EXPECTED_FALLBACK_PIN = 'b364f404e47bd25f4f69a4349f8e42620ea18dc2'
 
 

@@ -48,3 +48,10 @@ Tailscale credentials or trusted cache writer are exposed to PR code.
 The new backend now also discovers shared dependencies between the four build
 owners and prebuilds those once (with Nix GC roots) before compile fan-out.
 The planner rejects residual cross-owner graph overlap after this cut.
+
+The first four-builders benchmark failed in the common compilation phase
+because Nix derivation paths evaluated in the planning job were absent from
+the shared builder's isolated Nix store. The pinned CI library revision now
+re-instantiates the exact-head derivation graph locally after cache restore,
+asserts its check derivation identities are unchanged, and only then invokes
+Nix on direct .drv targets. Regression tests cover inventory drift.
