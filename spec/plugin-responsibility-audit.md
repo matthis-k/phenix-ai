@@ -2,7 +2,7 @@
 
 **Usage-first follow-up:** [Plugin author APIs and derived architecture](usage-first-plugin-architecture.md) — user workflows and usage sketches precede proposed contracts, ownership, routing and migration gates.
 
-Audit baseline: `main` tree `00598cedf0a345934098d950881a702110001f83` (2026-10-24).
+Audit baseline: `main` tree `00598cedf0a345934098d950881a702110001f83` (2026-10-24). **Historical snapshot, not the current plugin inventory.** Since then provider/tool registration contracts have landed (merged #1128/#1129), while shared manager/event population follow-up PRs remain open. For intended graph-v2 behavior use [v2.4](graph-architecture-v2.4.md); verify actual code on `main`. See [spec index](README.md).
 
 **Scope:** 52 workspace crates, 28 `phenix-plugin-*` crates. The extra libraries, contracts, tools, and test/product crates are not automatically runtime plugins. Classification is by implemented contract and shipped/test composition, not by crate name alone.
 

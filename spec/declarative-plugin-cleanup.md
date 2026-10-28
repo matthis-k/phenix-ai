@@ -1,6 +1,6 @@
 # Declarative plugin cleanup
 
-Baseline: `00598cedf0a345934098d950881a702110001f83`, 24 October 2026.
+Baseline: `00598cedf0a345934098d950881a702110001f83`, 24 October 2026. **Dated cleanup inventory; not current as-built documentation or the graph-v2 design.** See [spec index](README.md) and [v2.4 graph target](graph-architecture-v2.4.md).
 The workspace contains 52 crates, including 28 native plugin crates.
 This inventory records ownership and removal gates. It does not treat an
 opt-in or dynamically loaded artifact as dead because the default excludes it.
