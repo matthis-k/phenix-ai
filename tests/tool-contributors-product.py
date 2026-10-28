@@ -57,19 +57,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-tool-registrations-") as temp:
                 dict(caller=service, slot="Contributors", index=0,
                      provider="phenix.tool.fixture-reverse",
                      export="Registrations"),
-                dict(caller="phenix.tool.fixture-reverse", slot="Registry",
-                     index=0, provider=service, export="Registry"),
             ]
-            grants += [
-                dict(caller="phenix.tool.fixture-reverse",
-                     interface="phenix.tools.registry@1",
-                     operation="register", resources=[resource]),
-                dict(caller="phenix.tool.fixture-reverse",
-                     interface="phenix.tools.populate@1",
-                     operation="register", resources=[resource]),
-            ]
-            ops += ["phenix.tools.registry@1/register",
-                    "phenix.tools.populate@1/register"]
             for operation_name in ("list", "execute"):
                 grants.append(dict(
                     caller=service,

@@ -1,21 +1,11 @@
 //! Opt-in external tool contributor proving that the stock Basic tool manager
 //! can offer and execute another plugin without editing its builtin table.
 use phenix_basic_contracts::{error, BasicError, ErrorCode, ToolInfo, ToolRequest, ToolResult};
-use phenix_sdk::{CallError, CallResult, Host, StaticGraphContribution};
+use phenix_sdk::{CallError, CallResult, Host};
 
-/// Event registration is only a hook: the tool manager declares the event
-/// and owns the catalog; this plugin owns only the reverse tool's execution.
-pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.tool.fixture-reverse",
-    events: &[],
-    actions: &[],
-    nodes: &[phenix_sdk::on_event!(
-        "populate",
-        phenix_basic_contracts::ToolsPopulate,
-        phenix_basic_contracts::ToolPopulate::register,
-    )],
-};
-
+/// The resolver-selected ToolRegistrations import couples immutable metadata
+/// and execution to one implementation. No duplicate populate-event payload
+/// or caller-selected executor route is necessary.
 fn definition() -> ToolInfo {
     ToolInfo {
         id: ID.into(),
@@ -30,26 +20,15 @@ const ID: &str = "fixture.reverse";
 #[phenix_sdk::plugin(
     id = "phenix.tool.fixture-reverse",
     version = "1.0.0",
-    provide(phenix_basic_contracts::ToolRegistrations, slot = "Registrations"),
-    provide(phenix_basic_contracts::ToolPopulate, slot = "Populate"),
-    // The registry import is used by a post-start graph event callback.
-    // It is not a startup dependency: manager -> executor remains required,
-    // while the selected reverse registration call is checked at invocation.
-    require(phenix_basic_contracts::ToolRegistry, slot = "Registry", optional),
-    graph(super::GRAPH)
+    provide(phenix_basic_contracts::ToolRegistrations, slot = "Registrations")
 )]
 mod plugin {
     use super::*;
-    use phenix_basic_contracts::{ToolPopulate, ToolRegistrations, Tools, ToolsPopulate};
+    use phenix_basic_contracts::ToolRegistrations;
 
     #[provide(ToolRegistrations::list)]
     fn list() -> CallResult<Vec<ToolInfo>, BasicError> {
         Ok(vec![definition()])
-    }
-
-    #[provide(ToolPopulate::register)]
-    fn register(host: &Host<'_>, _: ToolsPopulate) -> CallResult<(), BasicError> {
-        Tools::new(host, "Registry").register(definition())
     }
 
     #[provide(ToolRegistrations::execute)]
@@ -82,17 +61,14 @@ mod tests {
     use phenix_sdk::ContractMetadata;
 
     #[test]
-    fn contributor_has_only_one_typed_registration_contract() {
+    fn one_attested_contract_owns_metadata_and_execution_without_graph_hooks() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
-        assert_eq!(metadata.provides.len(), 2);
-        assert_eq!(metadata.requires.len(), 1);
-        assert_eq!(metadata.requires[0].contract, "phenix.tools.registry@1");
+        assert_eq!(metadata.provides.len(), 1);
+        assert_eq!(metadata.requires.len(), 0);
         assert_eq!(
-            metadata.requires[0].cardinality,
-            phenix_sdk::Cardinality::Optional
+            metadata.provides[0].contract,
+            "phenix.basic.tool-registrations@1"
         );
-        assert_eq!(GRAPH.nodes[0].triggers, ["phenix.tools.populate"]);
-        assert!(GRAPH.events.is_empty());
-        assert!(GRAPH.actions.is_empty());
+        assert_eq!(definition().id, ID);
     }
 }

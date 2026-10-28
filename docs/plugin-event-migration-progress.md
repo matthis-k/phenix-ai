@@ -263,6 +263,23 @@ Use only the existing M1 graph, ABI, authority, cancellation and state watches.
   covered by unit tests. No change to descriptors, graph grants or runtime
   dispatch; native product and CI acceptance remain pending.
 
+- **S35 (G2 single-source attested tool registration)**: the stock
+  external fixture now provides only the resolver-selected
+  `ToolRegistrations` contract. It declares metadata once in `list`
+  and implements execution in `execute`; there is no duplicate
+  `ToolPopulate::register` handler, graph node, callback Registry
+  import or contributor Registry grant. The owner stages authenticated
+  `Contributors#index` lists during `kernel.begin` and publishes after
+  the existing settled graph edge. Executor routes are still selected
+  by the resolver; event payloads cannot assert an executor index.
+  Native tool-population product now expects two graph handlers (begin
+  and settlement), validates catalog publication and calls the selected
+  external executor. Direct contributor product grants and bindings
+  no longer contain unused event registry or populate operations.
+  The optional ToolRegistry authoring API remains for genuinely dynamic
+  event-based contributions; this simplification requires no kernel ABI.
+  **Status: draft; exact-head native acceptance pending.**
+
 ## Ergonomics register
 
 Each item is observed in source. 'Target' describes the desired author-facing
@@ -293,7 +310,7 @@ interface; it is not automatically implemented merely by being logged.
 | ERG-18 | High | Tool catalog's imported `ToolRegistrations::{list,execute}` associates routing with resolver-selected slot identity, which would be lost if a registration payload supplied an arbitrary executor name (`phenix-plugin-basic-tools`) | Preserve an attested execution capability/selected binding when moving tool descriptions into an event-driven registry; never trust contributor-supplied route indices | Open; G2 security gate |
 
 | ERG-19 | High | Tool subscriber's active handler cannot be reentered by manager calling its list contract; live registration previously queried the selected tool's list synchronously | Pin preselected contributor catalogs in manager onBegin, verify event registration against the snapshot, and preserve the imported route | **Fixed in #1151**, native product pending |
-| ERG-20 | Medium | Tool authors still define both `ToolRegistrations::list` and `ToolPopulate::register` to provide exactly the same immutable metadata, solely for authenticated routing | Generic SDK-supplied attested executor capability binding in a registration payload; stop requiring a duplicated pull list once provenance can be preserved | Partially implemented in follow-up draft: one published catalog; duplicate ToolRegistrations::list and ToolPopulate declarations remain cleanup |
+| ERG-20 | Medium | Tool authors still define both `ToolRegistrations::list` and `ToolPopulate::register` to provide exactly the same immutable metadata, solely for authenticated routing | Generic SDK-supplied attested executor capability binding in a registration payload; stop requiring a duplicated pull list once provenance can be preserved | Single-source contribution implemented in #1156; ToolRegistrations remains the resolver-attested declaration/execution contract|
 | ERG-21 | High | Direct selected session/storage contracts can run outside any `GraphExecution`, but `Host::emit_event` is permitted only within one active graph root | Generic post-commit semantic notification integration from the owning graph/controller, with no nested root or silent event loss | Open; G3 prerequisite |
 | ERG-22 | Medium | Several manager/startup plugins repeat manual graph declarations even with the common `StaticGraphNode::on` constructor | Optional typed `#[phenix::on(Event)]`/on-settled sugar generated over existing M1 contracts and graph descriptors | **Partially implemented in #1152** via typed on_event! now also infers Operation::KEY in follow-up draft; on-settled/handler generation still open |
 
