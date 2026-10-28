@@ -20,3 +20,9 @@ Both explicit graph wiring **Source → Python Invoke → Rust Invoke** and a ne
 ## Local Linux acceptance
 
 Run the CI recipe in `.github/workflows/graph-v2-python-language-adapter.yml`; it needs Rust 1.96.1, Python development headers/libpython, GNU objcopy and the normal Phenix root workspace build. The graph test runner is a separate Cargo workspace and leaves production crates unchanged.
+
+## Native panic drain regression
+
+The direct Rust provider `panic` regression from #1183 remains enabled. Generated synchronous exports now report quiescent failure (ABI status 5) after unwinding; generated pending exports still report non-quiescent failure (status 2), since their workers may remain alive. The kernel continues to retain imported child leases independently of the parent's native completion. No failed-ticket shortcut is used.
+
+Local validation on the fix branch passed the real native Python-to-Rust runner, including direct Rust panic, all 66 kernel unit tests, SDK and macro tests, and Nix checks `m1-pending`, `m1-pending-product`, `m1-imports`, `m1-lifecycle`, and `m1-lifecycle-product`. This is local evidence, not exact-head CI acceptance or full graph-v2/P1 parity. The workflow's existing experiment path filter covers this README change; SDK/runtime paths alone do not trigger it.
