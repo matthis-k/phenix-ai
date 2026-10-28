@@ -54,3 +54,7 @@ whether a ref is appropriate. Remove the benchmark branch after acceptance.
 
 Future backends and trust behavior belong in the typed library policy, not
 consumer-maintained GitHub Actions YAML.
+
+The paired user-facing API is merged in `phenix-flake-ci` PR #37 and
+pinned to its immutable squash commit `aebaaf47a6c1e1099b941802abfa0f77b9f97f3f`. Both generated workflows
+are verified byte-for-byte against that exact merged library revision.
