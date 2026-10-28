@@ -368,6 +368,7 @@
       # or authentication contracts.
       providerHostPluginSource = subset (publicPaths ++ [
         ./crates/phenix-plugin-provider-host
+        ./crates/phenix-provider-discovery
         ./crates/phenix-provider-builtins
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols

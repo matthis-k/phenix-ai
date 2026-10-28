@@ -4,6 +4,8 @@
 //! Until an executable strategy is selected, this host deliberately refuses
 //! authentication and model discovery. It never grants authority from metadata.
 
+mod models;
+
 use phenix_provider_builtins::merge_registration_pages;
 use phenix_provider_contracts::{
     AuthenticationStatus, ModelPage, ProviderDescriptor, ProviderError, ProviderErrorCode,
@@ -40,14 +42,19 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
         slot = "Contributors",
         many(min = 0)
     ),
+    require(
+        phenix_provider_contracts::ProviderCredentials,
+        slot = "Credentials",
+        many(min = 0)
+    ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, ModelQuery,
-        ProviderAuth, ProviderCatalog, ProviderDetailsQuery, ProviderPage, ProviderQuery,
-        ProviderRegistrations,
+        AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
+        CredentialIdentity, ModelQuery, ProviderAuth, ProviderCatalog, ProviderCredentials,
+        ProviderDetailsQuery, ProviderPage, ProviderQuery, ProviderRegistrations,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -136,23 +143,35 @@ mod plugin {
             })
     }
 
-    fn selected_connection(
+    fn connection_descriptor(
         state: &mut State,
         host: &Host<'_>,
         provider_id: &str,
         connection_id: &str,
-    ) -> CallResult<bool, ProviderError> {
+    ) -> CallResult<phenix_provider_contracts::ConnectionDescriptor, ProviderError> {
         selected_provider(state, host, provider_id)?
             .connections
-            .iter()
+            .into_iter()
             .find(|item| item.id == connection_id)
-            .map(|item| !item.auth_methods.is_empty())
             .ok_or_else(|| {
                 CallError::Domain(error(
                     ProviderErrorCode::NotFound,
                     "unknown provider connection",
                 ))
             })
+    }
+
+    fn selected_connection(
+        state: &mut State,
+        host: &Host<'_>,
+        provider_id: &str,
+        connection_id: &str,
+    ) -> CallResult<bool, ProviderError> {
+        Ok(
+            !connection_descriptor(state, host, provider_id, connection_id)?
+                .auth_methods
+                .is_empty(),
+        )
     }
 
     #[provide(ProviderCatalog::list)]
@@ -184,13 +203,79 @@ mod plugin {
         host: &Host<'_>,
         request: ModelQuery,
     ) -> CallResult<ModelPage, ProviderError> {
-        check(host, &request.scope)?;
-        let requires_auth =
-            selected_connection(state, host, &request.provider_id, &request.connection_id)?;
-        // Registration alone proves neither model entitlement nor a usable
-        // inference transport. A credential-free connection must not be
-        // misreported as requiring authentication when discovery is absent.
-        Err(CallError::Domain(missing_model_catalog(requires_auth)))
+        // The management root is intentionally not a credential root. A
+        // profile-bearing query must be invoked under the exact selected
+        // credential resource; otherwise a provider-list grant could be
+        // abused to choose an arbitrary named account.
+        let selected_identity = match request.profile_id.as_deref() {
+            Some(profile) => {
+                if request.scope != "user" {
+                    return Err(CallError::Domain(error(
+                        ProviderErrorCode::Denied,
+                        "provider management scope unauthorized",
+                    )));
+                }
+                let identity =
+                    CredentialIdentity::new(&request.provider_id, &request.connection_id, profile)
+                        .map_err(CallError::Domain)?;
+                let expected = identity.resource().map_err(CallError::Domain)?;
+                if host.resource()?.as_deref() != Some(expected.as_str()) {
+                    return Err(CallError::Domain(error(
+                        ProviderErrorCode::Denied,
+                        "model account credential root not authorized",
+                    )));
+                }
+                Some(identity)
+            }
+            None => {
+                check(host, &request.scope)?;
+                None
+            }
+        };
+        let connection =
+            connection_descriptor(state, host, &request.provider_id, &request.connection_id)?;
+        if request.cursor.is_some() || !(1..=256).contains(&request.limit) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "invalid authorized model page request",
+            )));
+        }
+        let Some(identity) = selected_identity else {
+            return Err(CallError::Domain(missing_model_catalog(
+                !connection.auth_methods.is_empty(),
+            )));
+        };
+        if !super::models::can_discover(&connection) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Unavailable,
+                "selected model discovery strategy is not installed",
+            )));
+        }
+        let count = imports::Credentials::count(host)?;
+        if count == 0 {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::AuthenticationRequired,
+                "credential strategy is not installed",
+            )));
+        }
+        if count != 1 {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Unavailable,
+                "ambiguous credential strategies",
+            )));
+        }
+        let scope = identity.resolve_scope().map_err(CallError::Domain)?;
+        // The selected caller root is already this exact account; the
+        // attenuated #0 credential import cannot broaden resources or ops.
+        let credential =
+            host.invoke_scoped::<ProviderCredentials::resolve>("Credentials#0", &scope, &identity)?;
+        super::models::discover(
+            &connection,
+            identity.profile_id(),
+            &credential,
+            request.limit,
+        )
+        .map_err(CallError::Domain)
     }
 
     #[provide(ProviderAuth::status)]
