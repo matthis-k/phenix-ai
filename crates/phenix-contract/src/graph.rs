@@ -8,6 +8,10 @@ pub mod v2;
 /// Kernel-owned lifecycle entry sources. They are intrinsic to every compiled
 /// graph and cannot be re-declared by plugins or submitted as user actions.
 /// Handlers subscribe through the same GraphNode.triggers as ordinary events.
+/// Host import key for enqueueing an owned, declared custom graph event.
+/// It reuses the existing ABI-3 invoke callback; no new ABI or dispatcher.
+pub const HOST_GRAPH_EMIT: &str = "phenix.host.graph@1/emit";
+
 pub const KERNEL_BEGIN: &str = "phenix.kernel.begin";
 pub const KERNEL_PLUGIN_LOADED: &str = "phenix.kernel.plugin-loaded";
 pub const KERNEL_PLUGIN_UNLOADED: &str = "phenix.kernel.plugin-unloaded";

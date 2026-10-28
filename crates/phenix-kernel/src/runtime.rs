@@ -8,7 +8,7 @@ use phenix_contract::{
 };
 use std::{
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     marker::PhantomData,
     rc::Rc,
     sync::{
@@ -64,6 +64,11 @@ struct StopFailure {
     provider: String,
     failure: Failure,
 }
+pub(super) struct QueuedEvent {
+    pub(super) id: String,
+    pub(super) payload: Value,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) tickets: BTreeMap<u64, super::pending::Record>,
@@ -83,6 +88,11 @@ pub(super) struct State {
     pub(super) kernel_unloaded: std::collections::BTreeSet<String>,
     pub(super) kernel_reloaded: std::collections::BTreeSet<String>,
     pub(super) kernel_shutdown: bool,
+    // Graph event emissions are staged in the current serial root. There is
+    // no second scheduler or separately admitted event-processing root.
+    pub(super) graph_root: Option<u64>,
+    pub(super) graph_events: VecDeque<QueuedEvent>,
+    pub(super) graph_emission_count: usize,
 }
 #[derive(Clone, Copy)]
 pub(super) enum Caller<'a> {

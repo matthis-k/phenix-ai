@@ -4,7 +4,7 @@ pub mod v2;
 use crate::{
     dag,
     resolve::Selection,
-    runtime::{Kernel, Outcome, Root},
+    runtime::{Kernel, Outcome, QueuedEvent, Root},
     Call, Poll, Ticket,
 };
 use phenix_contract::{
@@ -36,6 +36,8 @@ pub struct CompiledGraph {
     pub identity: String,
     pub nodes: BTreeMap<String, CompiledNode>,
     pub events: BTreeMap<String, EventDefinition>,
+    /// The declaring plugin alone can emit each custom event from a live call.
+    pub event_owners: BTreeMap<String, String>,
     pub actions: BTreeMap<String, ActionInfo>,
     /// Static predecessor constraints; NOT an activation list.
     pub predecessors: BTreeMap<String, BTreeSet<String>>,
@@ -90,12 +92,14 @@ impl CompiledGraph {
             .into_iter()
             .map(|event| (event.id.clone(), event))
             .collect();
+        let mut event_owners = BTreeMap::<String, String>::new();
         let mut action_defs = BTreeMap::<String, ActionDefinition>::new();
         let mut nodes = BTreeMap::new();
         let mut predecessors = BTreeMap::new();
 
         for declaration in &normalized {
             for event in &declaration.events {
+                event_owners.insert(event.id.clone(), declaration.plugin.clone());
                 if events.insert(event.id.clone(), event.clone()).is_some() {
                     return Err(invalid(format!("duplicate event {}", event.id)));
                 }
@@ -198,6 +202,7 @@ impl CompiledGraph {
             identity,
             nodes,
             events,
+            event_owners,
             actions,
             predecessors,
             order,
@@ -468,6 +473,62 @@ pub enum GraphCompletion<'a> {
 const MAX_SYNC_GRAPH_PUMPS: usize = 1_024;
 
 impl Kernel {
+    /// Stage only an event authored by the currently executing plugin. The
+    /// current GraphExecution will handle it as a subsequent same-root wave.
+    /// No user action, provider registration, credential, or authority is
+    /// inferred from the event identity or payload.
+    pub(super) fn queue_graph_event(
+        &self,
+        root: u64,
+        caller: &str,
+        event: &str,
+        payload: Value,
+    ) -> Result<(), Failure> {
+        self.check_thread()?;
+        let graph = self
+            .prepared
+            .graph
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::MissingBinding, "no prepared graph"))?;
+        if graph.event_owners.get(event).map(String::as_str) != Some(caller) {
+            return Err(Failure::new(
+                Code::Denied,
+                "custom event is not declared by the executing plugin",
+            ));
+        }
+        if !graph.events[event].payload.accepts(&payload) {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "custom event payload does not match declared schema",
+            ));
+        }
+        if payload.encode()?.len() > 65_536 {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "custom event payload exceeds bounded queue size",
+            ));
+        }
+        let mut state = self.state.borrow_mut();
+        if state.active_root != Some(root) || state.graph_root != Some(root) {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "custom events require a live graph execution root",
+            ));
+        }
+        if state.graph_events.len() >= 128 || state.graph_emission_count >= 1_024 {
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "custom graph event queue or wave budget exhausted",
+            ));
+        }
+        state.graph_emission_count += 1;
+        state.graph_events.push_back(QueuedEvent {
+            id: event.into(),
+            payload,
+        });
+        Ok(())
+    }
+
     /// Trusted control-plane action admission. Frontends submit the discovered
     /// action rather than invoking a graph handler directly. Synchronous nodes
     /// execute in active topological order. Pending and state triggers are G4.
@@ -780,6 +841,12 @@ impl Kernel {
         let active = graph.activation_order(&BTreeSet::from([event.into()]))?;
         let epoch_cursor = self.cells.borrow().epoch().0;
         let root = self.admit_scoped_root(self.prepared.entry.clone(), scope)?;
+        {
+            let mut state = self.state.borrow_mut();
+            state.graph_root = Some(root.id);
+            state.graph_events.clear();
+            state.graph_emission_count = 0;
+        }
         Ok(GraphExecution {
             v2: None,
             root,
@@ -1050,6 +1117,28 @@ impl GraphExecution<'_> {
         }
         Ok(())
     }
+    /// The emitter's plugin frame has returned before this wave begins, so
+    /// callers can safely invoke the emitter plugin again via typed imports.
+    /// Queued events are FIFO; each selects one canonical active DAG.
+    fn admit_custom_event_wave(&mut self) -> Result<bool, Failure> {
+        loop {
+            let next = self.root.kernel.state.borrow_mut().graph_events.pop_front();
+            let Some(event) = next else { return Ok(false) };
+            let graph = self.root.kernel.prepared.graph.as_ref().unwrap();
+            let active = graph.activation_order(&BTreeSet::from([event.id.clone()]))?;
+            if active.is_empty() {
+                continue;
+            }
+            self.event = event.id;
+            self.payload = event.payload;
+            self.node_requests.clear();
+            self.active = active;
+            self.waiting = self.active.iter().cloned().collect();
+            self.unsuccessful.clear();
+            return Ok(true);
+        }
+    }
+
     /// Admit one committed epoch through the prepared state-trigger DAG.
     /// This uses the existing root, provider selection and ticket lifecycle.
     /// The caller pumps the new wave just like the original event wave.
@@ -1216,7 +1305,11 @@ impl GraphExecution<'_> {
             && self.waiting.is_empty()
             && self.pending.is_empty()
         {
-            self.admit_state_wave()?;
+            // Custom emitted events run before state watches in FIFO order.
+            // Both use this root, scheduler, cancellation and grant checks.
+            if !self.admit_custom_event_wave()? {
+                self.admit_state_wave()?;
+            }
         }
         if !self.terminal
             && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
@@ -1249,6 +1342,19 @@ impl GraphExecution<'_> {
         } else {
             GraphStatus::Pending
         })
+    }
+}
+
+impl Drop for GraphExecution<'_> {
+    fn drop(&mut self) {
+        // An abandoned or cancelled graph must never leak emitted work into
+        // the next serial root. The root itself is released by its own Drop.
+        let mut state = self.root.kernel.state.borrow_mut();
+        if state.graph_root == Some(self.root.id) {
+            state.graph_root = None;
+            state.graph_events.clear();
+            state.graph_emission_count = 0;
+        }
     }
 }
 
@@ -1434,6 +1540,10 @@ mod tests {
             ["openai/register"]
         );
         assert!(graph.actions.is_empty());
+        assert_eq!(
+            graph.event_owners["phenix.providers.populate"],
+            "phenix.providers"
+        );
         let mut bad = declarations;
         bad[0].events[0].id = "phenix.kernel.fabricated".into();
         assert!(compile(&bad).is_err());
