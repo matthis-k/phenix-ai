@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: matthis-k/phenix-flake-ci
-          ref: c4467d7dc233ada85ea49823561ee8be57089591
+          ref: a0460dd78cd03478f906421844d769dddc66a69c
           path: .ci-tools/flake-ci
           persist-credentials: false
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
@@ -42,11 +42,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          nix eval --raw --file ci/render-flake-workflow.nix > "$RUNNER_TEMP/phenix-flake-ci-generated.yml"
+          nix eval --raw --file ci/render-flake-workflows.nix --apply 'w: w.trusted' > "$RUNNER_TEMP/phenix-flake-ci-generated.yml"
+          nix eval --raw --file ci/render-flake-workflows.nix --apply 'w: w.pullRequest' > "$RUNNER_TEMP/minimal-kernel-flake.yml"
           diff -u .github/workflows/phenix-flake-ci-generated.yml "$RUNNER_TEMP/phenix-flake-ci-generated.yml"
+          diff -u .github/workflows/minimal-kernel-flake.yml "$RUNNER_TEMP/minimal-kernel-flake.yml"
           test "$(grep -c 'worker_count: 4' "$RUNNER_TEMP/phenix-flake-ci-generated.yml")" -eq 1
+          ! grep -q 'id-token: write' "$RUNNER_TEMP/minimal-kernel-flake.yml"
       - name: Require the consumer check configuration to evaluate
         run: |
           set -euo pipefail
           nix eval --json --file ci/flake-check-config.nix > "$RUNNER_TEMP/flake-check-config.json"
-          jq -e '.schemaVersion == 1 and .system == "x86_64-linux"' "$RUNNER_TEMP/flake-check-config.json"
+          jq -e '.schemaVersion == 1 and .system == "x86_64-linux" and .ci.trusted.remote.workers == 4 and .ci.trusted.pullRequestAuthors == ["matthis-k"] and .ci.pullRequest.backend == "nix-dag"' "$RUNNER_TEMP/flake-check-config.json"
