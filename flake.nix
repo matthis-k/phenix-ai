@@ -1,11 +1,14 @@
 {
   description = "Phenix M1 typed contract kernel";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/cd2403a45333a5211775bdf01b3ce45f28e02e5f";
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, phenix-flake-ci }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
+      testLib = phenix-flake-ci.lib;
+      a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
       subset =
@@ -2855,7 +2858,7 @@
       } ''
         mkdir -p $out
         python ${./tests/p1-release-evidence.py} --self-test
-        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} $out
+        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} ${p1AuthLauncherProductCheck} ${p1CombinedAuthProductCheck} $out
         test -s "$out/evidence.json"
       '';
       release = pkgs.runCommand "phenix-m1-release" { } ''
@@ -2930,9 +2933,53 @@
           "$TMPDIR/source-config.json" > "$out/terminal.txt"
         grep -F 'answer: mock:hello' "$out/terminal.txt"
       '';
+      # Test definitions refer only to existing immutable packages.
+      # All checks are discovered from checks.${system} by the same CI planner.
+      declarativeCliChecks = testLib.mkTestCases {
+        inherit pkgs;
+        namePrefix = "phenix-";
+        defaults.command.program = "${kernel}/bin/phenix-kernel";
+        cases = {
+          kernel-inspect-contract = {
+            command.args = [ "inspect" "${basicComposition}" ];
+            expect = {
+              exitCode = a.eq 0;
+              stdout.json."/format" = a.eq "phenix.inspect.v2";
+            };
+          };
+          kernel-invalid-composition = {
+            command.args = [ "inspect" "/not-a-phenix-composition.json" ];
+            expect.exitCode = a.ne 0;
+          };
+        };
+      };
     in
     {
       packages.${system} = {
+        # Runnable test.* packages are discovered by generic CI automatically.
+        # They are thin executable wrappers over already-built artifacts:
+        # test jobs never compile a second kernel or plugin composition.
+        "test.basic-composition-smoke" = pkgs.writeShellApplication {
+          name = "test-basic-composition-smoke";
+          runtimeInputs = [ pkgs.coreutils pkgs.gnugrep ];
+          text = ''
+            state_dir="$(mktemp -d)"
+            trap 'rm -rf "$state_dir"' EXIT
+            export HOME="$state_dir"
+            export XDG_STATE_HOME="$state_dir/state"
+            printf 'hello\\n' |
+              ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} |
+              grep -F 'answer: mock:hello'
+          '';
+        };
+        "test.kernel-composition-inspect" = pkgs.writeShellApplication {
+          name = "test-kernel-composition-inspect";
+          runtimeInputs = [ pkgs.jq ];
+          text = ''
+            ${kernel}/bin/phenix-kernel inspect ${basicComposition} |
+              jq -e '.format == "phenix.inspect.v2"'
+          '';
+        };
         default = kernel;
         phenix-kernel = kernel;
         # Shared Cargo output for Nix CI prebuild; plugins remain independent packages.
@@ -3275,7 +3322,7 @@
         m1-pending-product = pendingProduct;
         m1-lifecycle = lifecycleCheck;
         m1-lifecycle-product = lifecycleProduct;
-      };
+      } // declarativeCliChecks;
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo

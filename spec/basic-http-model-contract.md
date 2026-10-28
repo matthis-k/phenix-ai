@@ -1,5 +1,7 @@
 # Pending HTTP model provider
 
+> **Historical B4 implementation slice, not the desired provider onboarding experience.** This document records an environment-configured transport implementation. Future provider selection, authentication, and model discovery should use the accepted current contract design and owning migration PRs; a plugin implementation ID must not appear as a selectable model. Verify what still runs in source/tests. See [spec index](README.md) and [Graph-v2.4 target](graph-architecture-v2.4.md) for the distinction between current and target architecture.
+
 B4 owns `phenix-plugin-model-http`. It implements the existing typed Model
 contract and imports the selected EventJournal. The provider uses libcurl's
 Rust wrapper for HTTP/HTTPS, certificate verification and caller-selected
