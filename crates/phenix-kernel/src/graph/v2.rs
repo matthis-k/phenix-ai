@@ -64,6 +64,7 @@ pub struct CompiledGraph {
     predecessors: BTreeMap<String, BTreeSet<String>>,
     source_reachability: BTreeMap<String, BTreeSet<String>>,
     join_satisfiability: BTreeMap<String, Satisfiability>,
+    input_edges: BTreeMap<(String, String), Vec<String>>,
     order: Vec<String>,
     policy: TrustedCompositionPolicy,
 }
@@ -316,6 +317,7 @@ fn compile(
         }
     }
     let mut candidates = BTreeMap::<(String, String), usize>::new();
+    let mut input_edges = BTreeMap::<(String, String), Vec<String>>::new();
     for declaration in &declarations {
         for edge in &declaration.edges {
             let endpoints = match &edge.kind {
@@ -384,6 +386,10 @@ fn compile(
                     *candidates
                         .entry((to.node.clone(), to.port.clone()))
                         .or_default() += 1;
+                    input_edges
+                        .entry((to.node.clone(), to.port.clone()))
+                        .or_default()
+                        .push(edge.id.clone());
                     predecessors
                         .get_mut(&to.node)
                         .unwrap()
@@ -482,7 +488,9 @@ fn compile(
                 )
             })
             .zip(&incoming)
-            .filter(|(p, _)| p.readiness == InputReadiness::One)
+            // A required collection with one candidate requires that candidate
+            // just as One does. Multi-candidate alternatives remain Unknown.
+            .filter(|(_, edges)| edges.len() == 1)
             .flat_map(|(_, edges)| edges)
         {
             if matches!(nodes[&from.node].1.kind, NodeKind::Switch { .. })
@@ -531,6 +539,9 @@ fn compile(
     );
     let mut bytes = b"phenix.graph.offline-plan.v2\0".to_vec();
     bytes.extend(Value::List(vec![canonical, route_values, policy_value(policy)]).encode()?);
+    for edges in input_edges.values_mut() {
+        edges.sort();
+    }
     Ok(CompiledGraph {
         identity: phenix_artifact::digest(&bytes),
         declarations,
@@ -538,6 +549,7 @@ fn compile(
         predecessors,
         source_reachability,
         join_satisfiability,
+        input_edges,
         order,
         policy: policy.clone(),
     })
