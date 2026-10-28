@@ -11,9 +11,10 @@ pub use catalog::discovered_model_page;
 
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
-    ConnectionDescriptor, DiscoveryKind, DiscoverySource, ProtocolBinding, ProviderDescriptor,
-    ProviderPage,
+    DiscoveryKind, ProviderDescriptor, ProviderPage,
 };
+#[cfg(test)]
+use phenix_provider_contracts::{ConnectionDescriptor, DiscoverySource, ProtocolBinding};
 use phenix_provider_protocols::{same_credential_origin, validate_endpoint, EndpointMode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -84,19 +85,6 @@ fn provider(id: &str, label: &str, connections: Vec<ConnectionDescriptor>) -> Pr
     }
 }
 
-/// The smallest author-facing provider connection: endpoint, protocol, auth.
-///
-/// The provider/connection ID belongs to the registry, and named accounts
-/// belong to the credential store, NOT this declaration. Extra protocol
-/// endpoints, discovery codecs, and environment hints are explicit optional
-/// extensions. A declaration is metadata, never network or kernel authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderDeclaration<'a> {
-    pub endpoint: &'a str,
-    pub protocol: &'a str,
-    pub auth: &'a str,
-}
-
 /// Lookup of auth implementations installed by the provider composition.
 /// External plugins can register new methods without changing Phenix core.
 pub trait AuthenticationAdapters {
@@ -137,60 +125,6 @@ impl AuthenticationAdapters for BuiltinAuthenticationAdapters {
     }
 }
 
-impl ProviderDeclaration<'_> {
-    pub fn connection(self, id: &str, label: &str) -> Result<ConnectionDescriptor, &'static str> {
-        self.connection_with(id, label, &BuiltinAuthenticationAdapters)
-    }
-
-    pub fn connection_with(
-        self,
-        id: &str,
-        label: &str,
-        registry: &impl AuthenticationAdapters,
-    ) -> Result<ConnectionDescriptor, &'static str> {
-        if self.endpoint.is_empty() || self.protocol.is_empty() {
-            return Err("provider endpoint and protocol are required");
-        }
-        validate_endpoint(self.endpoint, EndpointMode::LocalLoopback)
-            .map_err(|_| "unsafe provider endpoint")?;
-        let auth_methods = registry.methods(self.auth)?;
-        Ok(ConnectionDescriptor {
-            id: id.into(),
-            label: label.into(),
-            protocols: vec![ProtocolBinding {
-                id: self.protocol.into(),
-                endpoint: None,
-            }],
-            base_url: Some(self.endpoint.into()),
-            auth_methods,
-            // No implicit /models guess. A provider or registered discovery
-            // adapter contributes this only where the provider supports it.
-            model_sources: vec![],
-        })
-    }
-}
-
-/// Shared endpoint and discovery conventions for provider declarations.
-///
-/// This references installed standard protocol implementations; it does not
-/// introduce provider-specific Rust, perform discovery, or grant credentials.
-/// The declaration chooses supported wire protocols and the actual catalog
-/// response adapter. Non-standard providers can still supply exact endpoints.
-pub trait StandardConventions {
-    /// Populate endpoints for selected established protocol wire formats.
-    /// An omitted protocol is never inferred to be supported.
-    fn with_standard_protocols(self, additional: &[&str]) -> Result<Self, &'static str>
-    where
-        Self: Sized;
-
-    /// Select a documented /models endpoint and existing catalog adapter.
-    /// The caller opts in explicitly; not all OpenAI-compatible APIs provide
-    /// discovery, and some use a different response schema.
-    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str>
-    where
-        Self: Sized;
-}
-
 fn standard_endpoint(base: &str, path: &str) -> Result<String, &'static str> {
     if base.contains('?') || base.ends_with('/') {
         return Err("standard convention requires a plain endpoint base");
@@ -206,326 +140,12 @@ fn standard_endpoint(base: &str, path: &str) -> Result<String, &'static str> {
     Ok(target)
 }
 
-impl StandardConventions for ConnectionDescriptor {
-    fn with_standard_protocols(mut self, additional: &[&str]) -> Result<Self, &'static str> {
-        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
-        let mut ids = self
-            .protocols
-            .iter()
-            .map(|binding| binding.id.as_str())
-            .collect::<Vec<_>>();
-        ids.extend_from_slice(additional);
-        let mut seen = BTreeSet::new();
-        let mut protocols = Vec::new();
-        for id in ids {
-            if !seen.insert(id) {
-                continue;
-            }
-            let path = match id {
-                OPENAI_CHAT => "chat/completions",
-                OPENAI_RESPONSES => "responses",
-                ANTHROPIC_MESSAGES => "messages",
-                _ => return Err("protocol has no registered standard endpoint"),
-            };
-            protocols.push(ProtocolBinding {
-                id: id.to_owned(),
-                endpoint: Some(standard_endpoint(base, path)?),
-            });
-        }
-        self.protocols = protocols;
-        Ok(self)
-    }
-
-    fn with_standard_models(self, adapter: &str) -> Result<Self, &'static str> {
-        let base = self.base_url.as_deref().ok_or("missing provider URL")?;
-        let endpoint = standard_endpoint(base, "models")?;
-        self.with_catalog(Some(&endpoint), adapter, DiscoveryKind::Dynamic)
-    }
-}
-
-/// Named adapters are registry-level implementations. The builder merely
-/// references them; it does not implement OAuth or model streaming.
-pub trait ConnectionExtensions {
-    fn with_protocol(self, id: &str, endpoint: Option<&str>) -> Self;
-    fn with_catalog(
-        self,
-        endpoint: Option<&str>,
-        adapter: &str,
-        kind: DiscoveryKind,
-    ) -> Result<Self, &'static str>
-    where
-        Self: Sized;
-    fn with_key_environment(self, name: &str) -> Result<Self, &'static str>
-    where
-        Self: Sized;
-    fn with_key_presentation(self, presentation: ApiKeyPresentation) -> Result<Self, &'static str>
-    where
-        Self: Sized;
-}
-
-impl ConnectionExtensions for ConnectionDescriptor {
-    fn with_protocol(mut self, id: &str, endpoint: Option<&str>) -> Self {
-        // Replace the primary protocol's optional endpoint without creating
-        // a duplicate, otherwise append an additional supported protocol.
-        if let Some(existing) = self.protocols.iter_mut().find(|item| item.id == id) {
-            existing.endpoint = endpoint.map(str::to_owned);
-        } else {
-            self.protocols.push(ProtocolBinding {
-                id: id.into(),
-                endpoint: endpoint.map(str::to_owned),
-            });
-        }
-        self
-    }
-
-    fn with_catalog(
-        mut self,
-        endpoint: Option<&str>,
-        adapter: &str,
-        kind: DiscoveryKind,
-    ) -> Result<Self, &'static str> {
-        self.model_sources.push(DiscoverySource {
-            id: "models".into(),
-            kind,
-            endpoint: endpoint.map(str::to_owned),
-            adapter: AdapterBinding::from_typed(adapter, &())
-                .map_err(|_| "unregistered model catalog adapter")?,
-        });
-        Ok(self)
-    }
-
-    fn with_key_environment(mut self, name: &str) -> Result<Self, &'static str> {
-        let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
-            return Err("key environment variable requires API key auth");
-        };
-        let mut options = method
-            .adapter
-            .config
-            .decode::<ApiKeyOptions>()
-            .map_err(|_| "API-key source adapter has incompatible configuration")?;
-        options.environment_variable = Some(name.into());
-        options
-            .validate()
-            .map_err(|_| "invalid API key environment")?;
-        method.adapter = AdapterBinding::from_typed("api-key", &options)
-            .map_err(|_| "invalid API key environment")?;
-        Ok(self)
-    }
-
-    fn with_key_presentation(
-        mut self,
-        presentation: ApiKeyPresentation,
-    ) -> Result<Self, &'static str> {
-        presentation
-            .validate()
-            .map_err(|_| "invalid API-key wire presentation")?;
-        let Some(method) = self.auth_methods.iter_mut().find(|m| m.id == "api-key") else {
-            return Err("wire presentation requires the API-key strategy");
-        };
-        let mut options = method
-            .adapter
-            .config
-            .decode::<ApiKeyOptions>()
-            .map_err(|_| "API-key source adapter has incompatible configuration")?;
-        options.presentation = presentation;
-        options
-            .validate()
-            .map_err(|_| "invalid API-key wire presentation")?;
-        method.adapter = AdapterBinding::from_typed("api-key", &options)
-            .map_err(|_| "invalid API-key wire presentation")?;
-        Ok(self)
-    }
-}
-
 /// Compile the immutable built-in provider data through the same SDK path
 /// available to third-party provider registration contributors. This does
 /// not install auth methods or grant model execution authority.
 pub fn registrations() -> Vec<ProviderDescriptor> {
     declaration::compile(defaults::PROVIDERS, &BuiltinAuthenticationAdapters)
         .expect("valid built-in provider data")
-}
-
-#[cfg(test)]
-mod declaration_tests {
-    use super::*;
-
-    #[test]
-    fn minimal_provider_is_three_fields_and_never_implicitly_discovers_models() {
-        let declaration = ProviderDeclaration {
-            endpoint: "https://api.example.test/v1",
-            protocol: OPENAI_RESPONSES,
-            auth: "api-key",
-        };
-        let connection = declaration.connection("api", "Example").unwrap();
-        assert_eq!(connection.base_url.as_deref(), Some(declaration.endpoint));
-        assert_eq!(connection.protocols[0].id, declaration.protocol);
-        assert_eq!(connection.auth_methods[0].id, declaration.auth);
-        assert!(connection.model_sources.is_empty());
-        assert_eq!(connection.id, "api");
-    }
-
-    #[test]
-    fn standard_conventions_are_provider_neutral_and_opt_in() {
-        let connection = ProviderDeclaration {
-            endpoint: "https://inference.example.test/api/v1",
-            protocol: OPENAI_CHAT,
-            auth: "api-key",
-        }
-        .connection("standard", "Standard provider")
-        .unwrap()
-        .with_standard_protocols(&[OPENAI_RESPONSES])
-        .unwrap()
-        .with_standard_models("openai.models")
-        .unwrap();
-        assert_eq!(connection.protocols[0].id, OPENAI_CHAT);
-        assert_eq!(
-            connection.protocols[0].endpoint.as_deref(),
-            Some("https://inference.example.test/api/v1/chat/completions")
-        );
-        assert_eq!(
-            connection.protocols[1].endpoint.as_deref(),
-            Some("https://inference.example.test/api/v1/responses")
-        );
-        assert_eq!(
-            connection.model_sources[0].endpoint.as_deref(),
-            Some("https://inference.example.test/api/v1/models")
-        );
-        assert_eq!(connection.model_sources[0].adapter.id, "openai.models");
-        validate_registrations(&[ProviderDescriptor {
-            id: "vendor-neutral".into(),
-            label: "Generic HTTP models".into(),
-            connections: vec![connection],
-        }])
-        .unwrap();
-
-        let unsupported = ProviderDeclaration {
-            endpoint: "https://inference.example.test/api/v1",
-            protocol: "custom-binary",
-            auth: "api-key",
-        }
-        .connection("custom", "Unconventional")
-        .unwrap();
-        assert_eq!(
-            unsupported.with_standard_protocols(&[]).unwrap_err(),
-            "protocol has no registered standard endpoint"
-        );
-        assert_eq!(
-            standard_endpoint("https://example.test/v1?token=unsafe", "models"),
-            Err("standard convention requires a plain endpoint base")
-        );
-    }
-
-    #[test]
-    fn standard_conventions_do_not_install_catalogs_implicitly() {
-        let connection = ProviderDeclaration {
-            endpoint: "https://example.test/v1",
-            protocol: ANTHROPIC_MESSAGES,
-            auth: "api-key",
-        }
-        .connection("api", "Example")
-        .unwrap()
-        .with_standard_protocols(&[])
-        .unwrap();
-        assert_eq!(
-            connection.protocols[0].endpoint.as_deref(),
-            Some("https://example.test/v1/messages")
-        );
-        assert!(connection.model_sources.is_empty());
-    }
-
-    #[test]
-    fn unknown_adapter_or_unsafe_endpoint_fails_closed() {
-        let declaration = ProviderDeclaration {
-            endpoint: "https://api.example.test/v1",
-            protocol: OPENAI_CHAT,
-            auth: "unregistered-oauth",
-        };
-        assert_eq!(
-            declaration.connection("api", "Unregistered").unwrap_err(),
-            "authentication adapter is not registered"
-        );
-        assert_eq!(
-            ProviderDeclaration {
-                endpoint: "http://api.example.test/v1",
-                ..declaration
-            }
-            .connection("api", "Unsafe")
-            .unwrap_err(),
-            "unsafe provider endpoint"
-        );
-    }
-
-    #[test]
-    fn externally_registered_authentication_adapter_is_supported() {
-        struct ThirdParty;
-        impl AuthenticationAdapters for ThirdParty {
-            fn methods(&self, adapter: &str) -> Result<Vec<AuthenticationMethod>, &'static str> {
-                if adapter != "vendor.sso" {
-                    return Err("unknown third-party adapter");
-                }
-                Ok(vec![AuthenticationMethod {
-                    id: "sso".into(),
-                    label: "Vendor SSO".into(),
-                    kind: AuthenticationKind::Plugin,
-                    adapter: AdapterBinding::from_typed("vendor.sso", &()).unwrap(),
-                }])
-            }
-        }
-        let connection = ProviderDeclaration {
-            endpoint: "https://api.vendor.example/v1",
-            protocol: "vendor-protocol",
-            auth: "vendor.sso",
-        }
-        .connection_with("custom", "Vendor", &ThirdParty)
-        .unwrap();
-        assert_eq!(connection.auth_methods[0].adapter.id, "vendor.sso");
-        assert_eq!(connection.protocols[0].id, "vendor-protocol");
-        validate_registrations(&[ProviderDescriptor {
-            id: "vendor".into(),
-            label: "Vendor".into(),
-            connections: vec![connection],
-        }])
-        .unwrap();
-    }
-
-    #[test]
-    fn extra_protocols_and_discovery_are_optional_but_origin_is_checked() {
-        let connection = ProviderDeclaration {
-            endpoint: "https://api.example.test/v1",
-            protocol: OPENAI_RESPONSES,
-            auth: "api-key",
-        }
-        .connection("api", "Example")
-        .unwrap()
-        .with_protocol(
-            OPENAI_RESPONSES,
-            Some("https://api.example.test/v1/responses"),
-        )
-        .with_catalog(
-            Some("https://api.example.test/v1/models"),
-            "test.models",
-            DiscoveryKind::Dynamic,
-        )
-        .unwrap();
-        validate_registrations(&[ProviderDescriptor {
-            id: "example".into(),
-            label: "Example".into(),
-            connections: vec![connection.clone()],
-        }])
-        .unwrap();
-        let wrong_origin = connection.with_protocol(
-            OPENAI_CHAT,
-            Some("https://different.example.test/v1/chat/completions"),
-        );
-        assert_eq!(
-            validate_registrations(&[ProviderDescriptor {
-                id: "example".into(),
-                label: "Example".into(),
-                connections: vec![wrong_origin],
-            }]),
-            Err("cross-origin protocol endpoint")
-        );
-    }
 }
 
 /// Build one immutable catalog snapshot from the explicitly selected
@@ -1045,37 +665,37 @@ mod tests {
             }
         );
 
-        // Acquisition source and HTTP presentation are independent options;
-        // configuring either first must produce the same method declaration.
-        let header = ApiKeyPresentation::Header {
-            name: "x-api-key".into(),
-            prefix: String::new(),
-        };
-        for configured in [
-            openai
-                .clone()
-                .with_key_presentation(header.clone())
-                .unwrap()
-                .with_key_environment("EXAMPLE_API_KEY")
-                .unwrap(),
-            openai
-                .clone()
-                .with_key_environment("EXAMPLE_API_KEY")
-                .unwrap()
-                .with_key_presentation(header.clone())
-                .unwrap(),
-        ] {
-            let configured_key = configured.auth_methods[0]
-                .adapter
-                .config
-                .decode::<ApiKeyOptions>()
-                .unwrap();
-            assert_eq!(configured_key.presentation, header);
-            assert_eq!(
-                configured_key.environment_variable.as_deref(),
-                Some("EXAMPLE_API_KEY")
-            );
-        }
+        // The new plain-data compiler independently covers key-source hints
+        // and header presentation, without requiring mutation builders.
+        let standalone = [declaration::Provider {
+            id: "example",
+            name: "Example",
+            connections: &[declaration::Connection {
+                id: "api",
+                name: "Example API",
+                endpoint: "https://example.test/v1",
+                protocols: &[declaration::Protocol::OpenAiChat],
+                auth: declaration::Auth::ApiKey {
+                    env_hint: Some("EXAMPLE_API_KEY"),
+                    presentation: declaration::KeyPresentation::Header {
+                        name: "x-api-key",
+                        prefix: "",
+                    },
+                },
+                discovery: declaration::Discovery::None,
+            }],
+        }];
+        let descriptor = declaration::compile(&standalone, &BuiltinAuthenticationAdapters).unwrap();
+        let configured_key = descriptor[0].connections[0].auth_methods[0]
+            .adapter
+            .config
+            .decode::<ApiKeyOptions>()
+            .unwrap();
+        assert_eq!(
+            configured_key.environment_variable.as_deref(),
+            Some("EXAMPLE_API_KEY")
+        );
+        assert_eq!(configured_key.presentation, anthropic_key.presentation);
 
         let chatgpt = &catalog[0].connections[1];
         assert_eq!(chatgpt.auth_methods[0].adapter.id, "chatgpt.oauth");
