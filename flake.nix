@@ -2785,6 +2785,30 @@
     in
     {
       packages.${system} = {
+        # Runnable test.* packages are discovered by generic CI automatically.
+        # They are thin executable wrappers over already-built artifacts:
+        # test jobs never compile a second kernel or plugin composition.
+        "test.basic-composition-smoke" = pkgs.writeShellApplication {
+          name = "test-basic-composition-smoke";
+          runtimeInputs = [ pkgs.coreutils pkgs.gnugrep ];
+          text = ''
+            state_dir="$(mktemp -d)"
+            trap 'rm -rf "$state_dir"' EXIT
+            export HOME="$state_dir"
+            export XDG_STATE_HOME="$state_dir/state"
+            printf 'hello\\n' |
+              ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} |
+              grep -F 'answer: mock:hello'
+          '';
+        };
+        "test.kernel-composition-inspect" = pkgs.writeShellApplication {
+          name = "test-kernel-composition-inspect";
+          runtimeInputs = [ pkgs.jq ];
+          text = ''
+            ${kernel}/bin/phenix-kernel inspect ${basicComposition} |
+              jq -e '.format == "phenix.inspect.v2"'
+          '';
+        };
         default = kernel;
         phenix-kernel = kernel;
         # Shared Cargo output for Nix CI prebuild; plugins remain independent packages.
