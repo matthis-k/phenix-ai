@@ -1,5 +1,7 @@
 # P2 advanced agent: memory, compaction, workspace, sub-agents and inspection
 
+> **Status note (26 October 2026):** This document records intended P2 work and dated milestone evidence, not the current implementation. P1 stabilization precedes a graph-v2 P1-parity migration; new graph design follows [v2.4](graph-architecture-v2.4.md), not the older reactive DAG RFC. Current source and exact-head tests determine actual behavior. Consult [the spec index](README.md) for precedence.
+
 Status: IN PROGRESS. P2-0, P2-1 and P2-2a are integrated; P2-2b and P2-3 remain active. P2-3 slices through P2-3al and typed preparation receipt #1017 have merged, but verified changed-candidate compaction admission, crash-atomic journal/session reconciliation and production tokenizer parity are unaccepted. Provider catalog and authorized API-key import/revoke/query **slices** are integrated (#1006, #1009–#1011), not provider-verified readiness, operational Model rebinding, revision-CAS model selection or the full Neovim journey. P2 release gates remain open.
 Updated: 2026-10-20
 Parent: [M1 roadmap](m1-roadmap.md)
