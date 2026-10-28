@@ -1,6 +1,6 @@
 # G1/G2 graph declaration contract and implementation scope
 
-Status: partial implementation on `impl/m1-graph-declarations`
+Status: historical G1/G2 graph-v1 development contract. Verify present `phenix.graph.v1` behavior in current source and conformance tests; do not infer branch status. For future graph dataflow and patches, use [Graph Architecture v2.4](graph-architecture-v2.4.md) (proposed, not implemented).
 Base: accepted S3b at `e78b1aa87614d48a769457c434857af1d4ab036c`
 Owners: `phenix-contract/src/graph.rs`, `phenix-contract/src/descriptor/static_metadata.rs`, `phenix-macros/src/`, `phenix-artifact/src/lib.rs`, `phenix-kernel/src/graph.rs`, `resolve.rs`, `generation.rs`
 Roadmap: [m1-roadmap.md](m1-roadmap.md)
