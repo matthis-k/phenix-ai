@@ -12,7 +12,7 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     nodes: &[phenix_sdk::on_event!(
         "populate",
         phenix_basic_contracts::ToolsPopulate,
-        "phenix.tools.populate@1/register",
+        phenix_basic_contracts::ToolPopulate::register,
     )],
 };
 

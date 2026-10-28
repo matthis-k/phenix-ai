@@ -45,7 +45,7 @@ pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
     nodes: &[phenix_sdk::on_event!(
         "populate",
         ProvidersPopulate,
-        "phenix.provider.populate@1/register",
+        ProviderPopulate::register,
     )],
 };
 
