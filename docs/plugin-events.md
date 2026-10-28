@@ -40,6 +40,38 @@ replayable message queue. A late subscriber queries the owning plugin's
 current state using a contract. Incompatible event schema changes need an
 explicitly versioned event identity rather than silent mutation.
 
+## Events are edges, not source-order instructions
+
+A Neovim-style autocommand is an **event-to-handler edge**:
+`event A → handler B`. An ordering constraint is a separate
+**handler-to-handler edge**: `B → C` (spelled `C.after([B])` in the
+current graph SDK). The kernel first collects all contributed nodes
+and events, then resolves and validates these edges, then topologically
+orders only the activated portion of the graph.
+
+Node, event, action and graph-key **declaration order is irrelevant**.
+The native static descriptor encoder canonicalizes them at compile time
+without allocating. The portable decoder continues to require canonical
+bytes; identical declarations in different source order have identical
+digests and graph behavior. Duplicate identities, missing anchors,
+cycles and unordered conflicting writers remain errors. An `after`
+edge never independently activates a handler.
+
+For example, both authored node arrays below are equivalent:
+
+```rust
+// The source order is arbitrary, not execution order.
+nodes: &[
+    StaticGraphNode::on("submit", &["prompt"], "input@1/submit"),
+    StaticGraphNode::on("notify", &["prompt"], "lifecycle@1/notify")
+        .after(&["agent/submit"]),
+]
+```
+
+The event source `prompt` activates both handlers; the DAG edge
+`submit → notify` determines execution order, including pending
+completion. This is the same graph mechanism, not a separate event bus.
+
 ## Graph execution and completion
 
 An event emitted from a plugin is queued on the active graph root. It does

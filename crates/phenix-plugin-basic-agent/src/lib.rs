@@ -1,7 +1,10 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
+use phenix_basic_contracts::AgentRunFinished;
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
-use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
+#[cfg(feature = "staged-graph")]
+use phenix_sdk::{FailurePolicy, JoinPolicy};
+use phenix_sdk::{StaticGraphContribution, StaticGraphNode};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
 ///
@@ -239,24 +242,29 @@ mod journal_page_tests {
 #[cfg(not(feature = "staged-graph"))]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
-    events: &[],
+    events: &[AgentRunFinished::EVENT],
     actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "submit",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.input@1/submit",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
+    // Author in workflow order, not key order. The descriptor canonicalizes
+    // declarations; the explicit edge is what orders these two operations.
+    nodes: &[
+        StaticGraphNode::on(
+            "submit",
+            &["phenix.basic.prompt"],
+            "phenix.basic.input@1/submit",
+        ),
+        StaticGraphNode::on(
+            "run-finished",
+            &["phenix.basic.prompt"],
+            "phenix.agent.lifecycle@1/finished",
+        )
+        .after(&["phenix.basic.agent/submit"]),
+    ],
 };
 
 #[cfg(feature = "staged-graph")]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
-    events: &[],
+    events: &[AgentRunFinished::EVENT],
     actions: &[],
     nodes: &[StaticGraphNode {
         id: "prepare",
@@ -270,6 +278,29 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     }],
 };
 
+#[cfg(all(test, not(feature = "staged-graph")))]
+mod run_event_graph_tests {
+    use super::*;
+
+    #[test]
+    fn completion_event_is_owned_and_ordered_after_submit() {
+        let graph = GRAPH.owned().unwrap();
+        assert_eq!(graph.events.len(), 1);
+        assert_eq!(graph.events[0].id, "phenix.agent.run-finished");
+        assert_eq!(GRAPH.nodes[0].id, "submit");
+        assert_eq!(GRAPH.nodes[1].id, "run-finished");
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[0].id, "run-finished");
+        assert_eq!(graph.nodes[1].id, "submit");
+        assert_eq!(graph.nodes[0].triggers, vec!["phenix.basic.prompt"]);
+        assert_eq!(graph.nodes[0].after, vec!["phenix.basic.agent/submit"]);
+        assert_eq!(
+            graph.nodes[0].operation,
+            "phenix.agent.lifecycle@1/finished"
+        );
+    }
+}
+
 #[cfg(all(test, feature = "staged-graph"))]
 #[path = "staged_graph_tests.rs"]
 mod staged_graph_tests;
@@ -281,6 +312,7 @@ mod staged_graph_tests;
     provide(phenix_basic_contracts::BasicTurnPrepare, slot = "Prepare"),
     provide(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     provide(phenix_basic_contracts::BasicOutput, slot = "Output"),
+    provide(phenix_basic_contracts::AgentLifecycle, slot = "Lifecycle"),
     require(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
     require(phenix_basic_contracts::ToolExecute, slot = "Tools"),
@@ -297,12 +329,13 @@ mod staged_graph_tests;
 )]
 mod plugin {
     use phenix_basic_contracts::{
-        error, AdvancedPreparedModelRequest, BasicError, BasicInput, BasicOutput, BasicTurnAdvance,
-        BasicTurnPrepare, CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind,
-        EventPage, GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
-        ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
-        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
-        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
+        error, AdvancedPreparedModelRequest, AgentLifecycle, AgentRunFinished, BasicError,
+        BasicInput, BasicOutput, BasicTurnAdvance, BasicTurnPrepare, CatalogCursor, Context,
+        ErrorCode, Event, EventJournal, EventKind, EventPage, GraphStateChange, JournalAppend,
+        JournalQuery, Message, Model, ModelRequest, ObserverCheckpoint, ObserverRequest,
+        PromptSubmitted, RunResult, RunStatus, Scope, Session, SessionSnapshot, Skills,
+        ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome, ToolQuery, ToolRequest,
+        TurnAdvanceOutcome, Usage,
     };
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
@@ -327,6 +360,10 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
+        /// Only a redacted successful completion notice is retained for
+        /// the post-submit graph hook. Transcripts and answer text remain
+        /// exclusively in the Session/Journal owner, not this cache.
+        completed: Option<AgentRunFinished>,
         // The staged request is authoritative in this plugin. The graph
         // consumes a read-only, watched Phenix view of this Rust field.
         #[expose]
@@ -865,6 +902,17 @@ mod plugin {
         }
     }
 
+    // One canonical, redacted semantic notice for both execution modes.
+    // The answer, journal entries, history and credentials stay with their owners.
+    fn completion_notice(reply: &RunResult) -> AgentRunFinished {
+        AgentRunFinished {
+            session: reply.session.clone(),
+            run: reply.run.clone(),
+            model_turns: reply.model_turns,
+            tool_calls: reply.tool_calls,
+        }
+    }
+
     fn finish(
         state: &mut State,
         host: &Host<'_>,
@@ -880,7 +928,10 @@ mod plugin {
                 Code::PluginFailed,
                 "default Basic cannot publish a staged continuation",
             )),
-            Ok(Advance::Done(reply)) => PendingResult::Ready(Ok(reply)),
+            Ok(Advance::Done(reply)) => {
+                state.completed = Some(completion_notice(&reply));
+                PendingResult::Ready(Ok(reply))
+            }
             Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
             Err(CallError::Kernel(failure)) => reconcile_model_failure(host, &running, failure),
         }
@@ -904,6 +955,14 @@ mod plugin {
                 PendingResult::Ready(Ok(TurnAdvanceOutcome::Reprepare))
             }
             Ok(Advance::Done(reply)) => {
+                // Staged advance is admitted by the existing watched-state
+                // graph node. A terminal reply has already been checkpointed;
+                // queue its semantic notice in that same root before returning
+                // Complete. Reprepare/Pending/failed/cancelled paths never emit.
+                // A failed emission must not be silently reported as success.
+                if let Err(failure) = host.emit_event(&completion_notice(&reply)) {
+                    return PendingResult::QuiescentFailure(failure);
+                }
                 PendingResult::Ready(Ok(TurnAdvanceOutcome::Complete { result: reply }))
             }
             Err(CallError::Domain(problem)) => {
@@ -1047,6 +1106,33 @@ mod plugin {
         Ok(true)
     }
 
+    /// A semantic notification after the pending submit operation finishes.
+    /// Graph 'after' enforces ordering; no alternative event scheduler or
+    /// session checkpoint mutation is introduced.
+    #[provide(AgentLifecycle::finished)]
+    fn notify_run_finished(
+        state: &mut State,
+        host: &Host<'_>,
+        request: PromptSubmitted,
+    ) -> CallResult<(), BasicError> {
+        phenix_basic_contracts::check_session(host, &request.session)?;
+        let result = state.completed.as_ref().ok_or_else(|| {
+            CallError::Domain(error(
+                ErrorCode::Conflict,
+                "no successfully completed run to announce",
+            ))
+        })?;
+        if result.session != request.session {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "completed run belongs to a different session",
+            )));
+        }
+        host.emit_event(result).map_err(CallError::Kernel)?;
+        state.completed = None;
+        Ok(())
+    }
+
     #[pending(BasicInput::submit)]
     fn begin(
         state: &mut State,
@@ -1065,6 +1151,7 @@ mod plugin {
                 "a Basic run is already active",
             ))));
         }
+        state.completed = None;
         match prepare(host, request) {
             Ok(mut running) => {
                 let value = advance(host, &mut running, None);

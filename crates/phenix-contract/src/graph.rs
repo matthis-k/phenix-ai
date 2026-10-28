@@ -214,6 +214,14 @@ impl StaticGraphNode {
             failure: FailurePolicy::FailRoot,
         }
     }
+
+    /// Order a declarative subscription after existing graph operations,
+    /// including pending operations. This only describes a normal M1 DAG
+    /// dependency; it does not create a new scheduler or completion event.
+    pub const fn after(mut self, nodes: &'static [&'static str]) -> Self {
+        self.after = nodes;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -678,6 +686,21 @@ mod tests {
             settled_event_schema(),
             ValueSchema::Struct(std::collections::BTreeMap::new())
         );
+    }
+
+    #[test]
+    fn declarative_after_builder_preserves_normal_graph_edges() {
+        const ORDERED: StaticGraphNode = StaticGraphNode::on(
+            "completed",
+            &["prompt.submitted"],
+            "agent.lifecycle@1/completed",
+        )
+        .after(&["agent/submit"]);
+        assert_eq!(ORDERED.after, &["agent/submit"]);
+        assert_eq!(ORDERED.selector, "");
+        assert!(ORDERED.writes.is_empty());
+        assert_eq!(ORDERED.join, JoinPolicy::AllActive);
+        assert_eq!(ORDERED.failure, FailurePolicy::FailRoot);
     }
 
     #[test]

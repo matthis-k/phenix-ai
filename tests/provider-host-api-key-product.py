@@ -122,24 +122,13 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
                          resources=[source]),
                     dict(caller="phenix.provider.host", interface=CREDS, operation="resolve",
                          resources=[source]),
-                    # Graph handlers are separate, explicitly scoped operations.
-                    # Merely installing a provider host grants neither one.
-                    dict(caller="phenix.provider.host",
-                         interface="phenix.provider.startup@1", operation="begin",
-                         resources=[source]),
-                    dict(caller="phenix.provider.host",
-                         interface="phenix.provider.settlement@1", operation="complete",
-                         resources=[source]),
                 ] if entry == "phenix.provider.host" else []),
             ],
             excluded=[],
             substitutions=[],
             authority=dict(
-                operations=[root_op] + ([
-                    REG + "/list", CREDS + "/resolve",
-                    "phenix.provider.startup@1/begin",
-                    "phenix.provider.settlement@1/complete",
-                ] if entry == "phenix.provider.host" else []),
+                operations=[root_op] + ([REG + "/list", CREDS + "/resolve"]
+                                        if entry == "phenix.provider.host" else []),
                 resources=[source],
             ),
             resource=source,
@@ -151,14 +140,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
             capture_output=True, text=True, env=env, timeout=30,
         )
         assert proc.stdout, ("missing native response", proc.returncode, proc.stderr[-150:])
-        report = json.loads(proc.stdout)
-        if "outcome" not in report:
-            raise AssertionError({
-                "operation": root_op, "exit_code": proc.returncode,
-                "last_failure": report.get("last_failure"),
-                "stderr": proc.stderr[-4000:],
-            })
-        return report["outcome"], proc.returncode
+        return json.loads(proc.stdout).get("outcome"), proc.returncode
 
     try:
         query = dict(scope="user", provider_id="openai", connection_id="api")

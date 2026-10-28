@@ -78,11 +78,21 @@ fn submit(
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let steps = execution.steps();
-    assert_eq!(steps.len(), 1);
+    assert!(!steps.is_empty());
     assert_eq!(steps[0].node, "phenix.basic.agent/submit");
     match &steps[0].outcome {
-        Outcome::Success(value) => Ok(RunResult::from_value(value.clone()).unwrap()),
-        Outcome::Domain(value) => Err(BasicError::from_value(value.clone()).unwrap()),
+        Outcome::Success(value) => {
+            // The completed agent run now emits a semantic success notice
+            // via its separately granted, explicitly ordered graph handler.
+            assert_eq!(steps.len(), 2);
+            assert_eq!(steps[1].node, "phenix.basic.agent/run-finished");
+            assert!(matches!(&steps[1].outcome, Outcome::Success(_)));
+            Ok(RunResult::from_value(value.clone()).unwrap())
+        }
+        Outcome::Domain(value) => {
+            assert_eq!(steps.len(), 1, "failed turns must not emit completion");
+            Err(BasicError::from_value(value.clone()).unwrap())
+        }
     }
 }
 fn main() {
@@ -99,6 +109,7 @@ fn main() {
     let resources = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let keys = [
         ("phenix.basic.agent", "phenix.basic.input@1/submit"),
+        ("phenix.basic.agent", "phenix.agent.lifecycle@1/finished"),
         ("phenix.basic.agent", "phenix.basic.output@1/read"),
         ("phenix.model.scripted", "phenix.basic.model@1/complete"),
         ("phenix.basic.tools", "phenix.basic.catalog@1/list"),
@@ -166,6 +177,7 @@ fn main() {
         ("root", "phenix.basic.session@1/open"),
         ("root", "phenix.basic.context@1/set"),
         ("phenix.basic.agent", "phenix.basic.input@1/submit"),
+        ("phenix.basic.agent", "phenix.agent.lifecycle@1/finished"),
         ("phenix.basic.tools", "phenix.tools.startup@1/begin"),
         ("phenix.basic.tools", "phenix.tools.settlement@1/complete"),
         ("phenix.basic.agent", "phenix.basic.journal@1/append"),

@@ -103,8 +103,6 @@ mod plugin {
 
     #[derive(Default)]
     pub struct State {
-        /// One immutable snapshot per plugin generation, not mutable Storage.
-        selected: Option<Vec<ProviderDescriptor>>,
         /// Only an explicitly authorized population event can stage declarations.
         registry: registration::Registry,
         /// Shared, account-isolated attempt lifecycle owned by this host.
@@ -158,9 +156,9 @@ mod plugin {
         state: &'a mut State,
         host: &Host<'_>,
     ) -> CallResult<&'a [ProviderDescriptor], ProviderError> {
-        if state.selected.is_none() {
-            // Registration events may still be executing. Do not publish a
-            // partial catalog or silently select the pull-based compatibility path.
+        if state.registry.selected().is_none() {
+            // An active or failed event wave can never expose an uncommitted
+            // snapshot or silently select the legacy pull adapter.
             if state.registry.blocks_pull_catalog() {
                 return Err(CallError::Domain(error(
                     ProviderErrorCode::Unavailable,
@@ -192,12 +190,17 @@ mod plugin {
                     "invalid or conflicting selected provider registrations",
                 ))
             })?;
-            state.selected = Some(selected);
+            state
+                .registry
+                .select_legacy(selected)
+                .map_err(CallError::Domain)?;
         }
-        Ok(state
-            .selected
-            .as_deref()
-            .expect("initialized provider catalog"))
+        state.registry.selected().ok_or_else(|| {
+            CallError::Domain(error(
+                ProviderErrorCode::Unavailable,
+                "provider catalog has not been published",
+            ))
+        })
     }
 
     fn selected_provider(
@@ -354,7 +357,7 @@ mod plugin {
         _: ProviderKernelBegin,
     ) -> CallResult<(), ProviderError> {
         let scope = current_scope(host)?;
-        if state.selected.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
                 "provider catalog already selected",
@@ -421,7 +424,7 @@ mod plugin {
         _: ProvidersPopulated,
     ) -> CallResult<(), ProviderError> {
         let scope = current_scope(host)?;
-        if state.selected.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
                 "provider catalog is already selected",
@@ -432,8 +435,7 @@ mod plugin {
         // Enqueue before committing so a full queue cannot expose a partial
         // initialization as successful.
         host.emit_event(&ProvidersReady { scope, revision: 1 })?;
-        let published = state.registry.publish().map_err(CallError::Domain)?;
-        state.selected = Some(published.providers);
+        state.registry.publish().map_err(CallError::Domain)?;
         Ok(())
     }
 
@@ -445,7 +447,7 @@ mod plugin {
         request: ProviderQuery,
     ) -> CallResult<(), ProviderError> {
         check(host, &request.scope)?;
-        if state.selected.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
                 "provider catalog is already selected",
@@ -463,7 +465,7 @@ mod plugin {
         request: ProviderRegistration,
     ) -> CallResult<(), ProviderError> {
         check(host, &request.scope)?;
-        if state.selected.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
                 "provider catalog is already selected",
@@ -484,15 +486,13 @@ mod plugin {
         request: ProviderQuery,
     ) -> CallResult<ProviderPage, ProviderError> {
         check(host, &request.scope)?;
-        if state.selected.is_some() {
+        if state.registry.selected().is_some() {
             return Err(CallError::Domain(error(
                 ProviderErrorCode::Conflict,
                 "provider catalog is already selected",
             )));
         }
-        let page = state.registry.publish().map_err(CallError::Domain)?;
-        state.selected = Some(page.providers.clone());
-        Ok(page)
+        state.registry.publish().map_err(CallError::Domain)
     }
 
     /// Controller-only: discard the failed event wave without publishing data.
