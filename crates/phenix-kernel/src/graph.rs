@@ -780,6 +780,7 @@ impl Kernel {
                 action: action_id.into(),
                 event: action_id.into(),
                 payload: payload.clone(),
+                wave_is_settlement: false,
                 v2: Some(wave),
                 node_requests: BTreeMap::new(),
                 state_cursor: 0,
