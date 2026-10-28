@@ -1,4 +1,4 @@
-use example_graph_contracts::{SlowTask, Start, Task};
+use example_graph_contracts::{ReferenceSource, SlowTask, Start, Task};
 use phenix_sdk::{live, *};
 
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
@@ -37,8 +37,10 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     id = "example.graph-a",
     define(Task),
     define(SlowTask),
+    define(ReferenceSource),
     provide(Task, slot = "task"),
     provide(SlowTask, slot = "slow"),
+    provide(ReferenceSource, slot = "reference_source"),
     profile = "state",
     graph(GRAPH)
 )]
@@ -67,6 +69,9 @@ mod provider {
     #[provide(Task::run)]
     fn run(state: &mut State, host: &live::Host<'_>, input: Start) -> CallResult<String, String> {
         example_graph_contracts::check_resource(host, &input)?;
+        if input.text == "kernel-a" {
+            return Err(Failure::new(Code::PluginFailed, "kernel failure fixture a").into());
+        }
         if input.text == "domain" {
             return Err(CallError::Domain("domain fixture".into()));
         }
@@ -98,6 +103,25 @@ mod provider {
                 .map_err(|e| Failure::new(Code::PluginFailed, e.to_string()))?;
         }
         Ok(input.text)
+    }
+
+    #[provide(ReferenceSource::run)]
+    fn reference_source(
+        state: &mut State,
+        host: &live::Host<'_>,
+        input: Start,
+    ) -> CallResult<live::ValueRef<String>, String> {
+        let expected = format!("A:{}", input.text);
+        run(state, host, input)?;
+        let reference = state.result.reference()?;
+        let snapshot = reference
+            .read(host)
+            .map_err(|_| Failure::new(Code::PluginFailed, "owner reference read failed"))?;
+        assert!(
+            *snapshot.value == expected,
+            "owner reference value mismatch"
+        );
+        Ok(reference)
     }
 
     #[pending(SlowTask::run)]
