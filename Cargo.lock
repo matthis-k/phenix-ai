@@ -2071,6 +2071,7 @@ dependencies = [
 name = "phenix-plugin-provider-host"
 version = "0.1.0"
 dependencies = [
+ "phenix-basic-contracts",
  "phenix-provider-auth-strategies",
  "phenix-provider-builtins",
  "phenix-provider-discovery",

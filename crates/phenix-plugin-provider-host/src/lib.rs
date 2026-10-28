@@ -48,15 +48,17 @@ fn missing_model_catalog(requires_auth: bool) -> ProviderError {
         slot = "Credentials",
         many(min = 0)
     ),
-    provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication")
+    provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
+    provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime")
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
         AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
-        AuthenticatedProfile, CredentialIdentity, CredentialProfile, CredentialProfileStatus,
-        ModelQuery, ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery,
-        ProviderPage, ProviderQuery, ProviderRegistrations,
+        AuthenticatedProfile, AuthenticationCommand, AuthenticationEvent, CredentialIdentity,
+        CredentialProfile, CredentialProfileStatus, ModelQuery, ProviderAuth, ProviderCatalog,
+        ProviderCompletion, ProviderCredentials, ProviderDetailsQuery, ProviderPage, ProviderQuery,
+        ProviderRegistrations, ProviderRuntime,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -165,19 +167,6 @@ mod plugin {
             })
     }
 
-    fn selected_connection(
-        state: &mut State,
-        host: &Host<'_>,
-        provider_id: &str,
-        connection_id: &str,
-    ) -> CallResult<bool, ProviderError> {
-        Ok(
-            !connection_descriptor(state, host, provider_id, connection_id)?
-                .auth_methods
-                .is_empty(),
-        )
-    }
-
     /// Revalidate selected credentials against the real declared catalog.
     /// Stored credentials alone never constitute successful authentication.
     fn verified_key(
@@ -202,6 +191,89 @@ mod plugin {
             Err(failure) => return Err(failure),
         };
         Ok(models::discover(connection, identity.profile_id(), &secret, 256).is_ok())
+    }
+
+    // The shared host is the canonical provider execution-facing interface.
+    // Legacy auth/catalog ports are simple aliases to these exact handlers,
+    // rather than distinct provider-specific implementations.
+    #[provide(ProviderRuntime::authenticate)]
+    fn runtime_authenticate(
+        state: &mut State,
+        host: &Host<'_>,
+        command: AuthenticationCommand,
+    ) -> CallResult<AuthenticationEvent, ProviderError> {
+        match command {
+            AuthenticationCommand::Status { query } => {
+                status(state, host, query).map(|value| AuthenticationEvent::Status { value })
+            }
+            AuthenticationCommand::Begin { request } => {
+                begin(state, host, request).map(|value| AuthenticationEvent::Challenge { value })
+            }
+            AuthenticationCommand::Poll { request } => {
+                poll(state, host, request).map(|value| AuthenticationEvent::Attempt { value })
+            }
+            AuthenticationCommand::Cancel { request } => {
+                cancel(state, host, request).map(|value| AuthenticationEvent::Attempt { value })
+            }
+        }
+    }
+
+    #[provide(ProviderRuntime::models)]
+    fn runtime_models(
+        state: &mut State,
+        host: &Host<'_>,
+        query: ModelQuery,
+    ) -> CallResult<ModelPage, ProviderError> {
+        models(state, host, query)
+    }
+
+    #[provide(ProviderRuntime::complete)]
+    fn runtime_complete(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderCompletion,
+    ) -> CallResult<phenix_basic_contracts::ModelReply, ProviderError> {
+        if request.request.session.is_empty() || request.request.run.is_empty() {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::InvalidInput,
+                "missing canonical model session or run",
+            )));
+        }
+        // Run precisely the same account-bound, verified catalog path used
+        // for UI selection. A stale or cross-account model ID is not a grant.
+        // A listed model is still not an executable protocol strategy.
+        let authorized = models(
+            state,
+            host,
+            ModelQuery {
+                scope: request.scope.clone(),
+                provider_id: request.provider_id.clone(),
+                connection_id: request.connection_id.clone(),
+                profile_id: request.profile_id.clone(),
+                cursor: None,
+                limit: 256,
+            },
+        )?;
+        if request.profile_id != authorized.profile_id {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::Denied,
+                "selected model account does not match verified account",
+            )));
+        }
+        if !authorized.models.iter().any(|model| {
+            model.id == request.model_id
+                && model.connection_id == request.connection_id
+                && model.selectable
+        }) {
+            return Err(CallError::Domain(error(
+                ProviderErrorCode::NotFound,
+                "model is not selectable for the authorized account",
+            )));
+        }
+        Err(CallError::Domain(error(
+            ProviderErrorCode::Unavailable,
+            "selected session protocol adapter is not installed",
+        )))
     }
 
     #[provide(ProviderCatalog::list)]
@@ -485,7 +557,7 @@ mod tests {
     fn metadata_exposes_shared_host_without_provider_registrations() {
         let metadata = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
         assert_ne!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.provides.len(), 2);
+        assert_eq!(metadata.provides.len(), 3);
     }
 
     #[test]

@@ -24,6 +24,7 @@ RESOURCE = "phenix.credentials." + ".".join(
     IDENTITY[key].encode().hex() for key in ("provider_id", "connection_id", "profile_id")
 )
 AUTH = "phenix.provider.auth@1"
+RUNTIME = "phenix.provider.runtime@1"
 CATALOG = "phenix.provider.catalog@1"
 CREDS = "phenix.provider.credentials@1"
 REG = "phenix.provider.registrations@1"
@@ -188,6 +189,50 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
         assert page["value"]["profile_id"] == ["personal"], page
         assert [m["id"] for m in page["value"]["models"]] == ["gpt-5"], page
 
+        # The canonical port MUST reuse these very same host-owned auth and
+        # discovery decisions; provider implementations do not get a second
+        # state machine or alternative model verification path.
+        canonical_status, code = invoke(RUNTIME, "authenticate", {
+            "Status": {"query": query},
+        })
+        assert code == 0 and canonical_status["kind"] == "success", canonical_status
+        assert canonical_status["value"]["Status"]["value"] == after["value"], (
+            canonical_status, after,
+        )
+        canonical_models, code = invoke(RUNTIME, "models", {
+            **query, "profile_id": ["personal"], "cursor": None, "limit": 20,
+        })
+        assert code == 0 and canonical_models["kind"] == "success", canonical_models
+        assert canonical_models["value"] == page["value"], canonical_models
+
+        request = dict(
+            scope="user", provider_id="openai", connection_id="api",
+            profile_id=["personal"], model_id="gpt-5",
+            request=dict(
+                session="session-1", run="run-1",
+                history=[], tools=[], skills=[], context=[],
+                limits=dict(
+                    model_turns=None, tool_calls=None,
+                    model_tokens=None, http_timeout_ms=None,
+                ),
+            ),
+        )
+        selected, code = invoke(RUNTIME, "complete", request)
+        assert code == 0 and selected["kind"] == "domain_error", selected
+        assert selected["value"]["code"] == "Unavailable", selected
+
+        foreign_model, code = invoke(RUNTIME, "complete", {
+            **request, "model_id": "text-embedding-3-large",
+        })
+        assert code == 0 and foreign_model["kind"] == "domain_error", foreign_model
+        assert foreign_model["value"]["code"] == "NotFound", foreign_model
+
+        bad_run, code = invoke(RUNTIME, "complete", {
+            **request, "request": {**request["request"], "run": ""},
+        })
+        assert code == 0 and bad_run["kind"] == "domain_error", bad_run
+        assert bad_run["value"]["code"] == "InvalidInput", bad_run
+
         other, code = invoke(CATALOG, "models", {
             **query, "profile_id": ["other"], "cursor": None, "limit": 20,
         })
@@ -206,4 +251,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-host-key-") as temporary:
         exact_credential_authority=True,
         foreign_connection_denied=True,
         no_embedding_models=True,
+        canonical_host_contract=True,
+        cross_port_exact_model_selection=True,
+        completion_requires_executable_adapter=True,
     ), indent=2, sort_keys=True))
