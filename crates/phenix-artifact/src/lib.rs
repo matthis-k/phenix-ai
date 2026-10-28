@@ -1,4 +1,5 @@
 use object::{Object, ObjectSection};
+use phenix_contract::{graph::v2::GraphContributionV2, Value};
 use phenix_contract::{
     Code, ContractMetadata, Failure, GraphContribution, MetadataExecution, NATIVE_SECTION_BYTES,
 };
@@ -63,6 +64,51 @@ fn extract_section(data: &[u8]) -> Result<Vec<u8>, Failure> {
  * The artifact SHA-256 binds both sections to the verified package.
  */
 pub fn extract_graph(bytes: &[u8]) -> Result<Option<GraphContribution>, Failure> {
+    match extract_graph_metadata(bytes)? {
+        None => Ok(None),
+        Some(ParsedGraph::V1(graph)) => Ok(Some(graph)),
+        Some(ParsedGraph::V2(_)) => Err(Failure::new(
+            Code::DescriptorInvalid,
+            "graph-v2 requires the v2 accessor",
+        )),
+    }
+}
+
+/// Inspect canonical graph-v2 metadata offline; a v1 section is not discarded.
+pub fn extract_graph_v2(bytes: &[u8]) -> Result<Option<GraphContributionV2>, Failure> {
+    match extract_graph_metadata(bytes)? {
+        None => Ok(None),
+        Some(ParsedGraph::V2(graph)) => Ok(Some(graph)),
+        Some(ParsedGraph::V1(_)) => Err(Failure::new(
+            Code::DescriptorInvalid,
+            "graph-v1 requires the v1 accessor",
+        )),
+    }
+}
+
+#[derive(Debug)]
+enum ParsedGraph {
+    V1(GraphContribution),
+    V2(GraphContributionV2),
+}
+
+impl ParsedGraph {
+    fn validate_owner(&self, plugin: &str) -> Result<(), Failure> {
+        let owner = match self {
+            Self::V1(graph) => &graph.plugin,
+            Self::V2(graph) => &graph.contributor,
+        };
+        if owner != plugin {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "graph owner differs from artifact",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn extract_graph_metadata(bytes: &[u8]) -> Result<Option<ParsedGraph>, Failure> {
     let object = object::File::parse(bytes)
         .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
     let mut sections = object
@@ -80,6 +126,10 @@ pub fn extract_graph(bytes: &[u8]) -> Result<Option<GraphContribution>, Failure>
     let data = section
         .data()
         .map_err(|e| Failure::new(Code::DescriptorInvalid, e.to_string()))?;
+    extract_graph_section(data).map(Some)
+}
+
+fn extract_graph_section(data: &[u8]) -> Result<ParsedGraph, Failure> {
     if data.len() != NATIVE_SECTION_BYTES {
         return Err(Failure::new(
             Code::DescriptorInvalid,
@@ -103,7 +153,26 @@ pub fn extract_graph(bytes: &[u8]) -> Result<Option<GraphContribution>, Failure>
             "nonzero graph section padding",
         ));
     }
-    Ok(Some(GraphContribution::decode(payload)?))
+    decode_graph_metadata(payload)
+}
+
+fn decode_graph_metadata(payload: &[u8]) -> Result<ParsedGraph, Failure> {
+    let value = Value::decode(payload)?;
+    match &value {
+        Value::Map(fields) => match fields.get("format") {
+            Some(Value::String(format)) if format == "phenix.graph.v1" => {
+                GraphContribution::decode(payload).map(ParsedGraph::V1)
+            }
+            Some(Value::String(format)) if format == "phenix.graph.v2" => {
+                GraphContributionV2::decode(payload).map(ParsedGraph::V2)
+            }
+            _ => Err(Failure::new(
+                Code::DescriptorInvalid,
+                "unknown graph format",
+            )),
+        },
+        _ => Err(Failure::new(Code::DescriptorInvalid, "expected graph map")),
+    }
 }
 
 use serde::{Deserialize, Serialize};
@@ -124,6 +193,7 @@ pub struct VerifiedPackage {
     record: PackageRecord,
     metadata: ContractMetadata,
     graph: Option<GraphContribution>,
+    graph_v2: Option<GraphContributionV2>,
 }
 fn read(path: &Path, code: Code) -> Result<Vec<u8>, Failure> {
     std::fs::read(path).map_err(|e| Failure::new(code, e.to_string()))
@@ -161,6 +231,10 @@ impl VerifiedPackage {
     pub fn graph(&self) -> Option<&GraphContribution> {
         self.graph.as_ref()
     }
+    /// Offline metadata only; presence does not authorize graph-v2 execution.
+    pub fn graph_v2(&self) -> Option<&GraphContributionV2> {
+        self.graph_v2.as_ref()
+    }
     /// Trusted control-plane caller attests a read-only package source. The CLI
     /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
     pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
@@ -194,7 +268,7 @@ impl VerifiedPackage {
                 "descriptor digest mismatch",
             ));
         }
-        let graph = extract_graph(&executable)?;
+        let graph = extract_graph_metadata(&executable)?;
         let extracted = extract(&executable)?;
         if extracted != metadata {
             return Err(Failure::new(
@@ -209,20 +283,20 @@ impl VerifiedPackage {
                 "native metadata execution profile",
             ));
         }
-        if graph
-            .as_ref()
-            .is_some_and(|declaration| declaration.plugin != metadata.plugin)
-        {
-            return Err(Failure::new(
-                Code::DescriptorInvalid,
-                "graph owner differs from artifact",
-            ));
+        if let Some(graph) = &graph {
+            graph.validate_owner(&metadata.plugin)?;
         }
+        let (graph, graph_v2) = match graph {
+            Some(ParsedGraph::V1(graph)) => (Some(graph), None),
+            Some(ParsedGraph::V2(graph)) => (None, Some(graph)),
+            None => (None, None),
+        };
         Ok(Self {
             artifact,
             record,
             metadata,
             graph,
+            graph_v2,
         })
     }
     pub fn recheck(&self) -> Result<(), Failure> {
@@ -316,7 +390,15 @@ impl VerifiedContractPackage {
                     "definition graph digest mismatch",
                 ));
             }
-            let graph = phenix_contract::GraphContribution::decode(&bytes)?;
+            let graph = match decode_graph_metadata(&bytes)? {
+                ParsedGraph::V1(graph) => graph,
+                ParsedGraph::V2(_) => {
+                    return Err(Failure::new(
+                        Code::DescriptorInvalid,
+                        "graph-v2 definition packages are not supported",
+                    ));
+                }
+            };
             if graph.plugin != metadata.plugin || !graph.nodes.is_empty() {
                 return Err(Failure::new(
                     Code::DescriptorInvalid,
@@ -336,5 +418,81 @@ impl VerifiedContractPackage {
             package_sha256,
             graph,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v2() -> GraphContributionV2 {
+        GraphContributionV2 {
+            contributor: "test.plugin".into(),
+            sources: vec![],
+            nodes: vec![],
+            edges: vec![],
+            patches: vec![],
+        }
+    }
+
+    fn section(payload: &[u8]) -> Vec<u8> {
+        let mut data = vec![0; NATIVE_SECTION_BYTES];
+        data[..4].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+        data[4..4 + payload.len()].copy_from_slice(payload);
+        data
+    }
+
+    #[test]
+    fn canonical_graph_versions_and_owner() {
+        let graph = v2();
+        let payload = graph.encode().unwrap();
+        let parsed = extract_graph_section(&section(&payload)).unwrap();
+        parsed.validate_owner("test.plugin").unwrap();
+        let error = parsed.validate_owner("other.plugin").unwrap_err();
+        assert_eq!(error.code, Code::DescriptorInvalid);
+        let ParsedGraph::V2(decoded) = parsed else {
+            panic!("expected v2")
+        };
+        assert_eq!(decoded, graph);
+        assert_eq!(decoded.encode().unwrap(), payload);
+
+        let graph = GraphContribution {
+            plugin: "test.plugin".into(),
+            events: vec![],
+            actions: vec![],
+            nodes: vec![],
+        };
+        let parsed = extract_graph_section(&section(&graph.encode().unwrap())).unwrap();
+        parsed.validate_owner("test.plugin").unwrap();
+        assert!(parsed.validate_owner("other.plugin").is_err());
+        let ParsedGraph::V1(decoded) = parsed else {
+            panic!("expected v1")
+        };
+        assert_eq!(decoded, graph);
+    }
+
+    #[test]
+    fn rejects_invalid_graph_sections() {
+        let payload = v2().encode().unwrap();
+        let valid = section(&payload);
+        assert!(extract_graph_section(&valid[..valid.len() - 1]).is_err());
+        assert!(extract_graph_section(&[]).is_err());
+        let mut data = valid.clone();
+        *data.last_mut().unwrap() = 1;
+        assert!(extract_graph_section(&data).is_err());
+        let mut data = valid;
+        data[..4].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(extract_graph_section(&data).is_err());
+        for payload in [&[][..], &[0xff][..], &payload[..payload.len() - 1]] {
+            assert!(extract_graph_section(&section(payload)).is_err());
+        }
+        let Value::Map(mut fields) = Value::decode(&payload).unwrap() else {
+            unreachable!()
+        };
+        fields.insert("format".into(), Value::String("phenix.graph.v99".into()));
+        let unknown = Value::Map(fields.clone()).encode().unwrap();
+        assert!(extract_graph_section(&section(&unknown)).is_err());
+        fields.remove("format");
+        assert!(extract_graph_section(&section(&Value::Map(fields).encode().unwrap())).is_err());
     }
 }

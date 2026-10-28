@@ -33,6 +33,15 @@ CI checks out the exact PR head. Its artifact records `kernel-commit.txt`,
 acceptance to that commit and evidence. Historical M0 documents describe retired
 profiles; the M1 matrices own current behavior and remaining stage gates.
 
+The pull-request full-inventory gate uses the single-store `flake-local-dag`
+backend from `phenix-flake-ci`: one exact-head plan and native Nix DAG, with
+trusted-main cache restore read-only and no PR publisher or remote credentials.
+Keep its reusable workflow and `library_ref` pinned together. The trusted-main
+remote-builder workflow and independent ACP, formatting and policy checks remain
+separate. Use focused local checks while iterating; the complete exact-head CI
+evidence, not an interrupted local build or a different commit's pass, governs
+integration. A warm-cache improvement does not establish cold-build latency.
+
 ## Basic history verification
 
 The packaged products have three distinct levels:
