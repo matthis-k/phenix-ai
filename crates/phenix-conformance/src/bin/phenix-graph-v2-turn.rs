@@ -1,6 +1,7 @@
 //! Native acceptance for repeated graph-managed Basic turns.
 //! Usage: phenix-graph-v2-turn COMPOSITION (with a fresh SQLite database).
-//! Optional mode: deny-tool, pending, cancel, or fail-model. Controlled modes
+//! Controlled modes include pending[-rounds], cancel[-rounds-initial],
+//! cancel-continuation, cancel-rounds-continuation, and fail-model. These modes
 //! require the scripted Model's controlled-pending fixture feature.
 use phenix_basic_contracts::{
     BasicError, ErrorCode, EventKind, EventPage, JournalQuery, Limits, PromptSubmitted, RunResult,
@@ -22,10 +23,27 @@ fn main() {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let mode = std::env::args().nth(2);
     let deny_tool = mode.as_deref() == Some("deny-tool");
-    let controlled = matches!(mode.as_deref(), Some("pending" | "cancel" | "fail-model"));
+    let cancel_at = match mode.as_deref() {
+        Some("cancel" | "cancel-rounds-initial") => Some(0),
+        Some("cancel-continuation") => Some(1),
+        Some("cancel-rounds-continuation") => Some(2),
+        _ => None,
+    };
+    let controlled = cancel_at.is_some()
+        || matches!(
+            mode.as_deref(),
+            Some("pending" | "pending-rounds" | "fail-model")
+        );
     let repeated = matches!(
         mode.as_deref(),
-        Some("rounds" | "model-budget" | "tool-budget")
+        Some(
+            "rounds"
+                | "model-budget"
+                | "tool-budget"
+                | "pending-rounds"
+                | "cancel-rounds-initial"
+                | "cancel-rounds-continuation"
+        )
     );
     let budget = matches!(mode.as_deref(), Some("model-budget" | "tool-budget"));
     let prompt = match mode.as_deref() {
@@ -141,9 +159,53 @@ fn main() {
         // Repeated polls must neither re-admit the stage nor start another Model.
         assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Pending);
         assert_eq!(run.steps().len(), 1);
-        if mode.as_deref() == Some("cancel") {
+        if let Some(rounds) = cancel_at {
+            // Release one Model at a time, stopping with the requested
+            // continuation physically pending before requesting cancellation.
+            for round in 1..=rounds {
+                std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
+                for _ in 0..8 {
+                    assert_eq!(
+                        run.pump(|_| panic!("premature completion")).unwrap(),
+                        GraphStatus::Pending
+                    );
+                    if run.steps().len() == 1 + 3 * round {
+                        break;
+                    }
+                }
+                std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "hold");
+                let mut expected = vec!["phenix.basic.agent/prepare"];
+                for _ in 0..round {
+                    expected.extend([
+                        "phenix.basic.agent/model",
+                        "phenix.basic.agent/decide",
+                        "phenix.basic.agent/tool",
+                    ]);
+                }
+                assert_eq!(
+                    run.steps()
+                        .iter()
+                        .map(|step| step.node.as_str())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(
+                    run.pump(|_| panic!("premature completion")).unwrap(),
+                    GraphStatus::Pending
+                );
+                assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+            }
+            let steps_before_cancel = run.steps().len();
             run.cancel().unwrap();
-            assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Draining);
+            for _ in 0..3 {
+                assert_eq!(
+                    run.pump(|_| panic!("completed before physical drain"))
+                        .unwrap(),
+                    GraphStatus::Draining
+                );
+                assert_eq!(run.steps().len(), steps_before_cancel);
+                assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+            }
             assert!(run.completion().is_none());
             assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
             std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "drain");
@@ -162,12 +224,47 @@ fn main() {
             }
             assert_eq!(run.completion(), Some(GraphCompletion::Cancelled));
             assert_eq!(completions, 1);
-            assert_eq!(run.steps().len(), 1, "late Model success resumed graph");
+            assert_eq!(
+                run.steps().len(),
+                steps_before_cancel,
+                "late Model success resumed graph"
+            );
             assert_eq!(
                 run.pump(|_| panic!("duplicate completion")).unwrap(),
                 GraphStatus::Finished
             );
             assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            let Outcome::Success(value) = run
+                .invoke_selected(
+                    &Selection {
+                        interface: "phenix.basic.output@1".into(),
+                        operation: "read".into(),
+                        provider: "phenix.basic.agent".into(),
+                    },
+                    &JournalQuery {
+                        session: "s1".into(),
+                        after: 0,
+                        limit: 100,
+                    }
+                    .to_value(),
+                )
+                .unwrap()
+            else {
+                panic!("cancelled journal read failed")
+            };
+            let page = EventPage::from_value(value).unwrap();
+            let count = |kind| {
+                page.events
+                    .iter()
+                    .filter(|event| event.kind == kind)
+                    .count()
+            };
+            assert_eq!(count(EventKind::PromptAccepted), 1);
+            assert_eq!(count(EventKind::ModelStarted), rounds + 1);
+            assert_eq!(count(EventKind::ToolStarted), rounds);
+            assert_eq!(count(EventKind::ToolFinished), rounds);
+            assert_eq!(count(EventKind::Answer), 0);
+            assert_eq!(count(EventKind::Failure), 0);
             drop(run);
             std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
             assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
