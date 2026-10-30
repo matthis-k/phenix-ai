@@ -1,7 +1,9 @@
 # Phenix Graph Architecture v2.4 — Typed Dataflow, Finite-Wave Semantics and Deterministic Graph Patches
 
 **Status:** Latest graph-v2 design proposal for review; not implemented on `main`. This file defines intended future semantics, not an as-built API. Current behavior is determined by source and tests at the inspected commit. Earlier graph RFCs are historical when they disagree with this proposal. Incorporates the v2.1/v2.2 counterexample review, agent-harness ownership review, and the ten-point v2.3 contract review (25 October 2026).  
-**Scope:** M1 Phenix kernel, graph metadata, contract SDK, resolver and native plugin authoring.  
+**Scope:** M1 Phenix kernel, graph metadata, contract SDK, resolver and native plugin authoring.
+
+**28 October 2026 design amendment (proposed, not implemented):** §7.4–§7.8 and §9.3 formalize recursive open-graph authoring, explicitly named boundaries, graph-relative state scopes, overlapping views and activation completion. These constrain forthcoming V3/V4/V5 work; they do not claim current runtime or SDK support.  
 **Baseline inspected:** `matthis-k/phenix-ai` current `main` graph declarations/compiler, `phenix-contract` portable values and `Operation`, `phenix-kernel` `Prepared`/`GraphExecution`, ABI 3, and the event-driven draft implementation stack through #1153 (25 October 2026).
 
 ## 0. Decisions at a glance
@@ -40,6 +42,12 @@
 | D30 | `Value::Ref` delivery does not grant dereference authority | Portable references are identifiers, not capabilities |
 | D31 | Effective-export rebinding checks exact security by default | Patch winner changes cannot silently alter trust assumptions |
 | D32 | A mandatory hard-budget claim is a composition acceptance constraint | Unmediated cost effects invalidate any hard-enforcement claim |
+| D33 | A graph is recursively composable; a subgraph is a graph with an explicit identity and named, typed input/output interface | Domain-first authoring without creating a second graph runtime |
+| D34 | A composite graph can be wired like a node, but lowers into the one canonical effective graph; views do not clone topology or execute | Stable dataflow, selected dispatch and authority |
+| D35 | State has graph-relative scope (composition, graph instance, execution, invocation); persistence and synchronization are independent properties | Graph boundaries do not imply implementation/plugin-owned state |
+| D36 | Typed outputs settle independently; completion is an activation-scoped, drain-safe terminal signal, not an ordinary output's availability | No premature completion or pending-work release |
+| D37 | Overlapping views are permitted; partial overlap is diagnosable, not a compilation failure by itself | Allow deliberate reuse without hidden re-execution |
+| D38 | Blocking/serialization uses explicit scoped-state access and bounded keyed admission queues; queued external input does not keep a root alive | Prevent state races while preserving root and lifecycle semantics |
 
 ### 0.1 Historical implementation snapshot (25 October 2026; verify against current code)
 
@@ -932,6 +940,95 @@ Compiled graph patches can be authored through fluent builders, a declarative ma
 
 Expose an inspection API returning canonical graph JSON/Value metadata plus `dot`/Mermaid exports and an origin map for each generated edge. Key queries: `show graph`, `show sources`, `show route(edge_id)`, `explain patch(id)`, `why node active`, `why patch superseded`, `why flow denied`. Keep inspection read-only; it cannot change a live graph.
 
+### 7.4 Recursive open-graph composition and boundary model (target contract)
+
+**Status:** Normative target for SDK/compiler work, **not** an as-built API or a new runtime primitive. Graphs remain declarative metadata at preparation. A **graph** contains typed nodes/edges and may have disconnected components. A **subgraph** is any graph definition, occurrence, or view relative to another graph; these are roles of the same graph abstraction, not a second scheduler or special mandatory `NodeKind`.
+
+The following identities must stay distinct:
+
+| Concept | Identity and behavior |
+|---|---|
+| **Graph definition** | Qualified stable name, explicitly declared named/typed boundary, declarative internal topology; can be reused |
+| **Graph instance** | Deterministic, qualified occurrence of a definition within a composition; a distinct instance gets distinct effective node/edge IDs |
+| **Graph view** | Named selection of existing effective nodes/edges; may overlap/contain other views, but creates no nodes, invocations, state, execution scopes, grants or source admissions |
+| **Composite node** | Authoring façade exposing an instance's explicit interface as a node-like port endpoint; lowered before execution |
+| **Graph activation** | One causally admitted occurrence of work associated with a particular instance/view interface, root and wave(s); **not** the definition or a permanent source subscription |
+| **Effective graph** | The single canonical, verified graph prepared from the selected contributions, expanded instances, bindings and authorized patches; may be disconnected |
+
+Definitions must explicitly **name/tag themselves and every published input/output port**. Each port has the existing canonical `ValueSchema`, classification/integrity, and (for inputs) readiness policy. Exposed operation errors must remain distinguished from infrastructure failures; graph boundaries do not convert kernel failures into ordinary domain error values. A graph may publish zero, one, or multiple independent outputs. A named `completed` lifecycle projection is separate from ordinary domain output ports (§7.7).
+
+A graph may be wired as a node: `a.output("context") -> b.input("context")`. Each external port resolves to exactly one declared boundary mapping, potentially to a typed internal endpoint or an explicitly typed boundary aggregator. Boundary mappings may not silently omit internal crossing `Flow`, `Order` or `Deferred` edges, change readiness semantics, relabel security, synthesize a root or infer a default port from a single available endpoint. Invalid, unexposed crossings reject with a diagnostic naming the graph, port and original edge. Temporary visual selection may infer candidate boundary *suggestions*, but executable/reusable interfaces must be explicitly declared and verified.
+
+**Recursive definition composition is finite**: definitions may contain instances of other definitions, but cycles in the definition-reference graph reject rather than infinitely expanding. This does **not** prohibit runtime feedback: feedback is the existing explicit `Deferred::Next` mechanism with bounded same-root waves (§3.6). No generic runtime function-call/recursion semantics are inferred from graph containment.
+
+**Lowering contract** (pure, offline, prior to live plugin initialization):
+
+1. Verify each definition and named boundary, then resolve the selected definition/instance dependency DAG.
+2. Expand instances using canonical qualified IDs independent of declaration order; reject collisions/ambiguous aliases. Preserve definition ID, instance ID, original node/edge origin and boundary-port origin as inspectable provenance.
+3. Resolve external port edges to exact internal typed endpoints. Preserve `Flow` payload, `Order` nonactivation, `Deferred` wave behavior, closure/failure and all security labels; no fake synchronous call or copied live state.
+4. Apply authorized graph patch algebra against stable **logical** anchors and effective named exports, not incidental compiler-generated segment IDs. Validate post-patch types, causality, cycles, selected operation bindings, grants, information flow and generation identity globally under existing rules.
+5. Emit **one** canonical effective graph for the existing kernel scheduler/selected ABI-3 dispatcher; there is no composite-node interpreter, GraphManager or second admission path.
+
+Compiler output must make it possible to explain `definition -> instance -> boundary -> effective node/edge` and attribute failures to the authoring location. Equivalent canonical definitions/instances/patch sets must produce identical topology/provenance digests independent of declaration order; changing an instance, interface, grant, binding or effective membership must not accidentally reuse a stale generation.
+
+### 7.5 Views, containment, overlap, and execution identity
+
+Subgraphs may be disjoint, nested, identical, or partially overlapping. **Disjoint and contained are normal; partial overlap is allowed** for reuse and integration and may emit a non-failing architectural diagnostic. A view selects membership and/or presentations of existing nodes; membership does not imply unique graph ownership, automatically export state, duplicate an execution or confer authority.
+
+Boxing an existing view into an executable/reusable graph interface requires an explicit stable name, complete declared boundary ports, and a nonambiguous instance/activation anchor. **Boxing is observational** when it merely exposes the same underlying topology; **instantiation** creates a distinct occurrence with distinct effective IDs. They must not be confused. Overlapping boxed views of the same effective node still refer to that one compiled node; a second runtime invocation occurs only when normal causal admission schedules an invocation (or when an actual separate instance supplies a separate effective node ID). Preserve V2's once-per-node-per-wave initial profile; nested presentation cannot bypass it.
+
+A node's side effects, authorization and state bindings belong to its actual selected operation and scoped resources, **not** to the set of views containing it. Views may observe a shared invocation in multiple aggregate status projections without creating independent tickets or physical leases. If a consumer requires independent work, it must instantiate explicit topology or use an admitted later wave, not rely on overlapping membership.
+
+### 7.6 Graph-relative scoped state and serialization
+
+Three **independent dimensions** describe state: (a) scope/identity, (b) lifetime/durability, and (c) concurrency/admission policy. A graph view or plugin packaging boundary is **not** an implicit state scope. A subgraph's implementation can be supplied by a native plugin, but that package identity does not decide which graph activations share state.
+
+| State scope | Identity | Sharing |
+|---|---|---|
+| **Composition-global** | Explicit named resource under a selected composition/generation | Across authorized graph instances/activations of that composition; never implicit process-global access |
+| **Graph-instance** | Explicitly named state anchored to one stable graph instance identity | Across activations of that instance; distinct instances do not alias without an explicit shared binding |
+| **Execution** | Named resource anchored to one graph activation/root causal context | Shared only among operations admitted into that activation; separately admitted activations do not alias |
+| **Invocation** | Exact `(RootId, WaveId, NodeId, invocation occurrence)` | One selected invocation's temporary work; never implicitly shared |
+
+Execution scope is not always synonymous with a whole root: one root can encompass nested graph activations or later waves. The compiler/runtime must distinguish the relevant subgraph activation correlation from `RootId` and `WaveId` rather than guessing from membership. A durable record may be associated with a graph-instance identity, but *durable* is a lifetime/storage policy, not another state scope. Reuse across prepared generations requires explicit owner-mediated restoration/rebinding and schema/scope checks; the new generation cannot silently inherit an old instance's live values.
+
+**State ownership remains with the responsible domain implementation**, typically ordinary native Rust fields or a selected domain storage service, as required by [plugin-state-ownership.md](plugin-state-ownership.md). Graph-level scoped-state references describe access, identity and lifecycle; they do **not** introduce a kernel-managed arbitrary-object store, a generic writeable state registry or a new native ABI. Only the selected owner mutation contract may change its data, and opt-in typed observations remain separately authorized.
+
+Any operation referencing graph-instance-scoped state must have one **explicit scope anchor**. Overlapping view membership cannot choose between anchors, duplicate a state object, or silently merge state. An ambiguous or absent anchor rejects before native load. The verifier checks declared state access against selected binding/resource scope, while runtime permission is still attenuated by the effective root; state declaration or serialization alone grants no rights.
+
+**Synchronization is an access/admission policy, not a fifth scope.** Pure operations and independently scoped invocations can run without a lock. Shared mutable state may declare an exclusive or keyed serial lane, concurrent-safe/transactional access, and a bounded queue policy. The domain declares the protected resource/key, readiness condition, fairness and domain-specific admission policy; a shared mechanism may enforce the lifetime of an exclusive reservation. A reservation must not be released while outstanding native work can still mutate protected state; cancellation/failure follows the existing physical-drain guarantees. Avoid locking an entire graph or holding a Rust mutex across asynchronous/user interaction merely because a state field exists.
+
+Accepted user input may be **queued before root admission** while session/auth/model prerequisites are unavailable. Queue acceptance is not successful execution, may have bounded capacity and explicit rejection/cancellation/revalidation, and does not create a waiting root. Eligibility, resource grants and selected bindings are revalidated at admission; each eligible turn is admitted and settled according to the owning domain's lane policy. A queued item contributes to domain backlog status, not to any not-yet-created activation's completion. These general mechanisms must not teach the kernel about sessions, models or user turns.
+
+### 7.7 Independent outputs and aggregate subgraph completion
+
+A graph interface has **independent named typed outputs**. Producing `result` can make a consumer runnable while another internal branch remains pending. Neither an output value nor its closure is an implicit graph-completion event.
+
+An executable graph **activation** can additionally expose a read-only aggregate status and an explicitly named `completed` **lifecycle projection**. It is terminal only when, for the activation's causally attributable internal work:
+
+- all relevant incoming candidates and internal branches have resolved `Value`, `Closed` or `Failed` and no internal node is runnable, waiting for resolvable input, or scheduled;
+- no internal operation/ticket remains logically pending, and every attributable native physical lease is quiescent or safely drained;
+- no admitted same-root deferred continuation or already-scheduled internal activation can still enter the region; no later wave can reopen this **specific** completed activation;
+- failure/cancellation paths retain their correct status and drain before terminal notification.
+
+Completion is **terminal regardless of outcome**: success, handled domain failure, kernel failure, or cancellation are distinguished in its typed *status*. An idle long-lived graph definition or persistent external source is not an active execution and must not be held open awaiting future events. A new external occurrence creates another root/activation under existing admission rules. An external approval wait is a durable plugin checkpoint followed by a **new** root (§10.3), not an unfinished live subgraph activation.
+
+The completion projection is a **kernel-derived lifecycle fact**, not an arbitrarily injected `Value` that can bypass admission or an `Order` edge that incorrectly activates successors. If consumed as graph data/control, the SDK/compiler must specify a typed, authorized lowering consistent with `Flow<()>` activation and the eventual finite-wave executor. Until that mechanism exists, the authoring surface must not claim completion-triggered execution is supported. An `after` / `Order` dependency alone never activates a successor.
+
+A completion view includes only work **causally attributable to that activation inside the declared region**, including outstanding descendant operations relevant to it, not arbitrary downstream work outside its boundary. It cannot complete merely because no currently-running node is visible if a relevant node may still become runnable or a deferred continuation is scheduled. Overlapping views may observe the same real ticket; the ticket is physically owned exactly once. Membership alone does not create an activation, and completion accounting requires actual root/wave/node/ticket correlations. Define and verify ownership/causal attribution before implementing composite completion; do not infer it from `NodeId` membership alone.
+
+### 7.8 Rollout and compatibility with V2 execution
+
+**Do not interrupt V1/V2 stabilization or rewrite passing native tests.** This amendment is a design constraint for forthcoming compiler/SDK features, not permission to change ABI 3 or reinterpret existing flat graph bytes. Existing explicit flat V2 `GraphContributionV2` authors and independently compiled foreign-language contributors remain valid. A macro-free builder and external metadata generator must lower to the **same** canonical graph as proc-macro-authored definitions.
+
+**Ordering for implementation:**
+
+1. **Before V3 patch algebra / V5 SDK commitment:** Freeze graph definition/interface IDs, instance namespaces, boundary exports and flattening/patch-target identity. Add pure compiler fixtures exercising recursive composition, aliases and overlap. Existing typed Flow/Order/selected Invoke behavior must be unchanged.
+2. **After current V1/V2 regression fixes:** Implement the small offline graph-definition/instance/view authoring layer and its deterministic lowering. Keep the flat runtime compiler and use the same global validation, selected grants, native ABI-3 host and negative test fixtures.
+3. **With V4 finite-wave/lifecycle work:** Define actual graph-activation identities, completion-attribution sets, typed terminal status and physical-drain-safe completion. Do not approximate completion with a disconnected output or a node counter.
+4. **After the lowerer is proved, with V5 SDK:** Add ergonomic graph/node/subgraph builder APIs, macros and foreign-language adapters that generate equivalent metadata. Add graph-relative state-resource bindings and optional keyed admission/serialization as separate mechanisms, not as a new graph executor.
+5. **Before product migration:** Prove current P1 behavior (startup, auth restoration, frontend queues, sessions, pending, cancellation, tool routing and persistence) across the composed flat graph. Keep old behavior until the new path passes equivalent end-to-end tests.
+
 ## 8. Module and file plan
 
 ```mermaid
@@ -983,9 +1080,9 @@ Keep all domain-specific operations as normal selected contracts in their existi
 | **V0** | Formal wave/port/failure/authorization semantics + canonical graph-v2 schema | Source reachability, closure/failure reduction, root lifecycle, metadata bounds, no unauthorized flow |
 | **V1** | **Native ABI-3 vertical slice:** `Source → Invoke → Flow → Invoke` | Schema checks, runtime scope, pending/cancel/drain, domain `err`, no duplicate delivery, M1 direct-call parity |
 | **V2** | Switch, Merge, Join, source/constant and branch-closure rules | Cross-source valid merge, impossible join rejection, closure liveness, deterministic failure precedence |
-| **V3** | Deterministic graph patches: add/remove/splice/replace and exports | Commutativity, exact positions, supersession/export binding, negative authority tests, bounded processing |
-| **V4** | `Deferred::Next` with bounded same-root waves | Finite roots, cycle rejection, wave/byte/ticket limits, cancellation and draining |
-| **V5** | Typed SDK ergonomics and temporary graph-v1 lowering bridge | Provider/tool/agent and ACP parity, same event-settlement/state-watch semantics, retirement plan for v1 |
+| **V3** | Deterministic graph patches: add/remove/splice/replace and exports, using stable logical graph-interface anchors | Commutativity, exact positions, supersession/export binding, negative authority tests, bounded processing |
+| **V4** | `Deferred::Next` with bounded same-root waves and drain-safe activation attribution/completion | Finite roots, cycle rejection, wave/byte/ticket limits, cancellation and draining |
+| **V5** | Recursive open-graph SDK ergonomics, scoped-state bindings and temporary graph-v1 lowering bridge | Provider/tool/agent and ACP parity, same event-settlement/state-watch semantics, retirement plan for v1 |
 | **V6** | **Plugin-scaffolding acceptance gate**, not additional kernel architecture: selected streaming observer contract + durable approval + batched tools | Native streamed tool request with approval/checkpoint/new-root admission, bounded delivery, per-tool grants; kernel remains unchanged unless native test proves a missing generic guarantee |
 | **V7** | Inspection/explain/provenance and plugin migration | Stable versioned extension points, protected diagnostics, no parallel dispatcher/capability catalogs |
 
@@ -1036,6 +1133,23 @@ Keep all domain-specific operations as normal selected contracts in their existi
 9. An observer lacking a selected scoped stream grant receives no chunks, even if it discovers the stream ID. Cross-root and over-classification chunks are denied.
 10. A loop exceeding its agent turn quota terminates with plugin-owned policy result *before* generic kernel wave exhaustion.
 11. Negative `splice_order` and an independent `AddEdge` touching a `ReplaceNode` incident port reject at preparation.
+
+### 9.3 Recursive composition, scoped state, and completion acceptance (28 October amendment)
+
+These are **new future acceptance tests**, not assertions about merged/runtime support:
+
+1. Independently authored and macro-authored graph definitions with the same explicit named/typed boundary lower to the same flat graph. `A.out -> B.in` is equivalent to the corresponding correctly mapped internal Flow, including error closure and security.
+2. Nested instances produce deterministic namespaced node/edge IDs and provenance independent of declaration order; repeated instantiation does not share graph-instance state unless explicitly bound. Cyclic definition-reference graphs reject; bounded `Deferred::Next` feedback is unaffected.
+3. Invalid/missing/ambiguous graph boundary mappings, unexposed Flow/Order/Deferred crossings, type/readiness mismatch and confidentiality/integrity weakening reject **offline**, before native initialization.
+4. Patches target stable qualified interface/anchor exports through lowering; changing internal layout preserves compatible public anchors. Attempts to access private internals or obtain grants through composition/patching reject.
+5. Disjoint, nested, identical and partially overlapping views preserve the same compiled node count and invocation count. Partial overlap may warn; overlap alone cannot authorize effects, start new roots or clone physical tickets.
+6. An overlapping shared node with an explicit graph-instance state anchor uses that exact anchor in every view; an ambiguous or missing anchor rejects. Composition-global, execution and invocation state identities do not alias accidentally across different instances, roots or generations.
+7. Pure shared nodes admit independent executions when allowed; shared mutable state with keyed serial policy executes same-key admitted requests sequentially, permits safe different-key progress where supported, and retains the lane until physical work is quiescent.
+8. Accepted-but-blocked user input remains in a bounded queue with identifiable cancellation/rejection and authorization recheck on admission, and does not open a persistent root; multiple queued turns are processed by the declared domain ordering policy.
+9. One graph's `result` output becomes available while its internal audit node is still pending. `completed` remains unavailable until the audit terminates and all attributable physical work drains; domain failure/cancel/kernel failure produce distinct terminal outcomes.
+10. Completion never waits for future unrelated external triggers or outside-region work. Already admitted same-root internal deferred continuations prevent premature completion, and a completed activation cannot be reopened by another wave.
+11. An overlapping view reports the same physical ticket without creating a second lease; completion of two distinct activations follows their actual causal attribution rather than mere node membership.
+12. A native panic, cancel race, and late pending response cannot produce a successful premature aggregate completion; direct ABI-3 cleanup behavior is verified against the existing regression suite (including #1183 until its failure is fixed).
 
 ## 10. Agent-harness fit and ownership (no agent concepts in the kernel)
 

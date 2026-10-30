@@ -2,7 +2,7 @@
 
 **Purpose:** This directory records intended behavior, migration plans, design reviews, and historical acceptance evidence. **It does not describe the live state of the repository.** Source code and tests at a pinned Git revision determine what is implemented. A specification describes what should hold, even when implementation is incomplete. A merged PR supplies change history; its verified checks supply acceptance evidence.
 
-**Latest graph redesign target:** [Graph Architecture v2.4](graph-architecture-v2.4.md), drafted 25 October 2026. **Proposed, not merged as runtime behavior.** Earlier graph designs (v1 and v2.1–v2.3) are not competing normative targets. The existing M1 `phenix.graph.v1` code and its tests remain the current implementation until graph-v2 reaches tested P1 parity and replaces it.
+**Latest graph redesign target:** [Graph Architecture v2.4](graph-architecture-v2.4.md), drafted 25 October 2026 and amended 28 October with recursive open-graph composition, named subgraph interfaces, graph-relative state and drain-safe activation completion (§7.4–§7.8, §9.3). **Proposed, not merged as runtime behavior.** Earlier graph designs (v1 and v2.1–v2.3) are not competing normative targets. The existing M1 `phenix.graph.v1` code and its tests remain the current implementation until graph-v2 reaches tested P1 parity and replaces it.
 
 ## Read the right source
 
