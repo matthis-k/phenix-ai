@@ -1,0 +1,44 @@
+name: Native ABI and language-adapter experiment
+on:
+  pull_request:
+    paths:
+      - "experiments/native-abi/**"
+      - ".github/workflows/native-abi-experiment.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.1"
+          components: rustfmt
+      - name: Run Cargo tests for independent language adapters
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path experiments/native-abi/Cargo.toml --all --check
+          cargo build --manifest-path experiments/native-abi/Cargo.toml --workspace
+          cargo test --manifest-path experiments/native-abi/Cargo.toml --workspace
+          cargo check --manifest-path experiments/native-abi/Cargo.toml -p native-abi-consumer --features hot-reload-adapter
+      - name: Compile C language adapter and C consumer
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -fPIC -shared -o /tmp/libphenix_c_language_adapter.so experiments/native-abi/language-adapter/c-runtime-adapter.c
+          cc -std=c11 -Wall -Wextra -Werror -o /tmp/phenix_c_consumer experiments/native-abi/consumer/c-consumer.c -ldl
+      - name: Exercise independent native providers and language adapter
+        run: |
+          set -euo pipefail
+          cargo run --manifest-path experiments/native-abi/Cargo.toml -p native-abi-consumer -- \
+            experiments/native-abi/target/debug/libnative_abi_cglue_provider.so \
+            experiments/native-abi/target/debug/libnative_abi_stabby_provider.so \
+            /tmp/libphenix_c_language_adapter.so
+          /tmp/phenix_c_consumer \
+            experiments/native-abi/target/debug/libnative_abi_cglue_provider.so \
+            experiments/native-abi/target/debug/libnative_abi_stabby_provider.so \
+            /tmp/libphenix_c_language_adapter.so
