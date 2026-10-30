@@ -172,7 +172,7 @@ impl Prepared {
         prepared.graph_v2 = Some(prepared.compile_graph_v2(&declarations, policy)?);
         Ok(prepared)
     }
-    fn prepare_inner(
+    pub(crate) fn prepare_inner(
         mut composition: Composition,
         graph_v2_profile: bool,
     ) -> Result<Self, Failure> {

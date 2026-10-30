@@ -5,6 +5,8 @@ use crate::{dag, resolve::Prepared};
 use phenix_contract::{graph::v2::*, Code, Failure, OperationSchema, Value, MAX_BYTES, MAX_COUNT};
 use std::collections::{BTreeMap, BTreeSet};
 pub(super) mod execute;
+mod recursive;
+pub use recursive::recursive_effective_id;
 
 /// Base-profile longest Flow+Order path, counting vertices. Bounds recursion in
 /// the shared DAG sorter without changing its established deterministic order.
@@ -58,6 +60,7 @@ pub enum Satisfiability {
 /// effective root authority or permission to dereference a transported reference.
 #[derive(Debug, Clone)]
 pub struct CompiledGraph {
+    recursive: Option<composition::ExpandedGraph>,
     identity: String,
     declarations: Vec<GraphContributionV2>,
     routes: BTreeMap<String, String>,
@@ -70,6 +73,10 @@ pub struct CompiledGraph {
 }
 
 impl CompiledGraph {
+    /// Structural provenance supplied by the trusted host, not package attestation.
+    pub fn recursive_provenance(&self) -> Option<&composition::ExpandedGraph> {
+        self.recursive.as_ref()
+    }
     /// Deterministic Join diagnostics keyed by authored node identity.
     pub fn join_satisfiability(&self) -> &BTreeMap<String, Satisfiability> {
         &self.join_satisfiability
@@ -108,10 +115,24 @@ fn invalid(message: &str) -> Failure {
     fail(Code::DescriptorInvalid, message)
 }
 
+fn verify_body(
+    body: &GraphContributionV2,
+    verified: Option<&GraphContributionV2>,
+) -> Result<(), Failure> {
+    let verified =
+        verified.ok_or_else(|| denied("graph-v2 declaration lacks verified package metadata"))?;
+    if body.normalized()?.encode()? != verified.normalized()?.encode()? {
+        return Err(denied(
+            "graph-v2 declaration differs from verified package metadata",
+        ));
+    }
+    Ok(())
+}
+
 impl Prepared {
     /// Compile against the established selected bindings and operation grants.
     /// Contributor identity is checked against real verified selected packages;
-    /// this does not attest that supplied declaration bytes came from a package.
+    /// supplied declarations must exactly equal normalized verified package bodies.
     pub fn compile_graph_v2(
         &self,
         declarations: &[GraphContributionV2],
@@ -121,14 +142,17 @@ impl Prepared {
             let verified = self
                 .packages
                 .get(&declaration.contributor)
-                .and_then(|package| package.graph_v2())
-                .ok_or_else(|| denied("graph-v2 declaration lacks verified package metadata"))?;
-            if declaration.normalized()?.encode()? != verified.normalized()?.encode()? {
-                return Err(denied(
-                    "graph-v2 declaration differs from verified package metadata",
-                ));
-            }
+                .and_then(|package| package.graph_v2());
+            verify_body(declaration, verified)?;
         }
+        self.compile_selected_graph_v2(declarations, policy)
+    }
+
+    fn compile_selected_graph_v2(
+        &self,
+        declarations: &[GraphContributionV2],
+        policy: &TrustedCompositionPolicy,
+    ) -> Result<CompiledGraph, Failure> {
         compile(
             declarations,
             policy,
@@ -543,6 +567,7 @@ fn compile(
         edges.sort();
     }
     Ok(CompiledGraph {
+        recursive: None,
         identity: phenix_artifact::digest(&bytes),
         declarations,
         routes,
