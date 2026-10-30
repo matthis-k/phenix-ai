@@ -484,13 +484,20 @@ impl Wave {
             let mut terminal = true;
             let mut all_closed = true;
             let mut count = 0;
-            for (id, edge) in &self.edges {
-                let EdgeKind::Flow { from, to } = &edge.kind else {
+            // The compiled input index avoids scanning unrelated graph edges
+            // for every consumer readiness check.
+            for id in self
+                .input_edges
+                .get(&(node.to_owned(), port.name.clone()))
+                .into_iter()
+                .flatten()
+            {
+                let Some(edge) = self.edges.get(id) else {
                     continue;
                 };
-                if to.node != node || to.port != port.name {
+                let EdgeKind::Flow { from, .. } = &edge.kind else {
                     continue;
-                }
+                };
                 if let Some((_, selected, failed)) =
                     completion.filter(|(producer, _, _)| *producer == from.node)
                 {
