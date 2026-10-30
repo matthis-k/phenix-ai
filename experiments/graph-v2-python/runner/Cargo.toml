@@ -1,0 +1,11 @@
+[package]
+name = "phenix-python-kernel-verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+phenix-contract = { path = "../../../crates/phenix-contract" }
+phenix-kernel = { path = "../../../crates/phenix-kernel" }
+phenix-artifact = { path = "../../../crates/phenix-artifact" }
+serde_json = "1"
