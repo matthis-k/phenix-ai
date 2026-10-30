@@ -104,6 +104,33 @@ fn failing_tool_continuation(history: &[Message], start: usize) -> Result<String
     Ok("tools-recovered:scripted failure|5".into())
 }
 
+/// Test-only observation of what Basic actually supplied to the Model boundary.
+/// This does not query authentication, the provider catalog, or any process
+/// global state. It reports offered metadata, not executable authority.
+fn inspect_capabilities(request: &ModelRequest) -> String {
+    let mut tools = request.tools.clone();
+    tools.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut skills = request
+        .skills
+        .iter()
+        .map(|skill| skill.id.as_str())
+        .collect::<Vec<_>>();
+    skills.sort_unstable();
+    let mut context = request
+        .context
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<Vec<_>>();
+    context.sort_unstable();
+    serde_json::json!({
+        "format": "phenix.test.model-capabilities.v1",
+        "tools": tools,
+        "skills": skills,
+        "context": context,
+    })
+    .to_string()
+}
+
 /// Pure function. No state is retained between model calls, sessions or processes.
 pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     session_resource(&request.session)?;
@@ -166,6 +193,8 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
             return Err(invalid("prior assistant answer changed"));
         }
         (format!("verified:{key}={value}"), vec![])
+    } else if prompt.text() == "inspect:capabilities" {
+        (inspect_capabilities(request), vec![])
     } else if prompt.text() == "tools:hello" {
         if !request.tools.iter().any(|tool| tool.id == "uppercase") {
             return Err(invalid("uppercase tool unavailable"));
@@ -352,5 +381,41 @@ mod tests {
             complete(&request(history)).unwrap_err().code,
             ErrorCode::InvalidReply
         );
+    }
+    #[test]
+    fn capability_observation_is_exact_sorted_and_has_no_auth_dependency() {
+        let mut input = request(vec![Message::user("inspect:capabilities")]);
+        input.tools.push(ToolInfo {
+            id: "alpha".into(),
+            description: "alpha description".into(),
+            arguments_schema: r#"{"type":"object"}"#.into(),
+            idempotent: false,
+        });
+        input.skills.push(phenix_basic_contracts::Skill {
+            id: "skill-a".into(),
+            description: "fixture".into(),
+            instructions: "private instructions".into(),
+        });
+        input.context.push(phenix_basic_contracts::ContextItem {
+            id: "context-a".into(),
+            text: "private context".into(),
+        });
+        let reply = complete(&input).expect("credential-free mock model");
+        let view: serde_json::Value = serde_json::from_str(&reply.text).unwrap();
+        assert_eq!(view["format"], "phenix.test.model-capabilities.v1");
+        assert_eq!(view["tools"][0]["id"], "alpha");
+        assert_eq!(view["tools"][1]["id"], "uppercase");
+        assert_eq!(view["tools"][0]["arguments_schema"], r#"{"type":"object"}"#);
+        assert_eq!(view["tools"][0]["idempotent"], false);
+        assert_eq!(view["skills"], serde_json::json!(["skill-a"]));
+        assert_eq!(view["context"], serde_json::json!(["context-a"]));
+        assert!(!reply.text.contains("private instructions"));
+        assert!(!reply.text.contains("private context"));
+        assert!(reply.calls.is_empty());
+
+        input.tools.clear();
+        let empty: serde_json::Value =
+            serde_json::from_str(&complete(&input).unwrap().text).unwrap();
+        assert_eq!(empty["tools"], serde_json::json!([]));
     }
 }

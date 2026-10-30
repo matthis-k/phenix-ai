@@ -2042,6 +2042,23 @@
         python ${./tests/basic-launcher-default-product.py} ${self.packages.${system}.phenix-basic-acp}/bin/phenix-basic-acp "$out"
         test -s "$out/accepted.json"
       '';
+      # Independent, credential-free model capability/wiring acceptance:
+      # same production Basic graph, only the Model slot uses a test fixture.
+      modelCapabilitiesCheck = pkgs.runCommand "phenix-basic-model-capabilities" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-model-capabilities-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
+        test -s "$out/accepted.json"
+      '';
+      # ACP projection is verified separately from JSONL and model history.
+      acpModelCapabilitiesCheck = pkgs.runCommand "phenix-basic-acp-model-capabilities" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/basic-acp-model-capabilities-product.py} ${historyVerificationBinary}/bin/phenix-basic-verification "$out"
+        test -s "$out/accepted.json"
+      '';
       historyVerificationCheck = pkgs.runCommand "phenix-basic-history-verification" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -3072,6 +3089,8 @@
         basic-host-smoke = basicProductCheck;
         basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
+        basic-model-capabilities = modelCapabilitiesCheck;
+        basic-acp-model-capabilities = acpModelCapabilitiesCheck;
         basic-streaming = basicStreamingCheck;
         basic-http-product = basicHttpProductCheck;
         basic-launcher-default-state = basicLauncherDefaultCheck;
