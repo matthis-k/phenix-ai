@@ -1,9 +1,0 @@
-[package]
-name = "phenix-provider-credential-files"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-zeroize = "=1.9.1"
-libc = "0.2"

@@ -1,6 +1,7 @@
 pub mod abi;
 pub mod descriptor;
 pub mod graph;
+pub mod graph_v2;
 pub use graph::*;
 pub mod reference;
 pub mod scope;

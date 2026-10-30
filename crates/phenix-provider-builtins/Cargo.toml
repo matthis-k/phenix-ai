@@ -1,9 +1,0 @@
-[package]
-name = "phenix-provider-builtins"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-phenix-provider-contracts = { path = "../phenix-provider-contracts" }
-phenix-provider-protocols = { path = "../phenix-provider-protocols" }

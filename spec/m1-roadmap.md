@@ -10,6 +10,70 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Clean rewrite CI repair (28 October 2026)
+
+Baseline #1171 head `607db15175ea833a287e4a8b91fd5966857bde0b`
+inherits main `dbfe3476f50e` but its Nix inventory still names deleted
+plugins, failing evaluation at `phenix-plugin-event-journal`.
+The clean branch now declares its own workspace, public SDK, native examples,
+ABI/schema negatives, descriptor retention variants and four native fixture
+checks. Per-package Cargo source closures exclude unrelated plugins.
+The generated CI adapter no longer prebuilds deleted P1 packages.
+
+The four P1-only standalone workflows (Basic history, legacy-plugin cache
+isolation, ACP SDK and ACP v2 frontend) are removed on this rewrite branch
+because their implementations were deleted. They remain on main and must be
+restored with native product parity, not reported as passing clean checks.
+Full P1/shipping conformance is still absent. This is not P1 acceptance.
+
+Local evaluation covers 14 checks and 13 package attributes. Native fixture
+builds, all 56 kernel tests, 36 SDK compile-fail doc tests, schema/wire negatives
+and the C/Rust ABI harness (17 rejected tables) passed during repair.
+Strict quality checks exposed existing lint errors; these are corrected rather
+than suppressed. Exact committed-head full CI acceptance is still required.
+An isolated model-fixture source edit changes its derivation but leaves the
+counter, session and reverse-tool fixture derivations unchanged; physical
+distributed rebuild scope and cross-run cache reuse remain unverified.
+
+Provider `phenix-flake-ci` main `cd2403a45333a5211775bdf01b3ce45f28e02e5f`
+already contains the declarative assertion API (#43-#45) and native coordinator.
+Its #36 head `8a55da7382d346e2ed8a3cd221078b2ab3592f66` is an open,
+divergent build/join experiment, not accepted performance evidence. No
+10-minute result, physical deduplication or Graph-v2 product parity is claimed.
+Next: pass exact-head clean CI, reconcile #36 with the merged provider, then
+measure cold/warm/single-plugin runs before substantial Graph-v2 restoration.
+
+Verified CI repair at `b2875f7486e9d7ddce13eb04e49e409fd2684d6e`:
+[run 40772149093, attempt 1](https://github.com/matthis-k/phenix-ai/actions/runs/40772149093/attempts/1)
+passed all 14 checks in 642 seconds end to end (562.60 seconds in the DAG).
+This was a GitHub store-cache miss, not an isolated cold Nix ecosystem:
+NixOS binary substitutions remained enabled. Logs show 68 distinct remote
+derivation dispatches, zero repeated dispatches, and eight overlapping build
+phases across four authenticated hosts. These counts do not imply compiler
+process CPU utilization or eliminate repeated Cargo compilation inside distinct
+Nix derivations.
+[Unchanged attempt 2](https://github.com/matthis-k/phenix-ai/actions/runs/40772149093/attempts/2)
+passed in 82 seconds end to end (1.46 seconds in the DAG), with an exact store
+cache hit, zero project builds and all 14 check outputs reused.
+
+Single-plugin experiment `54b3a8200b0a9149e4902dfb663df43a4295376e` adds
+only an exact-budget negative/boundary test to the model fixture.
+[Run 40774572757](https://github.com/matthis-k/phenix-ai/actions/runs/40774572757)
+passed in 353 seconds end to end (240.87 seconds in the DAG). Five distinct
+derivations were dispatched once each: model source, model artifact, quality,
+workspace tests and native-session check. The other three plugin artifacts
+were reused unchanged; 10 of 14 check output paths were unchanged. The broader
+workspace/native-session source inputs still cause avoidable recompilation.
+
+Those runs discovered zero standalone runnable tests; cached Nix checks do not
+prove fresh test execution. The next increment declares 11 independently
+executable Cargo test packages using the existing provider adapter and one
+shared compiled corpus. Every wrapper supplies the real session cdylib, so
+the native handoff cannot skip for a missing environment variable. All 137
+tests passed locally through these installed executables. Existing checks,
+including compile-fail docs and ABI negatives, are retained. Exact-head remote
+fan-out verification is required before accepting this increment.
+
 ### Graph-v2 implementation-gap matrix (27 October 2026)
 
 Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.

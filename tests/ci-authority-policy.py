@@ -12,7 +12,7 @@ def require(ok, message):
     if not ok:
         raise AssertionError(message)
 
-def verify(trusted, pr, canonical, old_matrix, diagnostic, fmt, acp, source):
+def verify(trusted, pr, canonical, old_matrix, diagnostic, fmt, source):
     require("  pull_request:" in trusted and "  id-token: write" in trusted
             and "flake-nix-builders.yml@" in trusted
             and "github.event.pull_request.user.login == 'matthis-k'" in trusted
@@ -42,11 +42,8 @@ def verify(trusted, pr, canonical, old_matrix, diagnostic, fmt, acp, source):
                     "cargo fmt --manifest-path examples/Cargo.toml --all --check",
                     "cargo fmt --manifest-path tests/acp-sdk-client/Cargo.toml"):
         require(command in fmt, "formatting omitted " + command)
-    require("P1 official ACP SDK interop" in acp and "  pull_request:" in acp
-            and "branches: [main]" in acp,
-            "independent ACP gate removed")
-    require("    paths:" not in fmt and "    paths:" not in acp,
-            "required formatting or ACP check became path-filtered")
+    require("    paths:" not in fmt,
+            "required formatting check became path-filtered")
     require("  pull_request:" in source and "    paths:" not in source
             and "    paths-ignore:" not in source,
             "workflow regeneration check cannot run on all PRs")
@@ -56,7 +53,7 @@ def files():
         "phenix-flake-ci-generated.yml", "minimal-kernel-flake.yml",
         "minimal-kernel.yml", "minimal-kernel-matrix.yml",
         "minimal-kernel-dag.yml", "p1-rustfmt.yml",
-        "p1-acp-sdk-interop.yml", "verify-generated-flake-ci.yml",
+        "verify-generated-flake-ci.yml",
     )]
 
 def self_test():
@@ -74,8 +71,8 @@ def self_test():
         (3, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (4, "  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:"),
         (5, "cargo fmt --all --check", "echo no-format"),
-        (6, "P1 official ACP SDK interop", "ACP omitted"),
-        (7, "  pull_request:", "  pull_request:\n    paths:\n      - crates/**"),
+        (5, "  pull_request:", "  pull_request:\n    paths:\n      - crates/**"),
+        (6, "  pull_request:", "  pull_request:\n    paths:\n      - crates/**"),
     ]
     for index, old, new in mutations:
         require(old in good[index], "invalid adversarial fixture: " + old)

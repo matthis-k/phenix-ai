@@ -1,0 +1,8 @@
+[package]
+name = "phenix-basic-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+phenix-sdk = { path = "../phenix-sdk" }

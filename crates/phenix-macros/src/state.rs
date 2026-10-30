@@ -16,6 +16,7 @@ fn arguments(
     signature: &syn::Signature,
     request_allowed: bool,
     host_allowed: bool,
+    state_type: &syn::Ident,
 ) -> syn::Result<(proc_macro2::TokenStream, bool)> {
     let mut roles = std::collections::BTreeSet::new();
     let mut arguments = Vec::new();
@@ -42,7 +43,7 @@ fn arguments(
                     .map(|segment| segment.ident.to_string())
                     .as_deref()
                 {
-                    Some("State") => ("state", quote!(state)),
+                    Some(name) if state_type == name => ("state", quote!(state)),
                     Some("Host") if host_allowed && reference.mutability.is_none() => {
                         ("host", quote!(&host))
                     }
@@ -250,6 +251,171 @@ pub fn expand(
     let (_, items) = module.content.as_mut().ok_or_else(|| {
         syn::Error::new(module.ident.span(), "state plugin needs an inline module")
     })?;
+    // Domain-first syntax: an annotated ordinary Rust struct and its inherent
+    // methods are the source of plugin-owned state and exported operations.
+    // Existing free handler declarations continue to work unchanged.
+    let mut selected_state: Option<syn::Ident> = None;
+    for item in items.iter_mut() {
+        if let syn::Item::Struct(domain) = item {
+            let mut marked = false;
+            domain.attrs.retain(|attr| {
+                if attr.path().is_ident("state") {
+                    marked = true;
+                    false
+                } else {
+                    true
+                }
+            });
+            if marked {
+                if selected_state.is_some() {
+                    return Err(syn::Error::new(domain.span(), "duplicate #[state] owner"));
+                }
+                selected_state = Some(domain.ident.clone());
+            }
+        }
+    }
+    // Inherent #[provide] methods already identify their Rust state owner.
+    // Inferring it avoids requiring domain structs to carry a Phenix marker.
+    let mut inferred_state: Option<syn::Ident> = None;
+    for item in items.iter() {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        if !implementation.items.iter().any(|member| {
+            matches!(member, syn::ImplItem::Fn(method)
+                if method.attrs.iter().any(|attr| attr.path().is_ident("provide")))
+        }) {
+            continue;
+        }
+        let Type::Path(owner) = implementation.self_ty.as_ref() else {
+            return Err(syn::Error::new(
+                implementation.self_ty.span(),
+                "exported methods require a local nominal state type",
+            ));
+        };
+        let Some(name) = owner.path.get_ident() else {
+            return Err(syn::Error::new(
+                owner.span(),
+                "exported methods require a simple local state type",
+            ));
+        };
+        if let Some(previous) = &inferred_state {
+            if previous != name {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "multiple exported state owners; use one domain owner or separate plugins",
+                ));
+            }
+        } else {
+            inferred_state = Some(name.clone());
+        }
+    }
+    if let (Some(explicit), Some(inferred)) = (&selected_state, &inferred_state) {
+        if explicit != inferred {
+            return Err(syn::Error::new(
+                inferred.span(),
+                "explicit state owner disagrees with exported methods",
+            ));
+        }
+    }
+    let state_ident = selected_state
+        .clone()
+        .or(inferred_state)
+        .unwrap_or_else(|| syn::Ident::new("State", module.ident.span()));
+    if selected_state.is_some()
+        && items.iter().any(|item| {
+            matches!(item, syn::Item::Struct(domain) if domain.ident == "State"
+                && domain.ident != state_ident)
+        })
+    {
+        return Err(syn::Error::new(
+            module.ident.span(),
+            "annotated state cannot coexist with legacy State",
+        ));
+    }
+    let mut generated_handlers = Vec::new();
+    for item in items.iter_mut() {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        for member in &mut implementation.items {
+            let syn::ImplItem::Fn(method) = member else {
+                continue;
+            };
+            let positions: Vec<_> = method
+                .attrs
+                .iter()
+                .enumerate()
+                .filter(|(_, attribute)| attribute.path().is_ident("provide"))
+                .map(|(index, _)| index)
+                .collect();
+            if positions.is_empty() {
+                continue;
+            }
+            if positions.len() != 1
+                || implementation.trait_.is_some()
+                || !implementation.generics.params.is_empty()
+                || implementation.generics.where_clause.is_some()
+                || !matches!(
+                    implementation.self_ty.as_ref(),
+                    Type::Path(path) if path.qself.is_none()
+                        && path.path.is_ident(&state_ident)
+                )
+                || method.sig.asyncness.is_some()
+                || method.sig.unsafety.is_some()
+                || method.sig.constness.is_some()
+                || method.sig.abi.is_some()
+                || !method.sig.generics.params.is_empty()
+                || method.sig.generics.where_clause.is_some()
+            {
+                return Err(syn::Error::new(
+                    method.span(),
+                    "#[provide] method needs a synchronous inherent impl on the plugin's state type",
+                ));
+            }
+            let attr = method.attrs.remove(positions[0]);
+            let operation: syn::Type = attr.parse_args()?;
+            let mut inputs = method.sig.inputs.iter();
+            let Some(syn::FnArg::Receiver(receiver)) = inputs.next() else {
+                return Err(syn::Error::new(
+                    method.sig.span(),
+                    "exported method needs borrowed self",
+                ));
+            };
+            if receiver.reference.is_none() || receiver.colon_token.is_some() {
+                return Err(syn::Error::new(
+                    receiver.span(),
+                    "exported method needs &self or &mut self",
+                ));
+            }
+            let (request, argument) = match (inputs.next(), inputs.next()) {
+                (None, None) => (quote!(), quote!()),
+                (Some(syn::FnArg::Typed(param)), None) => {
+                    let ty = &param.ty;
+                    (quote!(, request: #ty), quote!(request))
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        method.sig.span(),
+                        "exported method needs at most one typed request",
+                    ))
+                }
+            };
+            let output = &method.sig.output;
+            let name = &method.sig.ident;
+            let generated = syn::Ident::new(
+                &format!("__phenix_export_{}", generated_handlers.len()),
+                name.span(),
+            );
+            generated_handlers.push(syn::parse2::<syn::ItemFn>(quote! {
+                #[provide(#operation)]
+                fn #generated(state: &mut #state_ident #request) #output {
+                    state.#name(#argument)
+                }
+            })?);
+        }
+    }
+    items.extend(generated_handlers.into_iter().map(syn::Item::Fn));
     let mut state = false;
     let mut properties = Vec::new();
     let mut property_symbols = Vec::new();
@@ -265,7 +431,7 @@ pub fn expand(
     let mut stop = None;
     for item in items.iter_mut() {
         match item {
-            syn::Item::Struct(s) if s.ident == "State" => {
+            syn::Item::Struct(s) if s.ident == state_ident => {
                 if state
                     || !s.generics.params.is_empty()
                     || !matches!(s.fields, syn::Fields::Named(_) | syn::Fields::Unit)
@@ -488,7 +654,7 @@ pub fn expand(
                         let lifecycle =
                             attr.path().is_ident("start") || attr.path().is_ident("stop");
                         let (arguments, has_request) =
-                            arguments(&function.sig, request_allowed, !lifecycle)?;
+                            arguments(&function.sig, request_allowed, !lifecycle, &state_ident)?;
                         if attr.path().is_ident("start") || attr.path().is_ident("stop") {
                             if !matches!(attr.meta, Meta::Path(_)) {
                                 return Err(syn::Error::new(
@@ -618,7 +784,7 @@ pub fn expand(
         pub static PHENIX_GRAPH: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = GRAPH_METADATA.native_section();
     });
     let generated = quote! {
-        impl State {
+        impl #state_ident {
             #(#owned_fields)*
         }
         #graph_descriptor
@@ -629,14 +795,14 @@ pub fn expand(
         pub static PHENIX_DESCRIPTOR: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = METADATA.native_section();
         pub mod imports { #[allow(unused_imports)] use super::*; #(#imports)* }
         pub mod properties { #[allow(unused_imports)] use super::*; #(#property_symbols)* }
-        struct __Instance { state: State, initialized: bool, poisoned: bool }
+        struct __Instance { state: #state_ident, initialized: bool, poisoned: bool }
         fn __failure(error: ::phenix_sdk::Failure) -> ::phenix_sdk::abi::Reply { ::phenix_sdk::abi::Reply::value(2, error.to_value()) }
         fn __invalid(message: &str) -> ::phenix_sdk::Failure { ::phenix_sdk::Failure::new(::phenix_sdk::Code::PluginFailed, message) }
         unsafe extern "C" fn __create(out: *mut *mut ::std::ffi::c_void) -> ::phenix_sdk::abi::Reply {
             ::phenix_sdk::live::boundary(|| {
                 if out.is_null() { return __failure(__invalid("null instance output")); }
                 unsafe { *out = ::std::ptr::null_mut(); }
-                let state = State::default();
+                let state = #state_ident::default();
                 unsafe { *out = Box::into_raw(Box::new(__Instance { state, initialized: false, poisoned: false })).cast(); }
                 ::phenix_sdk::abi::Reply::value(0, ::phenix_sdk::Value::Null)
             })
@@ -708,6 +874,166 @@ pub fn expand(
     let extra: syn::File = syn::parse2(generated)?;
     items.extend(extra.items);
     Ok(quote!(#module))
+}
+
+#[cfg(test)]
+mod domain_method_tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn domain_methods_generate_abi_hooks_without_free_function_wrappers() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct Counter { value: u64 }
+
+                impl Counter {
+                    #[provide(CounterApi::increase)]
+                    fn increase(&mut self, change: u64) -> Result<u64, String> {
+                        self.value += change;
+                        Ok(self.value)
+                    }
+
+                    #[provide(CounterApi::read)]
+                    fn read(&self) -> u64 { self.value }
+                }
+            }
+        };
+        let generated = expand(
+            quote!(
+                id = "test.counter",
+                define(CounterApi),
+                provide(CounterApi, slot = "Counter")
+            ),
+            module,
+        )
+        .unwrap()
+        .to_string();
+        assert!(generated.contains("struct Counter"));
+        assert!(generated.contains("impl Counter"));
+        assert!(generated.contains("__phenix_export_0"));
+        assert!(generated.contains("__phenix_export_1"));
+        assert!(generated.contains("state . increase (request)"));
+        assert!(generated.contains("state . read ()"));
+        assert!(generated.contains("let state = Counter :: default"));
+        assert!(generated.contains("state : Counter"));
+        assert!(!generated.contains("struct State"));
+    }
+
+    #[test]
+    fn inferred_state_owner_needs_no_annotation() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct Meter { total: u64 }
+                impl Meter {
+                    #[provide(MeterApi::add)]
+                    fn add(&mut self, by: u64) -> u64 {
+                        self.total += by;
+                        self.total
+                    }
+                }
+            }
+        };
+        let generated = expand(
+            quote!(id = "test.meter", provide(MeterApi, slot = "Meter")),
+            module,
+        )
+        .unwrap()
+        .to_string();
+        assert!(generated.contains("state : Meter"));
+        assert!(generated.contains("let state = Meter :: default"));
+        assert!(generated.contains("state . add (request)"));
+        assert!(!generated.contains("struct State"));
+    }
+
+    #[test]
+    fn distinct_inferred_owners_report_ambiguity() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                struct Left;
+                #[derive(Default)]
+                struct Right;
+                impl Left {
+                    #[provide(Api::first)]
+                    fn first(&self) -> u64 { 1 }
+                }
+                impl Right {
+                    #[provide(Api::second)]
+                    fn second(&self) -> u64 { 2 }
+                }
+            }
+        };
+        let error = expand(
+            quote!(id = "test.domain", provide(Api, slot = "Api")),
+            module,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("multiple exported state owners"));
+    }
+
+    #[test]
+    fn inappropriate_inherent_method_exports_reject() {
+        for module in [
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    struct Other;
+                    impl Other {
+                        #[provide(CounterApi::read)]
+                        fn read(&self) -> u64 { 0 }
+                    }
+                }
+            },
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    impl Counter {
+                        #[provide(CounterApi::read)]
+                        async fn read(&self) -> u64 { 0 }
+                    }
+                }
+            },
+            syn::parse_quote! {
+                mod plugin {
+                    #[derive(Default)]
+                    #[state]
+                    struct Counter;
+                    impl Counter {
+                        #[provide(CounterApi::read)]
+                        fn read(self) -> u64 { 0 }
+                    }
+                }
+            },
+        ] {
+            assert!(expand(
+                quote!(id = "test.counter", provide(CounterApi, slot = "Counter")),
+                module,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn duplicate_state_owner_rejects() {
+        let module: ItemMod = syn::parse_quote! {
+            mod plugin {
+                #[derive(Default)]
+                #[state]
+                struct Left;
+                #[derive(Default)]
+                #[state]
+                struct Right;
+            }
+        };
+        assert!(expand(quote!(id = "test.counter"), module).is_err());
+    }
 }
 
 #[cfg(test)]
