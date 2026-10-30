@@ -20,6 +20,14 @@ pub(super) fn run(
     bodies[0]
         .edges
         .retain(|edge| matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == FIRST));
+    let EdgeKind::Flow { from, to } = bodies[0].edges[0].kind.clone() else {
+        panic!()
+    };
+    bodies[0].edges[0].kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
     assert!(bodies[1].sources.is_empty());
     let mut composition = composition.clone();
     composition.artifacts = packages
@@ -64,6 +72,7 @@ pub(super) fn run(
             .into(),
         wiring: ["left", "right"]
             .map(|name| BoundaryFlow {
+                next: (name == "right").then_some(DeferredWave::Next),
                 name: name.into(),
                 from: BoundaryFrom::Local(OutPortRef {
                     node: FIRST.into(),
@@ -120,6 +129,8 @@ pub(super) fn run(
         "authored-source",
         "authored-topology",
         "delivery",
+        "deferred-topology",
+        "deferred-delivery",
         "source-ceiling",
         "grant",
     ] {
@@ -141,6 +152,13 @@ pub(super) fn run(
                 p.topology.insert((A.into(), SECOND.into()));
             }
             "delivery" => p.delivery.clear(),
+            "deferred-topology" => {
+                p.topology.remove(&(A.into(), children[1].clone()));
+            }
+            "deferred-delivery" => {
+                p.delivery
+                    .remove(&(first.clone(), "ok".into(), children[1].clone(), "in".into()));
+            }
             "source-ceiling" => {
                 p.source_owners.get_mut(A).unwrap().owner_ceiling = Classification::Public
             }
@@ -182,8 +200,10 @@ pub(super) fn run(
         )
         .unwrap();
     let mut terminals = 0;
-    assert_eq!(
-        execution
+    let mut status = GraphStatus::Pending;
+    // Deferred admission happens at pump settlement, so later waves need pumps.
+    for _ in 0..8 {
+        status = execution
             .pump(|update| {
                 assert!(
                     !matches!(update.event, GraphEvent::NodeFinished(_)),
@@ -191,11 +211,22 @@ pub(super) fn run(
                 );
                 if matches!(update.event, GraphEvent::Finished(_)) {
                     terminals += 1;
+                    assert_eq!(terminals, 1, "duplicate recursive terminal");
                 }
             })
-            .unwrap(),
-        GraphStatus::Finished
+            .unwrap();
+        if status == GraphStatus::Finished {
+            break;
+        }
+        assert_eq!(status, GraphStatus::Pending);
+        assert_eq!(terminals, 0, "recursive terminal before wave settlement");
+    }
+    assert_eq!(
+        status,
+        GraphStatus::Finished,
+        "recursive pump budget exhausted"
     );
+    assert_eq!(terminals, 1);
     assert_eq!(execution.completion(), Some(GraphCompletion::Success));
     assert_eq!(execution.steps().len(), 3);
     assert_eq!(execution.steps()[0].node, first);
@@ -227,6 +258,7 @@ pub(super) fn run(
     drop(execution);
     kernel.shutdown().unwrap();
     cases.push("repeated-source-free-child-native-execution");
+    cases.push("internal-and-cross-boundary-deferred-next-native-execution");
     fs::write(output.join("graph-v2-recursive.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "format": "phenix.graph-v2-recursive.v1", "full_V2": false, "p1_parity": false,
         "cases": cases,

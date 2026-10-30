@@ -1096,8 +1096,8 @@ reference and dependency cycle checks concern the selected root closure.
 The lowerer does not verify recursive definitions. No output is accepted as
 verified flat package metadata, and `Prepared::compile_graph_v2` retains its exact
 verified-byte equality gate. Section 7.11 freezes a separate trusted-host bridge;
-authenticated recursive packaging, direct nested exports, cross-boundary Order
-and Deferred activation remain future work.
+authenticated recursive packaging, direct nested exports and cross-boundary Order
+remain future work. Section 7.12 extends lowering to explicit Deferred activation.
 
 ### 7.11 C1 trusted-host executable bridge freeze
 
@@ -1120,8 +1120,31 @@ Repeated ExternalAction names remain rejected by the existing compiler.
 Identity includes the root and ALL normalized definitions, including unused
 definitions and empty/unused boundaries, as well as the existing flat plan and
 policy identity. Expansion budgets constrain admission, not semantic identity.
-Deferred edges and unsupported source kinds remain rejected. No scheduler,
+Unsupported source kinds remain rejected. No scheduler,
 alternate resolver, package boundary attestation or new runtime is introduced.
+
+### 7.12 C1 recursive deferred lowering freeze
+
+Body Deferred edges retain their authored identity and occurrence provenance.
+Trusted boundary wiring selects same-wave delivery with `BoundaryFlow.next = None`
+or next-wave delivery with `Some(DeferredWave::Next)`. Both resolve only explicitly
+exposed immediate-child ports and undergo identical endpoint, complete candidate
+schema and security validation. Deferred edges are excluded from the instantaneous
+Flow/Order cycle check, never rewritten to Flow. Materialization preserves their
+kind and exact effective endpoints for global compilation and authorization.
+Boundary delivery kind participates in recursive plan identity. Placement and
+wiring remain trusted control-plane input, not package attestation or authority.
+
+The remaining C1 work is tracked in five bundles below. None is closed by source
+inspection or unexecuted acceptance assertions.
+
+| Bundle | Starting capability | This increment | Remaining acceptance |
+| --- | --- | --- | --- |
+| Typed boundaries | Direct local exports and immediate-child wiring | Deferred wiring uses the same exact boundaries | Direct nested exports and multi-level aliases |
+| Edge semantics | Same-wave Flow and local Order | Internal and cross-boundary Deferred lowering | Cross-boundary Order and exact-head native Deferred acceptance |
+| Logical patch anchors | Structural occurrence identity | No change | Explicit public/private anchors and rejected hidden access |
+| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred origins and delivery-sensitive identity | Provenance through nested aliases and patch transformations |
+| Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Deferred topology/delivery denial assertions | Complete boundary, ownership, expansion and permission adversarial acceptance |
 
 ## 8. Module and file plan
 
