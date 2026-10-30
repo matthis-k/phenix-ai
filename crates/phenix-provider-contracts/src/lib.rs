@@ -353,6 +353,39 @@ pub enum AuthenticationEvent {
     Attempt { value: AuthAttemptState },
 }
 
+/// Temporary zero-copy bridge from the existing provider-auth operations to
+/// the single canonical port. Once generic auth strategies replace the
+/// concrete handlers, only this binding changes, not provider consumers.
+pub struct ProviderAuthDelegates<S> {
+    pub status: fn(&mut S, &Host<'_>, AuthQuery) -> CallResult<AuthenticationStatus, ProviderError>,
+    pub begin: fn(&mut S, &Host<'_>, AuthStart) -> CallResult<AuthChallenge, ProviderError>,
+    pub poll:
+        fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
+    pub cancel:
+        fn(&mut S, &Host<'_>, AuthAttemptQuery) -> CallResult<AuthAttemptState, ProviderError>,
+}
+
+impl<S> ProviderAuthDelegates<S> {
+    pub fn dispatch(
+        self,
+        state: &mut S,
+        host: &Host<'_>,
+        command: AuthenticationCommand,
+    ) -> CallResult<AuthenticationEvent, ProviderError> {
+        match command {
+            AuthenticationCommand::Status { query } => {
+                (self.status)(state, host, query).map(|value| AuthenticationEvent::Status { value })
+            }
+            AuthenticationCommand::Begin { request } => (self.begin)(state, host, request)
+                .map(|value| AuthenticationEvent::Challenge { value }),
+            AuthenticationCommand::Poll { request } => (self.poll)(state, host, request)
+                .map(|value| AuthenticationEvent::Attempt { value }),
+            AuthenticationCommand::Cancel { request } => (self.cancel)(state, host, request)
+                .map(|value| AuthenticationEvent::Attempt { value }),
+        }
+    }
+}
+
 /// Canonical, account-scoped inference request, not a transport configuration.
 /// The provider resolves the permitted protocol, endpoint, credentials,
 /// session-local conversation state and token limits from its private state
@@ -365,6 +398,42 @@ pub struct ProviderCompletion {
     pub profile_id: Option<String>,
     pub model_id: String,
     pub request: phenix_basic_contracts::ModelRequest,
+}
+
+/// Validate that an already authorized and freshly checked provider model
+/// page actually contains the exact requested selectable model. No provider
+/// string, account ID, protocol name, or metadata-only registration grants
+/// execution authority. A controller must still install an executable strategy.
+pub fn validate_completion<'a>(
+    request: &ProviderCompletion,
+    authorized: &'a ModelPage,
+) -> Result<&'a ProviderModel, ProviderError> {
+    let invalid = |code, message: &str| ProviderError {
+        code,
+        message: message.into(),
+    };
+    if request.request.session.is_empty()
+        || request.request.run.is_empty()
+        || request.connection_id.is_empty()
+        || request.model_id.is_empty()
+    {
+        return Err(invalid(
+            ProviderErrorCode::InvalidInput,
+            "incomplete model request",
+        ));
+    }
+    if request.profile_id != authorized.profile_id {
+        return Err(invalid(
+            ProviderErrorCode::Denied,
+            "selected model account did not match verified account",
+        ));
+    }
+    authorized
+        .models
+        .iter()
+        .find(|model| model.id == request.model_id && model.connection_id == request.connection_id)
+        .filter(|model| model.selectable)
+        .ok_or_else(|| invalid(ProviderErrorCode::NotFound, "model is not selectable"))
 }
 
 /// The single provider execution-facing interface. Protocols, authorization
@@ -612,6 +681,68 @@ mod tests {
             },
         };
         assert_eq!(ProviderCompletion::from_value(req.to_value()).unwrap(), req);
+    }
+
+    #[test]
+    fn completion_validation_is_scoped_to_exact_account_and_connection() {
+        let request = ProviderCompletion {
+            scope: "user".into(),
+            provider_id: "openai".into(),
+            connection_id: "api".into(),
+            profile_id: Some("personal".into()),
+            model_id: "gpt-test".into(),
+            request: phenix_basic_contracts::ModelRequest {
+                session: "session-1".into(),
+                run: "run-1".into(),
+                history: vec![],
+                tools: vec![],
+                skills: vec![],
+                context: vec![],
+                limits: phenix_basic_contracts::Limits::default(),
+            },
+        };
+        let page = ModelPage {
+            profile_id: Some("personal".into()),
+            models: vec![ProviderModel {
+                id: "gpt-test".into(),
+                label: "GPT test".into(),
+                connection_id: "api".into(),
+                protocol_id: "openai-responses".into(),
+                endpoint_id: "responses".into(),
+                capabilities: vec![],
+                origin: ModelOrigin::Discovered,
+                selectable: true,
+            }],
+            next_cursor: None,
+            revision: 1,
+        };
+        assert_eq!(validate_completion(&request, &page).unwrap().id, "gpt-test");
+        let mut wrong = request.clone();
+        wrong.profile_id = Some("work".into());
+        assert_eq!(
+            validate_completion(&wrong, &page).unwrap_err().code,
+            ProviderErrorCode::Denied
+        );
+        let mut wrong = request.clone();
+        wrong.connection_id = "chatgpt".into();
+        assert_eq!(
+            validate_completion(&wrong, &page).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
+        let mut wrong = request.clone();
+        wrong.model_id = "unlisted".into();
+        assert_eq!(
+            validate_completion(&wrong, &page).unwrap_err().code,
+            ProviderErrorCode::NotFound
+        );
+        let mut not_selectable = page;
+        not_selectable.models[0].selectable = false;
+        assert_eq!(
+            validate_completion(&request, &not_selectable)
+                .unwrap_err()
+                .code,
+            ProviderErrorCode::NotFound
+        );
     }
 
     #[test]

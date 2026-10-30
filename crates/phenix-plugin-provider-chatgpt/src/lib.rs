@@ -267,14 +267,16 @@ struct Pending {
         slot = "Registrations"
     ),
     provide(phenix_provider_contracts::ProviderAuth, slot = "Authentication"),
+    provide(phenix_provider_contracts::ProviderRuntime, slot = "Runtime"),
     provide(phenix_provider_contracts::ProviderCredentials, slot = "Bearer"),
     require(phenix_provider_contracts::ProviderCredentials, slot = "Credentials")
 )]
 mod plugin {
     use super::*;
     use phenix_provider_contracts::{
-        ProviderAuth, ProviderCatalog, ProviderCredentials, ProviderDetailsQuery, ProviderPage,
-        ProviderQuery, ProviderRegistrations,
+        AuthenticationCommand, AuthenticationEvent, ProviderAuth, ProviderAuthDelegates,
+        ProviderCatalog, ProviderCompletion, ProviderCredentials, ProviderDetailsQuery,
+        ProviderPage, ProviderQuery, ProviderRegistrations, ProviderRuntime,
     };
     use phenix_sdk::{Authority, CallError, CallResult, Host, Operation, ScopedRequest};
 
@@ -753,6 +755,65 @@ mod plugin {
         CredentialSecret::new(access.into_bytes()).map_err(CallError::Domain)
     }
 
+    /// Canonical provider port: the existing strategy stays private, while
+    /// clients receive one typed authentication operation instead of handling
+    /// provider-specific status/start/poll/cancel protocols themselves.
+    #[provide(ProviderRuntime::authenticate)]
+    fn authenticate(
+        state: &mut State,
+        host: &Host<'_>,
+        command: AuthenticationCommand,
+    ) -> CallResult<AuthenticationEvent, ProviderError> {
+        ProviderAuthDelegates {
+            status,
+            begin,
+            poll,
+            cancel,
+        }
+        .dispatch(state, host, command)
+    }
+
+    #[provide(ProviderRuntime::models)]
+    fn runtime_models(
+        state: &mut State,
+        host: &Host<'_>,
+        query: ModelQuery,
+    ) -> CallResult<ModelPage, ProviderError> {
+        models(state, host, query)
+    }
+
+    // The catalog and credential-verification mechanisms are real and reused.
+    // Model execution remains explicitly unavailable until a selected,
+    // session-authorized HTTP strategy is wired as a pending operation. Doing
+    // network I/O here would lose existing streaming/cancellation semantics.
+    #[provide(ProviderRuntime::complete)]
+    fn runtime_complete(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ProviderCompletion,
+    ) -> CallResult<phenix_basic_contracts::ModelReply, ProviderError> {
+        if request.request.session.is_empty() || request.request.run.is_empty() {
+            return Err(CallError::Domain(problem(
+                ProviderErrorCode::InvalidInput,
+                "missing canonical model session or run",
+            )));
+        }
+        let query = ModelQuery {
+            scope: request.scope.clone(),
+            provider_id: request.provider_id.clone(),
+            connection_id: request.connection_id.clone(),
+            profile_id: request.profile_id.clone(),
+            cursor: None,
+            limit: 256,
+        };
+        let available = models(state, host, query)?;
+        phenix_provider_contracts::validate_completion(&request, &available)
+            .map_err(CallError::Domain)?;
+        Err(CallError::Domain(unavailable(
+            "selected session protocol adapter is not installed",
+        )))
+    }
+
     #[provide(ProviderAuth::status)]
     fn status(
         _: &mut State,
@@ -1019,7 +1080,7 @@ mod tests {
     fn oauth_provider_contributes_plain_declaration_without_account_grant() {
         use phenix_sdk::ContractMetadata;
         let meta = ContractMetadata::decode(plugin::METADATA.bytes()).unwrap();
-        assert_eq!(meta.provides.len(), 4);
+        assert_eq!(meta.provides.len(), 5);
         assert_eq!(meta.requires.len(), 1);
         assert_eq!(meta.requires[0].slot, "Credentials");
         let page = descriptor().unwrap();

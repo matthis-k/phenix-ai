@@ -1268,6 +1268,15 @@
             ./crates/phenix-plugin-provider-loopback-fixture
           ]);
         });
+      providerRuntimeConcreteCheck = pkgs.runCommand "phenix-provider-runtime-concrete" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/provider-runtime-concrete-product.py} \
+          ${kernel}/bin/phenix-kernel ${providerOpenAiApi} ${providerChatGpt} \
+          ${providerCredentialStore} ${providerDefinitions} "$out" ${providerOpenAiApiFixture}
+        test -s "$out/verified.json"
+      '';
       providerRuntimeProductCheck = pkgs.runCommand "phenix-provider-runtime-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -3045,6 +3054,7 @@
         workspace-product = workspaceProductCheck;
         provider-contracts = providerContractsCheck;
         provider-runtime-product = providerRuntimeProductCheck;
+        provider-runtime-concrete = providerRuntimeConcreteCheck;
         provider-discovery = providerDiscoveryCheck;
         provider-protocols = providerProtocolsCheck;
         provider-credential-files = providerCredentialFilesCheck;
