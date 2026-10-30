@@ -11,6 +11,7 @@ pub use state::*;
 pub use static_schema::{StaticField, StaticSchema, StaticVariant};
 mod portable;
 pub use portable::Blob;
+pub mod transfer;
 pub mod value;
 pub use descriptor::*;
 pub use scope::*;
