@@ -17,6 +17,8 @@
           root = ./.;
           fileset = pkgs.lib.fileset.unions paths;
         };
+      # Production Rust SDK sources exclude the experimental Python frontend.
+      # The Python proof of concept has an explicit test-only source package.
       publicPaths = [
         ./Cargo.toml
         ./Cargo.lock
@@ -24,9 +26,12 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./include
-        ./tools/phenix_python
       ];
       publicSource = subset publicPaths;
+      agentMixes = import ./mixes/default.nix { lib = pkgs.lib; };
+      pythonPrototypeSource = pkgs.runCommand "phenix-python-poc-source" { } ''
+        cp -r ${subset [ ./tools/phenix_python ./examples/python-trivial ]} "$out"
+      '';
       sdk = pkgs.runCommand "phenix-sdk-0.1.0" { } "cp -r ${publicSource} $out";
       exampleSource = subset [ ./examples ];
       pluginSource = pkgs.runCommand "phenix-external-plugin-source" { } ''
@@ -1602,7 +1607,7 @@
         inherit caller slot provider export;
         index = 0;
       };
-      basicCompositionSpec = {
+      basicCompositionSpec = agentMixes.production.basic {
         format = "phenix.composition.v3";
         entry = {
           interface = "phenix.basic.input@1";
@@ -1691,12 +1696,12 @@
         };
       providerManagementComposition = pkgs.writeText "phenix-provider-management.json"
         (builtins.toJSON providerManagementCompositionSpec);
+      # Provider testing is a distinct mix, not a change to the shipping preset.
       providerLoopbackManagementComposition = pkgs.writeText "phenix-provider-loopback-management.json"
-        (builtins.toJSON (providerManagementCompositionSpec // {
-          entry = providerManagementCompositionSpec.entry // {
-            provider = "phenix.provider.loopback-fixture";
-          };
-          artifacts = [ "${c9LoopbackProvider}" ];
+        (builtins.toJSON (agentMixes.testing.providerLoopback {
+          base = providerManagementCompositionSpec;
+          artifact = "${c9LoopbackProvider}";
+          provider = "phenix.provider.loopback-fixture";
         }));
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
@@ -1748,14 +1753,14 @@
         (builtins.toJSON basicHttpCompositionSpec);
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
-      historyVerificationCompositionSpec = basicCompositionSpec // {
-          artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];
-          slots = map (binding:
-            if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
-            then binding // { provider = "phenix.model.history-test"; }
-            else binding
-          ) basicCompositionSpec.slots;
-        };
+      # Select a domain-specific history test mix, not an implicit Basic default.
+      historyVerificationCompositionSpec = agentMixes.testing.modelHistory {
+        base = basicCompositionSpec;
+        artifact = "${historyTestModel}";
+        caller = "phenix.basic.agent";
+        slot = "Model";
+        provider = "phenix.model.history-test";
+      };
       historyVerificationComposition = pkgs.writeText "phenix-basic-history-verification.json"
         (builtins.toJSON historyVerificationCompositionSpec);
       # P2-0: extend immutable package specifications without copying Basic's
@@ -1793,7 +1798,7 @@
         };
       # These are deliberately P2-0 scaffolds. No Advanced implementation
       # exists yet; Basic parity is the only behavior claimed in this slice.
-      advancedCompositionSpec = extendComposition basicCompositionSpec {
+      advancedCompositionSpec = agentMixes.production.advanced (extendComposition basicCompositionSpec {
         addDefinitions = [ "${advancedDefinitions}" ];
         addArtifacts = [ "${evidenceJournal}" "${evidenceStore}" "${projectStorageSqlite}" "${compactionCheckpointStore}" "${advancedModelAdapter}" ];
         replaceSlots = [
@@ -1939,15 +1944,16 @@
           "phenix.advanced.evidence@1/get"
           "phenix.advanced.evidence@1/search"
         ];
-      };
+      });
       advancedComposition = pkgs.writeText "phenix-advanced-composition.json"
         (builtins.toJSON advancedCompositionSpec);
-      advancedVerificationCompositionSpec = extendComposition advancedCompositionSpec {
-          addArtifacts = [ "${historyTestModel}" ];
-          replaceSlots = [
-            (basicBinding "phenix.advanced.model-adapter" "Upstream" "phenix.model.history-test" "Model")
-          ];
-        };
+      advancedVerificationCompositionSpec = agentMixes.testing.modelHistory {
+        base = advancedCompositionSpec;
+        artifact = "${historyTestModel}";
+        caller = "phenix.advanced.model-adapter";
+        slot = "Upstream";
+        provider = "phenix.model.history-test";
+      };
       advancedVerificationComposition = pkgs.writeText
         "phenix-advanced-verification-composition.json"
         (builtins.toJSON advancedVerificationCompositionSpec);
@@ -2068,6 +2074,40 @@
       advancedBinaryClosure = pkgs.closureInfo {
         rootPaths = [ advancedBinary ];
       };
+      # Test domains are independently selected. The Python fixture is source
+      # for an external conformance runner, never a native agent artifact.
+      domainTestingMixCatalog = pkgs.writeText "phenix-domain-test-mixes.json"
+        (builtins.toJSON {
+          format = "phenix.domain-testing-mixes.v1";
+          domains = {
+            model-history = {
+              basic = "${historyVerificationComposition}";
+              advanced = "${advancedVerificationComposition}";
+            };
+            provider-loopback = {
+              management = "${providerLoopbackManagementComposition}";
+            };
+            graph = agentMixes.testing.graph;
+            storage = agentMixes.testing.storage;
+            frontend = agentMixes.testing.frontend;
+            advanced = agentMixes.testing.advanced;
+            graph-v2-python-poc = agentMixes.testing.pythonPoc {
+              source = "${pythonPrototypeSource}";
+            };
+          };
+        });
+      agentMixBoundaryCheck = pkgs.runCommand "phenix-agent-mix-boundaries"
+        { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        python ${./tests/agent-mix-boundaries.py} \
+          "${basicComposition}" "${advancedComposition}" \
+          "${historyVerificationComposition}" "${advancedVerificationComposition}" \
+          "${providerManagementComposition}" "${providerLoopbackManagementComposition}" \
+          "${domainTestingMixCatalog}" "${sdk}" \
+          "${basicBinaryClosure}/store-paths" "${advancedBinaryClosure}/store-paths" \
+          "$out/evidence.json"
+        test -s "$out/evidence.json"
+      '';
       kernelBinaryClosure = pkgs.closureInfo {
         rootPaths = [ kernel ];
       };
@@ -3017,6 +3057,9 @@
         };
         phenix-m1-deployment = deployment;
         phenix-sdk = sdk;
+        phenix-domain-test-mixes = domainTestingMixCatalog;
+        # Explicit opt-in experimental source, not included in Basic/Advanced.
+        phenix-python-poc-source = pythonPrototypeSource;
         phenix-m1-value-sdk-evidence = valueSdkCheck;
         phenix-m1-value-sdk-product = valueSdkProduct;
         phenix-m1-live-state-evidence = stateCheck;
@@ -3039,6 +3082,7 @@
       };
       checks.${system} = {
         m1-native-authoring = authoringCheck;
+        agent-mix-boundaries = agentMixBoundaryCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
         basic-contracts = basicContractsCheck;
