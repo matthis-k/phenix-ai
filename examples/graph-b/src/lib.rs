@@ -72,6 +72,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(Task),
     define(SlowTask),
     provide(SlowTask, slot = "slow"),
+    require(SlowTask, slot = "Workers", many(min = 0)),
     define(EachCollect),
     provide(EachCollect, slot = "each_collect"),
     define(Consume),

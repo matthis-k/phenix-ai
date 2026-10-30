@@ -88,6 +88,8 @@ fn materialize(expanded: &ExpandedGraph) -> Result<Vec<GraphContributionV2>, Fai
         groups.get_mut(owner(id)).unwrap().sources.push(source);
     }
     for (id, node) in &expanded.nodes {
+        // InvokeEach keeps its declaring owner's collection/operation unchanged.
+        // The one global compiler freezes selected routes per effective node ID.
         let mut node = node.clone();
         node.id = node_id(id)?;
         if !ids.insert(node.id.clone()) {
@@ -561,6 +563,324 @@ mod tests {
         let error = super::super::compile(&flat, &policy, |_| true, |_, _, _| panic!("no invokes"))
             .unwrap_err();
         assert!(error.message.contains("duplicate graph-v2 action"));
+    }
+
+    #[test]
+    fn repeated_each_materialization_uses_original_owner_global_routes_and_exact_grants() {
+        use phenix_contract::ValueSchema;
+        let (mut root, mut policy) = fixture();
+        let batch = ValueSchema::List(Box::new(ValueSchema::Struct(BTreeMap::from([
+            ("route".into(), ValueSchema::U64),
+            ("input".into(), ValueSchema::String),
+        ]))));
+        let outcomes = ValueSchema::List(Box::new(ValueSchema::Tagged(BTreeMap::from([
+            ("Ok".into(), Some(ValueSchema::String)),
+            ("Err".into(), Some(ValueSchema::String)),
+        ]))));
+        root.body
+            .nodes
+            .retain(|n| matches!(n.kind, NodeKind::Source { .. }));
+        root.body.edges.clear();
+        root.body.sources[0].payload = batch.clone();
+        root.body.nodes[0].outputs[0].schema = batch.clone();
+        let label = root.body.sources[0].security;
+        let execution = ExecutionPolicy {
+            on_domain_error: DomainErrorPolicy::RouteErr,
+        };
+        let child = GraphDefinition {
+            id: GraphDefinitionId::new("beta/each").unwrap(),
+            body: GraphContributionV2 {
+                contributor: "beta".into(),
+                sources: vec![],
+                patches: vec![],
+                nodes: vec![
+                    NodeDecl {
+                        id: "beta/each".into(),
+                        kind: NodeKind::InvokeEach {
+                            collection: "Workers".into(),
+                            operation: "example.api@1/run".into(),
+                            include_self: true,
+                            max: 2,
+                        },
+                        inputs: vec![InputPort {
+                            name: "in".into(),
+                            schema: batch.clone(),
+                            readiness: InputReadiness::One,
+                            security: label,
+                        }],
+                        outputs: vec![OutputPort {
+                            name: "out".into(),
+                            schema: outcomes.clone(),
+                            security: label,
+                        }],
+                        execution,
+                    },
+                    NodeDecl {
+                        id: "beta/collect".into(),
+                        kind: NodeKind::Invoke {
+                            selector: String::new(),
+                            operation: "example.collect@1/run".into(),
+                        },
+                        inputs: vec![InputPort {
+                            name: "in".into(),
+                            schema: outcomes.clone(),
+                            readiness: InputReadiness::One,
+                            security: label,
+                        }],
+                        outputs: vec![
+                            OutputPort {
+                                name: "ok".into(),
+                                schema: outcomes.clone(),
+                                security: label,
+                            },
+                            OutputPort {
+                                name: "err".into(),
+                                schema: ValueSchema::String,
+                                security: label,
+                            },
+                        ],
+                        execution,
+                    },
+                ],
+                edges: vec![EdgeDecl {
+                    id: "beta/exit".into(),
+                    kind: EdgeKind::Flow {
+                        from: OutPortRef {
+                            node: "beta/each".into(),
+                            port: "out".into(),
+                        },
+                        to: InPortRef {
+                            node: "beta/collect".into(),
+                            port: "in".into(),
+                        },
+                    },
+                }],
+            },
+            inputs: vec![BoundaryInput {
+                port: InputPort {
+                    name: "batch".into(),
+                    schema: batch,
+                    readiness: InputReadiness::One,
+                    security: label,
+                },
+                target: BoundaryTo::Local(InPortRef {
+                    node: "beta/each".into(),
+                    port: "in".into(),
+                }),
+            }],
+            outputs: vec![],
+            children: vec![],
+            anchors: vec![],
+            orders: vec![],
+            wiring: vec![],
+        };
+        root.children = ["left", "right"]
+            .map(|name| GraphChild {
+                name: name.into(),
+                definition: child.id.clone(),
+            })
+            .into();
+        root.wiring = ["left", "right"]
+            .map(|name| BoundaryFlow {
+                name: name.into(),
+                next: None,
+                from: BoundaryFrom::Local(OutPortRef {
+                    node: "alpha/source".into(),
+                    port: "out".into(),
+                }),
+                to: BoundaryTo::Child {
+                    child: name.into(),
+                    port: "batch".into(),
+                },
+            })
+            .into();
+        let defs = [root.clone(), child];
+        let expanded = lower_recursive(&defs, &root.id, budget()).unwrap();
+        let flat = materialize(&expanded).unwrap();
+        let each: Vec<_> = flat[1]
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, NodeKind::InvokeEach { .. }))
+            .map(|n| n.id.clone())
+            .collect();
+        assert_eq!(each.len(), 2);
+        assert_ne!(each[0], each[1]);
+        assert_eq!(flat[1].contributor, "beta");
+        policy.sources.clear();
+        policy.topology.clear();
+        policy.delivery.clear();
+        policy.operations.clear();
+        policy.sources.insert(flat[0].sources[0].id.clone(), label);
+        for id in &each {
+            policy.topology.insert(("alpha".into(), id.clone()));
+        }
+        for g in &flat {
+            for e in &g.edges {
+                if let EdgeKind::Flow { from, to } = &e.kind {
+                    policy.delivery.insert(
+                        (
+                            from.node.clone(),
+                            from.port.clone(),
+                            to.node.clone(),
+                            to.port.clone(),
+                        ),
+                        FlowGrant {
+                            resources: BTreeSet::from(["resource".into()]),
+                            maximum_classification: Classification::Public,
+                        },
+                    );
+                }
+            }
+        }
+        for (provider, key) in [
+            ("alpha", "example.api@1/run"),
+            ("other", "example.api@1/run"),
+            ("beta", "example.api@1/run"),
+            ("beta", "example.collect@1/run"),
+        ] {
+            policy.operations.insert(
+                (provider.into(), key.into()),
+                OperationSecurity {
+                    input: label,
+                    ok: label,
+                    err: label,
+                },
+            );
+        }
+        let counts = std::cell::Cell::new(0);
+        let check = |p: &TrustedCompositionPolicy, swapped: bool, schema_bad: bool, grant: bool| {
+            super::super::compile_each(
+                &flat,
+                p,
+                |_| true,
+                |owner, selector, key| {
+                    assert_eq!(
+                        owner, "beta",
+                        "placement must not change the declaring owner"
+                    );
+                    let (provider, request, response) = if key == "example.collect@1/run" {
+                        assert!(selector.is_empty());
+                        ("beta", outcomes.clone(), outcomes.clone())
+                    } else {
+                        if !grant {
+                            return Err(denied("missing original-owner Each grant"));
+                        }
+                        let provider = match selector {
+                            "Workers#0" => {
+                                if swapped {
+                                    "other"
+                                } else {
+                                    "alpha"
+                                }
+                            }
+                            "" => "beta",
+                            _ => panic!("unexpected selected route"),
+                        };
+                        (
+                            provider,
+                            if schema_bad {
+                                ValueSchema::Bool
+                            } else {
+                                ValueSchema::String
+                            },
+                            ValueSchema::String,
+                        )
+                    };
+                    Ok((
+                        provider.into(),
+                        OperationSchema {
+                            name: "run".into(),
+                            request,
+                            response,
+                            error: ValueSchema::String,
+                        },
+                        BTreeSet::from(["resource".into()]),
+                    ))
+                },
+                |owner, collection| {
+                    assert_eq!((owner, collection), ("beta", "Workers"));
+                    counts.set(counts.get() + 1);
+                    Ok(1)
+                },
+            )
+        };
+        let plan = check(&policy, false, false, true).unwrap();
+        assert_eq!(
+            counts.get(),
+            2,
+            "freeze the original owner's collection for every effective occurrence"
+        );
+        assert_eq!(plan.each_routes.keys().cloned().collect::<Vec<_>>(), each);
+        for routes in plan.each_routes.values() {
+            assert_eq!(
+                routes.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
+                ["alpha", "beta"]
+            );
+        }
+        assert_ne!(
+            plan.identity(),
+            check(&policy, true, false, true).unwrap().identity()
+        );
+        assert_eq!(
+            check(&policy, false, true, true).unwrap_err().code,
+            Code::SchemaRejected
+        );
+        assert_eq!(
+            check(&policy, false, false, false).unwrap_err().code,
+            Code::Denied
+        );
+        for key in policy.delivery.keys() {
+            let mut missing = policy.clone();
+            missing.delivery.remove(key);
+            assert_eq!(
+                check(&missing, false, false, true).unwrap_err().code,
+                Code::Denied,
+                "exact Each entry and same-owner exit: {key:?}"
+            );
+        }
+        for provider in ["alpha", "beta"] {
+            let mut missing = policy.clone();
+            missing
+                .operations
+                .remove(&(provider.into(), "example.api@1/run".into()));
+            assert_eq!(
+                check(&missing, false, false, true).unwrap_err().code,
+                Code::Denied
+            );
+        }
+        let mut authored = policy.clone();
+        authored.delivery.clear();
+        authored.delivery.insert(
+            (
+                "alpha/source".into(),
+                "out".into(),
+                "beta/each".into(),
+                "in".into(),
+            ),
+            FlowGrant {
+                resources: BTreeSet::from(["resource".into()]),
+                maximum_classification: Classification::Public,
+            },
+        );
+        assert_eq!(
+            check(&authored, false, false, true).unwrap_err().code,
+            Code::Denied
+        );
+        let mut permuted = defs.clone();
+        permuted.reverse();
+        for d in &mut permuted {
+            d.children.reverse();
+            d.wiring.reverse();
+            d.body.nodes.reverse();
+        }
+        assert_eq!(
+            expanded,
+            lower_recursive(&permuted, &root.id, budget()).unwrap()
+        );
+        assert_eq!(
+            metadata(&defs, &root.id).unwrap(),
+            metadata(&permuted, &root.id).unwrap()
+        );
     }
 
     #[test]

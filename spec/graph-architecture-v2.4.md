@@ -1141,11 +1141,11 @@ inspection or unexecuted acceptance assertions.
 
 | Bundle | Starting capability | This increment | Remaining acceptance |
 | --- | --- | --- | --- |
-| Typed boundaries | Direct local exports and immediate-child wiring | Deferred wiring and nested aliases (7.13), acceptance pending | Exact-head multi-level native and adversarial acceptance |
-| Edge semantics | Same-wave Flow and local Order | Deferred lowering and explicit cross-boundary Order (7.14), acceptance pending | Exact-head native edge acceptance |
-| Logical patch anchors | Structural occurrence identity | Public/private node anchors and scoped resolver (7.14), acceptance pending | Exact-head exposure rejection acceptance; patch application remains separate |
-| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred, nested alias, anchor and Order provenance/identity (7.13-7.14), acceptance pending | Exact-head provenance acceptance and patch transformations |
-| Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Deferred/Order exact-policy and anchor-exposure denial assertions, acceptance pending | Complete boundary, ownership, expansion and permission adversarial acceptance |
+| Typed boundaries | Direct local exports and immediate-child wiring | Closed for this profile: 7.13 and #1217 at `9ec4481b6`, [exact-head acceptance](https://github.com/matthis-k/phenix-ai/actions/runs/41100857560) | No remaining typed-boundary gap in this scoped profile |
+| Edge semantics | Same-wave Flow and local Order | Closed for Flow/Order/Deferred: #1211 and 7.14/#1218 at `4ba135ba0`, [exact-head acceptance](https://github.com/matthis-k/phenix-ai/actions/runs/41105358932) | New operator placement remains separately gated below |
+| Logical patch anchors | Structural occurrence identity | Closed for resolution: 7.14/#1218 public/private exposure and scoped lookup acceptance | Actual patch application is future V3, outside this C1 profile |
+| Canonical provenance | Body/wiring origins and effective-ID mapping | Body/alias/anchor/Order/effective-ID provenance through all implemented lowering, acceptance pending | Exact-head implemented-transformation provenance acceptance; patch transformation is future V3 |
+| Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Exact-policy checks plus recursive InvokeEach placement (7.15), acceptance pending | Complete exact-head boundary, ownership, route/schema/grant, expansion and native dispatch acceptance |
 
 ### 7.13 C1 immediate-child nested boundary alias freeze
 
@@ -1181,11 +1181,10 @@ node/port or child/boundary name of every alias, including unused aliases and
 definitions. Bodies remain package-attested; host placement, wiring and alias
 metadata are trusted control-plane input, not package attestation or authority.
 Global compilation still requires exact effective source/topology/delivery grants;
-names, ancestry and aliases grant nothing. InvokeEach recursive lowering remains
-explicitly unsupported. No executor, dispatcher, pending manager or Basic gate
-changes are part of this increment. The five bundles in 7.12 remain independently
-open pending normative requirements AND exact-head acceptance, including the
-three-level repeated-occurrence native fixture and pre-constructor denials.
+names, ancestry and aliases grant nothing. Section 7.15 adds bounded InvokeEach
+placement through existing global compilation. No executor, dispatcher, pending manager or Basic gate
+changes are part of this increment. Bundle status and exact-head evidence are
+recorded in 7.12; source inspection alone never closes an acceptance requirement.
 
 ### 7.14 C1 scoped logical anchors and boundary Order freeze
 
@@ -1235,10 +1234,57 @@ infer no grants: exact effective-ID topology/source/delivery and original-owner
 operation policy remain mandatory during global compilation. Bodies still match
 their contributor's selected package; no unattested empty container is introduced.
 This is bounded metadata algebra and resolution only, NOT a graph-patch engine.
-Recursive InvokeEach remains unsupported; generic Each/Basic execution is unchanged.
-The five C1 bundles in 7.12 remain independently open until normative AND all
-exact-head acceptance passes, including held-native-A versus ready distinct-B
-ordering, no-Flow nonactivation, provenance isolation and pre-constructor denials.
+Section 7.15 adds recursive InvokeEach placement; generic Each/Basic execution is unchanged.
+Bundle status and exact-head evidence are recorded in 7.12, including held-native-A
+versus ready distinct-B ordering, no-Flow nonactivation, provenance isolation and
+pre-constructor denials. Source assertions alone do not establish runtime acceptance.
+
+### 7.15 C1 recursive invocation placement freeze
+
+The section 10.5 InvokeEach operator may be placed in recursive definitions.
+Structural lowering retains its complete collection, operation, include_self,
+maximum, full input/output schemas and execution policy. Borrowed collection and
+operation strings are charged before cloning, alongside existing schema/tree and
+aggregate limits. Materialization rewrites only occurrence-qualified node/edge
+identities and source references, keeping the ORIGINAL contributor. No route,
+grant, selected membership or provider instance is inferred from a definition,
+instance path, public anchor, ancestor or collection name.
+
+Every definition body still exactly matches its contributor's selected package,
+including repeated source-free definitions. All materialized occurrences enter
+the SAME global compiler. For each effective Each node it freezes routes from
+that original owner's package-declared Many import and exact selected ordinal
+bindings, optionally followed by self. Every route must have identical schemas,
+attested security and that declaring owner's prepared grants. Exact effective-ID
+delivery grants apply on BOTH Each entry and exit, even for same-owner endpoints;
+existing topology/source/operation policy remains explicit. No local compilation,
+collection registry, duplicate provider state, special recursive dispatcher or
+new scheduler is introduced.
+
+Distinct effective Each node IDs supplement root, activation and branch ordinals
+to isolate repeated occurrences. The existing global provider-busy guard still
+serializes physical calls to each selected provider across all occurrences while
+allowing distinct providers to overlap. Ordered typed publication, cancellation,
+infrastructure failure, root limits and physical drain are unchanged from 10.5.
+Aliases, anchors and Order retain their full provenance around Each endpoints;
+canonical recursive identity includes their metadata, complete authored Each
+declarations and each globally frozen route plan. Input permutations remain
+immaterial; route order and effective occurrence IDs remain identity-sensitive.
+
+Focused acceptance uses one source-only A root and two source-free B Each plus
+native typed-collector occurrences with explicit B.Workers=[A] binding plus the
+attested `include_self=true` declaration, freezing routes [A,B], and owner-B call
+grants. An explicit Many self-binding would be a required startup dependency
+cycle; placement does not relax that existing resolver rule. It must prove four real pending branches, two collectors,
+isolated identities, ordered mixed outcomes, shared-provider serialization and
+physical drain, protected observers and pre-constructor route/schema/effective-ID
+grant denials. Source, unit and native assertions do not close the five C1 bundles
+until ALL mandatory exact-head gates pass. The scoped C1 profile comprises typed
+boundaries, Flow/Order/Deferred, public/private anchor RESOLUTION, provenance of
+implemented lowering transformations and placement/ownership/security. Actual
+patch application/transformation is future V3 and is neither implemented nor a
+missing requirement of this C1 lowering profile. Full V2 and P1 parity remain
+separate acceptance tracks.
 
 ## 8. Module and file plan
 
