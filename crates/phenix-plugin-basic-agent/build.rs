@@ -1,4 +1,4 @@
-use phenix_basic_contracts::{BasicGraphTurn, BasicTurnPrepare};
+use phenix_basic_contracts::{BasicGraphTurn, BasicTurnPrepare, GraphTurnDecision};
 use phenix_contract::{graph::v2::*, Operation, Portable};
 
 fn invoke<O: Operation>(id: &str) -> NodeDecl {
@@ -77,28 +77,69 @@ fn main() {
             invoke::<BasicTurnPrepare::prepare>("prepare"),
             invoke::<BasicGraphTurn::model>("model"),
             invoke::<BasicGraphTurn::tool>("tool"),
-            invoke::<BasicGraphTurn::model>("continuation"),
+            invoke::<BasicGraphTurn::decide>("decide"),
+            NodeDecl {
+                id: "phenix.basic.agent/route".into(),
+                kind: NodeKind::Switch {
+                    tagged_schema: GraphTurnDecision::SCHEMA.owned().unwrap().id().unwrap(),
+                },
+                inputs: vec![InputPort {
+                    name: "in".into(),
+                    schema: GraphTurnDecision::SCHEMA.owned().unwrap(),
+                    readiness: InputReadiness::One,
+                    security: label(),
+                }],
+                outputs: ["Final", "Tools"]
+                    .into_iter()
+                    .map(|name| OutputPort {
+                        name: name.into(),
+                        schema: <BasicGraphTurn::tool as Operation>::Request::SCHEMA
+                            .owned()
+                            .unwrap(),
+                        security: label(),
+                    })
+                    .collect(),
+                execution: ExecutionPolicy {
+                    on_domain_error: DomainErrorPolicy::RouteErr,
+                },
+            },
             invoke::<BasicGraphTurn::finish>("finish"),
         ],
         edges: [
             ("prompt", "out", "prepare"),
             ("prepare", "ok", "model"),
-            ("model", "ok", "tool"),
-            ("tool", "ok", "continuation"),
-            ("continuation", "ok", "finish"),
+            ("model", "ok", "decide"),
+            ("decide", "ok", "route"),
+            ("route", "Tools", "tool"),
+            ("route", "Final", "finish"),
+            ("tool", "ok", "model"),
         ]
         .into_iter()
         .map(|(from, port, to)| EdgeDecl {
             id: format!("phenix.basic.agent/{from}-to-{to}"),
-            kind: EdgeKind::Flow {
-                from: OutPortRef {
-                    node: format!("phenix.basic.agent/{from}"),
-                    port: port.into(),
-                },
-                to: InPortRef {
-                    node: format!("phenix.basic.agent/{to}"),
-                    port: "in".into(),
-                },
+            kind: if from == "tool" {
+                EdgeKind::Deferred {
+                    from: OutPortRef {
+                        node: format!("phenix.basic.agent/{from}"),
+                        port: port.into(),
+                    },
+                    to: InPortRef {
+                        node: format!("phenix.basic.agent/{to}"),
+                        port: "in".into(),
+                    },
+                    next: DeferredWave::Next,
+                }
+            } else {
+                EdgeKind::Flow {
+                    from: OutPortRef {
+                        node: format!("phenix.basic.agent/{from}"),
+                        port: port.into(),
+                    },
+                    to: InPortRef {
+                        node: format!("phenix.basic.agent/{to}"),
+                        port: "in".into(),
+                    },
+                }
             },
         })
         .collect(),

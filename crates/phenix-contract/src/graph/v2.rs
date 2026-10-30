@@ -1,7 +1,7 @@
 //! Bounded offline graph-v2 base declarations and security primitives.
 //!
 //! The supported profile is Source, Invoke, Constant, Flow and Order. Other
-//! intrinsic/deferred declarations are typed but explicitly rejected. Patches
+//! deferred edges use typed next-wave admissions. Patches
 //! are empty-only. This is not full V0 or a graph compiler/runtime integration.
 //!
 //! These checks do not attest metadata, authorize delivery or reference access,

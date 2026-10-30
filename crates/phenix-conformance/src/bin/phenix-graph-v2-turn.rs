@@ -1,4 +1,4 @@
-//! Native acceptance for the bounded graph-v2 Basic turn.
+//! Native acceptance for repeated graph-managed Basic turns.
 //! Usage: phenix-graph-v2-turn COMPOSITION (with a fresh SQLite database).
 //! Optional mode: deny-tool, pending, cancel, or fail-model. Controlled modes
 //! require the scripted Model's controlled-pending fixture feature.
@@ -23,6 +23,17 @@ fn main() {
     let mode = std::env::args().nth(2);
     let deny_tool = mode.as_deref() == Some("deny-tool");
     let controlled = matches!(mode.as_deref(), Some("pending" | "cancel" | "fail-model"));
+    let repeated = matches!(
+        mode.as_deref(),
+        Some("rounds" | "model-budget" | "tool-budget")
+    );
+    let budget = matches!(mode.as_deref(), Some("model-budget" | "tool-budget"));
+    let prompt = match mode.as_deref() {
+        Some("final") => "graph-proof",
+        Some("tool-failure") => "tools-fail:graph-proof",
+        _ if repeated => "rounds:graph-proof",
+        _ => "tool:graph-proof",
+    };
     if deny_tool {
         composition.grants.retain(|grant| {
             !(grant.caller == "phenix.basic.agent"
@@ -48,6 +59,7 @@ fn main() {
     for key in [
         "phenix.basic.turn-prepare@1/prepare",
         "phenix.basic.graph-turn@1/model",
+        "phenix.basic.graph-turn@1/decide",
         "phenix.basic.graph-turn@1/tool",
         "phenix.basic.graph-turn@1/finish",
     ] {
@@ -108,8 +120,12 @@ fn main() {
             "phenix.basic.submit",
             &PromptSubmitted {
                 session: "s1".into(),
-                text: "tool:graph-proof".into(),
-                limits: Limits::default(),
+                text: prompt.into(),
+                limits: Limits {
+                    model_turns: (mode.as_deref() == Some("model-budget")).then_some(2),
+                    tool_calls: (mode.as_deref() == Some("tool-budget")).then_some(1),
+                    ..Limits::default()
+                },
             }
             .to_value(),
             scope,
@@ -203,8 +219,8 @@ fn main() {
             return;
         }
         std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
-        // Both model stages deliberately suspend, including the continuation.
-        let mut continuation_pending = false;
+        // Every Model stage suspends, including both repeated continuations.
+        let mut continuation_pending = std::collections::BTreeSet::new();
         for _ in 0..8 {
             let status = run
                 .pump(|update| {
@@ -213,25 +229,44 @@ fn main() {
                     }
                 })
                 .unwrap();
-            if status == GraphStatus::Pending && run.steps().len() == 3 {
-                continuation_pending = true;
+            if status == GraphStatus::Pending && kernel.inspect()["pending"]["physical_leases"] == 2
+            {
+                let completed_models = run
+                    .steps()
+                    .iter()
+                    .filter(|step| step.node == "phenix.basic.agent/model")
+                    .count();
+                assert_eq!(run.steps().len(), 1 + 3 * completed_models);
+                if completed_models > 0 {
+                    // Repeated polls of one admission are not new continuations.
+                    continuation_pending.insert(completed_models);
+                }
                 assert!(run.completion().is_none());
-                assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
             }
             if status == GraphStatus::Finished {
                 break;
             }
         }
-        assert!(continuation_pending, "continuation did not suspend");
+        assert_eq!(
+            continuation_pending.len(),
+            if repeated { 2 } else { 1 },
+            "continuation did not suspend in every round"
+        );
         assert_eq!(run.completion(), Some(GraphCompletion::Success));
         assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
         std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
     }
-    let pumped = run.pump(|update| {
-        if matches!(update.event, GraphEvent::Finished(_)) {
-            completions += 1;
+    let mut pumped = Ok(GraphStatus::Pending);
+    for _ in 0..8 {
+        pumped = run.pump(|update| {
+            if matches!(update.event, GraphEvent::Finished(_)) {
+                completions += 1;
+            }
+        });
+        if matches!(pumped, Ok(GraphStatus::Finished) | Err(_)) {
+            break;
         }
-    });
+    }
     if deny_tool {
         assert_eq!(pumped.unwrap_err().code, phenix_contract::Code::Denied);
         assert_ne!(run.completion(), Some(GraphCompletion::Success));
@@ -260,27 +295,113 @@ fn main() {
         return;
     }
     assert_eq!(pumped.unwrap(), GraphStatus::Finished);
-    assert_eq!(run.completion(), Some(GraphCompletion::Success));
     assert_eq!(completions, 1);
+    if budget {
+        assert_eq!(run.completion(), Some(GraphCompletion::Domain));
+        let Outcome::Domain(value) = &run.steps().last().unwrap().outcome else {
+            panic!("budget did not stop the graph turn")
+        };
+        assert_eq!(
+            BasicError::from_value(value.clone()).unwrap().code,
+            ErrorCode::TurnLimit
+        );
+        assert_eq!(
+            run.steps()
+                .iter()
+                .filter(|step| step.node == "phenix.basic.agent/model")
+                .count(),
+            2
+        );
+        assert!(!run
+            .steps()
+            .iter()
+            .any(|step| step.node == "phenix.basic.agent/finish"));
+        let Outcome::Success(value) = run
+            .invoke_selected(
+                &Selection {
+                    interface: "phenix.basic.session@1".into(),
+                    operation: "open".into(),
+                    provider: "phenix.basic.session".into(),
+                },
+                &Scope {
+                    session: "s1".into(),
+                }
+                .to_value(),
+            )
+            .unwrap()
+        else {
+            panic!("budget session read failed")
+        };
+        let snapshot = SessionSnapshot::from_value(value).unwrap();
+        assert_eq!(snapshot.status, RunStatus::Failed);
+        assert!(snapshot.pending.is_empty());
+        assert_eq!(
+            snapshot
+                .history
+                .iter()
+                .filter(|message| message.role() == phenix_basic_contracts::Role::Tool)
+                .count(),
+            if mode.as_deref() == Some("model-budget") {
+                2
+            } else {
+                1
+            }
+        );
+        drop(run);
+        kernel.shutdown().unwrap();
+        return;
+    }
+    assert_eq!(run.completion(), Some(GraphCompletion::Success));
+    let rounds = if mode.as_deref() == Some("final") {
+        0
+    } else if repeated {
+        2
+    } else {
+        1
+    };
+    let mut expected = vec!["phenix.basic.agent/prepare"];
+    for _ in 0..rounds {
+        expected.extend([
+            "phenix.basic.agent/model",
+            "phenix.basic.agent/decide",
+            "phenix.basic.agent/tool",
+        ]);
+    }
+    expected.extend([
+        "phenix.basic.agent/model",
+        "phenix.basic.agent/decide",
+        "phenix.basic.agent/finish",
+    ]);
     assert_eq!(
         run.steps()
             .iter()
             .map(|step| step.node.as_str())
             .collect::<Vec<_>>(),
-        [
-            "phenix.basic.agent/prepare",
-            "phenix.basic.agent/model",
-            "phenix.basic.agent/tool",
-            "phenix.basic.agent/continuation",
-            "phenix.basic.agent/finish"
-        ]
+        expected
     );
     let Outcome::Success(value) = &run.steps().last().unwrap().outcome else {
         panic!("missing final answer")
     };
     let result = RunResult::from_value(value.clone()).unwrap();
-    assert_eq!(result.answer, "mock:call-1:GRAPH-PROOF");
-    assert_eq!((result.model_turns, result.tool_calls), (2, 1));
+    let calls = if mode.as_deref() == Some("tool-failure") {
+        2
+    } else {
+        rounds
+    };
+    if mode.as_deref() == Some("tool-failure") {
+        assert!(result.answer.contains("call-1:error:"));
+        assert!(result.answer.contains("call-2:11"));
+    } else {
+        assert_eq!(
+            result.answer,
+            match rounds {
+                0 => "mock:graph-proof",
+                2 => "mock:rounds:GRAPH-PROOF",
+                _ => "mock:call-1:GRAPH-PROOF",
+            }
+        );
+    }
+    assert_eq!((result.model_turns, result.tool_calls), (rounds + 1, calls));
     let Outcome::Success(value) = run
         .invoke_selected(
             &Selection {
@@ -300,21 +421,18 @@ fn main() {
         panic!("journal read failed")
     };
     let page = EventPage::from_value(value).unwrap();
-    assert_eq!(
+    let count = |kind| {
         page.events
             .iter()
-            .map(|event| &event.kind)
-            .collect::<Vec<_>>(),
-        [
-            &EventKind::PromptAccepted,
-            &EventKind::ModelStarted,
-            &EventKind::ToolStarted,
-            &EventKind::ToolFinished,
-            &EventKind::ModelStarted,
-            &EventKind::TextDelta,
-            &EventKind::Answer
-        ]
-    );
+            .filter(|event| event.kind == kind)
+            .count() as u64
+    };
+    assert_eq!(count(EventKind::PromptAccepted), 1);
+    assert_eq!(count(EventKind::ModelStarted), rounds + 1);
+    assert_eq!(count(EventKind::ToolStarted), calls);
+    assert_eq!(count(EventKind::ToolFinished), calls);
+    assert_eq!(count(EventKind::Answer), 1);
+    assert_eq!(count(EventKind::Failure), 0);
     assert_eq!(
         run.pump(|_| panic!("duplicate completion")).unwrap(),
         GraphStatus::Finished
@@ -322,5 +440,5 @@ fn main() {
     drop(run);
     assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
     kernel.shutdown().unwrap();
-    println!("graph-v2 turn: five ordered stages, two model turns, one tool, journal ordering, answer and exactly-once completion passed");
+    println!("graph-v2 turn: explicit branch, repeated deferred turns, accounting and exactly-once completion passed");
 }

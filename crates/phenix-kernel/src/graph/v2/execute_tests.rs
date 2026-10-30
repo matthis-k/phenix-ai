@@ -1,6 +1,275 @@
 use super::*;
 use phenix_contract::Authority;
 
+#[test]
+fn deferred_arrival_survives_producer_closure_and_propagates_absence_scope() {
+    let (mut declarations, policy) = super::super::tests::fixture();
+    let EdgeKind::Flow { from, to } = declarations[0].edges[0].kind.clone() else {
+        unreachable!()
+    };
+    declarations[0].edges[0].kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let mut wave = Wave::new(&graph, "$deferred:alpha/start").unwrap();
+    let resources = BTreeSet::from(["resource".into()]);
+    wave.arrivals.insert(
+        "alpha/start".into(),
+        Resolution::Value(Some(Value::String("admitted".into())), resources.clone()),
+    );
+    // The old producer is inactive in this wave. It cannot close the admission.
+    wave.deliver(
+        &graph,
+        &scope(&["resource", "other"]),
+        "alpha/source",
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(
+        matches!(wave.input("alpha/first").unwrap(), Resolution::Value(Some(_), ref r) if r == &resources)
+    );
+    wave.causes.insert(
+        "alpha/first".into(),
+        wave.input_evidence("alpha/first").unwrap(),
+    );
+    wave.deliver(
+        &graph,
+        &scope(&["resource", "other"]),
+        "alpha/first",
+        None,
+        false,
+    )
+    .unwrap();
+    let evidence = wave.input_evidence("beta/second").unwrap();
+    assert!(evidence.causal && evidence.authorized);
+    assert_eq!(evidence.resources, Some(resources));
+    assert!(matches!(
+        wave.input("beta/second").unwrap(),
+        Resolution::Closed
+    ));
+    assert!(wave.emitted.is_empty());
+}
+
+#[test]
+fn deferred_foreign_delivery_attenuates_and_denies_before_enqueue() {
+    let (mut declarations, mut policy) = super::super::tests::fixture();
+    let EdgeKind::Flow { from, to } = declarations[0].edges[1].kind.clone() else {
+        unreachable!()
+    };
+    declarations[0].edges[1].kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let value = Value::String("next".into());
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    wave.resources.insert(
+        "alpha/first".into(),
+        BTreeSet::from(["resource".into(), "other".into()]),
+    );
+    wave.deliver(
+        &graph,
+        &scope(&["resource", "other"]),
+        "alpha/first",
+        Some(("ok", &value)),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        wave.emitted["alpha/next"].resources,
+        BTreeSet::from(["resource".into()])
+    );
+    for missing in [false, true] {
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        wave.resources
+            .insert("alpha/first".into(), BTreeSet::from(["other".into()]));
+        let mut denied_graph = graph.clone();
+        if missing {
+            policy.delivery.clear();
+            denied_graph.policy = policy.clone();
+        }
+        assert_eq!(
+            wave.deliver(
+                &denied_graph,
+                &scope(&["resource", "other"]),
+                "alpha/first",
+                Some(("ok", &value)),
+                false
+            )
+            .unwrap_err()
+            .code,
+            Code::Denied
+        );
+        assert!(wave.emitted.is_empty());
+    }
+}
+
+#[test]
+fn separate_deferred_inputs_cannot_satisfy_a_same_wave_join() {
+    let (mut declarations, policy) = super::super::tests::join_fixture();
+    for edge in &mut declarations[0].edges[..2] {
+        let EdgeKind::Flow { from, to } = edge.kind.clone() else {
+            unreachable!()
+        };
+        edge.kind = EdgeKind::Deferred {
+            from,
+            to,
+            next: DeferredWave::Next,
+        };
+    }
+    let failure = super::super::tests::run(&declarations, &policy).unwrap_err();
+    assert!(failure.message.contains("disjoint input sources"));
+    // Also exercise terminal reduction independently of static rejection.
+    let (declarations, policy) = super::super::tests::join_fixture();
+    let mut graph = super::super::tests::run(&declarations, &policy).unwrap();
+    for edge in &mut graph.declarations[0].edges[..2] {
+        let EdgeKind::Flow { from, to } = edge.kind.clone() else {
+            unreachable!()
+        };
+        edge.kind = EdgeKind::Deferred {
+            from,
+            to,
+            next: DeferredWave::Next,
+        };
+    }
+    for admitted in ["alpha/a", "alpha/b"] {
+        let mut wave = Wave::new(&graph, &format!("$deferred:{admitted}")).unwrap();
+        wave.arrivals.insert(
+            admitted.into(),
+            Resolution::Value(
+                Some(Value::String("one wave".into())),
+                BTreeSet::from(["resource".into()]),
+            ),
+        );
+        assert!(matches!(
+            wave.input("alpha/merge").unwrap(),
+            Resolution::Closed
+        ));
+    }
+}
+
+#[test]
+fn deferred_delivery_is_queued_not_a_same_wave_arrival() {
+    let (mut declarations, policy) = super::super::tests::fixture();
+    let edge = &mut declarations[0].edges[0];
+    let EdgeKind::Flow { from, to } = edge.kind.clone() else {
+        unreachable!()
+    };
+    let producer = from.node.clone();
+    let port = from.port.clone();
+    let target = to.node.clone();
+    let id = edge.id.clone();
+    edge.kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    assert!(!graph.predecessors[&target].contains(&producer));
+    assert!(graph.source_reachability[&target].contains(&format!("$deferred:{id}")));
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    let value = Value::String("next".into());
+    wave.resources
+        .insert(producer.clone(), BTreeSet::from(["resource".into()]));
+    wave.deliver(
+        &graph,
+        &scope(&["resource"]),
+        &producer,
+        Some((&port, &value)),
+        false,
+    )
+    .unwrap();
+    assert!(matches!(wave.arrivals[&id], Resolution::Closed));
+    assert_eq!(wave.emitted[&id].value, value);
+    assert_eq!(
+        wave.emitted[&id].resources,
+        BTreeSet::from(["resource".into()])
+    );
+    assert_eq!(wave.values, 2);
+    assert_eq!(wave.executions, 1);
+    // Replaying a completion cannot admit another activation.
+    wave.deliver(
+        &graph,
+        &scope(&["resource"]),
+        &producer,
+        Some((&port, &value)),
+        false,
+    )
+    .unwrap();
+    assert_eq!(wave.emitted.len(), 1);
+    assert_eq!(wave.values, 2);
+}
+
+#[test]
+fn deferred_closure_never_enqueues_a_wave() {
+    let (mut declarations, policy) = super::super::tests::fixture();
+    let edge = &mut declarations[0].edges[0];
+    let EdgeKind::Flow { from, to } = edge.kind.clone() else {
+        unreachable!()
+    };
+    let producer = from.node.clone();
+    edge.kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    wave.deliver(&graph, &scope(&["resource"]), &producer, None, false)
+        .unwrap();
+    assert!(wave.emitted.is_empty());
+}
+
+#[test]
+fn deferred_queue_and_cumulative_value_bounds_fail_closed() {
+    let (mut declarations, policy) = super::super::tests::fixture();
+    let edge = &mut declarations[0].edges[0];
+    let EdgeKind::Flow { from, to } = edge.kind.clone() else {
+        unreachable!()
+    };
+    let producer = from.node.clone();
+    let port = from.port.clone();
+    let id = edge.id.clone();
+    edge.kind = EdgeKind::Deferred {
+        from,
+        to,
+        next: DeferredWave::Next,
+    };
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let resources = BTreeSet::from(["resource".into()]);
+    let value = Value::String("next".into());
+    for queue_full in [false, true] {
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        wave.resources.insert(producer.clone(), resources.clone());
+        if queue_full {
+            for _ in 0..MAX_DEFERRED_QUEUE {
+                wave.queue.push_back(DeferredActivation {
+                    edge: id.clone(),
+                    value: value.clone(),
+                    resources: resources.clone(),
+                });
+            }
+        } else {
+            wave.values = MAX_ROOT_VALUES;
+        }
+        let failure = wave
+            .deliver(
+                &graph,
+                &scope(&["resource"]),
+                &producer,
+                Some((&port, &value)),
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(failure.code, Code::InfrastructureFailure);
+        assert!(wave.emitted.is_empty());
+    }
+}
+
 // Deterministic work count, not a wall-clock threshold.
 #[test]
 fn review_port_input_visits_only_relevant_candidates() {

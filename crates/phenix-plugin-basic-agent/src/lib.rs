@@ -733,13 +733,6 @@ mod plugin {
         if let Err(failure) = admission {
             return PendingResult::Ready(Err(failure));
         }
-        // A final first reply traverses the fixed continuation stage without
-        // invoking Model again or accounting the reply twice.
-        if let Some(reply) = state.graph_reply.as_ref() {
-            if reply.calls.is_empty() {
-                return PendingResult::Ready(Ok(reply.clone()));
-            }
-        }
         match host.begin::<Model::complete>("Model", &request) {
             Ok(ImportCall::Ready(reply)) => graph_model_result(state, host, reply),
             Ok(ImportCall::Pending(child)) => {
@@ -824,12 +817,32 @@ mod plugin {
         Ok(true)
     }
 
+    #[provide(phenix_basic_contracts::BasicGraphTurn::decide)]
+    fn graph_decide(
+        state: &mut State,
+        _: &Host<'_>,
+        reply: phenix_basic_contracts::ModelReply,
+    ) -> CallResult<phenix_basic_contracts::GraphTurnDecision, BasicError> {
+        if state.graph_reply.as_ref() != Some(&reply) {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "not the admitted Model reply",
+            )));
+        }
+        Ok(if reply.calls.is_empty() {
+            phenix_basic_contracts::GraphTurnDecision::Final { reply }
+        } else {
+            phenix_basic_contracts::GraphTurnDecision::Tools { reply }
+        })
+    }
+
     #[provide(phenix_basic_contracts::BasicGraphTurn::tool)]
     fn graph_tool(
         state: &mut State,
         host: &Host<'_>,
-        reply: phenix_basic_contracts::ModelReply,
+        request: phenix_basic_contracts::GraphTurnReply,
     ) -> CallResult<ModelRequest, BasicError> {
+        let reply = request.reply;
         if state.graph_reply.as_ref() != Some(&reply) {
             return Err(CallError::Domain(error(
                 ErrorCode::Denied,
@@ -840,27 +853,10 @@ mod plugin {
             .active
             .take()
             .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
-        if running.turns != 0 {
-            let problem = error(
-                ErrorCode::InvalidReply,
-                "graph slice requires an initial reply",
-            );
+        if reply.calls.is_empty() {
+            let problem = error(ErrorCode::InvalidReply, "tool stage requires tool calls");
             stopped(host, running.session, &problem)?;
             return Err(CallError::Domain(problem));
-        }
-        if reply.calls.is_empty() {
-            let next = super::project_model_request(
-                &running.input.session,
-                &running.run,
-                &running.session.history,
-                &running.tools,
-                &running.skills,
-                &running.context,
-                &running.input.limits,
-            );
-            state.pending_model_request = Some(next.clone());
-            state.active = Some(running);
-            return Ok(next);
         }
         state.graph_reply = None;
         let next = match (|| {
@@ -904,8 +900,9 @@ mod plugin {
     fn graph_finish(
         state: &mut State,
         host: &Host<'_>,
-        reply: phenix_basic_contracts::ModelReply,
+        request: phenix_basic_contracts::GraphTurnReply,
     ) -> CallResult<RunResult, BasicError> {
+        let reply = request.reply;
         if state.graph_reply.as_ref() != Some(&reply) {
             return Err(CallError::Domain(error(
                 ErrorCode::Denied,
@@ -917,7 +914,7 @@ mod plugin {
             .active
             .take()
             .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
-        if running.turns > 1 || !reply.calls.is_empty() {
+        if !reply.calls.is_empty() {
             let problem = error(
                 ErrorCode::InvalidReply,
                 "graph continuation requires final answer",

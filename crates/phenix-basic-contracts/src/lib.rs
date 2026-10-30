@@ -619,13 +619,25 @@ pub trait BasicTurnPrepare {
     fn prepare(&self, request: PromptSubmitted) -> Result<ModelRequest, BasicError>;
 }
 
-/// Bounded graph-v2 acceptance stages. Model and tool effects are synchronous;
-/// the graph, not a plugin loop, orders the two model turns.
+/// Domain routing only; the graph owns repetition and model cancellation.
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum GraphTurnDecision {
+    Final { reply: ModelReply },
+    Tools { reply: ModelReply },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphTurnReply {
+    pub reply: ModelReply,
+}
+
+/// Graph-managed turns. Each stage consumes one admitted reply exactly once.
 #[contract(id = "phenix.basic.graph-turn@1")]
 pub trait BasicGraphTurn {
     fn model(&self, request: ModelRequest) -> Result<ModelReply, BasicError>;
-    fn tool(&self, reply: ModelReply) -> Result<ModelRequest, BasicError>;
-    fn finish(&self, reply: ModelReply) -> Result<RunResult, BasicError>;
+    fn decide(&self, reply: ModelReply) -> Result<GraphTurnDecision, BasicError>;
+    fn tool(&self, reply: GraphTurnReply) -> Result<ModelRequest, BasicError>;
+    fn finish(&self, reply: GraphTurnReply) -> Result<RunResult, BasicError>;
 }
 
 #[property(owner = "phenix.basic.agent", id = "pending_model_request", get, watch)]
@@ -707,6 +719,33 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_decision_cases_match_stage_input_schema() {
+        let reply = ModelReply {
+            text: "answer".into(),
+            calls: vec![],
+            usage: Usage::default(),
+        };
+        let ValueSchema::Tagged(cases) = GraphTurnDecision::SCHEMA.owned().unwrap() else {
+            panic!("graph decision must be tagged")
+        };
+        for decision in [
+            GraphTurnDecision::Final {
+                reply: reply.clone(),
+            },
+            GraphTurnDecision::Tools {
+                reply: reply.clone(),
+            },
+        ] {
+            let Value::Map(value) = decision.to_value() else {
+                panic!("missing tag")
+            };
+            let (case, payload) = value.into_iter().next().unwrap();
+            assert_eq!(cases[&case], Some(GraphTurnReply::SCHEMA.owned().unwrap()));
+            assert_eq!(GraphTurnReply::from_value(payload).unwrap().reply, reply);
+        }
+    }
 
     #[test]
     fn single_record_cas_ack_rejects_spurious_or_ambiguous_results() {

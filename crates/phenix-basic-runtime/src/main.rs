@@ -1024,6 +1024,7 @@ fn prepare_agent(spec: Composition) -> Result<Prepared, phenix_contract::Failure
     for key in [
         "phenix.basic.turn-prepare@1/prepare",
         "phenix.basic.graph-turn@1/model",
+        "phenix.basic.graph-turn@1/decide",
         "phenix.basic.graph-turn@1/tool",
         "phenix.basic.graph-turn@1/finish",
     ] {

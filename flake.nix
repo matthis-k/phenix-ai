@@ -1610,6 +1610,7 @@
       basicV2StageKeys = [
         "phenix.basic.turn-prepare@1/prepare"
         "phenix.basic.graph-turn@1/model"
+        "phenix.basic.graph-turn@1/decide"
         "phenix.basic.graph-turn@1/tool"
         "phenix.basic.graph-turn@1/finish"
       ];
@@ -1629,6 +1630,10 @@
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} deny-tool
+        for mode in final rounds model-budget tool-budget tool-failure; do
+          PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-$mode.sqlite" \
+            ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} "$mode" > "$out/native-$mode.txt"
+        done
       '';
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }

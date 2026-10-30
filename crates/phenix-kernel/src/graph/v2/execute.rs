@@ -6,6 +6,14 @@ use phenix_contract::ScopedRequest;
 const MAX_ROOT_VALUES: usize = 16_384;
 const MAX_ROOT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROOT_NODES: usize = 4_096;
+const MAX_ROOT_WAVES: u64 = 256;
+const MAX_DEFERRED_QUEUE: usize = 1_024;
+
+struct DeferredActivation {
+    edge: String,
+    value: Value,
+    resources: BTreeSet<String>,
+}
 
 // Deterministic work count, not wall-clock timing.
 #[cfg(test)]
@@ -61,8 +69,10 @@ impl ClosureEvidence {
 }
 
 pub(in crate::graph) struct Wave {
-    // This profile admits exactly one initial wave under the existing Root ID.
     _id: u64,
+    queue: std::collections::VecDeque<DeferredActivation>,
+    emitted: BTreeMap<String, DeferredActivation>,
+    executions: usize,
     source: String,
     nodes: BTreeMap<String, (String, NodeDecl)>,
     edges: BTreeMap<String, EdgeDecl>,
@@ -105,11 +115,23 @@ impl Wave {
             .collect();
         let arrivals = edges
             .iter()
-            .filter(|(_, e)| matches!(e.kind, EdgeKind::Flow { .. }))
-            .map(|(id, _)| (id.clone(), Resolution::Unresolved))
+            .filter(|(_, e)| matches!(e.kind, EdgeKind::Flow { .. } | EdgeKind::Deferred { .. }))
+            .map(|(id, e)| {
+                (
+                    id.clone(),
+                    if matches!(e.kind, EdgeKind::Deferred { .. }) {
+                        Resolution::Closed
+                    } else {
+                        Resolution::Unresolved
+                    },
+                )
+            })
             .collect();
         Ok(Self {
             _id: 0,
+            queue: Default::default(),
+            emitted: BTreeMap::new(),
+            executions: 0,
             source: source.into(),
             nodes,
             edges,
@@ -137,6 +159,13 @@ impl Wave {
     ) -> Result<(), Failure> {
         if self.done.contains(node) {
             return Ok(());
+        }
+        self.executions += 1;
+        if self.executions > MAX_ROOT_NODES {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "graph-v2 root execution limit",
+            ));
         }
         let terminal_cause = self
             .domain_causes
@@ -303,14 +332,15 @@ impl Wave {
             .filter(|e| e.causal)
             .and_then(|e| e.resources.as_ref());
         for (id, edge) in &self.edges {
-            let EdgeKind::Flow { from, to } = &edge.kind else {
+            let (EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. }) = &edge.kind
+            else {
                 continue;
             };
             if from.node != node {
                 continue;
             }
             if let Some((port, value)) = selected.filter(|(port, _)| *port == from.port) {
-                if discarded.contains(&to.node) {
+                if matches!(edge.kind, EdgeKind::Flow { .. }) && discarded.contains(&to.node) {
                     continue;
                 }
                 let inherited =
@@ -354,10 +384,27 @@ impl Wave {
                         "graph-v2 root value/byte limit",
                     ));
                 }
-                self.arrivals.insert(
-                    id.clone(),
-                    Resolution::Value(Some(value.clone()), resources),
-                );
+                if matches!(edge.kind, EdgeKind::Deferred { .. }) {
+                    if self.queue.len() + self.emitted.len() >= MAX_DEFERRED_QUEUE {
+                        return Err(fail(
+                            Code::InfrastructureFailure,
+                            "graph-v2 deferred queue limit",
+                        ));
+                    }
+                    self.emitted.insert(
+                        id.clone(),
+                        DeferredActivation {
+                            edge: id.clone(),
+                            value: value.clone(),
+                            resources,
+                        },
+                    );
+                } else {
+                    self.arrivals.insert(
+                        id.clone(),
+                        Resolution::Value(Some(value.clone()), resources),
+                    );
+                }
             }
         }
         self.done.insert(node.into());
@@ -422,7 +469,7 @@ impl Wave {
         let candidates: Vec<_> = self
             .edges
             .iter()
-            .filter(|(_, edge)| matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node))
+            .filter(|(_, edge)| matches!(&edge.kind, EdgeKind::Flow { to, .. } | EdgeKind::Deferred { to, .. } if to.node == node))
             .map(|(id, _)| &self.arrivals[id])
             .collect();
         let non_runnable = self.join_non_runnable(node)?;
@@ -495,12 +542,13 @@ impl Wave {
                 let Some(edge) = self.edges.get(id) else {
                     continue;
                 };
-                let EdgeKind::Flow { from, .. } = &edge.kind else {
+                let (EdgeKind::Flow { from, .. } | EdgeKind::Deferred { from, .. }) = &edge.kind
+                else {
                     continue;
                 };
-                if let Some((_, selected, failed)) =
-                    completion.filter(|(producer, _, _)| *producer == from.node)
-                {
+                if let Some((_, selected, failed)) = completion.filter(|(producer, _, _)| {
+                    matches!(edge.kind, EdgeKind::Flow { .. }) && *producer == from.node
+                }) {
                     let value = selected == Some(from.port.as_str());
                     count += usize::from(value);
                     all_closed &= !value && !failed;
@@ -527,7 +575,8 @@ impl Wave {
     fn release_payloads(&mut self, node: &str) -> Result<(), Failure> {
         if self.join_non_runnable(node)? {
             for (id, edge) in &self.edges {
-                if matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node) {
+                if matches!(&edge.kind, EdgeKind::Flow { to, .. } | EdgeKind::Deferred { to, .. } if to.node == node)
+                {
                     if let Some(Resolution::Value(payload, _)) = self.arrivals.get_mut(id) {
                         *payload = None;
                     }
@@ -622,7 +671,8 @@ impl Wave {
     fn input_evidence(&self, node: &str) -> Option<ClosureEvidence> {
         let mut result: Option<ClosureEvidence> = None;
         for (id, edge) in &self.edges {
-            if !matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node) {
+            if !matches!(&edge.kind, EdgeKind::Flow { to, .. } | EdgeKind::Deferred { to, .. } if to.node == node)
+            {
                 continue;
             }
             let evidence = self
@@ -695,6 +745,42 @@ impl Wave {
 }
 
 impl GraphExecution<'_> {
+    pub(in crate::graph) fn advance_v2(&mut self) -> Result<(), Failure> {
+        if self.stopped
+            || !self.waiting.is_empty()
+            || !self.pending.is_empty()
+            || !self.draining.is_empty()
+        {
+            return Ok(());
+        }
+        let wave = self.v2.as_mut().unwrap();
+        wave.queue
+            .extend(std::mem::take(&mut wave.emitted).into_values());
+        let Some(activation) = wave.queue.pop_front() else {
+            return Ok(());
+        };
+        if wave._id + 1 >= MAX_ROOT_WAVES {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "graph-v2 root wave limit",
+            ));
+        }
+        let graph = self.root.kernel.prepared.graph_v2.as_ref().unwrap();
+        let mut next = Wave::new(graph, &format!("$deferred:{}", activation.edge))?;
+        next._id = wave._id + 1;
+        next.values = wave.values;
+        next.bytes = wave.bytes;
+        next.executions = wave.executions;
+        next.queue = std::mem::take(&mut wave.queue);
+        next.arrivals.insert(
+            activation.edge,
+            Resolution::Value(Some(activation.value), activation.resources),
+        );
+        self.waiting = graph.order.iter().cloned().collect();
+        self.v2 = Some(next);
+        Ok(())
+    }
+
     pub(in crate::graph) fn pump_v2(
         &mut self,
         observe: &mut impl FnMut(&crate::graph::GraphUpdate<'_>),

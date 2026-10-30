@@ -388,7 +388,7 @@ impl GraphContributionV2 {
                 return Err(bad("graph-v2 edge owner mismatch"));
             }
             match &edge.kind {
-                EdgeKind::Flow { from, to } => {
+                EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. } => {
                     if !valid_node_key(&from.node)
                         || !identifier(&from.port)
                         || !valid_node_key(&to.node)
@@ -426,7 +426,6 @@ impl GraphContributionV2 {
                         }
                     }
                 }
-                EdgeKind::Deferred { .. } => return Err(bad("unsupported graph-v2 deferred edge")),
             }
         }
         self.value()?.encode()?;
@@ -818,7 +817,16 @@ fn encode_edge(e: &EdgeDecl) -> Result<Value, Failure> {
             ("before", string(before)),
             ("after", string(after)),
         ]),
-        EdgeKind::Deferred { .. } => return Err(bad("unsupported graph-v2 deferred edge")),
+        EdgeKind::Deferred {
+            from,
+            to,
+            next: DeferredWave::Next,
+        } => Value::map([
+            ("kind", string("deferred")),
+            ("from", port_ref(&from.node, &from.port)),
+            ("to", port_ref(&to.node, &to.port)),
+            ("next", string("next")),
+        ]),
     };
     Ok(Value::map([("id", string(&e.id)), ("kind", kind)]))
 }
@@ -827,13 +835,22 @@ fn decode_edge(value: Value) -> Result<EdgeDecl, Failure> {
     let id = text(&mut f, "id")?;
     let mut k = fields(take(&mut f, "kind")?)?;
     let kind = match text(&mut k, "kind")?.as_str() {
-        "flow" => {
+        tag @ ("flow" | "deferred") => {
             let (node, port) = decode_ref(take(&mut k, "from")?)?;
             let from = OutPortRef { node, port };
             let (node, port) = decode_ref(take(&mut k, "to")?)?;
-            EdgeKind::Flow {
-                from,
-                to: InPortRef { node, port },
+            let to = InPortRef { node, port };
+            if tag == "deferred" {
+                if text(&mut k, "next")? != "next" {
+                    return Err(bad("unknown deferred wave"));
+                }
+                EdgeKind::Deferred {
+                    from,
+                    to,
+                    next: DeferredWave::Next,
+                }
+            } else {
+                EdgeKind::Flow { from, to }
             }
         }
         "order" => EdgeKind::Order {

@@ -43,6 +43,59 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         return Err(invalid("invalid user message"));
     }
     let tail = &request.history[start + 1..];
+    // Two sequential tool rounds, derived entirely from the current transcript.
+    if let Some(input) = prompt.text().strip_prefix("rounds:") {
+        if !request.tools.iter().any(|tool| tool.id == "uppercase") {
+            return Err(error(ErrorCode::InvalidInput, "required tool unavailable"));
+        }
+        if tail.len() > 4 || !tail.len().is_multiple_of(2) {
+            return Err(invalid("incomplete repeated tool round"));
+        }
+        for (index, round) in tail.chunks_exact(2).enumerate() {
+            let expected = ToolCall {
+                id: format!("call-{}", index + 1),
+                tool: "uppercase".into(),
+                arguments: serde_json::to_string(input).expect("serialize string"),
+            };
+            if round[0].role() != Role::Assistant
+                || round[0].calls() != [expected.clone()]
+                || round[1].role() != Role::Tool
+                || round[1].call_id() != expected.id
+            {
+                return Err(invalid("invalid repeated tool transcript"));
+            }
+        }
+        let failed = tail
+            .chunks_exact(2)
+            .find_map(|round| round[1].error().map(|reason| (round[1].call_id(), reason)));
+        let (text, calls) = if let Some((call_id, reason)) = failed {
+            (format!("mock:{call_id}:error:{reason}"), vec![])
+        } else if tail.len() == 4 {
+            (format!("mock:rounds:{}", tail[3].text()), vec![])
+        } else {
+            (
+                String::new(),
+                vec![ToolCall {
+                    id: format!("call-{}", tail.len() / 2 + 1),
+                    tool: "uppercase".into(),
+                    arguments: serde_json::to_string(input).expect("serialize string"),
+                }],
+            )
+        };
+        let metrics = usage(request, &text, &calls);
+        if request
+            .limits
+            .model_tokens
+            .is_some_and(|limit| metrics.output_tokens > limit)
+        {
+            return Err(error(ErrorCode::TurnLimit, "model token limit"));
+        }
+        return Ok(ModelReply {
+            text,
+            calls,
+            usage: metrics,
+        });
+    }
 
     let (text, calls) = if tail.is_empty() {
         if prompt.text() == "model-error" {
@@ -202,6 +255,69 @@ mod tests {
             skills: vec![],
             context: vec![],
             limits: Limits::default(),
+        }
+    }
+
+    #[test]
+    fn repeated_rounds_require_two_complete_tool_transcripts() {
+        let mut input = request("rounds:hello");
+        for index in 1..=2 {
+            let reply = complete(&input).unwrap();
+            assert_eq!(reply.calls[0].id, format!("call-{index}"));
+            input
+                .history
+                .push(Message::assistant(reply.text, reply.calls));
+            assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
+            input.history.push(Message::tool(
+                format!("call-{index}"),
+                phenix_basic_contracts::ToolOutcome::Succeeded {
+                    text: "HELLO".into(),
+                },
+            ));
+        }
+        let reply = complete(&input).unwrap();
+        assert!(reply.calls.is_empty());
+        assert_eq!(reply.text, "mock:rounds:HELLO");
+    }
+
+    #[test]
+    fn repeated_rounds_recover_failures_without_further_tool_calls() {
+        for failed_round in 1..=2 {
+            let mut input = request("rounds:hello");
+            for index in 1..=failed_round {
+                let reply = complete(&input).unwrap();
+                assert_eq!(reply.calls.len(), 1);
+                assert_eq!(reply.calls[0].id, format!("call-{index}"));
+                input
+                    .history
+                    .push(Message::assistant(reply.text, reply.calls));
+                input.history.push(Message::tool(
+                    format!("call-{index}"),
+                    if index == failed_round {
+                        phenix_basic_contracts::ToolOutcome::Failed {
+                            output: "partial output".into(),
+                            reason: "scripted round failure".into(),
+                        }
+                    } else {
+                        phenix_basic_contracts::ToolOutcome::Succeeded {
+                            text: "HELLO".into(),
+                        }
+                    },
+                ));
+            }
+            let reply = complete(&input).unwrap();
+            assert!(reply.calls.is_empty());
+            assert_eq!(
+                reply.text,
+                format!("mock:call-{failed_round}:error:scripted round failure")
+            );
+            *input
+                .history
+                .last_mut()
+                .unwrap()
+                .tool_call_id_mut()
+                .unwrap() = "wrong-call".into();
+            assert_eq!(complete(&input).unwrap_err().code, ErrorCode::InvalidReply);
         }
     }
 

@@ -772,6 +772,10 @@ fn unsupported_profiles_fail_explicitly() {
     let mut g = sample();
     g.sources[0].kind = SourceKind::DeferredEntry;
     assert!(g.encode().unwrap_err().message.contains("unsupported"));
+}
+
+#[test]
+fn deferred_next_round_trips_and_rejects_unknown_wave() {
     let mut g = sample();
     let EdgeKind::Flow { from, to } = g.edges[0].kind.clone() else {
         panic!()
@@ -781,7 +785,26 @@ fn unsupported_profiles_fail_explicitly() {
         to,
         next: DeferredWave::Next,
     };
-    assert!(g.encode().unwrap_err().message.contains("unsupported"));
+    let bytes = g.encode().unwrap();
+    assert_eq!(
+        GraphContributionV2::decode(&bytes).unwrap(),
+        g.normalized().unwrap()
+    );
+    let mut value = Value::decode(&bytes).unwrap();
+    let Value::Map(ref mut fields) = value else {
+        panic!()
+    };
+    let Value::List(edges) = fields.get_mut("edges").unwrap() else {
+        panic!()
+    };
+    let Value::Map(edge) = &mut edges[0] else {
+        panic!()
+    };
+    let Value::Map(kind) = edge.get_mut("kind").unwrap() else {
+        panic!()
+    };
+    kind.insert("next".into(), Value::String("later".into()));
+    assert!(GraphContributionV2::decode(&value.encode().unwrap()).is_err());
 }
 
 #[test]
