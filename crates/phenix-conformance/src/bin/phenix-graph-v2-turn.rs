@@ -1,5 +1,7 @@
 //! Native acceptance for the bounded graph-v2 Basic turn.
 //! Usage: phenix-graph-v2-turn COMPOSITION (with a fresh SQLite database).
+//! Optional mode: deny-tool, pending, cancel, or fail-model. Controlled modes
+//! require the scripted Model's controlled-pending fixture feature.
 use phenix_basic_contracts::{
     BasicError, ErrorCode, EventKind, EventPage, JournalQuery, Limits, PromptSubmitted, RunResult,
     RunStatus, Scope, SessionSnapshot,
@@ -18,7 +20,9 @@ fn main() {
     let path = std::env::args().nth(1).expect("COMPOSITION");
     let mut composition: Composition =
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    let deny_tool = std::env::args().nth(2).as_deref() == Some("deny-tool");
+    let mode = std::env::args().nth(2);
+    let deny_tool = mode.as_deref() == Some("deny-tool");
+    let controlled = matches!(mode.as_deref(), Some("pending" | "cancel" | "fail-model"));
     if deny_tool {
         composition.grants.retain(|grant| {
             !(grant.caller == "phenix.basic.agent"
@@ -96,6 +100,9 @@ fn main() {
         ErrorCode::Denied
     );
     drop(direct_root);
+    if controlled {
+        std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "hold");
+    }
     let mut run = kernel
         .begin_action_scoped(
             "phenix.basic.submit",
@@ -109,6 +116,117 @@ fn main() {
         )
         .unwrap();
     let mut completions = 0;
+    if controlled {
+        assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert_eq!(run.steps().len(), 1);
+        assert_eq!(run.steps()[0].node, "phenix.basic.agent/prepare");
+        assert!(run.completion().is_none());
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+        // Repeated polls must neither re-admit the stage nor start another Model.
+        assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert_eq!(run.steps().len(), 1);
+        if mode.as_deref() == Some("cancel") {
+            run.cancel().unwrap();
+            assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Draining);
+            assert!(run.completion().is_none());
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+            std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "drain");
+            for _ in 0..8 {
+                if run
+                    .pump(|update| {
+                        if matches!(update.event, GraphEvent::Finished(_)) {
+                            completions += 1;
+                        }
+                    })
+                    .unwrap()
+                    == GraphStatus::Finished
+                {
+                    break;
+                }
+            }
+            assert_eq!(run.completion(), Some(GraphCompletion::Cancelled));
+            assert_eq!(completions, 1);
+            assert_eq!(run.steps().len(), 1, "late Model success resumed graph");
+            assert_eq!(
+                run.pump(|_| panic!("duplicate completion")).unwrap(),
+                GraphStatus::Finished
+            );
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            drop(run);
+            std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            kernel.shutdown().unwrap();
+            return;
+        }
+        if mode.as_deref() == Some("fail-model") {
+            std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "fail");
+            let failure = run
+                .pump(|update| {
+                    if matches!(update.event, GraphEvent::Finished(_)) {
+                        completions += 1;
+                    }
+                })
+                .unwrap_err();
+            assert_eq!(failure.code, phenix_contract::Code::PluginFailed);
+            assert_eq!(run.completion(), Some(GraphCompletion::Failure(&failure)));
+            assert_eq!(run.steps().len(), 1);
+            assert_eq!(completions, 1);
+            assert_eq!(
+                run.pump(|_| panic!("duplicate completion")).unwrap_err(),
+                failure
+            );
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            let Outcome::Success(value) = run
+                .invoke_selected(
+                    &Selection {
+                        interface: "phenix.basic.session@1".into(),
+                        operation: "open".into(),
+                        provider: "phenix.basic.session".into(),
+                    },
+                    &Scope {
+                        session: "s1".into(),
+                    }
+                    .to_value(),
+                )
+                .unwrap()
+            else {
+                panic!("failed Model session read failed")
+            };
+            assert_eq!(
+                SessionSnapshot::from_value(value).unwrap().status,
+                RunStatus::Failed
+            );
+            drop(run);
+            std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            kernel.shutdown().unwrap();
+            return;
+        }
+        std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
+        // Both model stages deliberately suspend, including the continuation.
+        let mut continuation_pending = false;
+        for _ in 0..8 {
+            let status = run
+                .pump(|update| {
+                    if matches!(update.event, GraphEvent::Finished(_)) {
+                        completions += 1;
+                    }
+                })
+                .unwrap();
+            if status == GraphStatus::Pending && run.steps().len() == 3 {
+                continuation_pending = true;
+                assert!(run.completion().is_none());
+                assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+            }
+            if status == GraphStatus::Finished {
+                break;
+            }
+        }
+        assert!(continuation_pending, "continuation did not suspend");
+        assert_eq!(run.completion(), Some(GraphCompletion::Success));
+        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+        std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
+    }
     let pumped = run.pump(|update| {
         if matches!(update.event, GraphEvent::Finished(_)) {
             completions += 1;

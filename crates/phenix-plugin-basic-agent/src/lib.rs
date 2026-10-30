@@ -705,48 +705,123 @@ mod plugin {
         RePrepared,
     }
 
-    #[provide(phenix_basic_contracts::BasicGraphTurn::model)]
+    #[pending(phenix_basic_contracts::BasicGraphTurn::model)]
     fn graph_model(
         state: &mut State,
         host: &Host<'_>,
         request: ModelRequest,
-    ) -> CallResult<phenix_basic_contracts::ModelReply, BasicError> {
-        let source = state.pending_model_request.as_ref().ok_or_else(|| {
-            CallError::Domain(error(ErrorCode::Conflict, "no prepared graph turn"))
-        })?;
-        super::verify_staged_model_candidate(source, &request).map_err(CallError::Domain)?;
-        if state.active.as_ref().is_none_or(|running| {
-            running.run != request.run || running.input.session != request.session
-        }) {
-            return Err(CallError::Domain(error(
-                ErrorCode::Conflict,
-                "no active graph run",
-            )));
+    ) -> PendingResult<phenix_basic_contracts::ModelReply, BasicError> {
+        let admission = (|| {
+            let source = state.pending_model_request.as_ref().ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::Conflict, "no prepared graph turn"))
+            })?;
+            super::verify_staged_model_candidate(source, &request).map_err(CallError::Domain)?;
+            if state.active.as_ref().is_none_or(|running| {
+                running.run != request.run
+                    || running.input.session != request.session
+                    || running.child.is_some()
+            }) {
+                return Err(CallError::Domain(error(
+                    ErrorCode::Conflict,
+                    "no active graph run",
+                )));
+            }
+            // Consume admission before effects so a duplicate stage cannot call Model twice.
+            state.pending_model_request = None;
+            Ok(())
+        })();
+        if let Err(failure) = admission {
+            return PendingResult::Ready(Err(failure));
         }
-        // Consume admission before effects so a duplicate stage cannot call Model twice.
-        state.pending_model_request = None;
         // A final first reply traverses the fixed continuation stage without
         // invoking Model again or accounting the reply twice.
         if let Some(reply) = state.graph_reply.as_ref() {
             if reply.calls.is_empty() {
-                return Ok(reply.clone());
+                return PendingResult::Ready(Ok(reply.clone()));
             }
         }
-        match host.invoke::<Model::complete>("Model", &request) {
+        match host.begin::<Model::complete>("Model", &request) {
+            Ok(ImportCall::Ready(reply)) => graph_model_result(state, host, reply),
+            Ok(ImportCall::Pending(child)) => {
+                state
+                    .active
+                    .as_mut()
+                    .expect("validated active graph run")
+                    .child = Some(child);
+                PendingResult::Pending
+            }
+            Err(failure) => graph_model_result(state, host, Err(CallError::Kernel(failure))),
+        }
+    }
+
+    fn graph_model_result(
+        state: &mut State,
+        host: &Host<'_>,
+        result: CallResult<phenix_basic_contracts::ModelReply, BasicError>,
+    ) -> PendingResult<phenix_basic_contracts::ModelReply, BasicError> {
+        match result {
             Ok(reply) => {
                 state.graph_reply = Some(reply.clone());
-                Ok(reply)
+                PendingResult::Ready(Ok(reply))
             }
             Err(failure) => {
                 let running = state.active.take().expect("validated active graph run");
-                let problem = match &failure {
-                    CallError::Domain(problem) => problem.clone(),
-                    CallError::Kernel(_) => error(ErrorCode::ModelFailed, "Model execution failed"),
-                };
-                stopped(host, running.session, &problem)?;
-                Err(failure)
+                state.graph_reply = None;
+                state.pending_model_request = None;
+                match failure {
+                    CallError::Kernel(failure) => reconcile_model_failure(host, &running, failure),
+                    CallError::Domain(problem) => match stopped(host, running.session, &problem) {
+                        Ok(()) => PendingResult::Ready(Err(CallError::Domain(problem))),
+                        Err(CallError::Domain(cleanup)) => {
+                            PendingResult::Ready(Err(CallError::Domain(cleanup)))
+                        }
+                        Err(CallError::Kernel(cleanup)) => PendingResult::QuiescentFailure(cleanup),
+                    },
+                }
             }
         }
+    }
+
+    #[poll(phenix_basic_contracts::BasicGraphTurn::model)]
+    fn poll_graph_model(
+        state: &mut State,
+        host: &Host<'_>,
+    ) -> PendingResult<phenix_basic_contracts::ModelReply, BasicError> {
+        let Some(mut child) = state
+            .active
+            .as_mut()
+            .and_then(|running| running.child.take())
+        else {
+            return PendingResult::QuiescentFailure(Failure::new(
+                Code::PluginFailed,
+                "graph pending Model child is missing",
+            ));
+        };
+        match child.poll(host) {
+            Ok(ImportPoll::Pending | ImportPoll::Draining) => {
+                state.active.as_mut().expect("active graph run").child = Some(child);
+                PendingResult::Pending
+            }
+            Ok(ImportPoll::Ready(reply)) => graph_model_result(state, host, reply),
+            Ok(ImportPoll::Cancelled) => graph_model_result(
+                state,
+                host,
+                Err(CallError::Kernel(Failure::new(
+                    Code::ScopeRejected,
+                    "graph Model child was cancelled",
+                ))),
+            ),
+            Err(failure) => graph_model_result(state, host, Err(CallError::Kernel(failure))),
+        }
+    }
+
+    #[cancel(phenix_basic_contracts::BasicGraphTurn::model)]
+    fn cancel_graph_model(state: &mut State) -> Result<bool, Failure> {
+        // Child cancellation and physical drain remain kernel-owned.
+        state.active = None;
+        state.pending_model_request = None;
+        state.graph_reply = None;
+        Ok(true)
     }
 
     #[provide(phenix_basic_contracts::BasicGraphTurn::tool)]
