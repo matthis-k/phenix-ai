@@ -14,6 +14,7 @@ mod plugin {
     pub struct State {
         worker: Option<(Sender<()>, JoinHandle<()>)>,
         cancelled: bool,
+        request: Option<ModelRequest>,
     }
 
     fn drain(state: &mut State) {
@@ -48,6 +49,7 @@ mod plugin {
         started.recv().unwrap();
         state.worker = Some((stop, worker));
         state.cancelled = false;
+        state.request = Some(request);
         PendingResult::Pending
     }
 
@@ -61,6 +63,7 @@ mod plugin {
                 return PendingResult::Pending;
             }
             drain(state);
+            state.request = None;
             // A late success must never resume Basic or become an answer.
             return PendingResult::Ready(Ok(ModelReply {
                 text: "forbidden late answer".into(),
@@ -70,10 +73,18 @@ mod plugin {
         }
         if std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").as_deref() == Ok("fail") {
             drain(state);
+            state.request = None;
             return PendingResult::QuiescentFailure(Failure::new(
                 Code::PluginFailed,
                 "controlled scripted Model failure",
             ));
+        }
+        if std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").as_deref() == Ok("release") {
+            drain(state);
+            let request = state.request.take().unwrap();
+            return PendingResult::Ready(
+                super::super::complete(&request).map_err(CallError::Domain),
+            );
         }
         PendingResult::Pending
     }

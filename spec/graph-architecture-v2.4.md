@@ -715,6 +715,18 @@ and effective root scope. V2 completion waits for physical drain. Trusted host
 notification is suppressed for this profile. General classified observation and
 wave inspection remain separate acceptance work.
 
+**Basic single-model-stage freeze (29 October 2026):** The bounded Basic
+graph turn consumes its exact prepared-request admission once, then starts
+exactly one selected `Host::begin<Model::complete>` per non-cached model stage.
+Its pending handler retains the existing imported-child ticket; polls only
+that child and stores the successful reply for the downstream graph stage.
+The cached final-reply shortcut starts no import. Immediate and polled failures
+use the same domain/session or kernel-failure reconciliation. No model-stage
+callback runs the Basic advance loop, executes tools or prepares another turn.
+Cancellation clears active graph state without journal/session writes under
+revoked authority; the kernel owns child cancellation and physical drain.
+This increment does not change graph-v1 execution or claim full P1 parity.
+
 **Operator continuation (27 October 2026):** Partially implemented, inspected
 base `12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64`, owned by the M1 roadmap's V2
 slice following #1172. This extends, rather than supersedes, the initial profile;

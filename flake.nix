@@ -1584,7 +1584,7 @@
         cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
         cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
       };
-      basicV2Composition = pkgs.writeText "phenix-basic-v2-composition.json" (builtins.toJSON (basicCompositionSpec // {
+      basicV2CompositionSpec = basicCompositionSpec // {
         artifacts = map (artifact: if artifact == "${basicAgent}" then "${basicV2Agent}" else artifact) basicCompositionSpec.artifacts;
         definitions = [ "${basicV2Definitions}" ];
         grants = basicCompositionSpec.grants ++ map (key: let parts = pkgs.lib.splitString "/" key; in {
@@ -1596,15 +1596,34 @@
         authority = basicCompositionSpec.authority // {
           operations = basicCompositionSpec.authority.operations ++ basicV2StageKeys;
         };
-      }));
+      };
+      basicV2Composition = pkgs.writeText "phenix-basic-v2-composition.json"
+        (builtins.toJSON basicV2CompositionSpec);
+      # Reuse B5's feature-variant package, including its verified pending metadata.
+      # Keep the shipping model, grants and runtime configuration unchanged.
+      basicV2ControlledComposition = pkgs.writeText "phenix-basic-v2-controlled-composition.json"
+        (builtins.toJSON (basicV2CompositionSpec // {
+          artifacts = map (artifact:
+            if artifact == "${scriptedModel}" then "${scriptedModelControlled}" else artifact
+          ) basicV2CompositionSpec.artifacts;
+        }));
       basicV2StageKeys = [
         "phenix.basic.turn-prepare@1/prepare"
         "phenix.basic.graph-turn@1/model"
         "phenix.basic.graph-turn@1/tool"
         "phenix.basic.graph-turn@1/finish"
       ];
+      basicV2ControlledCheck = pkgs.runCommand "phenix-basic-v2-controlled-turns" { } ''
+        mkdir -p "$out"
+        for mode in pending cancel fail-model; do
+          PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-$mode.sqlite" \
+            ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2ControlledComposition} "$mode" \
+            > "$out/native-$mode.txt"
+        done
+      '';
       basicV2Product = pkgs.runCommand "phenix-basic-v2-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p "$out"
+        ln -s ${basicV2ControlledCheck} "$out/controlled-turns"
         python ${./tests/graph-v2-packaged-host.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2Composition} "$out"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
