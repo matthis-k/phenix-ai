@@ -5,6 +5,8 @@
 //! revalidate and authorize every selected account and model.
 
 pub mod catalog;
+pub mod declaration;
+pub mod defaults;
 pub use catalog::discovered_model_page;
 
 use phenix_provider_contracts::{
@@ -335,136 +337,12 @@ impl ConnectionExtensions for ConnectionDescriptor {
     }
 }
 
-/// Existing public registrations now use the same three-field declaration a
-/// third-party provider plugin can use. Protocol and discovery extensions
-/// preserve provider-specific behavior without enlarging that core schema.
+/// Compile the immutable built-in provider data through the same SDK path
+/// available to third-party provider registration contributors. This does
+/// not install auth methods or grant model execution authority.
 pub fn registrations() -> Vec<ProviderDescriptor> {
-    let make = |endpoint, protocol, auth, id, label| {
-        ProviderDeclaration {
-            endpoint,
-            protocol,
-            auth,
-        }
-        .connection(id, label)
-        .expect("valid built-in provider declaration")
-    };
-    let model = |connection: ConnectionDescriptor, adapter| {
-        connection
-            .with_standard_models(adapter)
-            .expect("valid standard catalog convention")
-    };
-    // Each entry describes which standards are supported. Shared conventions
-    // own standard routes and catalog GET; these definitions contribute no
-    // provider-specific transport or authentication implementation.
-    let api = make(
-        "https://api.openai.com/v1",
-        OPENAI_RESPONSES,
-        "api-key",
-        "api",
-        "OpenAI API",
-    )
-    .with_standard_protocols(&[OPENAI_CHAT])
-    .expect("valid OpenAI API protocols")
-    .with_key_environment("OPENAI_API_KEY")
-    .expect("valid OpenAI key setting");
-    let chatgpt = make(
-        "https://api.openai.com/v1",
-        OPENAI_RESPONSES,
-        "chatgpt-oauth",
-        "chatgpt",
-        "ChatGPT subscription",
-    );
-    let openrouter = make(
-        "https://openrouter.ai/api/v1",
-        OPENAI_CHAT,
-        "api-key",
-        "api",
-        "OpenRouter API",
-    )
-    .with_standard_protocols(&[OPENAI_RESPONSES])
-    .expect("valid OpenRouter protocols");
-    let anthropic = make(
-        "https://api.anthropic.com/v1",
-        ANTHROPIC_MESSAGES,
-        "api-key",
-        "api",
-        "Anthropic API",
-    )
-    .with_standard_protocols(&[])
-    .expect("valid Anthropic Messages protocol")
-    .with_key_presentation(ApiKeyPresentation::Header {
-        name: "x-api-key".into(),
-        prefix: String::new(),
-    })
-    .expect("valid Anthropic API-key wire strategy");
-    let zen = make(
-        "https://opencode.ai/zen/v1",
-        OPENAI_CHAT,
-        "api-key",
-        "api",
-        "OpenCode Zen",
-    )
-    .with_standard_protocols(&[OPENAI_RESPONSES])
-    .expect("valid OpenCode Zen protocols")
-    .with_protocol(ANTHROPIC_MESSAGES, None);
-    let go = make(
-        "https://opencode.ai/zen/go/v1",
-        OPENAI_CHAT,
-        "api-key",
-        "api",
-        "OpenCode Go",
-    )
-    .with_standard_protocols(&[OPENAI_RESPONSES])
-    .expect("valid OpenCode Go protocols")
-    .with_protocol(ANTHROPIC_MESSAGES, None);
-    let zai = make(
-        "https://api.z.ai/api/paas/v4",
-        OPENAI_CHAT,
-        "api-key",
-        "standard",
-        "Z.ai API",
-    )
-    .with_standard_protocols(&[])
-    .expect("valid Z.ai Chat protocol")
-    .with_catalog(None, "zai.declared", DiscoveryKind::Declared)
-    .expect("valid Z.ai catalog");
-    let declared = vec![
-        ProviderDescriptor {
-            id: "openai".into(),
-            label: "OpenAI".into(),
-            connections: vec![
-                model(api, "openai.models"),
-                model(chatgpt, "chatgpt.models"),
-            ],
-        },
-        ProviderDescriptor {
-            id: "openrouter".into(),
-            label: "OpenRouter".into(),
-            connections: vec![model(openrouter, "openrouter.models")],
-        },
-        ProviderDescriptor {
-            id: "anthropic".into(),
-            label: "Anthropic".into(),
-            connections: vec![model(anthropic, "anthropic.models")],
-        },
-        ProviderDescriptor {
-            id: "opencode-zen".into(),
-            label: "OpenCode Zen".into(),
-            connections: vec![model(zen, "opencode.models")],
-        },
-        ProviderDescriptor {
-            id: "opencode-go".into(),
-            label: "OpenCode Go".into(),
-            connections: vec![model(go, "opencode.models")],
-        },
-        ProviderDescriptor {
-            id: "zai".into(),
-            label: "Z.ai".into(),
-            connections: vec![zai],
-        },
-    ];
-    validate_registrations(&declared).expect("valid built-in provider endpoints");
-    declared
+    declaration::compile(defaults::PROVIDERS, &BuiltinAuthenticationAdapters)
+        .expect("valid built-in provider data")
 }
 
 #[cfg(test)]
@@ -909,7 +787,7 @@ mod tests {
             openai.connections[1].protocols,
             vec![ProtocolBinding {
                 id: OPENAI_RESPONSES.into(),
-                endpoint: None,
+                endpoint: Some("https://api.openai.com/v1/responses".into()),
             }]
         );
     }
@@ -1402,13 +1280,14 @@ mod tests {
             assert_eq!(configured.endpoint.as_deref(), Some(endpoint));
         }
 
-        // The subscription OAuth flow has no installed authorized transport.
+        // A standard route is public metadata, not proof of account
+        // authorization or an installed executable transport.
         let chatgpt = &providers[0].connections[1];
         assert_eq!(chatgpt.id, "chatgpt");
-        assert!(chatgpt
-            .protocols
-            .iter()
-            .all(|protocol| protocol.endpoint.is_none()));
+        assert_eq!(
+            chatgpt.protocols[0].endpoint.as_deref(),
+            Some("https://api.openai.com/v1/responses")
+        );
 
         // Anthropic wire shape does not imply this gateway accepts x-api-key
         // instead of the gateway's account-bound bearer authentication.

@@ -126,12 +126,15 @@ with tempfile.TemporaryDirectory(prefix="phenix-provider-native-") as temp:
         "openai-responses": ["https://api.openai.com/v1/responses"],
         "openai-chat": ["https://api.openai.com/v1/chat/completions"],
     }
-    # A descriptor with an explicit API endpoint does not authenticate it.
-    # ChatGPT delegated subscription inference remains deliberately unavailable.
-    assert all(
-        protocol["endpoint"] is None
-        for protocol in connections["chatgpt"]["protocols"]
-    )
+    # Shared protocol conventions resolve supported routes for both API keys
+    # and OAuth. Endpoint metadata alone does not authenticate the account or
+    # install an executable model adapter; subscription inference is still
+    # unavailable until a real authorized backend is selected.
+    assert {
+        p["id"]: p["endpoint"] for p in connections["chatgpt"]["protocols"]
+    } == {
+        "openai-responses": ["https://api.openai.com/v1/responses"],
+    }
 
     # Real selected M1 import: the OpenAI API plugin contributes its own
     # registration while the existing manager retains ownership of the public
