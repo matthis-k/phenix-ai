@@ -1,0 +1,13 @@
+[package]
+name = "phenix-python-host-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+phenix-sdk = { path = "../../../crates/phenix-sdk" }
+example-contracts = { path = "../../../examples/contracts" }
+pyo3 = { version = "0.25.1", features = ["auto-initialize"] }

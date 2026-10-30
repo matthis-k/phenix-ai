@@ -10,6 +10,7 @@ static STOPS: AtomicUsize = AtomicUsize::new(0);
 #[contract(id = "test.generated@1")]
 pub trait Service {
     fn reference(&self) -> Result<live::ValueRef<u64>, String>;
+    fn synchronous(&self, input: String) -> Result<String, String>;
     fn run(&mut self, input: String) -> Result<String, String>;
 }
 #[contract(id = "test.dependency@1")]
@@ -76,10 +77,27 @@ mod generated {
                 state.pending = true;
                 panic!("fixture panic")
             }
+            "failure" => {
+                state.pending = true;
+                live::PendingResult::Ready(Err(CallError::Kernel(Failure::new(
+                    Code::PluginFailed,
+                    "worker still running",
+                ))))
+            }
             "domain" => live::PendingResult::Ready(Err(CallError::Domain("recoverable".into()))),
             _ => live::PendingResult::Ready(imports::primary::invoke::<Dependency::echo>(
                 host, &input,
             )),
+        }
+    }
+    #[provide(Service::synchronous)]
+    fn synchronous(input: String) -> CallResult<String, String> {
+        match input.as_str() {
+            "panic" => panic!("synchronous fixture panic"),
+            _ => Err(CallError::Kernel(Failure::new(
+                Code::PluginFailed,
+                "returned failure",
+            ))),
         }
     }
     #[poll(Service::run)]
@@ -203,6 +221,15 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
         .unwrap(),
         (0, Value::String("drained".into()))
     );
+    assert_eq!(call("failure").0, 2);
+    assert_eq!(
+        unsafe {
+            table.cancel.unwrap()(instance, &host, Bytes::new(Service::run::KEY.as_bytes()))
+                .consume()
+        }
+        .unwrap(),
+        (4, Value::Null)
+    );
     assert_eq!(call("panic").0, 2);
     assert_eq!(call("echo").0, 5);
     assert_eq!(
@@ -218,6 +245,33 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
         (0, Value::Null)
     );
     assert_eq!(STOPS.load(Ordering::SeqCst), 1);
+
+    let mut instance = std::ptr::null_mut();
+    unsafe { table.create.unwrap()(&mut instance).consume() }.unwrap();
+    unsafe { table.initialize.unwrap()(instance, &host).consume() }.unwrap();
+    for text in ["failure", "panic", "failure"] {
+        let bytes = Value::String(text.into()).encode().unwrap();
+        let (status, value) = unsafe {
+            table.invoke.unwrap()(
+                instance,
+                &host,
+                Bytes::new(Service::synchronous::KEY.as_bytes()),
+                Bytes::new(&bytes),
+            )
+            .consume()
+        }
+        .unwrap();
+        assert_eq!(
+            status, 5,
+            "synchronous {text} must release its native lease"
+        );
+        assert_eq!(Failure::from_value(value).unwrap().code, Code::PluginFailed);
+    }
+    assert_eq!(
+        unsafe { table.stop.unwrap()(instance).consume() }.unwrap(),
+        (0, Value::Null)
+    );
+    assert_eq!(STOPS.load(Ordering::SeqCst), 2);
 }
 
 #[test]

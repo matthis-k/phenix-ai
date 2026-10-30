@@ -561,6 +561,7 @@ pub fn expand(
     for (op, name, arguments, has_request) in synchronous {
         let unit_request = (!has_request).then(|| quote!(let _: () = request;));
         invoke.push(quote! { if key == <#op as ::phenix_sdk::live::Operation>::KEY {
+            __synchronous = true;
             let request = <<#op as ::phenix_sdk::live::Operation>::Request as ::phenix_sdk::live::Portable>::from_value(value)?;
             #unit_request
             let result = ::phenix_sdk::live::handler_result::<<#op as ::phenix_sdk::live::Operation>::Response, <#op as ::phenix_sdk::live::Operation>::Error, _>(#name(#arguments));
@@ -660,7 +661,8 @@ pub fn expand(
             })
         }
         unsafe fn __entry(ptr: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::StateHostApi, key: ::phenix_sdk::abi::Bytes, input: Option<::phenix_sdk::abi::Bytes>, mode: u8) -> ::phenix_sdk::abi::Reply {
-            ::phenix_sdk::live::boundary(|| {
+            let mut __synchronous = false;
+            let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
                 let result = (|| -> Result<::phenix_sdk::abi::Reply, ::phenix_sdk::Failure> {
                     if ptr.is_null() { return Err(__invalid("null invocation instance")); }
                     let api = unsafe { ::phenix_sdk::abi::StateHostApi::negotiate(api.cast()) }?;
@@ -684,7 +686,15 @@ pub fn expand(
                     instance.poisoned = poisoned;
                     result
                 })();
-                match result { Ok(reply) => reply, Err(error) => __failure(error) }
+                match result {
+                    Ok(reply) => reply,
+                    Err(error) => ::phenix_sdk::abi::Reply::value(if __synchronous { 5 } else { 2 }, error.to_value()),
+                }
+            }));
+            result.unwrap_or_else(|_| {
+                // Only synchronous exports prove their own work ended on unwind.
+                // Pending exports may still own workers and must retain their lease.
+                ::phenix_sdk::abi::Reply::value(if __synchronous { 5 } else { 2 }, __invalid("caught state plugin panic").to_value())
             })
         }
         unsafe extern "C" fn __invoke(ptr: *mut ::std::ffi::c_void, api: *const ::phenix_sdk::abi::StateHostApi, key: ::phenix_sdk::abi::Bytes, input: ::phenix_sdk::abi::Bytes) -> ::phenix_sdk::abi::Reply { unsafe { __entry(ptr, api, key, Some(input), 0) } }
