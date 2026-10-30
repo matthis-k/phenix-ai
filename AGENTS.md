@@ -2,6 +2,12 @@
 
 Specifications describe **intended architecture**, not necessarily the current implementation. Before changing code, check [the spec index](spec/README.md), the exact source and conformance tests, and the owning PR's merge status. [Graph Architecture v2.4](spec/graph-architecture-v2.4.md) is the latest **proposed graph-v2 design**; graph-v1 M1 code remains current until the P1-stable → graph-v2 P1-parity → P2 migration proves replacement. Old graph RFCs are historical where they disagree with v2.4. Update the latest target specification when design decisions change, and use source plus tests to state what is implemented.
 
+Before plugin and crate work, follow [CONTRIBUTING.md](CONTRIBUTING.md),
+[the target folder/crate layout](docs/plugin-layout.md), and
+[plugin do's and don'ts](docs/plugin-dos-and-donts.md). These describe
+intended boundaries, not a completed migration. Frontends attach as typed
+ingress adapters and authorized observers, never agent dependencies.
+
 M1 is the sole supported product. Follow [the M1-only transition contract](spec/m1-only-runtime-contract.md), [the consolidation contract](spec/m1-consolidation-contract.md) and [the roadmap](spec/m1-roadmap.md). They supersede historical M0 compatibility requirements. Preserve behavioral guarantees in contemporary M1 conformance tests. Historical commits and acceptance documents retain evidence for retired formats.
 
 Keep one canonical ContractMetadata/ValueSchema model, one declarative Composition, one preparation mechanism, one dispatcher, one authority lineage, one pending-ticket manager and one generation lifecycle. StaticSchema is a compile-time encoding. Native and cell operations share preparation and authority while retaining distinct effect semantics. Lifecycle and future reactive graphs share algorithms, with separate semantic projections. Agent logic belongs in plugins.
