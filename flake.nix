@@ -24,6 +24,7 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./include
+        ./tools/phenix_python
       ];
       publicSource = subset publicPaths;
       sdk = pkgs.runCommand "phenix-sdk-0.1.0" { } "cp -r ${publicSource} $out";

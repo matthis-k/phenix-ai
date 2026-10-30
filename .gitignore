@@ -1,3 +1,7 @@
 /target
 /examples/target
 /result*
+/generated/
+/examples/python-trivial/*/target/
+/tools/phenix_python/__pycache__/
+/examples/python-trivial/__pycache__/
