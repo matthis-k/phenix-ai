@@ -1621,6 +1621,9 @@
             ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2ControlledComposition} "$mode" \
             > "$out/native-$mode.txt"
         done
+        ${pkgs.python3}/bin/python ${./tests/graph-v2-packaged-cancellation.py} \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2ControlledComposition} "$out"
+        test -s "$out/packaged-cancellation.json"
       '';
       basicV2Product = pkgs.runCommand "phenix-basic-v2-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p "$out"
