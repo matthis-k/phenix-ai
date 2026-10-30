@@ -4,6 +4,10 @@ Phenix uses a small kernel and replaceable plugins. The kernel owns generic exec
 
 This guide describes **how to contribute**, not a frozen description of the current implementation. **Source code and verified tests at an exact commit tell us what is implemented. Specifications describe intended behavior, often not yet implemented, and may be older than the code.** The latest graph design proposal is [v2.4](spec/graph-architecture-v2.4.md); it is a target, not the current graph ABI. Check [the specification index](spec/README.md) and the owning PR before using any older design text. Neither an open PR nor an unverified specification closes an implementation gap.
 
+## Required plugin architecture guidance
+
+Before adding, relocating, splitting or connecting a plugin, read the **[folder/crate and product layout](docs/plugin-layout.md)** and **[plugin do's and don'ts](docs/plugin-dos-and-donts.md)**. These define the intended organization and reactive integration review rules; they are **not evidence** that unmerged graph-v2 work or proposed crate moves have landed. Follow the owning PR and exact-head product tests when migrating existing code.
+
 ## Find the owner before changing code
 
 | Question | Source |
@@ -196,6 +200,10 @@ Report both executed tests and tests you could not run. A claimed result needs t
 | **Acceptance gate** | The tests and evidence required to verify a roadmap item. |
 
 ## Review checklist
+
+- [ ] Review the [crate layout](docs/plugin-layout.md) and justify any new crate rather than using a domain module.
+- [ ] Check the [plugin do's and don'ts](docs/plugin-dos-and-donts.md): domain ownership, typed imports/exports, public observers, explicit authority and no frontend coupling.
+- [ ] For structural migrations, preserve stable plugin identity and verify the updated Cargo/Nix/CI product compositions at an exact commit.
 
 - [ ] The change has an existing roadmap owner, or explains why a new specification is needed.
 - [ ] The proposed usage is simpler and does not duplicate shared mechanics.
