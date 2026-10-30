@@ -1074,7 +1074,7 @@ Every Flow, including body flows, resolves real ports and requires exact candida
 schema equality and security flow compatibility without grants. Boundary aliases
 still require complete input schema/readiness/security equality. Local Order edges
 are preserved and participate with Flow in dependency-cycle rejection. Cross-child
-Order is unsupported; Deferred edges are added by 7.12, never silently dropped. Definition
+Order is added by 7.14; Deferred edges are added by 7.12, never silently dropped. Definition
 reference cycles and expanded dependency cycles fail closed; repeated acyclic
 uses are distinct occurrences. Cardinality/readiness admission remains a compiler
 obligation, not a claim made by structural lowering.
@@ -1097,7 +1097,7 @@ dependency cycle checks concern the selected root closure.
 The lowerer does not verify recursive definitions. No output is accepted as
 verified flat package metadata, and `Prepared::compile_graph_v2` retains its exact
 verified-byte equality gate. Section 7.11 freezes a separate trusted-host bridge;
-authenticated recursive packaging and cross-boundary Order remain future work.
+Authenticated recursive packaging remains future work; 7.14 adds cross-boundary Order.
 Section 7.12 adds explicit Deferred activation; 7.13 adds direct nested exports.
 
 ### 7.11 C1 trusted-host executable bridge freeze
@@ -1142,10 +1142,10 @@ inspection or unexecuted acceptance assertions.
 | Bundle | Starting capability | This increment | Remaining acceptance |
 | --- | --- | --- | --- |
 | Typed boundaries | Direct local exports and immediate-child wiring | Deferred wiring and nested aliases (7.13), acceptance pending | Exact-head multi-level native and adversarial acceptance |
-| Edge semantics | Same-wave Flow and local Order | Internal and cross-boundary Deferred lowering | Cross-boundary Order and exact-head native Deferred acceptance |
-| Logical patch anchors | Structural occurrence identity | No change | Explicit public/private anchors and rejected hidden access |
-| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred origins, delivery-sensitive identity and nested alias chains (acceptance pending) | Exact-head alias acceptance and patch transformations |
-| Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Deferred topology/delivery denial assertions | Complete boundary, ownership, expansion and permission adversarial acceptance |
+| Edge semantics | Same-wave Flow and local Order | Deferred lowering and explicit cross-boundary Order (7.14), acceptance pending | Exact-head native edge acceptance |
+| Logical patch anchors | Structural occurrence identity | Public/private node anchors and scoped resolver (7.14), acceptance pending | Exact-head exposure rejection acceptance; patch application remains separate |
+| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred, nested alias, anchor and Order provenance/identity (7.13-7.14), acceptance pending | Exact-head provenance acceptance and patch transformations |
+| Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Deferred/Order exact-policy and anchor-exposure denial assertions, acceptance pending | Complete boundary, ownership, expansion and permission adversarial acceptance |
 
 ### 7.13 C1 immediate-child nested boundary alias freeze
 
@@ -1186,6 +1186,59 @@ explicitly unsupported. No executor, dispatcher, pending manager or Basic gate
 changes are part of this increment. The five bundles in 7.12 remain independently
 open pending normative requirements AND exact-head acceptance, including the
 three-level repeated-occurrence native fixture and pre-constructor denials.
+
+### 7.14 C1 scoped logical anchors and boundary Order freeze
+
+`GraphDefinition.anchors` is a canonically name-sorted list of `GraphAnchor {
+name, visibility, target }`. Names are unique identifiers in their own namespace;
+visibility is Public or Private. `AnchorTarget::LocalNode` names an existing node
+in this definition's closed, package-attested body. `AnchorTarget::Child` names
+one declared immediate child and one of that child's PUBLIC named anchors.
+Public re-export through multiple such hops is allowed. Private child anchors
+cannot be used or re-exported, even by a private parent anchor. An own public
+anchor deliberately exposing a local body node is allowed independently of any
+other private alias of that node. No descendant path strings, raw-node lookup
+fallback, implicit anchors or foreign body-node targets are supported.
+
+`GraphDefinition.orders` is a separately name-sorted list of `BoundaryOrder {
+name, before, after }`. Each `AnchorRef` is Local(named own anchor, public or
+private) or Child(immediate child, PUBLIC named anchor). Order names are unique
+within their namespace, distinct from Flow wire and body-edge identities.
+Lowering resolves each reference to an actual LogicalId and emits existing
+`LogicalEdge::Order` / `EdgeKind::Order`, retaining original contributor ownership.
+Order means only execution dependency on that exact exposed node. It neither
+activates the after-node nor transports values, resources or authority. It is
+not child start/finish, whole-subgraph completion, a scheduler or an executor.
+
+ExpandedGraph retains `AnchorProvenance` (visibility, resolved node, every alias
+outermost to local terminal) and `OrderProvenance` (both complete anchor chains).
+`ExpandedGraph::resolve_anchor(scope, reference)` is the public structural
+selection contract for future logical patch selection: own private anchors may
+be selected only as Local in that occurrence; Child lookup requires public
+exposure and a declared immediate-child occurrence. It applies NO patches and
+grants NO permissions. ExpandedGraph is descriptive trusted-host diagnostics,
+not authenticated SDK input or an authority token, including its private maps.
+
+All supplied definitions, including unused ones, validate anchor/order names,
+local ownership, child/public exposure and reference links before native loading.
+Definition cycles are rejected. Selected expansion uses the existing bounded
+depth/occurrence limits; input counts include anchors and orders; expanded items
+include every retained anchor and Order provenance hop plus Order edges. Borrowed
+metadata is byte-checked before normalization, and expanded identity chains are
+charged before cloning. The existing global instantaneous Flow/Order cycle check
+runs after endpoint expansion, excluding typed Deferred Next admission edges.
+
+Canonical identity includes all anchor visibility, target kind, node or child/
+anchor names, and Order names/references, including unused/private metadata.
+Permutations do not alter identity. Public exposure, names, ancestry and membership
+infer no grants: exact effective-ID topology/source/delivery and original-owner
+operation policy remain mandatory during global compilation. Bodies still match
+their contributor's selected package; no unattested empty container is introduced.
+This is bounded metadata algebra and resolution only, NOT a graph-patch engine.
+Recursive InvokeEach remains unsupported; generic Each/Basic execution is unchanged.
+The five C1 bundles in 7.12 remain independently open until normative AND all
+exact-head acceptance passes, including held-native-A versus ready distinct-B
+ordering, no-Flow nonactivation, provenance isolation and pre-constructor denials.
 
 ## 8. Module and file plan
 
