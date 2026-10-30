@@ -4,17 +4,9 @@ use super::*;
 const SLOW: &str = "example.graph.slow@1/run";
 const COLLECT: &str = "example.graph.each-collect@1/run";
 
-pub(super) fn run(packages: &[String], output: &Path) {
-    let controls = [output.join("each-a.control"), output.join("each-b.control")];
-    for (key, path) in ["PHENIX_GRAPH_A_EACH_CONTROL", "PHENIX_GRAPH_B_EACH_CONTROL"]
-        .into_iter()
-        .zip(&controls)
-    {
-        std::env::set_var(key, path);
-    }
+pub(super) fn profile_schemas(package: &str) -> (ValueSchema, phenix_contract::OperationSchema) {
     let verified =
-        phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&packages[1]))
-            .unwrap();
+        phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(package)).unwrap();
     let collect = verified
         .metadata()
         .definitions
@@ -24,12 +16,25 @@ pub(super) fn run(packages: &[String], output: &Path) {
         .operations
         .iter()
         .find(|s| s.name == "run")
-        .unwrap();
+        .unwrap()
+        .clone();
     let request = ValueSchema::Struct(BTreeMap::from([("text".into(), ValueSchema::String)]));
     let batch = ValueSchema::List(Box::new(ValueSchema::Struct(BTreeMap::from([
         ("route".into(), ValueSchema::U64),
         ("input".into(), request),
     ]))));
+    (batch, collect)
+}
+
+pub(super) fn run(packages: &[String], output: &Path) {
+    let controls = [output.join("each-a.control"), output.join("each-b.control")];
+    for (key, path) in ["PHENIX_GRAPH_A_EACH_CONTROL", "PHENIX_GRAPH_B_EACH_CONTROL"]
+        .into_iter()
+        .zip(&controls)
+    {
+        std::env::set_var(key, path);
+    }
+    let (batch, collect) = profile_schemas(&packages[1]);
     let execution = ExecutionPolicy {
         on_domain_error: DomainErrorPolicy::RouteErr,
     };

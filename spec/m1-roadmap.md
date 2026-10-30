@@ -47,13 +47,16 @@ left intact. #1171 and the Python experiments remain isolated.
 | #1214: deferred-gap recovery | `14cd8d3d9139a046a8f3490d21395100c21c5b39` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41021476597), coordinator 21m23s. Zero-lease cancellation, rejection before authorized durable finalization, and same-session recovery afterward. Native explicit host finalizer, not packaged gap timing. |
 | #1215: independent invocation batches | `7a90b64ec404195190b85b89f9a1bf7fc9c13adf` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41059981242), coordinator 21m35s. Kernel/contract units and native distinct-provider overlap, ordered collection, empty batches, same-provider serialization, denial, cancellation and physical drain. |
 | #1216: Basic tool fan-out | `c79c44ff1ec808f57e487fd122cee5e9d7736dea` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41060020967), coordinator 20m59s. Native and packaged JSONL fan-out, durable partial outcomes, cancellation/EOF, restart recovery, active malformed collection and receipt-write failure. Focused opt-in lint/host compilation passes in 47s. |
+| #1217: nested typed boundaries | `9ec4481b69994e10d9d56a3ba0c6e1788f9469cf` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41100857560), coordinator 24m25s. Three-level input/output aliases, repeated native occurrences, complete alias provenance and pre-constructor malformed-boundary/policy rejection. |
+| #1218: scoped anchors and Order | `4ba135ba0569715881832d52cefe4e32baacf033` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41105358932), coordinator 20m11s. Public/private resolution, exact-node cross-boundary Order, held-A/ready-B counterfactual, no-Flow nonactivation and complete scoped provenance. |
 
 **Accepted bounded fan-out (30 October 2026):** The v2.4 section 10.5 InvokeEach
 contract freezes homogeneous selected routes, atomic bounded list admission,
 host-issued branch ordinals and original-order typed collection after drain.
 Distinct providers overlap; the existing physical provider-busy guard serializes
 same-provider calls. No second scheduler or agent-specific kernel mechanism is
-introduced. C1 recursive lowering still explicitly rejects this operator.
+introduced. The initial profile rejected recursive placement; the dependent C1
+section 7.15 increment adds that placement and is gated separately.
 
 Basic V2 connects admit/checkpoint -> sealed Tools plan -> InvokeEach -> correlated
 Join/collect -> Basic ordered checkpoint -> Deferred Model. Both typed outcomes
@@ -91,16 +94,20 @@ durably marked the same old run Cancelled with no pending tool effects. Cancella
 callbacks gain no write authority. The deterministic gap fixture explicitly uses
 that manual host finalizer; it is not packaged deferred-gap scheduling evidence.
 
-The next acceptance milestone is C1 direct nested exports and multi-level mappings
-through repeated middle/leaf native occurrences, with exact effective-ID policy,
-complete alias-hop provenance and malformed-boundary rejection before loading.
+The next acceptance milestone is recursive InvokeEach placement through repeated
+source-free occurrences, globally attested routes and original-owner grants,
+exact effective-ID entry/exit delivery, shared-provider serialization and physical
+drain. Normative requirements and executable source assertions are present in the
+dependent placement increment; native execution remains pending its exact-head gate.
 
-The five C1 bundles are tracked independently in v2.4 section 7.12. Recursive
-Deferred resolves part of edge lowering, not direct nested/multi-level exports,
-cross-boundary Order, public/private patch anchors, complete transformation
-provenance or all placement/ownership/security adversarial cases. No bundle is
-closed by these increments. Scoped concurrent state, durable graph recovery and
-real V2 ACP/Neovim/provider/auth parity remain open.
+The five C1 bundles are tracked independently in v2.4 section 7.12. Typed
+boundaries, Flow/Order/Deferred semantics and public/private anchor resolution
+have frozen contracts and exact-head acceptance for this trusted-host profile.
+Complete implemented-transformation provenance and placement/ownership/security
+remain open until the recursive invocation placement gate passes. This profile
+does not apply patches; actual patch application/transformation is future V3.
+Scoped concurrent state, durable graph recovery and real V2 ACP/Neovim/provider/auth
+parity remain open.
 
 CI cost evidence: expensive local builds were zero. The #1209 planner contains
 89 checks and 3,353 unique closure derivations, not 3,353 rebuilt outputs. #1209

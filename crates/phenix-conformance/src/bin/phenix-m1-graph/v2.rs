@@ -319,8 +319,16 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
                 phenix_artifact::VerifiedPackage::verify_trusted_read_only(Path::new(&packages[1]))
                     .unwrap();
             assert!(
-                b.metadata().requires.is_empty(),
-                "B must have no selected property import"
+                b.metadata()
+                    .requires
+                    .iter()
+                    .all(|import| import.slot == "Workers"
+                        && import.contract == "example.graph.slow@1"
+                        && matches!(
+                            import.cardinality,
+                            phenix_contract::Cardinality::Many { minimum: 0 }
+                        )),
+                "B may declare only its zero-minimum Workers collection, not a property import"
             );
         }
         let mut policy = TrustedCompositionPolicy::default();

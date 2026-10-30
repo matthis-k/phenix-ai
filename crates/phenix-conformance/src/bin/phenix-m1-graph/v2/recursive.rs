@@ -539,6 +539,11 @@ pub(super) fn run(
     cases.push("internal-and-cross-boundary-deferred-next-native-execution");
     cases.push("three-level-input-output-aliases-repeated-middle-native-execution");
     order_acceptance(packages, &composition, &policy, output);
+    each_acceptance(packages, &composition, &policy, output);
+    cases.extend([
+        "recursive-each-original-owner-route-and-effective-grant-denials",
+        "recursive-each-repeated-native-branches-collectors-and-global-provider-drain",
+    ]);
     cases.extend([
         "scoped-public-private-anchor-denials-before-constructors",
         "cross-boundary-order-held-a-ready-b",
@@ -548,7 +553,7 @@ pub(super) fn run(
     fs::write(output.join("graph-v2-recursive.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "format": "phenix.graph-v2-recursive.v1", "full_V2": false, "p1_parity": false,
         "cases": cases,
-        "limits": ["finite root with two repeated middle/leaf occurrences", "no repeated action sources, recursive cycles, recursive InvokeEach or P1 parity"]
+        "limits": ["finite roots with repeated source-free occurrences", "no repeated action sources, recursive cycles, patch application or P1 parity"]
     })).unwrap()).unwrap();
     std::env::set_var(
         "PHENIX_GRAPH_CONSTRUCTOR_WITNESS",
@@ -1027,4 +1032,705 @@ fn order_acceptance(
         kernel.shutdown().unwrap();
     }
     std::env::remove_var("PHENIX_GRAPH_A_EACH_CONTROL");
+}
+
+fn each_acceptance(
+    packages: &[String],
+    composition: &Composition,
+    policy: &TrustedCompositionPolicy,
+    output: &Path,
+) {
+    const SLOW: &str = "example.graph.slow@1/run";
+    const COLLECT: &str = "example.graph.each-collect@1/run";
+    let each_node = format!("{B}/each");
+    let controls = [
+        output.join("recursive-each-a.control"),
+        output.join("recursive-each-b.control"),
+    ];
+    let witness = output.join("recursive-each.constructor");
+    std::env::set_var("PHENIX_GRAPH_CONSTRUCTOR_WITNESS", &witness);
+    for (key, path) in ["PHENIX_GRAPH_A_EACH_CONTROL", "PHENIX_GRAPH_B_EACH_CONTROL"]
+        .into_iter()
+        .zip(&controls)
+    {
+        std::env::set_var(key, path);
+        fs::write(path, "hold").unwrap();
+        assert!(!path.with_extension("calls").exists());
+    }
+    assert!(!witness.exists());
+    let (batch, collect) = super::each::profile_schemas(&packages[1]);
+    let mut bodies = declarations(false, false);
+    bodies[0].sources[0].payload = batch.clone();
+    bodies[0]
+        .nodes
+        .retain(|n| matches!(n.kind, NodeKind::Source { .. }));
+    bodies[0].nodes[0].outputs[0].schema = batch.clone();
+    bodies[0].edges.clear();
+    let mut collector = bodies[1].nodes[0].clone();
+    collector.kind = NodeKind::Invoke {
+        selector: String::new(),
+        operation: COLLECT.into(),
+    };
+    collector.inputs[0].schema = collect.request.clone();
+    for port in &mut collector.outputs {
+        port.schema = if port.name == "ok" {
+            collect.response.clone()
+        } else {
+            collect.error.clone()
+        };
+    }
+    let input = InputPort {
+        name: "in".into(),
+        schema: batch.clone(),
+        readiness: InputReadiness::One,
+        security: LABEL,
+    };
+    let each = NodeDecl {
+        id: each_node.clone(),
+        kind: NodeKind::InvokeEach {
+            collection: "Workers".into(),
+            operation: SLOW.into(),
+            include_self: true,
+            max: 2,
+        },
+        inputs: vec![input.clone()],
+        outputs: vec![OutputPort {
+            name: "out".into(),
+            schema: collect.request.clone(),
+            security: LABEL,
+        }],
+        execution: collector.execution,
+    };
+    bodies[1].nodes = vec![each, collector];
+    bodies[1].edges = vec![EdgeDecl {
+        id: format!("{B}/each-exit"),
+        kind: EdgeKind::Flow {
+            from: OutPortRef {
+                node: each_node.clone(),
+                port: "out".into(),
+            },
+            to: InPortRef {
+                node: SECOND.into(),
+                port: "in".into(),
+            },
+        },
+    }];
+    let child = GraphDefinition {
+        id: GraphDefinitionId::new("example.graph-b/each-child").unwrap(),
+        body: bodies[1].clone(),
+        inputs: vec![BoundaryInput {
+            port: InputPort {
+                name: "batch".into(),
+                ..input
+            },
+            target: BoundaryTo::Local(InPortRef {
+                node: each_node.clone(),
+                port: "in".into(),
+            }),
+        }],
+        outputs: vec![BoundaryOutput {
+            port: OutputPort {
+                name: "result".into(),
+                schema: collect.response.clone(),
+                security: LABEL,
+            },
+            source: BoundaryFrom::Local(OutPortRef {
+                node: SECOND.into(),
+                port: "ok".into(),
+            }),
+        }],
+        anchors: vec![
+            GraphAnchor {
+                name: "each".into(),
+                visibility: AnchorVisibility::Public,
+                target: AnchorTarget::LocalNode(each_node.clone()),
+            },
+            GraphAnchor {
+                name: "private-each".into(),
+                visibility: AnchorVisibility::Private,
+                target: AnchorTarget::LocalNode(each_node.clone()),
+            },
+            GraphAnchor {
+                name: "collect".into(),
+                visibility: AnchorVisibility::Public,
+                target: AnchorTarget::LocalNode(SECOND.into()),
+            },
+        ],
+        children: vec![],
+        wiring: vec![],
+        orders: vec![],
+    };
+    let root = GraphDefinition {
+        id: GraphDefinitionId::new("example.graph-a/each-root").unwrap(),
+        body: bodies[0].clone(),
+        inputs: vec![BoundaryInput {
+            port: child.inputs[0].port.clone(),
+            target: BoundaryTo::Child {
+                child: "right".into(),
+                port: "batch".into(),
+            },
+        }],
+        outputs: vec![BoundaryOutput {
+            port: child.outputs[0].port.clone(),
+            source: BoundaryFrom::Child {
+                child: "left".into(),
+                port: "result".into(),
+            },
+        }],
+        children: ["left", "right"]
+            .map(|name| GraphChild {
+                name: name.into(),
+                definition: child.id.clone(),
+            })
+            .into(),
+        wiring: ["left", "right"]
+            .map(|name| BoundaryFlow {
+                name: name.into(),
+                next: None,
+                from: BoundaryFrom::Local(OutPortRef {
+                    node: SOURCE.into(),
+                    port: "out".into(),
+                }),
+                to: BoundaryTo::Child {
+                    child: name.into(),
+                    port: "batch".into(),
+                },
+            })
+            .into(),
+        anchors: vec![GraphAnchor {
+            name: "selected".into(),
+            visibility: AnchorVisibility::Public,
+            target: AnchorTarget::Child {
+                child: "left".into(),
+                anchor: "each".into(),
+            },
+        }],
+        orders: vec![
+            BoundaryOrder {
+                name: "collect-order".into(),
+                before: AnchorRef::Child {
+                    child: "left".into(),
+                    anchor: "collect".into(),
+                },
+                after: AnchorRef::Child {
+                    child: "right".into(),
+                    anchor: "collect".into(),
+                },
+            },
+            BoundaryOrder {
+                name: "each-order".into(),
+                before: AnchorRef::Local("selected".into()),
+                after: AnchorRef::Child {
+                    child: "right".into(),
+                    anchor: "collect".into(),
+                },
+            },
+        ],
+    };
+    let definitions = vec![root.clone(), child];
+    let budget = ExpansionBudget {
+        depth: 2,
+        occurrences: 3,
+        items: 128,
+    };
+    let expanded = lower_recursive(&definitions, &root.id, budget).unwrap();
+    let scope = GraphInstanceId::new(root.id.clone());
+    let effective = |owner, kind, instance: GraphInstanceId, authored: &str| {
+        recursive_effective_id(
+            owner,
+            kind,
+            &LogicalId {
+                instance,
+                authored: authored.into(),
+            },
+        )
+        .unwrap()
+    };
+    let source = effective(A, "node", scope.clone(), SOURCE);
+    let each_ids =
+        ["left", "right"].map(|name| effective(B, "node", scope.child(name).unwrap(), &each_node));
+    let collectors =
+        ["left", "right"].map(|name| effective(B, "node", scope.child(name).unwrap(), SECOND));
+    assert_ne!(each_ids[0], each_ids[1]);
+    assert_ne!(collectors[0], collectors[1]);
+    let selected = expanded
+        .resolve_anchor(&scope, &AnchorRef::Local("selected".into()))
+        .unwrap();
+    assert_eq!(selected.aliases.len(), 2);
+    assert_eq!(
+        expanded.orders[&LogicalId {
+            instance: scope.clone(),
+            authored: "each-order".into()
+        }]
+            .before,
+        selected.aliases
+    );
+    assert_eq!(
+        recursive_effective_id(B, "node", &selected.node).unwrap(),
+        each_ids[0]
+    );
+    assert_eq!(
+        expanded.inputs[&LogicalId {
+            instance: scope.clone(),
+            authored: "batch".into()
+        }]
+            .endpoint
+            .node
+            .instance
+            .path(),
+        ["right"]
+    );
+    assert_eq!(
+        expanded.outputs[&LogicalId {
+            instance: scope.clone(),
+            authored: "result".into()
+        }]
+            .endpoint
+            .node
+            .instance
+            .path(),
+        ["left"]
+    );
+    let mut permuted = definitions.clone();
+    permuted.reverse();
+    for d in &mut permuted {
+        d.children.reverse();
+        d.wiring.reverse();
+        d.anchors.reverse();
+        d.body.nodes.reverse();
+    }
+    assert_eq!(
+        expanded,
+        lower_recursive(&permuted, &root.id, budget).unwrap()
+    );
+    let mut c = composition.clone();
+    c.artifacts = bodies
+        .iter()
+        .enumerate()
+        .map(|(i, body)| {
+            repack(
+                &packages[i],
+                &output.join(format!("recursive-each-{i}")),
+                body,
+            )
+        })
+        .collect();
+    // A required Many self-binding would form a startup cycle. Self is instead
+    // the explicit attested include_self route, after the selected A route.
+    c.slots = vec![SlotBinding {
+        caller: B.into(),
+        slot: "Workers".into(),
+        index: 0,
+        provider: A.into(),
+        export: "slow".into(),
+    }];
+    for key in [SLOW, COLLECT] {
+        c.authority.operations.insert(key.into());
+        let (interface, operation) = key.rsplit_once('/').unwrap();
+        c.grants.push(ScopedGrant {
+            caller: B.into(),
+            interface: interface.into(),
+            operation: operation.into(),
+            resources: c.authority.resources.clone(),
+        });
+    }
+    let mut p = policy.clone();
+    p.sources.clear();
+    p.topology.clear();
+    p.delivery.clear();
+    p.sources
+        .insert(effective(A, "source", scope.clone(), SOURCE), LABEL);
+    for (owner, key) in [(A, SLOW), (B, SLOW), (B, COLLECT)] {
+        p.operations.insert(
+            (owner.into(), key.into()),
+            OperationSecurity {
+                input: LABEL,
+                ok: LABEL,
+                err: LABEL,
+            },
+        );
+    }
+    for i in 0..2 {
+        for node in [&each_ids[i], &collectors[i]] {
+            p.topology.insert((A.into(), node.clone()));
+        }
+        for (from, to) in [(&source, &each_ids[i]), (&each_ids[i], &collectors[i])] {
+            p.delivery.insert(
+                (from.clone(), "out".into(), to.clone(), "in".into()),
+                FlowGrant {
+                    resources: c.authority.resources.clone(),
+                    maximum_classification: Classification::Confidential,
+                },
+            );
+        }
+    }
+    for (i, key) in p.delivery.keys().enumerate() {
+        let mut missing = p.clone();
+        missing.delivery.remove(key);
+        let failure = Prepared::prepare_recursive_graph_v2(
+            c.clone(),
+            &definitions,
+            &root.id,
+            budget,
+            &missing,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            failure.code,
+            Code::Denied,
+            "Each effective entry/exit {i}: {key:?}"
+        );
+        assert_eq!(
+            failure.message,
+            "cross-plugin flow lacks exact delivery grant"
+        );
+        assert!(!witness.exists());
+    }
+    for negative in [
+        "foreign-owner-grant",
+        "collector-owner-grant",
+        "route-a-attestation",
+        "route-b-attestation",
+        "route-security",
+        "route-schema",
+        "collection-namespace",
+        "source-namespace",
+        "topology-namespace",
+        "delivery-namespace",
+        "body",
+        "self-binding-cycle",
+        "dag-cycle",
+        "depth",
+        "occurrences",
+        "items",
+    ] {
+        let mut composition = c.clone();
+        let mut defs = definitions.clone();
+        let mut policy = p.clone();
+        let mut limited = budget;
+        match negative {
+            "foreign-owner-grant" | "collector-owner-grant" => {
+                let key = if negative == "foreign-owner-grant" {
+                    SLOW
+                } else {
+                    COLLECT
+                };
+                let (interface, operation) = key.rsplit_once('/').unwrap();
+                composition.grants.retain(|g| {
+                    !(g.caller == B && g.interface == interface && g.operation == operation)
+                });
+                if key == SLOW {
+                    composition.grants.push(ScopedGrant {
+                        caller: A.into(),
+                        interface: interface.into(),
+                        operation: operation.into(),
+                        resources: c.authority.resources.clone(),
+                    });
+                }
+            }
+            "route-a-attestation" => {
+                policy.operations.remove(&(A.into(), SLOW.into()));
+            }
+            "route-b-attestation" => {
+                policy.operations.remove(&(B.into(), SLOW.into()));
+            }
+            "route-security" => {
+                policy
+                    .operations
+                    .get_mut(&(A.into(), SLOW.into()))
+                    .unwrap()
+                    .input
+                    .confidentiality = Classification::Secret
+            }
+            "route-schema" => {
+                let wrong = ValueSchema::List(Box::new(ValueSchema::Struct(BTreeMap::from([
+                    ("route".into(), ValueSchema::U64),
+                    ("input".into(), ValueSchema::Bool),
+                ]))));
+                defs[0].body.sources[0].payload = wrong.clone();
+                defs[0].body.nodes[0].outputs[0].schema = wrong.clone();
+                defs[0].inputs[0].port.schema = wrong.clone();
+                defs[1].inputs[0].port.schema = wrong.clone();
+                defs[1]
+                    .body
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.id == each_node)
+                    .unwrap()
+                    .inputs[0]
+                    .schema = wrong;
+                composition.artifacts = defs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        repack(
+                            &packages[i],
+                            &output.join(format!("recursive-each-schema-{i}")),
+                            &d.body,
+                        )
+                    })
+                    .collect();
+            }
+            "collection-namespace" => {
+                let NodeKind::InvokeEach { collection, .. } = &mut defs[1]
+                    .body
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.id == each_node)
+                    .unwrap()
+                    .kind
+                else {
+                    panic!()
+                };
+                *collection = "ParentWorkers".into();
+                composition.artifacts[1] = repack(
+                    &packages[1],
+                    &output.join("recursive-each-namespace-b"),
+                    &defs[1].body,
+                );
+            }
+            "source-namespace" => {
+                policy.sources.clear();
+                policy.sources.insert(SOURCE.into(), LABEL);
+            }
+            "topology-namespace" => {
+                policy.topology.clear();
+                policy.topology.insert((A.into(), each_node.clone()));
+            }
+            "delivery-namespace" => {
+                policy.delivery.clear();
+                policy.delivery.insert(
+                    (SOURCE.into(), "out".into(), each_node.clone(), "in".into()),
+                    FlowGrant {
+                        resources: c.authority.resources.clone(),
+                        maximum_classification: Classification::Confidential,
+                    },
+                );
+            }
+            "body" => {
+                let NodeKind::InvokeEach { max, .. } = &mut defs[1]
+                    .body
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.id == each_node)
+                    .unwrap()
+                    .kind
+                else {
+                    panic!()
+                };
+                *max = 3;
+            }
+            "self-binding-cycle" => composition.slots.push(SlotBinding {
+                caller: B.into(),
+                slot: "Workers".into(),
+                index: 1,
+                provider: B.into(),
+                export: "slow".into(),
+            }),
+            "dag-cycle" => defs[0].orders.push(BoundaryOrder {
+                name: "cycle".into(),
+                before: AnchorRef::Child {
+                    child: "right".into(),
+                    anchor: "collect".into(),
+                },
+                after: AnchorRef::Local("selected".into()),
+            }),
+            "depth" => limited.depth = 1,
+            "occurrences" => limited.occurrences = 2,
+            "items" => limited.items = 1,
+            _ => unreachable!(),
+        }
+        let failure =
+            Prepared::prepare_recursive_graph_v2(composition, &defs, &root.id, limited, &policy)
+                .err()
+                .unwrap();
+        if matches!(negative, "foreign-owner-grant" | "collector-owner-grant") {
+            assert_eq!(failure.code, Code::Denied);
+            assert_eq!(failure.message, "graph-v2 operation lacks prepared grant");
+        }
+        if negative == "body" {
+            assert_eq!(
+                failure.message,
+                "graph-v2 declaration differs from verified package metadata"
+            );
+        }
+        if matches!(negative, "route-a-attestation" | "route-b-attestation") {
+            assert_eq!(failure.message, "missing InvokeEach operation attestation");
+        }
+        if negative == "route-security" {
+            assert_eq!(failure.message, "InvokeEach operation security mismatch");
+        }
+        if negative == "dag-cycle" {
+            assert_eq!(failure.message, "recursive dependency cycle");
+        }
+        if negative == "route-schema" {
+            assert_eq!(failure.code, Code::SchemaRejected);
+            assert_eq!(failure.message, "InvokeEach route schemas differ");
+        }
+        if negative == "collection-namespace" {
+            assert_eq!(
+                failure.message,
+                "InvokeEach requires a declared Many collection"
+            );
+        }
+        assert!(!witness.exists(), "{negative} ran constructor");
+        for control in &controls {
+            assert!(
+                !control.with_extension("calls").exists(),
+                "{negative} ran native work"
+            );
+        }
+    }
+    let prepared =
+        Prepared::prepare_recursive_graph_v2(c.clone(), &permuted, &root.id, budget, &p).unwrap();
+    assert!(!witness.exists());
+    let kernel = prepared.load().unwrap();
+    assert!(witness.exists());
+    let fds = fs::read_dir("/proc/self/fd").unwrap().count();
+    let payload = Value::List(
+        ["first", "domain"]
+            .into_iter()
+            .enumerate()
+            .map(|(route, text)| {
+                Value::map([
+                    ("route", Value::U64(route as u64)),
+                    ("input", Value::map([("text", Value::String(text.into()))])),
+                ])
+            })
+            .collect(),
+    );
+    let mut run = kernel
+        .begin_action_scoped(
+            ACTION,
+            &payload,
+            ScopedRequest {
+                authority: c.authority.clone(),
+                resource: None,
+            },
+        )
+        .unwrap();
+    let calls =
+        |i: usize| fs::read_to_string(controls[i].with_extension("calls")).unwrap_or_default();
+    let terminals = std::cell::Cell::new(0);
+    let mut observe = |u: &phenix_kernel::graph::GraphUpdate<'_>| {
+        assert!(
+            !matches!(u.event, GraphEvent::NodeFinished(_)),
+            "protected Each payload exposed"
+        );
+        if matches!(u.event, GraphEvent::Finished(_)) {
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            terminals.set(terminals.get() + 1);
+        }
+    };
+    for _ in 0..4 {
+        assert_eq!(run.pump(&mut observe).unwrap(), GraphStatus::Pending);
+    }
+    assert_eq!([calls(0), calls(1)], ["first\n", "domain\n"]);
+    assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
+    assert_eq!(fs::read_dir("/proc/self/fd").unwrap().count(), fds + 2);
+    assert!(run.steps().is_empty());
+    assert!(kernel.shutdown().is_err());
+    fs::write(&controls[1], "release").unwrap();
+    for _ in 0..16 {
+        assert_eq!(run.pump(&mut observe).unwrap(), GraphStatus::Pending);
+        assert!(
+            kernel.inspect()["pending"]["physical_leases"]
+                .as_u64()
+                .unwrap()
+                <= 2
+        );
+        if run.steps().len() == 2 && calls(1) == "domain\ndomain\n" {
+            break;
+        }
+    }
+    assert_eq!([calls(0), calls(1)], ["first\n", "domain\ndomain\n"]);
+    assert_eq!(run.steps().len(), 2);
+    assert_eq!(
+        run.steps()
+            .iter()
+            .map(|s| s.node.clone())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(each_ids.clone())
+    );
+    assert!(run.steps().iter().all(|s| s.branch == Some(1)
+        && s.outcome == Outcome::Domain(Value::String("domain fixture b".into()))));
+    assert_eq!(terminals.get(), 0);
+    assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+    assert_eq!(fs::read_dir("/proc/self/fd").unwrap().count(), fds + 1);
+    assert!(kernel.shutdown().is_err());
+    fs::write(&controls[0], "release").unwrap();
+    let mut status = GraphStatus::Pending;
+    for _ in 0..32 {
+        status = run.pump(&mut observe).unwrap();
+        if status == GraphStatus::Finished {
+            break;
+        }
+        assert_eq!(status, GraphStatus::Pending);
+    }
+    assert_eq!(status, GraphStatus::Finished);
+    assert_eq!(run.completion(), Some(GraphCompletion::Domain));
+    assert_eq!(run.steps().len(), 6);
+    let identities: BTreeSet<_> = run
+        .steps()
+        .iter()
+        .map(|s| (s.root, s.activation, s.node.clone(), s.branch))
+        .collect();
+    assert_eq!(identities.len(), 6);
+    assert!(run
+        .steps()
+        .iter()
+        .all(|s| s.root == run.steps()[0].root && s.activation == Some(0)));
+    for id in &each_ids {
+        let branches: BTreeSet<_> = run
+            .steps()
+            .iter()
+            .filter(|s| &s.node == id)
+            .map(|s| s.branch)
+            .collect();
+        assert_eq!(branches, BTreeSet::from([Some(0), Some(1)]));
+    }
+    assert!(run
+        .steps()
+        .iter()
+        .filter(|s| s.branch == Some(0))
+        .all(|s| s.outcome == Outcome::Success(Value::String("first".into()))));
+    let expected = Value::List(vec![
+        Value::map([("Ok", Value::String("first".into()))]),
+        Value::map([("Err", Value::String("domain fixture b".into()))]),
+    ]);
+    for id in &collectors {
+        let step = run.steps().iter().find(|s| &s.node == id).unwrap();
+        assert_eq!(step.branch, None);
+        assert_eq!(step.outcome, Outcome::Success(expected.clone()));
+    }
+    assert!(
+        run.steps()
+            .iter()
+            .position(|s| s.node == collectors[0])
+            .unwrap()
+            < run
+                .steps()
+                .iter()
+                .position(|s| s.node == collectors[1])
+                .unwrap()
+    );
+    assert_eq!([calls(0), calls(1)], ["first\nfirst\n", "domain\ndomain\n"]);
+    assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+    assert_eq!(fs::read_dir("/proc/self/fd").unwrap().count(), fds);
+    assert_eq!(terminals.get(), 1);
+    for _ in 0..3 {
+        assert_eq!(
+            run.pump(|_| panic!("duplicate recursive Each terminal"))
+                .unwrap(),
+            GraphStatus::Finished
+        );
+    }
+    assert_eq!(run.steps().len(), 6);
+    assert_eq!([calls(0), calls(1)], ["first\nfirst\n", "domain\ndomain\n"]);
+    drop(run);
+    kernel.shutdown().unwrap();
+    for key in ["PHENIX_GRAPH_A_EACH_CONTROL", "PHENIX_GRAPH_B_EACH_CONTROL"] {
+        std::env::remove_var(key);
+    }
 }

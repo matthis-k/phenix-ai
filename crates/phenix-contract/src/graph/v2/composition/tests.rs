@@ -822,18 +822,144 @@ fn recursive_expansion_is_canonical_and_preserves_occurrence_provenance() {
 }
 
 #[test]
-fn invoke_each_rejects_in_recursive_preflight_before_lowering_metadata() {
+fn invoke_each_preserves_original_owner_complete_schema_and_scoped_provenance() {
     let (mut definitions, root, budget) = recursive_fixture();
-    definitions[1].body.nodes[0].kind = NodeKind::InvokeEach {
+    let batch = ValueSchema::List(Box::new(ValueSchema::Struct(
+        std::collections::BTreeMap::from([
+            ("route".into(), ValueSchema::U64),
+            ("input".into(), ValueSchema::Bool),
+        ]),
+    )));
+    let outcomes = ValueSchema::List(Box::new(ValueSchema::Tagged(
+        std::collections::BTreeMap::from([
+            ("Ok".into(), Some(ValueSchema::Bool)),
+            ("Err".into(), Some(ValueSchema::Bool)),
+        ]),
+    )));
+    let leaf = &mut definitions[1];
+    leaf.body.nodes[0].kind = NodeKind::InvokeEach {
         collection: "Workers".into(),
         operation: "demo@1/run".into(),
-        include_self: false,
-        max: 8,
+        include_self: true,
+        max: 3,
     };
-    let failure = lower_recursive(&definitions, &root, budget).unwrap_err();
-    assert!(failure
-        .message
-        .contains("InvokeEach recursive lowering is unsupported"));
+    leaf.body.nodes[0].execution.on_domain_error = DomainErrorPolicy::RouteErr;
+    leaf.body.nodes[0].inputs[0].schema = batch.clone();
+    leaf.inputs[0].port.schema = batch;
+    leaf.body.nodes[0].outputs[0].schema = outcomes.clone();
+    leaf.outputs[0].port.schema = outcomes;
+    leaf.anchors.push(GraphAnchor {
+        name: "each".into(),
+        visibility: AnchorVisibility::Public,
+        target: AnchorTarget::LocalNode("demo/filter".into()),
+    });
+    let input = leaf.inputs[0].port.clone();
+    let output = leaf.outputs[0].port.clone();
+    definitions[0].wiring.clear();
+    definitions[0].inputs.push(BoundaryInput {
+        port: input,
+        target: BoundaryTo::Child {
+            child: "left".into(),
+            port: "in".into(),
+        },
+    });
+    definitions[0].outputs.push(BoundaryOutput {
+        port: output,
+        source: BoundaryFrom::Child {
+            child: "right".into(),
+            port: "out".into(),
+        },
+    });
+    definitions[0].anchors.push(GraphAnchor {
+        name: "selected".into(),
+        visibility: AnchorVisibility::Public,
+        target: AnchorTarget::Child {
+            child: "left".into(),
+            anchor: "each".into(),
+        },
+    });
+    definitions[0].orders.push(BoundaryOrder {
+        name: "ordered".into(),
+        before: AnchorRef::Local("selected".into()),
+        after: AnchorRef::Child {
+            child: "right".into(),
+            anchor: "each".into(),
+        },
+    });
+    let budget = ExpansionBudget {
+        items: 32,
+        ..budget
+    };
+    let expanded = lower_recursive(&definitions, &root, budget).unwrap();
+    assert_eq!(expanded.nodes.len(), 2);
+    for (id, node) in &expanded.nodes {
+        assert_eq!(expanded.instances[&id.instance].owner(), "demo");
+        assert_eq!(node, &definitions[1].body.nodes[0]);
+        assert_eq!(id.authored, "demo/filter");
+    }
+    let scope = GraphInstanceId::new(root.clone());
+    let selected = expanded
+        .resolve_anchor(&scope, &AnchorRef::Local("selected".into()))
+        .unwrap();
+    assert_eq!(selected.aliases.len(), 2);
+    assert_eq!(selected.node.instance.path(), ["left"]);
+    assert_eq!(
+        expanded.orders[&LogicalId {
+            instance: scope.clone(),
+            authored: "ordered".into()
+        }]
+            .before,
+        selected.aliases
+    );
+    assert_eq!(
+        expanded.inputs[&LogicalId {
+            instance: scope.clone(),
+            authored: "in".into()
+        }]
+            .endpoint
+            .node,
+        selected.node
+    );
+    assert_eq!(
+        expanded.outputs[&LogicalId {
+            instance: scope,
+            authored: "out".into()
+        }]
+            .endpoint
+            .node
+            .instance
+            .path(),
+        ["right"]
+    );
+    for case in 0..4 {
+        let mut malformed = definitions.clone();
+        let NodeKind::InvokeEach {
+            collection,
+            operation,
+            max,
+            ..
+        } = &mut malformed[1].body.nodes[0].kind
+        else {
+            panic!()
+        };
+        match case {
+            0 => *collection = "x".repeat(crate::MAX_BYTES + 1),
+            1 => *operation = "x".repeat(crate::MAX_BYTES + 1),
+            2 => *max = 0,
+            3 => *max = 257,
+            _ => unreachable!(),
+        }
+        let failure = lower_recursive(&malformed, &root, budget).unwrap_err();
+        if case < 2 {
+            assert_eq!(failure.message, "recursive byte budget");
+        }
+    }
+    definitions[0].children.reverse();
+    definitions.reverse();
+    assert_eq!(
+        expanded,
+        lower_recursive(&definitions, &root, budget).unwrap()
+    );
 }
 
 #[test]

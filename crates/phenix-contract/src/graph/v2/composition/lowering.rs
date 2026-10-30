@@ -102,8 +102,13 @@ fn definition_bytes(d: &GraphDefinition) -> Result<usize, Failure> {
     for n in &d.body.nodes {
         charge(&mut bytes, n.id.len())?;
         match &n.kind {
-            NodeKind::InvokeEach { .. } => {
-                return Err(bad("InvokeEach recursive lowering is unsupported"));
+            NodeKind::InvokeEach {
+                collection,
+                operation,
+                ..
+            } => {
+                charge(&mut bytes, collection.len())?;
+                charge(&mut bytes, operation.len())?;
             }
             NodeKind::Invoke {
                 selector,
