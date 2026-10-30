@@ -19,11 +19,11 @@ The isolated rewrite #1171 is not a replacement for the working P1 composition.
 
 | Area | Spec reference | Current code | Gap | Migration | Verification | PR/status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, shared artifact graph section parser | Base declarations integrated by #1172; Switch/Merge/Join follow-ups implemented; extended readiness, deferred and patches explicitly reject | V0/V2, retain v1 | Canonical permutation, malformed metadata, ownership, bounds and native fixture tests; follow-up CI pending | In progress; base slice integrated |
-| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave intrinsic delivery implemented on follow-ups; multiple waves and deferred admission remain absent | V0/V1/V2 | Native Source/Invoke/Constant, Switch/Merge and Join fixtures pass locally; follow-up exact-head CI pending | In progress |
+| Graph metadata | v2.4 section 2 | `phenix-contract/src/graph/v2/declarations.rs`, shared artifact graph section parser | Base declarations integrated by #1172; Switch/Merge (#1173) and Join (#1175) merged; Optional/StaticMany readiness implemented on a follow-up; deferred and patches still explicitly reject | V0/V2, retain v1 | Canonical permutation, malformed metadata, ownership, bounds, readiness wire and native fixture tests | In progress; base+operators integrated, readiness pending CI |
+| Finite waves | v2.4 section 3 | Existing serial M1 graph/root machinery, private initial-wave v2 readiness | Initial-wave intrinsic delivery through Switch/Merge/Join and Optional/StaticMany merged or on follow-up; multiple waves and deferred admission remain absent | V0/V1/V2 | Native Source/Invoke/Constant, Switch/Merge, Join and readiness fixtures pass; follow-up exact-head CI pending | In progress; base+operators integrated |
 | Graph patches | v2.4 section 4 | No v2 patch engine | Exact deterministic patch algebra and exports | V3, after V1 | No patch acceptance | Not started |
 | Security | v2.4 sections 3.4.1, 5 | Offline product lattice, trusted composition policy and inherited-resource runtime delivery | Independent topology/delivery/operation checks implemented; intrinsic label propagation tested. Declassification/endorsement and selected classified observation remain absent | V0/V1 base integrated; V2 follow-ups | Native scoped delivery/ref-without-read negatives passed in #1172; follow-up intrinsic/control/resource tests pass locally | In progress; base slice integrated |
-| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Bounded initial-wave One inputs and typed intrinsics through Join implemented; extended readiness and deferred execution remain absent | V1/V2/V4 through existing dispatcher/tickets | Native result routing, terminality, failure precedence and physical-drain fixtures; follow-up exact-head CI pending | In progress; V1 base slice integrated |
+| Scheduler | v2.4 section 6 | Existing `GraphExecution` with private v2 readiness, same Root/dispatcher/tickets | Bounded initial-wave One inputs, typed intrinsics through Join, and Optional/StaticMany terminal reduction implemented; deferred execution remains absent | V1/V2/V4 through existing dispatcher/tickets | Native result routing, terminality, failure precedence, cardinality closure and physical-drain fixtures; follow-up exact-head CI pending | In progress; V1 base + operators integrated |
 | SDK/macros | v2.4 section 7 | Existing M1 `Operation`, graph-v1 authoring | Typed graph/subgraph authoring and temporary lowering bridge | V5 | Existing APIs are not v2 acceptance | Not started |
 | Plugin state/exposure | Plugin state ownership | Ordinary plugin fields and M1 selected property contracts | Explicit normative opt-in publication amendment and concrete authoring trials | Preserve private ownership; no global state registry | No new exposure acceptance | Not started |
 | Providers/auth | Provider responsibility audit | Existing selected provider contracts/runtime | Consolidate stacked shared-host lineage and auth parity | #1139-#1156; reconcile #1143/#1145, do not combine competing #1136 auth | Refresh each exact-head product gate before integration | In progress, unmerged stack |
@@ -41,14 +41,13 @@ This verifies the named slice and preserved current P1 fixtures, not full V0/V1
 or graph-v2 P1 acceptance. Full local `nix flake check -L --keep-going` exceeded
 20 minutes; the completed remote matrix supplies the full-gate evidence.
 
-V2 continuation: Switch and Merge::ExactlyOne are implemented on a separate
-follow-up branch, using the same private wave/GraphExecution machinery. Native
-fixtures exercise text/unit case routing, cross-source convergence, pending
-candidate waiting, late failure precedence, multiple-value rejection and
-all-closed termination. Focused tests include direct wire negatives, whole-input
-classification, selected-resource attenuation and confidential control outcomes.
-Exact committed-head evidence and CI are required before integration; Join,
-Optional/StaticMany readiness and general classified observation remain open.
+V2 continuation (merged): Switch and Merge::ExactlyOne shipped via #1173 on the
+same private wave/GraphExecution machinery. Native fixtures exercise text/unit
+case routing, cross-source convergence, pending candidate waiting, late failure
+precedence, multiple-value rejection and all-closed termination; focused tests
+include direct wire negatives, whole-input classification, selected-resource
+attenuation and confidential control outcomes. General classified observation
+remains open.
 
 CI continuation for #1173: the user-selected single-store full-DAG backend
 replaces only the automatic PR matrix execution, not its complete check
@@ -57,23 +56,22 @@ inventory or the independent ACP/security gates. Provider
 `25029578a370c0b1f57ae88881b6018ed1ac08df`; reusable workflow/runtime pins are
 updated together to that merged revision. Trusted-main remote execution keeps
 its existing pin and authority. The stale matrix-pin policy test was updated
-with adversarial wrong-pin, OIDC, publisher and reduced-inventory cases. Full
-DAG passed on `acf46e51f1081ccadc561c08d9fd11881ecbc3f8`, but that head's
-workflow-policy check failed before the fix. Do not treat it as complete
-acceptance of the final #1173 head.
+with adversarial wrong-pin, OIDC, publisher and reduced-inventory cases. The
+final #1173 head `64f6274a3ad025d1440eedd354a52d99dd0df894` passed the complete
+single-store full-DAG run before merge; the superseded `acf46e51f` head's earlier
+policy failure is retained only as history.
 
-Join continuation (separate branch following #1173): named One inputs assemble
+Join continuation (merged via #1175): named One inputs assemble
 one canonical struct, with conservative output security and intersected resource
 scope. Offline compilation rejects independent-only and direct Switch-exclusive
 combinations, diagnoses dormancy and reports Unknown for unproven composed
 paths. Native fixtures passed pending fan-in, actual field delivery, no early
 consumer invocation, required closure followed by late success/failure, producer
-non-cancellation and physical draining. Private terminal bookkeeping now releases
-payloads for non-runnable joins instead of retaining late successes. Focused
-contract/kernel tests pass locally; exact committed-head CI and integration are
-still required. Optional/StaticMany, patch algebra, deferred waves, SDK/lowering
-and graph-v2 P1 parity remain open. The user's single-store CI is inherited;
-no second test inventory or local full-flake rebuild is introduced.
+non-cancellation and physical draining. Private terminal bookkeeping releases
+payloads for non-runnable joins instead of retaining late successes. Patch
+algebra, deferred waves, SDK/lowering and graph-v2 P1 parity remain open. The
+user's single-store CI is inherited; no second test inventory or local full-flake
+rebuild is introduced.
 
 Join review correction in #1175: late discarded successes must not attempt
 destination data access. Outgoing closures now resolve before selected payloads,
@@ -82,6 +80,28 @@ required Join input. A native cross-plugin regression narrows away the late
 value's destination resource and still requires successful producer completion,
 zero consumer calls and physical drain. Runnable recipients retain independent
 denial checks. This is not a grant exemption for actual deliveries.
+
+Integrated operator scope: Switch and Merge::ExactlyOne merged via #1173 at
+`89c6f7f5c83e29819a05062f22d1333ad22d6093`, and named-One Join::All merged via
+#1175 at `52b1c3261db182b9f595aac85d48fc238bddb83c`, both after the user-selected
+single-store full-DAG CI passed at their exact heads. The single-store backend
+replaces only automatic PR matrix execution, not the complete check inventory or
+the independent ACP/security gates. Trusted-main remote authority is unchanged.
+
+Readiness continuation (follow-up on the merged Join base): Optional wraps a raw
+candidate as `Some`/`None` and StaticMany collects a finite candidate set in
+stable EdgeId order, closing on under/overflow and letting active failure
+dominate closure. `InputPort.schema` is the complete consumed value; edges match
+its unwrapped candidate schema and Invoke still consumes one complete request.
+Readiness never creates a source: Flow-only relevance gates absence activation,
+so disconnected/Order-only Optional and min-zero nodes stay dormant. Synthesized
+absence carries kernel-owned causal evidence intersected with the effective root
+and prepared flow grant; it never restores root scope, and an explicit empty
+resource set stays distinct from missing authority. Native fixtures cover
+Some/None, nested `Option<Option<T>>`, ordered/under/overflow collections,
+pending terminality, failure precedence, dormancy and narrowed-resource denial;
+exact-head single-store CI and full V2 acceptance remain required. Deferred
+waves, patch algebra, SDK/lowering and graph-v2 P1 parity stay open.
 
 Remaining architectural question: repository documents still label v2.4 a
 proposal; this implementation follows the requested target without changing

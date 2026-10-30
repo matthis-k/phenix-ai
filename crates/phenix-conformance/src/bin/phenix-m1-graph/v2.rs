@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 mod join;
 #[path = "v2/operators.rs"]
 mod operators;
+#[path = "v2/readiness.rs"]
+mod readiness;
 
 const A: &str = "example.graph-a";
 const B: &str = "example.graph-b";
@@ -607,4 +609,25 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
     fs::write(output.join("graph-v2-evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({"format":"phenix.graph-v2-evidence.v1", "acceptance":"V1 partial", "p1_parity":false, "cases":cases, "limits":["initial finite wave only", "no operators, patches or deferred waves", "no SDK or P1 migration parity"]})).unwrap()).unwrap();
     operators::run(packages, output);
     join::run(packages, output);
+    readiness::run(packages, output);
+    // Review regression: V1 evidence has a deliberately scoped label, while
+    // separate native files attest the newer operator/Join/readiness subsets.
+    // Reject missing files or accidental claims of full V2 / P1 parity.
+    let evidence = [
+        ("graph-v2-evidence.json", "phenix.graph-v2-evidence.v1"),
+        ("graph-v2-operators.json", "phenix.graph-v2-operators.v1"),
+        ("graph-v2-join.json", "phenix.graph-v2-join.v1"),
+        ("graph-v2-readiness.json", "phenix.graph-v2-readiness.v1"),
+    ];
+    for (name, format) in evidence {
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join(name)).unwrap()).unwrap();
+        assert_eq!(report["format"], format, "evidence report mismatch: {name}");
+        assert_eq!(report["p1_parity"], false, "premature P1 parity: {name}");
+        if name == "graph-v2-evidence.json" {
+            assert_eq!(report["acceptance"], "V1 partial");
+        } else {
+            assert_eq!(report["full_V2"], false, "premature V2 acceptance: {name}");
+        }
+    }
 }

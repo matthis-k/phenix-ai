@@ -64,6 +64,7 @@ pub struct CompiledGraph {
     predecessors: BTreeMap<String, BTreeSet<String>>,
     source_reachability: BTreeMap<String, BTreeSet<String>>,
     join_satisfiability: BTreeMap<String, Satisfiability>,
+    input_edges: BTreeMap<(String, String), Vec<String>>,
     order: Vec<String>,
     policy: TrustedCompositionPolicy,
 }
@@ -316,6 +317,7 @@ fn compile(
         }
     }
     let mut candidates = BTreeMap::<(String, String), usize>::new();
+    let mut input_edges = BTreeMap::<(String, String), Vec<String>>::new();
     for declaration in &declarations {
         for edge in &declaration.edges {
             let endpoints = match &edge.kind {
@@ -353,7 +355,7 @@ fn compile(
                         .iter()
                         .find(|p| p.name == to.port)
                         .ok_or_else(|| invalid("missing input port"))?;
-                    if output.schema != input.schema {
+                    if &output.schema != input.candidate_schema()? {
                         return Err(fail(Code::SchemaRejected, "flow schema mismatch"));
                     }
                     if !output.security.can_flow_to(input.security) {
@@ -384,6 +386,10 @@ fn compile(
                     *candidates
                         .entry((to.node.clone(), to.port.clone()))
                         .or_default() += 1;
+                    input_edges
+                        .entry((to.node.clone(), to.port.clone()))
+                        .or_default()
+                        .push(edge.id.clone());
                     predecessors
                         .get_mut(&to.node)
                         .unwrap()
@@ -410,9 +416,10 @@ fn compile(
                 .copied()
                 .unwrap_or(0)
                 > 1
+                && !matches!(input.readiness, InputReadiness::StaticMany { .. })
                 && !matches!(node.kind, NodeKind::Merge { .. })
             {
-                return Err(invalid("One input permits at most one candidate"));
+                return Err(invalid("One/Optional input permits at most one candidate"));
             }
         }
     }
@@ -432,6 +439,12 @@ fn compile(
         let incoming: Vec<_> = node
             .inputs
             .iter()
+            .filter(|input| {
+                matches!(
+                    input.readiness,
+                    InputReadiness::One | InputReadiness::StaticMany { min: 1.., .. }
+                )
+            })
             .map(|input| {
                 declarations
                     .iter()
@@ -456,16 +469,30 @@ fn compile(
                     .collect()
             })
             .collect();
-        if reachable.iter().any(BTreeSet::is_empty) {
+        if source_reachability[&node.id].is_empty() || reachable.iter().any(BTreeSet::is_empty) {
             join_satisfiability.insert(node.id.clone(), Satisfiability::Dormant);
             continue;
         }
-        let mut common = reachable[0].clone();
-        for sources in &reachable[1..] {
+        let mut common = source_reachability[&node.id].clone();
+        for sources in &reachable {
             common.retain(|source| sources.contains(source));
         }
         let mut switch_cases = BTreeMap::new();
-        for from in incoming.iter().flatten() {
+        for from in node
+            .inputs
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.readiness,
+                    InputReadiness::One | InputReadiness::StaticMany { min: 1.., .. }
+                )
+            })
+            .zip(&incoming)
+            // A required collection with one candidate requires that candidate
+            // just as One does. Multi-candidate alternatives remain Unknown.
+            .filter(|(_, edges)| edges.len() == 1)
+            .flat_map(|(_, edges)| edges)
+        {
             if matches!(nodes[&from.node].1.kind, NodeKind::Switch { .. })
                 && switch_cases
                     .insert(&from.node, &from.port)
@@ -477,10 +504,14 @@ fn compile(
         if common.is_empty() {
             return Err(invalid("UnsatisfiableJoin: disjoint input sources"));
         }
-        let status = if incoming
+        let status = if node
+            .inputs
             .iter()
-            .flatten()
-            .all(|from| matches!(nodes[&from.node].1.kind, NodeKind::Source { .. }))
+            .all(|p| p.readiness == InputReadiness::One)
+            && incoming
+                .iter()
+                .flatten()
+                .all(|from| matches!(nodes[&from.node].1.kind, NodeKind::Source { .. }))
         {
             Satisfiability::ProvenSatisfiable
         } else {
@@ -508,6 +539,9 @@ fn compile(
     );
     let mut bytes = b"phenix.graph.offline-plan.v2\0".to_vec();
     bytes.extend(Value::List(vec![canonical, route_values, policy_value(policy)]).encode()?);
+    for edges in input_edges.values_mut() {
+        edges.sort();
+    }
     Ok(CompiledGraph {
         identity: phenix_artifact::digest(&bytes),
         declarations,
@@ -515,6 +549,7 @@ fn compile(
         predecessors,
         source_reachability,
         join_satisfiability,
+        input_edges,
         order,
         policy: policy.clone(),
     })

@@ -7,13 +7,57 @@ const MAX_ROOT_VALUES: usize = 16_384;
 const MAX_ROOT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROOT_NODES: usize = 4_096;
 
+// Deterministic work count, not wall-clock timing.
+#[cfg(test)]
+thread_local! {
+    static PORT_INPUT_EDGE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug))]
 enum Resolution {
     Unresolved,
-    // None retains successful terminal bookkeeping only for a non-runnable Join.
+    // None retains successful terminal bookkeeping only for a non-runnable consumer.
     Value(Option<Value>, BTreeSet<String>),
     Closed,
     Failed,
+}
+
+// Private scheduler diagnostics, never exposed as plugin payloads or authority.
+#[derive(Clone, Debug, PartialEq)]
+enum TerminalCause {
+    InactiveSource {
+        source: String,
+    },
+    Closed {
+        node: String,
+    },
+    Domain {
+        node: String,
+        value: std::rc::Rc<Value>,
+    },
+}
+
+#[derive(Clone)]
+struct ClosureEvidence {
+    // None is an unconstrained potential scope, never an execution capability.
+    resources: Option<BTreeSet<String>>,
+    authorized: bool,
+    causal: bool,
+}
+
+impl ClosureEvidence {
+    fn intersect(&mut self, other: &Self) {
+        if let Some(other) = &other.resources {
+            if let Some(resources) = &mut self.resources {
+                resources.retain(|r| other.contains(r));
+            } else {
+                self.resources = Some(other.clone());
+            }
+        }
+        self.authorized &= other.authorized;
+        self.causal |= other.causal;
+    }
 }
 
 pub(in crate::graph) struct Wave {
@@ -23,9 +67,16 @@ pub(in crate::graph) struct Wave {
     nodes: BTreeMap<String, (String, NodeDecl)>,
     edges: BTreeMap<String, EdgeDecl>,
     arrivals: BTreeMap<String, Resolution>,
+    // Keep diagnostic provenance separate from readiness and authority evidence.
+    // Original incoming causes remain available after canonical propagation.
+    terminal_causes: BTreeMap<String, TerminalCause>,
+    domain_causes: BTreeMap<String, TerminalCause>,
+    input_edges: BTreeMap<(String, String), Vec<String>>,
     started: BTreeSet<String>,
     done: BTreeSet<String>,
     resources: BTreeMap<String, BTreeSet<String>>,
+    closure: BTreeMap<String, ClosureEvidence>,
+    causes: BTreeMap<String, ClosureEvidence>,
     values: usize,
     bytes: usize,
 }
@@ -63,9 +114,14 @@ impl Wave {
             nodes,
             edges,
             arrivals,
+            terminal_causes: BTreeMap::new(),
+            domain_causes: BTreeMap::new(),
+            input_edges: graph.input_edges.clone(),
             started: BTreeSet::new(),
             done: BTreeSet::new(),
             resources: BTreeMap::new(),
+            closure: BTreeMap::new(),
+            causes: BTreeMap::new(),
             values: 0,
             bytes: 0,
         })
@@ -82,6 +138,33 @@ impl Wave {
         if self.done.contains(node) {
             return Ok(());
         }
+        let terminal_cause = self
+            .domain_causes
+            .get(node)
+            .cloned()
+            .or_else(|| {
+                if selected.is_some() {
+                    return None;
+                }
+                self.edges.iter().find_map(|(id, edge)| {
+                    if matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node)
+                        && matches!(self.arrivals[id], Resolution::Failed) == failed
+                        && matches!(self.arrivals[id], Resolution::Closed | Resolution::Failed)
+                    {
+                        self.terminal_causes.get(id).cloned()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| match &self.nodes[node].1.kind {
+                NodeKind::Source { source } if source != &self.source => {
+                    TerminalCause::InactiveSource {
+                        source: source.clone(),
+                    }
+                }
+                _ => TerminalCause::Closed { node: node.into() },
+            });
         if let Some((_, value)) = selected {
             self.values += 1;
             self.bytes = self
@@ -95,9 +178,16 @@ impl Wave {
                 ));
             }
         }
-        let mut joins = BTreeSet::new();
-        // Resolve sibling closure/failure before any successful delivery. Edge ID
-        // order must not authorize a payload that this same completion discards.
+        let cause = self.resources.get(node).map(|resources| ClosureEvidence {
+            resources: Some(resources.clone()),
+            authorized: true,
+            causal: true,
+        }).or_else(|| self.causes.get(node).cloned()).or_else(|| {
+            matches!(&self.nodes[node].1.kind, NodeKind::Source { source } if source == &self.source)
+                .then(|| ClosureEvidence { resources: Some(scope.authority.resources.clone()), authorized: true, causal: true })
+        });
+        // Project even discarded deliveries: their terminal metadata may later
+        // explain observable absence, but dropping a value is not an access.
         for (id, edge) in &self.edges {
             let EdgeKind::Flow { from, to } = &edge.kind else {
                 continue;
@@ -105,10 +195,87 @@ impl Wave {
             if from.node != node {
                 continue;
             }
-            if matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. }) {
-                joins.insert(to.node.clone());
+            {
+                // An inactive candidate constrains a later causal anchor but
+                // cannot itself authorize execution or manufacture root rights.
+                let mut evidence = cause.clone().unwrap_or(ClosureEvidence {
+                    resources: None,
+                    authorized: true,
+                    causal: false,
+                });
+                let (owner, definition) = &self.nodes[node];
+                let target_owner = &self.nodes[&to.node].0;
+                if owner != target_owner
+                    || graph.routes.get(node).unwrap_or(owner)
+                        != graph.routes.get(&to.node).unwrap_or(target_owner)
+                {
+                    if let Some(grant) = graph.policy.delivery.get(&(
+                        from.node.clone(),
+                        from.port.clone(),
+                        to.node.clone(),
+                        to.port.clone(),
+                    )) {
+                        if let Some(resources) = &mut evidence.resources {
+                            resources.retain(|r| {
+                                grant.resources.contains(r) && scope.authority.resources.contains(r)
+                            });
+                        } else {
+                            evidence.resources = Some(
+                                grant
+                                    .resources
+                                    .intersection(&scope.authority.resources)
+                                    .cloned()
+                                    .collect(),
+                            );
+                        }
+                        let output = definition
+                            .outputs
+                            .iter()
+                            .find(|p| p.name == from.port)
+                            .unwrap();
+                        evidence.authorized &= output.security.confidentiality
+                            <= grant.maximum_classification
+                            && evidence.resources.as_ref().is_some_and(|r| !r.is_empty());
+                    } else {
+                        evidence.resources = Some(BTreeSet::new());
+                        evidence.authorized = false;
+                    }
+                }
+                evidence.authorized &= evidence.resources.as_ref().is_none_or(|resources| {
+                    scope
+                        .resource
+                        .as_ref()
+                        .is_none_or(|r| resources.contains(r))
+                });
+                self.closure.insert(id.clone(), evidence);
+            }
+        }
+        // Inspect all outputs of this completion atomically, without installing
+        // released payloads on consumers that could still run.
+        let discarded: BTreeSet<_> = self
+            .edges
+            .values()
+            .filter_map(|edge| {
+                let EdgeKind::Flow { from, to } = &edge.kind else {
+                    return None;
+                };
+                (from.node == node
+                    && self.non_runnable(&to.node, Some((node, selected.map(|(p, _)| p), failed))))
+                .then(|| to.node.clone())
+            })
+            .collect();
+        // Resolve sibling closure/failure and discarded successes before any
+        // actual delivery. Edge ID order cannot affect readiness or access.
+        for (id, edge) in &self.edges {
+            let EdgeKind::Flow { from, to } = &edge.kind else {
+                continue;
+            };
+            if from.node != node {
+                continue;
             }
             if selected.is_none_or(|(port, _)| port != from.port) {
+                self.terminal_causes
+                    .insert(id.clone(), terminal_cause.clone());
                 self.arrivals.insert(
                     id.clone(),
                     if failed {
@@ -117,16 +284,24 @@ impl Wave {
                         Resolution::Closed
                     },
                 );
+            } else if discarded.contains(&to.node) {
+                let resources = cause
+                    .as_ref()
+                    .filter(|e| e.causal)
+                    .and_then(|e| e.resources.as_ref())
+                    .ok_or_else(|| denied("delivery without causal resource scope"))?;
+                self.arrivals
+                    .insert(id.clone(), Resolution::Value(None, resources.clone()));
             }
         }
-        for join in joins {
-            self.release_join_payloads(&join)?;
+        for consumer in &discarded {
+            self.release_payloads(consumer)?;
         }
         let (owner, definition) = &self.nodes[node];
-        let inherited = self
-            .resources
-            .get(node)
-            .unwrap_or(&scope.authority.resources);
+        let inherited = cause
+            .as_ref()
+            .filter(|e| e.causal)
+            .and_then(|e| e.resources.as_ref());
         for (id, edge) in &self.edges {
             let EdgeKind::Flow { from, to } = &edge.kind else {
                 continue;
@@ -135,13 +310,11 @@ impl Wave {
                 continue;
             }
             if let Some((port, value)) = selected.filter(|(port, _)| *port == from.port) {
-                if matches!(self.nodes[&to.node].1.kind, NodeKind::Join { .. })
-                    && self.join_non_runnable(&to.node)?
-                {
-                    self.arrivals
-                        .insert(id.clone(), Resolution::Value(None, inherited.clone()));
+                if discarded.contains(&to.node) {
                     continue;
                 }
+                let inherited =
+                    inherited.ok_or_else(|| denied("delivery without causal resource scope"))?;
                 let output = definition.outputs.iter().find(|p| p.name == port).unwrap();
                 let (target_owner, _) = &self.nodes[&to.node];
                 let mut resources = inherited.clone();
@@ -221,6 +394,13 @@ impl Wave {
                         ));
                     }
                 }
+                self.domain_causes.insert(
+                    node.into(),
+                    TerminalCause::Domain {
+                        node: node.into(),
+                        value: std::rc::Rc::new(value.clone()),
+                    },
+                );
                 self.deliver(graph, scope, node, None, true)?;
             }
         }
@@ -239,65 +419,105 @@ impl Wave {
             }
             return Ok(input);
         }
+        let candidates: Vec<_> = self
+            .edges
+            .iter()
+            .filter(|(_, edge)| matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node))
+            .map(|(id, _)| &self.arrivals[id])
+            .collect();
         let non_runnable = self.join_non_runnable(node)?;
+        if !non_runnable
+            && candidates
+                .iter()
+                .any(|r| matches!(r, Resolution::Value(None, _)))
+        {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "graph-v2 runnable Join payload released",
+            ));
+        }
+        if candidates
+            .iter()
+            .any(|r| matches!(r, Resolution::Unresolved))
+        {
+            return Ok(Resolution::Unresolved);
+        }
+        if candidates.iter().any(|r| matches!(r, Resolution::Failed)) {
+            return Ok(Resolution::Failed);
+        }
+        if non_runnable {
+            return Ok(Resolution::Closed);
+        }
         let mut fields = BTreeMap::new();
         let mut resources: Option<BTreeSet<String>> = None;
-        let mut unresolved = false;
-        let mut failed = false;
         for port in &definition.inputs {
-            match self.port_input(node, &port.name)? {
-                Resolution::Unresolved => unresolved = true,
-                Resolution::Failed => failed = true,
-                Resolution::Closed => {}
-                Resolution::Value(Some(value), scope) => {
-                    fields.insert(port.name.clone(), value);
-                    if let Some(resources) = &mut resources {
-                        resources.retain(|r| scope.contains(r));
-                    } else {
-                        resources = Some(scope);
-                    }
-                }
-                Resolution::Value(None, _) if non_runnable => {}
-                Resolution::Value(None, _) => {
-                    return Err(fail(
-                        Code::InfrastructureFailure,
-                        "graph-v2 runnable Join payload released",
-                    ))
-                }
+            let Resolution::Value(Some(value), scope) = self.port_input(node, &port.name)? else {
+                return Err(fail(
+                    Code::InfrastructureFailure,
+                    "graph-v2 runnable Join input not a retained value",
+                ));
+            };
+            fields.insert(port.name.clone(), value);
+            if let Some(resources) = &mut resources {
+                resources.retain(|r| scope.contains(r));
+            } else {
+                resources = Some(scope);
             }
         }
-        if unresolved {
-            Ok(Resolution::Unresolved)
-        } else if failed {
-            Ok(Resolution::Failed)
-        } else if non_runnable {
-            Ok(Resolution::Closed)
-        } else {
-            let resources = resources.ok_or_else(|| {
-                fail(
-                    Code::InfrastructureFailure,
-                    "graph-v2 Join resources absent",
-                )
-            })?;
-            Ok(Resolution::Value(Some(Value::Map(fields)), resources))
-        }
+        let resources = resources.ok_or_else(|| {
+            fail(
+                Code::InfrastructureFailure,
+                "graph-v2 Join resources absent",
+            )
+        })?;
+        Ok(Resolution::Value(Some(Value::Map(fields)), resources))
     }
 
     // Terminal arrivals never change: once a required input closes, this remains
     // true even while other producers are pending. No upstream cancellation.
     fn join_non_runnable(&self, node: &str) -> Result<bool, Failure> {
-        for port in &self.nodes[node].1.inputs {
-            // Join inputs have at most one candidate. No candidate is dormant
-            // closure, not a missing success payload or an unresolved producer.
-            if self.edges.iter().filter(|(_, e)| matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port.name))
-                .all(|(id, _)| matches!(self.arrivals[id], Resolution::Closed)) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self.non_runnable(node, None))
     }
 
-    fn release_join_payloads(&mut self, node: &str) -> Result<(), Failure> {
+    fn non_runnable(&self, node: &str, completion: Option<(&str, Option<&str>, bool)>) -> bool {
+        for port in &self.nodes[node].1.inputs {
+            let mut terminal = true;
+            let mut all_closed = true;
+            let mut count = 0;
+            for (id, edge) in &self.edges {
+                let EdgeKind::Flow { from, to } = &edge.kind else {
+                    continue;
+                };
+                if to.node != node || to.port != port.name {
+                    continue;
+                }
+                if let Some((_, selected, failed)) =
+                    completion.filter(|(producer, _, _)| *producer == from.node)
+                {
+                    let value = selected == Some(from.port.as_str());
+                    count += usize::from(value);
+                    all_closed &= !value && !failed;
+                } else {
+                    terminal &= !matches!(self.arrivals[id], Resolution::Unresolved);
+                    all_closed &= matches!(self.arrivals[id], Resolution::Closed);
+                    count += usize::from(matches!(self.arrivals[id], Resolution::Value(..)));
+                }
+            }
+            let unsatisfied = match port.readiness {
+                InputReadiness::One => all_closed,
+                InputReadiness::Optional => false,
+                InputReadiness::StaticMany { min, max } => {
+                    count < min as usize || count > max as usize
+                }
+            };
+            if terminal && unsatisfied {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn release_payloads(&mut self, node: &str) -> Result<(), Failure> {
         if self.join_non_runnable(node)? {
             for (id, edge) in &self.edges {
                 if matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node) {
@@ -314,8 +534,15 @@ impl Wave {
         let mut unresolved = false;
         let mut failed = false;
         let mut values = Vec::new();
-        for (edge, e) in &self.edges {
-            if !matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node == node && to.port == port) {
+        for edge in self
+            .input_edges
+            .get(&(node.into(), port.into()))
+            .into_iter()
+            .flatten()
+        {
+            #[cfg(test)]
+            PORT_INPUT_EDGE_VISITS.with(|visits| visits.set(visits.get() + 1));
+            if !self.edges.contains_key(edge) {
                 continue;
             }
             match &self.arrivals[edge] {
@@ -332,6 +559,48 @@ impl Wave {
         if failed {
             return Ok(Resolution::Failed);
         }
+        let readiness = self.nodes[node]
+            .1
+            .inputs
+            .iter()
+            .find(|p| p.name == port)
+            .unwrap()
+            .readiness;
+        if !matches!(readiness, InputReadiness::One) {
+            if let InputReadiness::StaticMany { min, max } = readiness {
+                if values.len() < min as usize || values.len() > max as usize {
+                    return Ok(Resolution::Closed);
+                }
+            }
+            if matches!(readiness, InputReadiness::Optional) && values.len() > 1 {
+                return Err(invalid("multiple Optional candidates"));
+            }
+            let evidence = self
+                .input_evidence(node)
+                .filter(|e| e.causal)
+                .ok_or_else(|| denied("absence without causal authority"))?;
+            let resources = evidence
+                .resources
+                .ok_or_else(|| denied("absence without causal resource scope"))?;
+            if !evidence.authorized {
+                return Err(denied("absence outside effective flow scope"));
+            }
+            let mut payloads = Vec::new();
+            for (value, _) in values {
+                payloads.push(value.clone().ok_or_else(|| {
+                    fail(
+                        Code::InfrastructureFailure,
+                        "graph-v2 runnable input payload released",
+                    )
+                })?);
+            }
+            let value = if matches!(readiness, InputReadiness::Optional) && payloads.is_empty() {
+                Value::Null
+            } else {
+                Value::List(payloads)
+            };
+            return Ok(Resolution::Value(Some(value), resources));
+        }
         match values.as_slice() {
             [] => Ok(Resolution::Closed),
             [(value, resources)] => Ok(Resolution::Value((*value).clone(), (*resources).clone())),
@@ -341,6 +610,35 @@ impl Wave {
                 "graph-v2 Merge ExactlyOne cardinality violated",
             )),
         }
+    }
+
+    fn input_evidence(&self, node: &str) -> Option<ClosureEvidence> {
+        let mut result: Option<ClosureEvidence> = None;
+        for (id, edge) in &self.edges {
+            if !matches!(&edge.kind, EdgeKind::Flow { to, .. } if to.node == node) {
+                continue;
+            }
+            let evidence = self
+                .closure
+                .get(id)
+                .cloned()
+                .or_else(|| match &self.arrivals[id] {
+                    Resolution::Value(_, resources) => Some(ClosureEvidence {
+                        resources: Some(resources.clone()),
+                        authorized: true,
+                        causal: true,
+                    }),
+                    _ => None,
+                });
+            if let Some(evidence) = evidence {
+                if let Some(result) = &mut result {
+                    result.intersect(&evidence);
+                } else {
+                    result = Some(evidence);
+                }
+            }
+        }
+        result
     }
 
     fn order_ready(&self, graph: &CompiledGraph, node: &str) -> bool {
@@ -422,10 +720,18 @@ impl GraphExecution<'_> {
                 self.waiting.remove(id);
                 continue;
             }
+            if !graph.source_reachability[id].contains(&wave.source) {
+                wave.deliver(graph, &self.root.scope, id, None, false)?;
+                self.waiting.remove(id);
+                continue;
+            }
             let input = wave.input(id)?;
             match input {
                 Resolution::Unresolved => continue,
                 Resolution::Closed | Resolution::Failed => {
+                    if let Some(evidence) = wave.input_evidence(id) {
+                        wave.causes.insert(id.clone(), evidence);
+                    }
                     wave.deliver(
                         graph,
                         &self.root.scope,

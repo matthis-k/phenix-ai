@@ -6,6 +6,173 @@ const PUBLIC: PortSecurity = PortSecurity {
     integrity: IntegrityClass::Untrusted,
 };
 
+fn readiness_join(d: &mut [GraphContributionV2], readiness: InputReadiness) {
+    let join = &mut d[0].nodes[2];
+    join.inputs[1].readiness = readiness;
+    join.inputs[1].schema = match readiness {
+        InputReadiness::One => ValueSchema::String,
+        InputReadiness::Optional => ValueSchema::Option(Box::new(ValueSchema::String)),
+        InputReadiness::StaticMany { .. } => ValueSchema::List(Box::new(ValueSchema::String)),
+    };
+    let schema = ValueSchema::Struct(
+        join.inputs
+            .iter()
+            .map(|p| (p.name.clone(), p.schema.clone()))
+            .collect(),
+    );
+    join.outputs[0].schema = schema.clone();
+    d[0].nodes[3].inputs[0].schema = schema.clone();
+    d[0].nodes[3].outputs[0].schema = schema;
+}
+
+#[test]
+fn optional_and_min_zero_do_not_require_common_sources_but_remain_dormant_without_flow() {
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 9 },
+    ] {
+        let (mut d, p) = join_fixture();
+        readiness_join(&mut d, readiness);
+        let EdgeKind::Flow { from, .. } = &mut d[0].edges[1].kind else {
+            panic!()
+        };
+        from.node = "alpha/alternative-source".into();
+        assert_eq!(
+            run(&d, &p).unwrap().join_satisfiability()["alpha/merge"],
+            Satisfiability::Unknown
+        );
+        d[0].edges.remove(1);
+        assert!(run(&d, &p).is_ok());
+        d[0].nodes[2].inputs.remove(0);
+        let schema = ValueSchema::Struct(
+            d[0].nodes[2]
+                .inputs
+                .iter()
+                .map(|p| (p.name.clone(), p.schema.clone()))
+                .collect(),
+        );
+        d[0].nodes[2].outputs[0].schema = schema.clone();
+        d[0].nodes[3].inputs[0].schema = schema.clone();
+        d[0].nodes[3].outputs[0].schema = schema;
+        d[0].edges.remove(0);
+        d[0].edges.push(EdgeDecl {
+            id: "alpha/order".into(),
+            kind: EdgeKind::Order {
+                before: "alpha/source".into(),
+                after: "alpha/merge".into(),
+            },
+        });
+        assert_eq!(
+            run(&d, &p).unwrap().join_satisfiability()["alpha/merge"],
+            Satisfiability::Dormant
+        );
+    }
+}
+
+#[test]
+fn collection_candidates_are_finite_alternatives_not_a_cardinality_proof() {
+    for (min, max) in [(0, 0), (1, 9), (3, 9)] {
+        let (mut d, p) = join_fixture();
+        readiness_join(&mut d, InputReadiness::StaticMany { min, max });
+        let mut candidate = d[0].edges[1].clone();
+        candidate.id = "alpha/alternative-candidate".into();
+        let EdgeKind::Flow { from, .. } = &mut candidate.kind else {
+            panic!()
+        };
+        from.node = "alpha/alternative-source".into();
+        d[0].edges.push(candidate);
+        assert_eq!(
+            run(&d, &p).unwrap().join_satisfiability()["alpha/merge"],
+            Satisfiability::Unknown
+        );
+        readiness_join(&mut d, InputReadiness::Optional);
+        assert!(run(&d, &p).unwrap_err().message.contains("at most one"));
+    }
+}
+
+#[test]
+fn collection_security_covers_every_candidate_not_just_required_deliveries() {
+    let (mut d, mut p) = join_fixture();
+    readiness_join(&mut d, InputReadiness::StaticMany { min: 0, max: 0 });
+    let EdgeKind::Flow { from, .. } = &mut d[0].edges[1].kind else {
+        panic!()
+    };
+    from.node = "alpha/alternative-source".into();
+    let label = PortSecurity {
+        confidentiality: Classification::Secret,
+        ..PUBLIC
+    };
+    d[0].sources[1].security = label;
+    d[0].nodes[1].outputs[0].security = label;
+    p.sources.insert("alpha/alternative".into(), label);
+    let ceilings = p.source_owners.get_mut("alpha").unwrap();
+    ceilings.owner_ceiling = Classification::Secret;
+    ceilings.composition_ceiling = Classification::Secret;
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::Denied);
+    d[0].nodes[2].inputs[1].security = label;
+    assert!(run(&d, &p).is_err()); // Presence/count cannot downgrade through Join.
+    d[0].nodes[2].outputs[0].security = label;
+    d[0].nodes[3].inputs[0].security = label;
+    d[0].nodes[3].outputs[0].security = label;
+    assert!(run(&d, &p).is_ok());
+    d[0].nodes[2].inputs[1].security.integrity = IntegrityClass::Trusted;
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::Denied);
+}
+
+#[test]
+fn invoke_readiness_matches_full_selected_request_and_edges_only_unwrap_once() {
+    for readiness in [
+        InputReadiness::Optional,
+        InputReadiness::StaticMany { min: 0, max: 7 },
+    ] {
+        for inner in [
+            ValueSchema::String,
+            ValueSchema::Option(Box::new(ValueSchema::String)),
+            ValueSchema::List(Box::new(ValueSchema::String)),
+        ] {
+            let (mut d, p) = fixture();
+            d.truncate(1);
+            d[0].edges.truncate(1);
+            d[0].sources[0].payload = inner.clone();
+            d[0].nodes[0].outputs[0].schema = inner.clone();
+            let request = match readiness {
+                InputReadiness::Optional => ValueSchema::Option(Box::new(inner)),
+                _ => ValueSchema::List(Box::new(inner)),
+            };
+            d[0].nodes[1].inputs[0].readiness = readiness;
+            d[0].nodes[1].inputs[0].schema = request.clone();
+            let check = |request: ValueSchema| {
+                compile(
+                    &d,
+                    &p,
+                    |_| true,
+                    |_, _, _| {
+                        Ok((
+                            "provider".into(),
+                            OperationSchema {
+                                name: "run".into(),
+                                request: request.clone(),
+                                response: ValueSchema::String,
+                                error: ValueSchema::String,
+                            },
+                            BTreeSet::from(["resource".into()]),
+                        ))
+                    },
+                )
+            };
+            assert!(check(request).is_ok());
+            assert_eq!(
+                check(ValueSchema::String).unwrap_err().code,
+                Code::SchemaRejected
+            );
+        }
+    }
+    let (mut d, p) = fixture();
+    d[0].nodes[1].inputs[0].schema =
+        ValueSchema::Struct(BTreeMap::from([("field".into(), ValueSchema::String)]));
+    assert_eq!(run(&d, &p).unwrap_err().code, Code::SchemaRejected);
+}
+
 pub(super) fn join_fixture() -> (Vec<GraphContributionV2>, TrustedCompositionPolicy) {
     let (mut d, p) = merge_fixture();
     let join = d[0]
@@ -144,6 +311,32 @@ fn join_direct_switch_exclusion_and_nested_unknown() {
         .unwrap_err()
         .message
         .contains("Switch case exclusion"));
+    // Review regression: a required StaticMany(min=1) on the other branch
+    // cannot coexist with the required One input in the same wave.
+    // Both candidates are *direct* mutually exclusive Switch case outputs,
+    // not an arbitrary predicate or nested Switch requiring a solver.
+    let mut required_many = d.clone();
+    readiness_join(
+        &mut required_many,
+        InputReadiness::StaticMany { min: 1, max: 1 },
+    );
+    let failure = run(&required_many, &p).expect_err(
+        "direct exclusive Switch outputs must make Join::All unsatisfiable even with required StaticMany",
+    );
+    assert!(
+        failure.message.contains("Switch case exclusion"),
+        "wrong rejection: {}",
+        failure.message
+    );
+    required_many[0].nodes.reverse();
+    required_many[0].edges.reverse();
+    assert_eq!(run(&required_many, &p).unwrap_err(), failure);
+    let mut optional = d.clone();
+    readiness_join(&mut optional, InputReadiness::Optional);
+    assert_eq!(
+        run(&optional, &p).unwrap().join_satisfiability()["alpha/merge"],
+        Satisfiability::Unknown
+    );
     let mut merge = d[0].nodes[3].clone();
     merge.id = "alpha/intermediate".into();
     merge.inputs[0].schema = ValueSchema::String;
