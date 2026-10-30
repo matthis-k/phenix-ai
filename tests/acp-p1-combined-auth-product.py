@@ -101,8 +101,10 @@ with tempfile.TemporaryDirectory(prefix="phenix-p1-combined-auth-") as private:
             ("openai", "chatgpt", "personal"),
         }, capabilities
         assert profiles[("openai", "api", "personal")]["import"] is True
+        assert profiles[("openai", "api", "personal")]["bind_environment"] is True
         assert profiles[("openai", "api", "personal")]["revoke"] is True
         assert profiles[("openai", "chatgpt", "personal")]["import"] is False
+        assert profiles[("openai", "chatgpt", "personal")]["bind_environment"] is False
         assert profiles[("openai", "chatgpt", "personal")]["revoke"] is True
         # A logout-only OAuth account root cannot be converted into a key
         # importer or named environment credential by a forged ACP request.
