@@ -924,6 +924,15 @@ If an upstream selected provider or strategy is a **composition-time constant**,
 
 ### 7.2 Typed Rust traits and ABI-neutral handles
 
+Bounded embedding implementation: `GraphContributionV2::native_section()` provides
+normalized, validated, size-bounded canonical bytes in the existing fixed native
+graph-section envelope. Build tooling may use public contract dependencies and
+generated operation metadata, then include those bytes in an exported retained
+link-time static. This does not grant authority or replace offline verification.
+The `experiments/graph-v2-python` fixture exercises this path with manually authored
+graph structure; Python annotations do not yet generate graphs or schemas. The
+typed builder and handles below remain proposed, not implemented by embedding.
+
 The SDK should **reuse** the current `phenix_contract::Operation` trait as the only native handler contract abstraction. New authoring traits and typed handles exist exclusively in Rust SDK/build tooling; they lower to portable IR rather than crossing the ABI.
 
 ```rust
