@@ -52,6 +52,26 @@ optional plugins outside this Basic implementation.
 
 ## Acceptance
 
+The incremental `phenix-b5-agent` gate also exercises a partial Graph V2 native
+migration: the selected terminal frontend decodes a prompt, an explicit V2
+Source/Flow invokes the existing Basic submit operation through ABI 3, and the
+frontend renders journaled answer/failure output. The first prompt opens its
+session automatically; the caller supplies the existing session resource scope,
+not an authentication or manual session-open workflow. The gate checks typed
+model failure, single terminal completion, idempotent pumping and cancellation
+before dispatch with no journal effect. A B5-only `controlled-pending` build of
+the scripted Model additionally holds a real native child and worker FD using
+channel handshakes. Private fixture control (`PHENIX_SCRIPTED_MODEL_CONTROL`:
+hold/fail/drain) exercises polled kernel failure and in-flight cancellation:
+Draining retains leases and blocks shutdown; completion follows worker join;
+late success produces no answer or revoked journal write. Kernel failure remains
+a kernel failure, with one reconciled failure event and a Failed session.
+No public Model request option or kernel agent semantics are introduced. The
+normal packaged scripted Model remains synchronous. The gate repackages offline
+graph metadata for acceptance only. The Basic loop remains plugin-owned; this
+does not establish packaged runtime-host V2 support, graph-decomposed model/tool
+turns, frontend cancellation recording/recovery, or full P1 parity.
+
 Public-SDK builds must prove typed definitions and native providers without
 private kernel sources. Product tests cover full history, multiple call IDs,
 tool error recovery, provider substitution, skills/context, usage, partial
