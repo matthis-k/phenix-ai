@@ -1,11 +1,11 @@
 //! Native acceptance for repeated graph-managed Basic turns.
 //! Usage: phenix-graph-v2-turn COMPOSITION (with a fresh SQLite database).
 //! Controlled modes include pending[-rounds], cancel[-rounds-initial],
-//! cancel-continuation, cancel-rounds-continuation, and fail-model. These modes
+//! cancel-deferred, cancel-continuation, cancel-rounds-continuation, and fail-model. These modes
 //! require the scripted Model's controlled-pending fixture feature.
 use phenix_basic_contracts::{
-    BasicError, ErrorCode, EventKind, EventPage, JournalQuery, Limits, PromptSubmitted, RunResult,
-    RunStatus, Scope, SessionSnapshot,
+    BasicError, ErrorCode, Event, EventKind, EventPage, JournalAppend, JournalQuery, Limits,
+    PromptSubmitted, RunResult, RunStatus, Scope, SessionSnapshot,
 };
 use phenix_contract::{graph::v2::*, Portable, ScopedRequest};
 use phenix_kernel::{
@@ -50,7 +50,7 @@ fn main() {
     let controlled = cancel_at.is_some()
         || matches!(
             mode.as_deref(),
-            Some("pending" | "pending-rounds" | "fail-model")
+            Some("pending" | "pending-rounds" | "fail-model" | "cancel-deferred")
         );
     let repeated = matches!(
         mode.as_deref(),
@@ -164,7 +164,7 @@ fn main() {
                 },
             }
             .to_value(),
-            scope,
+            scope.clone(),
         )
         .unwrap();
     let mut completions = 0;
@@ -188,6 +188,246 @@ fn main() {
         );
         assert_eq!(pending, pending_before_poll);
         assert_eq!(run.steps().len(), 1);
+        if mode.as_deref() == Some("cancel-deferred") {
+            std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
+            assert_eq!(
+                run.pump(|update| observe(update, &mut completions, &mut pending))
+                    .unwrap(),
+                GraphStatus::Pending
+            );
+            assert_eq!(
+                run.steps()
+                    .iter()
+                    .map(|step| step.node.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    "phenix.basic.agent/prepare",
+                    "phenix.basic.agent/model",
+                    "phenix.basic.agent/decide",
+                    "phenix.basic.agent/tool",
+                ]
+            );
+            assert_eq!(
+                pending.len(),
+                1,
+                "next Model must not begin in deferred gap"
+            );
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            assert!(run.completion().is_none());
+            run.cancel().unwrap();
+            assert_eq!(
+                run.pump(|update| observe(update, &mut completions, &mut pending))
+                    .unwrap(),
+                GraphStatus::Finished
+            );
+            assert_eq!(run.completion(), Some(GraphCompletion::Cancelled));
+            assert_eq!(completions, 1);
+            assert_eq!(
+                run.pump(|_| panic!("late cancellation effect")).unwrap(),
+                GraphStatus::Finished
+            );
+            assert_eq!(run.steps().len(), 4);
+            assert_eq!(pending.len(), 1);
+            drop(run);
+
+            // Explicit manual host finalizer, matching record_cancelled after drain.
+            // Each call uses a separately authorized fresh root, never the revoked graph.
+            // This does not exercise packaged-host scheduling into the deferred gap.
+            let host_call = |interface: &str,
+                             operation: &str,
+                             provider: &str,
+                             value: phenix_contract::Value| {
+                let root = kernel
+                    .admit_root(Selection {
+                        interface: interface.into(),
+                        operation: operation.into(),
+                        provider: provider.into(),
+                    })
+                    .unwrap_or_else(|failure| {
+                        panic!("manual host finalizer admission {provider} {interface}/{operation}: {failure:?}")
+                    });
+                // Match the host's synchronous invoke, not pending root admission.
+                match root.invoke(&value) {
+                    Ok(Outcome::Success(value)) => value,
+                    Ok(Outcome::Domain(value)) => panic!(
+                        "manual host finalizer {provider} {interface}/{operation}: domain {:?}",
+                        BasicError::from_value(value)
+                    ),
+                    Err(failure) => panic!(
+                        "manual host finalizer {provider} {interface}/{operation}: {failure:?}"
+                    ),
+                }
+            };
+            let session_scope = Scope {
+                session: "s1".into(),
+            };
+            let read_journal = || {
+                EventPage::from_value(host_call(
+                    "phenix.basic.output@1",
+                    "read",
+                    "phenix.basic.agent",
+                    JournalQuery {
+                        session: "s1".into(),
+                        after: 0,
+                        limit: 100,
+                    }
+                    .to_value(),
+                ))
+                .unwrap()
+            };
+            let mut snapshot = SessionSnapshot::from_value(host_call(
+                "phenix.basic.session@1",
+                "open",
+                "phenix.basic.session",
+                session_scope.to_value(),
+            ))
+            .unwrap();
+            assert_eq!(snapshot.status, RunStatus::Running);
+            assert!(snapshot.pending.is_empty());
+            let unfinalized_journal = read_journal();
+            let mut rejected = kernel
+                .begin_action_scoped(
+                    "phenix.basic.submit",
+                    &PromptSubmitted {
+                        session: "s1".into(),
+                        text: "must-not-recover-running".into(),
+                        limits: Limits::default(),
+                    }
+                    .to_value(),
+                    scope.clone(),
+                )
+                .unwrap();
+            assert_eq!(rejected.pump(|_| {}).unwrap(), GraphStatus::Finished);
+            assert_eq!(rejected.completion(), Some(GraphCompletion::Domain));
+            assert_eq!(rejected.steps().len(), 1);
+            assert_eq!(rejected.steps()[0].node, "phenix.basic.agent/prepare");
+            let Outcome::Domain(value) = &rejected.steps()[0].outcome else {
+                panic!("unfinalized Running session was not rejected")
+            };
+            assert_eq!(
+                BasicError::from_value(value.clone()).unwrap().code,
+                ErrorCode::Conflict
+            );
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            drop(rejected);
+            assert_eq!(read_journal().events, unfinalized_journal.events);
+            assert_eq!(
+                SessionSnapshot::from_value(host_call(
+                    "phenix.basic.session@1",
+                    "open",
+                    "phenix.basic.session",
+                    session_scope.to_value(),
+                ))
+                .unwrap(),
+                snapshot
+            );
+            let old_run = snapshot.run.clone();
+            snapshot.status = RunStatus::Cancelled;
+            let snapshot = SessionSnapshot::from_value(host_call(
+                "phenix.basic.session@1",
+                "checkpoint",
+                "phenix.basic.session",
+                snapshot.to_value(),
+            ))
+            .unwrap();
+            host_call(
+                "phenix.basic.journal@1",
+                "append",
+                "phenix.basic.event-journal",
+                JournalAppend {
+                    session: "s1".into(),
+                    events: vec![Event {
+                        sequence: 0,
+                        session: "s1".into(),
+                        run: snapshot.run,
+                        kind: EventKind::Cancelled,
+                        call_id: String::new(),
+                        text: String::new(),
+                        data: Default::default(),
+                    }],
+                }
+                .to_value(),
+            );
+            let before = read_journal();
+            let count = |page: &EventPage, kind| {
+                page.events
+                    .iter()
+                    .filter(|event| event.kind == kind)
+                    .count()
+            };
+            assert_eq!(count(&before, EventKind::ModelStarted), 2);
+            assert_eq!(count(&before, EventKind::ToolFinished), 1);
+            assert_eq!(count(&before, EventKind::Answer), 0);
+            assert_eq!(count(&before, EventKind::Cancelled), 1);
+            std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
+            let mut next = kernel
+                .begin_action_scoped(
+                    "phenix.basic.submit",
+                    &PromptSubmitted {
+                        session: "s1".into(),
+                        text: "fresh-proof".into(),
+                        limits: Limits::default(),
+                    }
+                    .to_value(),
+                    scope.clone(),
+                )
+                .unwrap();
+            let mut next_completions = 0;
+            for _ in 0..8 {
+                if next
+                    .pump(|update| {
+                        if matches!(update.event, GraphEvent::Finished(_)) {
+                            next_completions += 1;
+                        }
+                    })
+                    .unwrap()
+                    == GraphStatus::Finished
+                {
+                    break;
+                }
+            }
+            assert_eq!(next.completion(), Some(GraphCompletion::Success));
+            assert_eq!(next_completions, 1);
+            assert_eq!(next.steps().len(), 4);
+            let Outcome::Success(value) = &next.steps().last().unwrap().outcome else {
+                panic!("missing fresh answer")
+            };
+            let result = RunResult::from_value(value.clone()).unwrap();
+            assert_eq!(result.answer, "mock:fresh-proof");
+            assert_eq!((result.model_turns, result.tool_calls), (1, 0));
+            assert_eq!(
+                next.pump(|_| panic!("duplicate fresh completion")).unwrap(),
+                GraphStatus::Finished
+            );
+            drop(next);
+            let after = read_journal();
+            assert_eq!(count(&after, EventKind::ModelStarted), 3);
+            assert_eq!(count(&after, EventKind::Answer), 1);
+            assert_eq!(count(&after, EventKind::ToolFinished), 1);
+            assert_eq!(count(&after, EventKind::Cancelled), 1);
+            assert_eq!(
+                after
+                    .events
+                    .iter()
+                    .filter(|event| event.run == old_run)
+                    .count(),
+                before.events.len()
+            );
+            let snapshot = SessionSnapshot::from_value(host_call(
+                "phenix.basic.session@1",
+                "open",
+                "phenix.basic.session",
+                session_scope.to_value(),
+            ))
+            .unwrap();
+            assert_eq!(snapshot.status, RunStatus::Completed);
+            assert_ne!(snapshot.run, old_run);
+            assert!(snapshot.pending.is_empty());
+            std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
+            assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
+            kernel.shutdown().unwrap();
+            return;
+        }
         if let Some(rounds) = cancel_at {
             // Release one Model at a time, stopping with the requested
             // continuation physically pending before requesting cancellation.
