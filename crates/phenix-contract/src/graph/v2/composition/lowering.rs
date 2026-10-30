@@ -197,6 +197,8 @@ pub struct BoundaryFlow {
     pub name: String,
     pub from: BoundaryFrom,
     pub to: BoundaryTo,
+    /// None delivers in the current wave; Some crosses to the specified wave.
+    pub next: Option<crate::graph::v2::DeferredWave>,
 }
 
 /// Structural identity; the authored ID is never rewritten into an owner name.
@@ -220,8 +222,19 @@ pub struct LogicalPort {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogicalEdge {
-    Flow { from: LogicalPort, to: LogicalPort },
-    Order { before: LogicalId, after: LogicalId },
+    Flow {
+        from: LogicalPort,
+        to: LogicalPort,
+    },
+    Deferred {
+        from: LogicalPort,
+        to: LogicalPort,
+        next: crate::graph::v2::DeferredWave,
+    },
+    Order {
+        before: LogicalId,
+        after: LogicalId,
+    },
 }
 
 /// Provenance is descriptive, not authenticated. Node/source declarations retain
@@ -323,13 +336,13 @@ pub fn lower_recursive(
         &mut ExpansionBytes { sizes, used: 0 },
     )?;
 
-    // Kahn's algorithm includes both data and ordering dependencies. Parallel
-    // edges count separately; no recursion on the expanded dependency graph.
+    // Kahn's algorithm includes same-wave Flow and Order dependencies, not
+    // Deferred admissions. Parallel edges count separately; no graph recursion.
     let mut degree: BTreeMap<_, usize> = output.nodes.keys().cloned().map(|n| (n, 0)).collect();
     let mut next: BTreeMap<LogicalId, Vec<LogicalId>> = BTreeMap::new();
     for edge in output.edges.values() {
         let (from, to) = match edge {
-            LogicalEdge::Flow { from, to } => {
+            LogicalEdge::Flow { from, to } | LogicalEdge::Deferred { from, to, .. } => {
                 let source = output
                     .nodes
                     .get(&from.node)
@@ -344,6 +357,9 @@ pub fn lower_recursive(
                     || !source.security.can_flow_to(target.security)
                 {
                     return Err(bad("recursive flow schema or security mismatch"));
+                }
+                if matches!(edge, LogicalEdge::Deferred { .. }) {
+                    continue;
                 }
                 (&from.node, &to.node)
             }
@@ -452,7 +468,17 @@ fn expand(
                 before: logical(before),
                 after: logical(after),
             },
-            EdgeKind::Deferred { .. } => return Err(bad("recursive Deferred is unsupported")),
+            EdgeKind::Deferred { from, to, next } => LogicalEdge::Deferred {
+                from: LogicalPort {
+                    node: logical(&from.node),
+                    port: from.port.clone(),
+                },
+                to: LogicalPort {
+                    node: logical(&to.node),
+                    port: to.port.clone(),
+                },
+                next: *next,
+            },
         };
         out.edges
             .insert(EdgeOrigin::Body(logical(&edge.id)), lowered);
@@ -516,7 +542,10 @@ fn expand(
         };
         out.edges.insert(
             EdgeOrigin::Wiring(logical(&wire.name)),
-            LogicalEdge::Flow { from, to },
+            match wire.next {
+                Some(next) => LogicalEdge::Deferred { from, to, next },
+                None => LogicalEdge::Flow { from, to },
+            },
         );
     }
     for c in &d.children {

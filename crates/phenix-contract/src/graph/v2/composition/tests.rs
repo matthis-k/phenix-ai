@@ -181,6 +181,7 @@ fn recursive_fixture() -> (Vec<GraphDefinition>, GraphDefinitionId, ExpansionBud
             })
             .collect(),
         wiring: vec![BoundaryFlow {
+            next: None,
             name: "connect".into(),
             from: BoundaryFrom::Child {
                 child: "left".into(),
@@ -249,6 +250,7 @@ fn nested_local_wiring_and_owner_relative_invokes_are_preserved() {
         definition: leaf.id.clone(),
     }];
     middle.wiring = vec![BoundaryFlow {
+        next: None,
         name: "into".into(),
         from: BoundaryFrom::Local(middle.outputs[0].source.clone()),
         to: BoundaryTo::Child {
@@ -377,9 +379,111 @@ fn recursive_api_is_publicly_exported() {
 }
 
 #[test]
+fn deferred_internal_and_boundary_feedback_preserve_origins_without_same_wave_cycles() {
+    let (mut defs, root, budget) = recursive_fixture();
+    let feedback = EdgeDecl {
+        id: "demo/feedback".into(),
+        kind: EdgeKind::Deferred {
+            from: defs[1].outputs[0].source.clone(),
+            to: defs[1].inputs[0].target.clone(),
+            next: DeferredWave::Next,
+        },
+    };
+    defs[1].body.edges.push(feedback);
+    let mut reverse = defs[0].wiring[0].clone();
+    reverse.name = "feedback".into();
+    // Reverse the sibling direction while retaining the original forward Flow.
+    reverse.from = BoundaryFrom::Child {
+        child: "right".into(),
+        port: "out".into(),
+    };
+    reverse.to = BoundaryTo::Child {
+        child: "left".into(),
+        port: "in".into(),
+    };
+    reverse.next = Some(DeferredWave::Next);
+    defs[0].wiring.push(reverse);
+    let graph = lower_recursive(&defs, &root, budget).unwrap();
+    for child in ["left", "right"] {
+        let origin = EdgeOrigin::Body(LogicalId {
+            instance: GraphInstanceId::new(root.clone()).child(child).unwrap(),
+            authored: "demo/feedback".into(),
+        });
+        assert!(
+            matches!(&graph.edges[&origin], LogicalEdge::Deferred { from, to, next: DeferredWave::Next } if from.node == to.node && from.node.instance.path() == [child])
+        );
+    }
+    let origin = EdgeOrigin::Wiring(LogicalId {
+        instance: GraphInstanceId::new(root.clone()),
+        authored: "feedback".into(),
+    });
+    assert!(
+        matches!(&graph.edges[&origin], LogicalEdge::Deferred { from, to, .. } if from.node.instance.path() == ["right"] && to.node.instance.path() == ["left"])
+    );
+    defs.reverse();
+    assert_eq!(graph, lower_recursive(&defs, &root, budget).unwrap());
+    defs.reverse();
+    defs[0].wiring[1].next = None;
+    assert_eq!(
+        lower_recursive(&defs, &root, budget).unwrap_err().message,
+        "recursive dependency cycle"
+    );
+}
+
+#[test]
+fn deferred_rejects_invalid_ports_schemas_security_and_unexposed_crossings() {
+    let (base, root, budget) = recursive_fixture();
+    for case in 0..5 {
+        let mut defs = base.clone();
+        defs[0].wiring[0].next = Some(DeferredWave::Next);
+        match case {
+            0 => {
+                defs[0].wiring[0].to = BoundaryTo::Child {
+                    child: "right".into(),
+                    port: "missing".into(),
+                }
+            }
+            1 => {
+                defs[0].wiring[0].to = BoundaryTo::Child {
+                    child: "right/nested".into(),
+                    port: "in".into(),
+                }
+            }
+            2 => {
+                defs[1].body.nodes[0].outputs[0].schema = ValueSchema::String;
+                defs[1].outputs[0].port.schema = ValueSchema::String;
+            }
+            3 => {
+                defs[1].body.nodes[0].outputs[0].security.confidentiality = Classification::Secret;
+                defs[1].outputs[0].port.security.confidentiality = Classification::Secret;
+            }
+            4 => {
+                let from = defs[1].outputs[0].source.clone();
+                defs[1].body.edges.push(EdgeDecl {
+                    id: "demo/crossing".into(),
+                    kind: EdgeKind::Deferred {
+                        from,
+                        to: InPortRef {
+                            node: "other/filter".into(),
+                            port: "in".into(),
+                        },
+                        next: DeferredWave::Next,
+                    },
+                });
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            lower_recursive(&defs, &root, budget).is_err(),
+            "case {case}"
+        );
+    }
+}
+
+#[test]
 fn recursive_adversarial_shapes_and_crossings_fail_deterministically() {
     let (base, root, budget) = recursive_fixture();
-    for case in 0..12 {
+    for case in 0..11 {
         let mut defs = base.clone();
         match case {
             0 => defs.push(defs[1].clone()),
@@ -435,18 +539,6 @@ fn recursive_adversarial_shapes_and_crossings_fail_deterministically() {
                     after: "demo/filter".into(),
                 },
             }),
-            11 => {
-                let from = defs[1].outputs[0].source.clone();
-                let to = defs[1].inputs[0].target.clone();
-                defs[1].body.edges.push(EdgeDecl {
-                    id: "demo/deferred".into(),
-                    kind: EdgeKind::Deferred {
-                        from,
-                        to,
-                        next: DeferredWave::Next,
-                    },
-                });
-            }
             _ => unreachable!(),
         }
         let error = lower_recursive(&defs, &root, budget).unwrap_err();
@@ -552,6 +644,7 @@ fn sources_local_order_and_both_boundary_directions_survive_lowering() {
     ];
     defs[0].wiring.extend([
         BoundaryFlow {
+            next: None,
             name: "enter".into(),
             from: BoundaryFrom::Local(OutPortRef {
                 node: "app/source".into(),
@@ -563,6 +656,7 @@ fn sources_local_order_and_both_boundary_directions_survive_lowering() {
             },
         },
         BoundaryFlow {
+            next: None,
             name: "leave".into(),
             from: BoundaryFrom::Child {
                 child: "right".into(),

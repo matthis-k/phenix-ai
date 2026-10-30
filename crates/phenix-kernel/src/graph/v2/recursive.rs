@@ -129,6 +129,17 @@ fn materialize(expanded: &ExpandedGraph) -> Result<Vec<GraphContributionV2>, Fai
                 before: node_id(before)?,
                 after: node_id(after)?,
             },
+            LogicalEdge::Deferred { from, to, next } => EdgeKind::Deferred {
+                from: OutPortRef {
+                    node: node_id(&from.node)?,
+                    port: from.port.clone(),
+                },
+                to: InPortRef {
+                    node: node_id(&to.node)?,
+                    port: to.port.clone(),
+                },
+                next: *next,
+            },
         };
         groups.get_mut(owner(id)).unwrap().edges.push(EdgeDecl {
             id: effective,
@@ -202,7 +213,15 @@ fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result
                                     Value::List(vec![text("child"), text(child), text(port)])
                                 }
                             };
-                            Value::List(vec![text(&w.name), from, to])
+                            Value::List(vec![
+                                text(&w.name),
+                                from,
+                                to,
+                                text(match w.next {
+                                    None => "flow",
+                                    Some(DeferredWave::Next) => "next",
+                                }),
+                            ])
                         })
                         .collect(),
                 ),
@@ -262,6 +281,17 @@ mod tests {
     #[test]
     fn rewrites_sources_flow_and_order_and_retains_original_owner() {
         let (mut d, _) = fixture();
+        let EdgeKind::Flow { from, to } = d.body.edges[0].kind.clone() else {
+            panic!()
+        };
+        d.body.edges.push(EdgeDecl {
+            id: "alpha/deferred".into(),
+            kind: EdgeKind::Deferred {
+                from,
+                to,
+                next: DeferredWave::Next,
+            },
+        });
         d.body.edges.push(EdgeDecl {
             id: "alpha/order".into(),
             kind: EdgeKind::Order {
@@ -288,6 +318,9 @@ mod tests {
                     source: source.clone()
                 }));
         assert!(flat[0].edges.iter().any(|e| matches!(&e.kind, EdgeKind::Flow { from, to } if from.node == start && to.node == invoke)));
+        let deferred_id =
+            recursive_effective_id("alpha", "body-edge", &logical("alpha/deferred")).unwrap();
+        assert!(flat[0].edges.iter().any(|e| e.id == deferred_id && matches!(&e.kind, EdgeKind::Deferred { from, to, next: DeferredWave::Next } if from.node == start && to.node == invoke)));
         assert!(flat[0].edges.iter().any(|e| matches!(&e.kind, EdgeKind::Order { before, after } if before == &start && after == &invoke)));
         assert_eq!(flat, materialize(&expanded).unwrap());
         assert_ne!(
@@ -327,92 +360,116 @@ mod tests {
 
     #[test]
     fn parent_wiring_retains_contributor_and_requires_exact_foreign_policy() {
-        let (mut root, mut policy) = fixture();
-        let (mut bodies, _) = super::super::tests::fixture();
-        let body = bodies.remove(1);
-        let child = GraphDefinition {
-            id: GraphDefinitionId::new("beta/child").unwrap(),
-            inputs: vec![BoundaryInput {
-                port: body.nodes[0].inputs[0].clone(),
-                target: InPortRef {
-                    node: "beta/second".into(),
+        for next in [None, Some(DeferredWave::Next)] {
+            let (mut root, mut policy) = fixture();
+            let (mut bodies, _) = super::super::tests::fixture();
+            let body = bodies.remove(1);
+            let child = GraphDefinition {
+                id: GraphDefinitionId::new("beta/child").unwrap(),
+                inputs: vec![BoundaryInput {
+                    port: body.nodes[0].inputs[0].clone(),
+                    target: InPortRef {
+                        node: "beta/second".into(),
+                        port: "in".into(),
+                    },
+                }],
+                body,
+                outputs: vec![],
+                children: vec![],
+                wiring: vec![],
+            };
+            root.children.push(GraphChild {
+                name: "nested".into(),
+                definition: child.id.clone(),
+            });
+            root.wiring.push(BoundaryFlow {
+                next,
+                name: "connect".into(),
+                from: BoundaryFrom::Local(OutPortRef {
+                    node: "alpha/first".into(),
+                    port: "ok".into(),
+                }),
+                to: BoundaryTo::Child {
+                    child: "nested".into(),
                     port: "in".into(),
                 },
-            }],
-            body,
-            outputs: vec![],
-            children: vec![],
-            wiring: vec![],
-        };
-        root.children.push(GraphChild {
-            name: "nested".into(),
-            definition: child.id.clone(),
-        });
-        root.wiring.push(BoundaryFlow {
-            name: "connect".into(),
-            from: BoundaryFrom::Local(OutPortRef {
-                node: "alpha/first".into(),
-                port: "ok".into(),
-            }),
-            to: BoundaryTo::Child {
-                child: "nested".into(),
-                port: "in".into(),
-            },
-        });
-        let expanded = lower_recursive(&[root.clone(), child], &root.id, budget()).unwrap();
-        let flat = materialize(&expanded).unwrap();
-        assert_eq!(flat[0].contributor, "alpha");
-        assert_eq!(flat[1].contributor, "beta");
-        assert_eq!(flat[0].edges.len(), 2);
-        assert!(flat[1].edges.is_empty());
-        policy
-            .sources
-            .insert(flat[0].sources[0].id.clone(), flat[0].sources[0].security);
-        // Reconstruct exact delivery entries only; authored topology must fail.
-        for edge in &flat[0].edges {
-            let EdgeKind::Flow { from, to } = &edge.kind else {
-                panic!()
+            });
+            let definitions = [root.clone(), child];
+            let mut changed = definitions.clone();
+            changed[0].wiring[0].next = if next.is_some() {
+                None
+            } else {
+                Some(DeferredWave::Next)
             };
-            policy.delivery.insert(
-                (
-                    from.node.clone(),
-                    from.port.clone(),
-                    to.node.clone(),
-                    to.port.clone(),
-                ),
-                FlowGrant {
-                    resources: BTreeSet::from(["resource".into()]),
-                    maximum_classification: Classification::Public,
-                },
+            assert_ne!(
+                metadata(&definitions, &root.id).unwrap(),
+                metadata(&changed, &root.id).unwrap()
             );
+            let expanded = lower_recursive(&definitions, &root.id, budget()).unwrap();
+            let origin = EdgeOrigin::Wiring(LogicalId {
+                instance: GraphInstanceId::new(root.id.clone()),
+                authored: "connect".into(),
+            });
+            assert_eq!(
+                matches!(expanded.edges[&origin], LogicalEdge::Deferred { .. }),
+                next.is_some()
+            );
+            let flat = materialize(&expanded).unwrap();
+            assert_eq!(flat[0].contributor, "alpha");
+            assert_eq!(flat[1].contributor, "beta");
+            assert_eq!(flat[0].edges.len(), 2);
+            assert!(flat[1].edges.is_empty());
+            policy
+                .sources
+                .insert(flat[0].sources[0].id.clone(), flat[0].sources[0].security);
+            // Reconstruct exact delivery entries only; authored topology must fail.
+            for edge in &flat[0].edges {
+                let (EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. }) =
+                    &edge.kind
+                else {
+                    panic!()
+                };
+                policy.delivery.insert(
+                    (
+                        from.node.clone(),
+                        from.port.clone(),
+                        to.node.clone(),
+                        to.port.clone(),
+                    ),
+                    FlowGrant {
+                        resources: BTreeSet::from(["resource".into()]),
+                        maximum_classification: Classification::Public,
+                    },
+                );
+            }
+            let run = |p: &TrustedCompositionPolicy| {
+                super::super::compile(
+                    &flat,
+                    p,
+                    |_| true,
+                    |owner, _, _| {
+                        assert!(owner == "alpha" || owner == "beta");
+                        Ok((
+                            "provider".into(),
+                            OperationSchema {
+                                name: "run".into(),
+                                request: phenix_contract::ValueSchema::String,
+                                response: phenix_contract::ValueSchema::String,
+                                error: phenix_contract::ValueSchema::String,
+                            },
+                            BTreeSet::from(["resource".into()]),
+                        ))
+                    },
+                )
+            };
+            assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
+            policy
+                .topology
+                .insert(("alpha".into(), flat[1].nodes[0].id.clone()));
+            assert!(run(&policy).is_ok());
+            policy.delivery.clear();
+            assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
         }
-        let run = |p: &TrustedCompositionPolicy| {
-            super::super::compile(
-                &flat,
-                p,
-                |_| true,
-                |owner, _, _| {
-                    assert!(owner == "alpha" || owner == "beta");
-                    Ok((
-                        "provider".into(),
-                        OperationSchema {
-                            name: "run".into(),
-                            request: phenix_contract::ValueSchema::String,
-                            response: phenix_contract::ValueSchema::String,
-                            error: phenix_contract::ValueSchema::String,
-                        },
-                        BTreeSet::from(["resource".into()]),
-                    ))
-                },
-            )
-        };
-        assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
-        policy
-            .topology
-            .insert(("alpha".into(), flat[1].nodes[0].id.clone()));
-        assert!(run(&policy).is_ok());
-        policy.delivery.clear();
-        assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
     }
 
     #[test]
