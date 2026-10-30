@@ -87,6 +87,9 @@
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
+        ./crates/phenix-provider-contracts
+        ./crates/phenix-provider-protocols
+        ./crates/phenix-environment-contracts
         ./tests/generation-identity-v2.json
       ];
       describe = build "phenix-artifact" artifactSource;
@@ -100,6 +103,9 @@
       };
       kernel = build "phenix-kernel" kernelSource;
       conformanceBinary = build "phenix-conformance" conformanceSource;
+      graphV2TurnBinary = conformanceBinary.overrideAttrs {
+        cargoBuildFlags = [ "-p" "phenix-conformance" "--bin" "phenix-graph-v2-turn" ];
+      };
       recordWriter = pkgs.writeText "phenix-package-record.py" ''
         import json, sys
         from pathlib import Path
@@ -271,13 +277,15 @@
       basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
       basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
       basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" true;
+      basicV2Definitions = definitionPackage "phenix-basic-v2-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" false;
       basicContractsCheck = pkgs.runCommand "phenix-basic-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         python - "${basicDefinitions}/inspection.json" "$out" <<'PY'
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 15
+        assert len(report["definitions"]) == 16
+        assert "phenix.basic.graph-turn@1" in report["definitions"], report
         assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
         assert "phenix.basic.turn-prepare@1" in report["definitions"], report
@@ -1566,6 +1574,43 @@
         ./tests/generation-identity-v2.json
       ];
       basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
+      basicV2Runtime = basicRuntime.overrideAttrs {
+        doCheck = true;
+        cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--features" "graph-v2" ];
+        cargoTestFlags = [ "-p" "phenix-basic-runtime" "--features" "graph-v2" ];
+      };
+      basicV2Agent = basicStagedAgent.overrideAttrs {
+        pname = "phenix-plugin-basic-agent-v2";
+        cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
+      };
+      basicV2Composition = pkgs.writeText "phenix-basic-v2-composition.json" (builtins.toJSON (basicCompositionSpec // {
+        artifacts = map (artifact: if artifact == "${basicAgent}" then "${basicV2Agent}" else artifact) basicCompositionSpec.artifacts;
+        definitions = [ "${basicV2Definitions}" ];
+        grants = basicCompositionSpec.grants ++ map (key: let parts = pkgs.lib.splitString "/" key; in {
+          caller = "phenix.basic.agent";
+          interface = builtins.elemAt parts 0;
+          operation = builtins.elemAt parts 1;
+          resources = basicCompositionSpec.authority.resources;
+        }) basicV2StageKeys;
+        authority = basicCompositionSpec.authority // {
+          operations = basicCompositionSpec.authority.operations ++ basicV2StageKeys;
+        };
+      }));
+      basicV2StageKeys = [
+        "phenix.basic.turn-prepare@1/prepare"
+        "phenix.basic.graph-turn@1/model"
+        "phenix.basic.graph-turn@1/tool"
+        "phenix.basic.graph-turn@1/finish"
+      ];
+      basicV2Product = pkgs.runCommand "phenix-basic-v2-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        mkdir -p "$out"
+        python ${./tests/graph-v2-packaged-host.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2Composition} "$out"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
+          ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \
+          ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} deny-tool
+      '';
       basicGrantSpecs = [
         { caller = "root"; key = "phenix.basic.input@1/submit"; }
         { caller = "root"; key = "phenix.basic.output@1/read"; }
@@ -2872,6 +2917,12 @@
         phenix-plugin-frontend-jsonl = frontendJsonl;
         phenix-plugin-frontend-acp = frontendAcp;
         phenix-basic-runtime = basicRuntime;
+        phenix-basic-v2-runtime = basicV2Runtime;
+        phenix-basic-v2-composition = basicV2Composition;
+        phenix-basic-v2-product = basicV2Product;
+        phenix-basic-v2-terminal = pkgs.writeShellScriptBin "phenix-basic-v2-terminal" ''
+          exec ${basicV2Runtime}/bin/phenix-basic-runtime terminal ${basicV2Composition} "$@"
+        '';
         phenix-basic-composition = basicComposition;
         phenix-basic = basicBinary;
         phenix-basic-http = basicHttpBinary;
@@ -3085,6 +3136,7 @@
         };
       };
       checks.${system} = {
+        basic-v2-packaged-host = basicV2Product;
         m1-native-authoring = authoringCheck;
         agent-mix-boundaries = agentMixBoundaryCheck;
         plugin-source-preparation = pluginSourceCheck;

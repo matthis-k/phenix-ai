@@ -48,6 +48,7 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
         if prompt.text() == "model-error" {
             return Err(error(ErrorCode::ModelFailed, "scripted model failure"));
         }
+        let single = prompt.text().strip_prefix("tool:");
         let plan = prompt
             .text()
             .strip_prefix("tools:")
@@ -58,7 +59,19 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                     .strip_prefix("tools-fail:")
                     .map(|input| (input, ["fail", "length"]))
             });
-        if let Some((input, requested)) = plan {
+        if let Some(input) = single {
+            if !request.tools.iter().any(|entry| entry.id == "uppercase") {
+                return Err(error(ErrorCode::InvalidInput, "required tool unavailable"));
+            }
+            (
+                String::new(),
+                vec![ToolCall {
+                    id: "call-1".into(),
+                    tool: "uppercase".into(),
+                    arguments: serde_json::to_string(input).expect("serialize string"),
+                }],
+            )
+        } else if let Some((input, requested)) = plan {
             for tool in requested {
                 if !request.tools.iter().any(|entry| entry.id == tool) {
                     return Err(error(ErrorCode::InvalidInput, "required tool unavailable"));

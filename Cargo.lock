@@ -1924,6 +1924,7 @@ name = "phenix-plugin-basic-agent"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
+ "phenix-contract",
  "phenix-sdk",
 ]
 

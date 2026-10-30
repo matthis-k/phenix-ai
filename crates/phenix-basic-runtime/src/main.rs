@@ -989,10 +989,54 @@ fn scoped_kernel(composition: &Composition, session: &str) -> Result<Kernel, Str
     let resource = phenix_basic_contracts::session_resource(session)
         .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
     let spec = scoped_composition(composition, &resource);
-    Prepared::prepare(spec)
+    prepare_agent(spec)
         .map_err(|e| format!("{e:?}"))?
         .load()
         .map_err(|e| format!("{e:?}"))
+}
+
+#[cfg(not(feature = "graph-v2"))]
+fn prepare_agent(spec: Composition) -> Result<Prepared, phenix_contract::Failure> {
+    Prepared::prepare(spec)
+}
+
+#[cfg(feature = "graph-v2")]
+fn prepare_agent(spec: Composition) -> Result<Prepared, phenix_contract::Failure> {
+    use phenix_contract::graph::v2::{Classification, IntegrityClass, PortSecurity};
+    use phenix_kernel::graph::v2::{
+        OperationSecurity, SourceOwnerPolicy, TrustedCompositionPolicy,
+    };
+    let label = PortSecurity {
+        confidentiality: Classification::Confidential,
+        integrity: IntegrityClass::Untrusted,
+    };
+    let mut policy = TrustedCompositionPolicy::default();
+    policy.source_owners.insert(
+        "phenix.basic.agent".into(),
+        SourceOwnerPolicy {
+            owner_ceiling: Classification::Confidential,
+            composition_ceiling: Classification::Confidential,
+        },
+    );
+    policy
+        .sources
+        .insert("phenix.basic.agent/prompt".into(), label);
+    for key in [
+        "phenix.basic.turn-prepare@1/prepare",
+        "phenix.basic.graph-turn@1/model",
+        "phenix.basic.graph-turn@1/tool",
+        "phenix.basic.graph-turn@1/finish",
+    ] {
+        policy.operations.insert(
+            ("phenix.basic.agent".into(), key.into()),
+            OperationSecurity {
+                input: label,
+                ok: label,
+                err: label,
+            },
+        );
+    }
+    Prepared::prepare_graph_v2(spec, &policy)
 }
 
 fn run() -> Result<(), String> {
