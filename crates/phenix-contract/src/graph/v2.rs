@@ -10,6 +10,7 @@ use crate::{Code, Failure, Value, ValueSchema};
 
 mod declarations;
 pub use declarations::*;
+pub mod composition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Classification {

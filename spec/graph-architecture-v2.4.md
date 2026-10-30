@@ -985,6 +985,111 @@ Compiled graph patches can be authored through fluent builders, a declarative ma
 
 Expose an inspection API returning canonical graph JSON/Value metadata plus `dot`/Mermaid exports and an origin map for each generated edge. Key queries: `show graph`, `show sources`, `show route(edge_id)`, `explain patch(id)`, `why node active`, `why patch superseded`, `why flow denied`. Keep inspection read-only; it cannot change a live graph.
 
+### 7.9 C1 prerequisite freeze: identities and direct typed boundaries
+
+This narrow addendum adopts the definition/instance distinction of #1188 at
+`b517c746122f98f638564038067292d9376c9b9a`. It does not implement recursive
+lowering, activation/completion, views, state scopes or patches.
+
+The contract's independent `v2::composition` model leaves shipped flat
+`GraphContributionV2` bytes and consumers unchanged. A `GraphDefinitionId` is
+exactly `owner/local`, with both components using the existing identifier grammar
+and `root` forbidden as owner. A `GraphInstanceId` is a composition-qualified
+root occurrence plus an ordered path of explicit local child names. Identity is
+structural, never an array index, topology hash or concatenated flat NodeId.
+An instance pairs this identity with a definition ID; changing the definition
+does not rename the occurrence. Instance IDs do not carry generation or authority.
+
+A `GraphDefinition` reuses the flat declaration as its body, with matching
+contributor/definition owner. Its explicitly named input/output boundaries reuse
+`InputPort`, `OutputPort`, `InPortRef` and `OutPortRef`. Each maps to exactly one
+existing local endpoint, with exact complete schema, readiness (inputs) and
+security equality. Boundary names are unique per direction; aliases of the same
+endpoint are allowed when explicitly named. No inferred ports, relabeling,
+aggregation or wrapper removal occurs. Definition validation rejects all foreign
+body edge endpoints: this initial closed-body profile cannot silently expose a
+crossing. Existing flat validation supplies canonical ordering, shapes and bounds;
+normalization sorts boundaries and body declarations and rejects duplicates.
+
+These Rust metadata types are not a new artifact wire format or verified input to
+preparation. They validate shape only, not ownership authentication, bindings,
+grants, cycles or admission. Before a lowerer is connected, freeze authenticated
+definition provenance versus instance placement, nested boundary wiring and
+Order/Deferred crossings, expansion bounds, effective logical anchor encoding and
+global security validation. Never derive an Invoke owner from an instance name.
+
+### 7.10 C1 structural recursive lowering freeze
+
+This increment is a pure contract transformation, not authenticated preparation,
+an artifact format, a scheduler or runtime admission. `GraphDefinition` gains
+explicit named children referencing definitions and explicit named boundary Flow
+wires. Existing direct boundary aliases still terminate at local body ports;
+exporting a child's port directly is outside this profile. A wire endpoint is
+either a local body port or an immediate child's named boundary, never an
+arbitrary descendant or foreign node. Child names and wire names are unique.
+Child definition ownership may differ from placement ownership.
+
+Lowering expands every occurrence (no memoized sharing), in canonical definition,
+child and declaration order. Logical identities pair the structural instance ID
+with the original qualified declaration ID; wire IDs use a separate namespace.
+Output retains original declarations and definition/occurrence provenance,
+including source declarations and Invoke selectors. Placement never changes an
+Invoke's declaring owner. These are structured identities, not flat wire IDs.
+Root boundaries remain available through the root definition and instance.
+
+Every Flow, including body flows, resolves real ports and requires exact candidate
+schema equality and security flow compatibility without grants. Boundary aliases
+still require complete input schema/readiness/security equality. Local Order edges
+are preserved and participate with Flow in dependency-cycle rejection. Cross-child
+Order and all Deferred edges are unsupported, not silently dropped. Definition
+reference cycles and expanded dependency cycles fail closed; repeated acyclic
+uses are distinct occurrences. Cardinality/readiness admission remains a compiler
+obligation, not a claim made by structural lowering.
+
+Caller budgets bound depth (root depth one), occurrences and aggregate expanded
+items (sources, nodes and edges). Hard ceilings are depth 64 and the contract
+MAX_COUNT for occurrence/item budgets. Before cloning/normalizing, aggregate input
+declarations, ports, boundaries, children and wires are bounded by MAX_COUNT;
+borrowed strings, schemas and literal trees are byte/depth checked before cloning.
+Input and expanded bytes have separate MAX_BYTES ceilings, conservatively charging
+canonical body bytes plus authored metadata/tree sizes (including body payloads)
+per occurrence. Expanded accounting also charges repeated structural identity
+paths, including empty occurrences and dependency-checking copies. This is a
+resource bound, not a canonical encoding or an exact heap-size measure. Unknown definitions,
+duplicate identities, invalid endpoints, unsafe flows and budget exhaustion return
+failure without partial output. Unreachable definitions are shape-checked too;
+reference and dependency cycle checks concern the selected root closure.
+
+The lowerer does not verify recursive definitions. No output is accepted as
+verified flat package metadata, and `Prepared::compile_graph_v2` retains its exact
+verified-byte equality gate. Section 7.11 freezes a separate trusted-host bridge;
+authenticated recursive packaging, direct nested exports, cross-boundary Order
+and Deferred activation remain future work.
+
+### 7.11 C1 trusted-host executable bridge freeze
+
+`Prepared::prepare_recursive_graph_v2` reuses normal graph-v2 preparation,
+selected operation resolution, flat compilation and execution. Every supplied
+definition, including unused definitions, must have a normalized body exactly
+equal to its contributor's selected VerifiedPackage graph-v2 body. The trusted
+control plane supplies the exact definition metadata and root and thereby
+authorizes placement, boundary exposure and wiring. These boundaries are NOT
+package-attested. This API is not an untrusted composition admission interface.
+
+Lowered nodes, sources and body/wiring edges receive domain-separated hashed
+owner/local IDs from their structural occurrence identities. Contributions stay
+grouped by ORIGINAL contributor, including parent-owned wiring. Source references
+and every edge endpoint are rewritten. The compiled plan retains ExpandedGraph
+provenance. Global topology, source and delivery policy remains explicit over
+exact effective IDs; a deterministic mapping helper supplies names, not authority.
+Repeated ExternalAction names remain rejected by the existing compiler.
+
+Identity includes the root and ALL normalized definitions, including unused
+definitions and empty/unused boundaries, as well as the existing flat plan and
+policy identity. Expansion budgets constrain admission, not semantic identity.
+Deferred edges and unsupported source kinds remain rejected. No scheduler,
+alternate resolver, package boundary attestation or new runtime is introduced.
+
 ## 8. Module and file plan
 
 ```mermaid

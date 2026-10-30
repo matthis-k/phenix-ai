@@ -13,6 +13,8 @@ mod join;
 mod operators;
 #[path = "v2/readiness.rs"]
 mod readiness;
+#[path = "v2/recursive.rs"]
+mod recursive;
 
 const A: &str = "example.graph-a";
 const B: &str = "example.graph-b";
@@ -603,6 +605,9 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
             );
         }
         kernel.shutdown().unwrap();
+        if name == "success" {
+            recursive::run(packages, &composition, &policy, output);
+        }
         cases.push(name.into());
     }
     std::env::remove_var("PHENIX_GRAPH_B_CONSUME_WITNESS");
@@ -618,6 +623,7 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
         ("graph-v2-operators.json", "phenix.graph-v2-operators.v1"),
         ("graph-v2-join.json", "phenix.graph-v2-join.v1"),
         ("graph-v2-readiness.json", "phenix.graph-v2-readiness.v1"),
+        ("graph-v2-recursive.json", "phenix.graph-v2-recursive.v1"),
     ];
     for (name, format) in evidence {
         let report: serde_json::Value =
