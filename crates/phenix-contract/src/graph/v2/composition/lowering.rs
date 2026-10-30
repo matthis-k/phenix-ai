@@ -151,6 +151,26 @@ fn definition_bytes(d: &GraphDefinition) -> Result<usize, Failure> {
         charge(&mut bytes, c.name.len())?;
         charge(&mut bytes, c.definition.as_str().len())?;
     }
+    for a in &d.anchors {
+        charge(&mut bytes, a.name.len() + 2)?;
+        match &a.target {
+            AnchorTarget::LocalNode(node) => charge(&mut bytes, node.len())?,
+            AnchorTarget::Child { child, anchor } => {
+                charge(&mut bytes, child.len() + anchor.len())?
+            }
+        }
+    }
+    for o in &d.orders {
+        charge(&mut bytes, o.name.len())?;
+        for r in [&o.before, &o.after] {
+            match r {
+                AnchorRef::Local(name) => charge(&mut bytes, name.len() + 1)?,
+                AnchorRef::Child { child, anchor } => {
+                    charge(&mut bytes, child.len() + anchor.len() + 1)?
+                }
+            }
+        }
+    }
     for e in &d.body.edges {
         charge(&mut bytes, e.id.len())?;
         match &e.kind {
@@ -221,6 +241,7 @@ pub struct LogicalId {
 pub enum EdgeOrigin {
     Body(LogicalId),
     Wiring(LogicalId),
+    Order(LogicalId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +255,19 @@ pub struct LogicalPort {
 pub struct BoundaryProvenance {
     pub endpoint: LogicalPort,
     pub aliases: Vec<LogicalId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorProvenance {
+    pub visibility: AnchorVisibility,
+    pub node: LogicalId,
+    pub aliases: Vec<LogicalId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderProvenance {
+    pub before: Vec<LogicalId>,
+    pub after: Vec<LogicalId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +297,43 @@ pub struct ExpandedGraph {
     pub edges: BTreeMap<EdgeOrigin, LogicalEdge>,
     pub inputs: BTreeMap<LogicalId, BoundaryProvenance>,
     pub outputs: BTreeMap<LogicalId, BoundaryProvenance>,
+    pub anchors: BTreeMap<LogicalId, AnchorProvenance>,
+    pub orders: BTreeMap<LogicalId, OrderProvenance>,
+}
+
+impl ExpandedGraph {
+    /// Scoped structural selection for future patches; applies nothing and grants
+    /// no authority. These diagnostics are not authenticated untrusted SDK input.
+    pub fn resolve_anchor(
+        &self,
+        scope: &GraphInstanceId,
+        reference: &AnchorRef,
+    ) -> Result<&AnchorProvenance, Failure> {
+        if !self.instances.contains_key(scope) {
+            return Err(bad("unknown anchor scope"));
+        }
+        let (instance, name, public) = match reference {
+            AnchorRef::Local(name) => (scope.clone(), name, false),
+            AnchorRef::Child { child, anchor } => (scope.child(child)?, anchor, true),
+        };
+        if !self.instances.contains_key(&instance) {
+            return Err(bad("unknown anchor child occurrence"));
+        }
+        if !identifier(name) {
+            return Err(bad("invalid scoped anchor name"));
+        }
+        let anchor = self
+            .anchors
+            .get(&LogicalId {
+                instance,
+                authored: name.clone(),
+            })
+            .ok_or_else(|| bad("unknown scoped anchor"))?;
+        if public && anchor.visibility != AnchorVisibility::Public {
+            return Err(bad("private child anchor"));
+        }
+        Ok(anchor)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -298,6 +369,8 @@ pub fn lower_recursive(
             d.outputs.len(),
             d.children.len(),
             d.wiring.len(),
+            d.anchors.len(),
+            d.orders.len(),
         ]
         .into_iter()
         .chain(
@@ -346,6 +419,8 @@ pub fn lower_recursive(
         edges: BTreeMap::new(),
         inputs: BTreeMap::new(),
         outputs: BTreeMap::new(),
+        anchors: BTreeMap::new(),
+        orders: BTreeMap::new(),
     };
     expand(
         &defs,
@@ -489,6 +564,24 @@ fn output_contract<'a>(
     }
 }
 
+fn public_child_anchor<'a>(
+    defs: &'a BTreeMap<GraphDefinitionId, GraphDefinition>,
+    d: &GraphDefinition,
+    child: &str,
+    name: &str,
+) -> Result<&'a GraphAnchor, Failure> {
+    let child = child_definition(defs, d, child)?;
+    let index = child
+        .anchors
+        .binary_search_by(|a| a.name.as_str().cmp(name))
+        .map_err(|_| bad("unknown child anchor"))?;
+    let anchor = &child.anchors[index];
+    if anchor.visibility != AnchorVisibility::Public {
+        return Err(bad("private child anchor"));
+    }
+    Ok(anchor)
+}
+
 // Check all links, even in unused definitions, without recursively walking aliases.
 fn validate_links(defs: &BTreeMap<GraphDefinitionId, GraphDefinition>) -> Result<(), Failure> {
     let mut degree: BTreeMap<_, usize> = defs.keys().map(|id| (id, 0)).collect();
@@ -500,6 +593,18 @@ fn validate_links(defs: &BTreeMap<GraphDefinitionId, GraphDefinition>) -> Result
             }
             *degree.get_mut(&d.id).unwrap() += 1;
             parents.entry(&child.definition).or_default().push(&d.id);
+        }
+        for a in &d.anchors {
+            if let AnchorTarget::Child { child, anchor } = &a.target {
+                public_child_anchor(defs, d, child, anchor)?;
+            }
+        }
+        for o in &d.orders {
+            for r in [&o.before, &o.after] {
+                if let AnchorRef::Child { child, anchor } = r {
+                    public_child_anchor(defs, d, child, anchor)?;
+                }
+            }
         }
         for b in &d.inputs {
             let p = input_contract(defs, d, &b.target)?;
@@ -561,6 +666,17 @@ fn reserve_items(
     Ok(())
 }
 
+fn charge_logical(bytes: &mut usize, id: &LogicalId) -> Result<(), Failure> {
+    charge(
+        bytes,
+        id.instance.root().as_str().len() + id.authored.len() + 8,
+    )?;
+    for part in id.instance.path() {
+        charge(bytes, part.len() + 4)?;
+    }
+    Ok(())
+}
+
 fn retain_boundary(
     id: LogicalId,
     endpoint: &LogicalPort,
@@ -574,13 +690,7 @@ fn retain_boundary(
         .chain(inner)
         .chain(std::iter::once(&endpoint.node))
     {
-        charge(
-            &mut bytes.used,
-            alias.instance.root().as_str().len() + alias.authored.len() + 8,
-        )?;
-        for part in alias.instance.path() {
-            charge(&mut bytes.used, part.len() + 4)?;
-        }
+        charge_logical(&mut bytes.used, alias)?;
     }
     charge(&mut bytes.used, endpoint.port.len())?;
     let aliases = std::iter::once(id).chain(inner.iter().cloned()).collect();
@@ -608,7 +718,11 @@ fn expand(
     let d = defs
         .get(id)
         .ok_or_else(|| bad("unknown recursive definition"))?;
-    let added = d.body.nodes.len() + d.body.sources.len() + d.body.edges.len() + d.wiring.len();
+    let added = d.body.nodes.len()
+        + d.body.sources.len()
+        + d.body.edges.len()
+        + d.wiring.len()
+        + d.orders.len();
     charge(&mut bytes.used, bytes.sizes[id])?;
     // Keys and dependency checking clone occurrence paths a bounded number of
     // times per item; count paths even for empty occurrences.
@@ -678,6 +792,70 @@ fn expand(
     }
     // Child maps are complete before resolving parent aliases. No shared
     // occurrence identity or recursive alias traversal is introduced.
+    for a in &d.anchors {
+        let local;
+        let (node, inner): (_, &[LogicalId]) = match &a.target {
+            AnchorTarget::LocalNode(node) => {
+                local = logical(node);
+                (&local, &[])
+            }
+            AnchorTarget::Child { child, anchor } => {
+                let inner = out
+                    .anchors
+                    .get(&LogicalId {
+                        instance: instance.child(child)?,
+                        authored: anchor.clone(),
+                    })
+                    .ok_or_else(|| bad("unknown child anchor"))?;
+                if inner.visibility != AnchorVisibility::Public {
+                    return Err(bad("private child anchor"));
+                }
+                (&inner.node, inner.aliases.as_slice())
+            }
+        };
+        let id = logical(&a.name);
+        reserve_items(bytes, inner.len() + 1, budget)?;
+        for part in std::iter::once(&id)
+            .chain(std::iter::once(&id))
+            .chain(inner)
+            .chain(std::iter::once(node))
+        {
+            charge_logical(&mut bytes.used, part)?;
+        }
+        let provenance = AnchorProvenance {
+            visibility: a.visibility,
+            node: node.clone(),
+            aliases: std::iter::once(id.clone())
+                .chain(inner.iter().cloned())
+                .collect(),
+        };
+        out.anchors.insert(id, provenance);
+    }
+    for o in &d.orders {
+        let before = out.resolve_anchor(&instance, &o.before)?;
+        let after = out.resolve_anchor(&instance, &o.after)?;
+        reserve_items(bytes, before.aliases.len() + after.aliases.len(), budget)?;
+        let id = logical(&o.name);
+        for part in
+            before
+                .aliases
+                .iter()
+                .chain(&after.aliases)
+                .chain([&id, &before.node, &after.node])
+        {
+            charge_logical(&mut bytes.used, part)?;
+        }
+        let edge = LogicalEdge::Order {
+            before: before.node.clone(),
+            after: after.node.clone(),
+        };
+        let provenance = OrderProvenance {
+            before: before.aliases.clone(),
+            after: after.aliases.clone(),
+        };
+        out.edges.insert(EdgeOrigin::Order(id.clone()), edge);
+        out.orders.insert(id, provenance);
+    }
     for b in &d.inputs {
         let local;
         let (endpoint, aliases): (_, &[LogicalId]) = match &b.target {

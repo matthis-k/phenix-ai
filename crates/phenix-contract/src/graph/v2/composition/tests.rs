@@ -19,6 +19,8 @@ fn definition() -> GraphDefinition {
         security,
     };
     GraphDefinition {
+        anchors: vec![],
+        orders: vec![],
         id: GraphDefinitionId::new("demo/filter").unwrap(),
         body: GraphContributionV2 {
             contributor: "demo".into(),
@@ -169,6 +171,8 @@ fn recursive_fixture() -> (Vec<GraphDefinition>, GraphDefinitionId, ExpansionBud
     let leaf = definition();
     let root_id = GraphDefinitionId::new("app/main").unwrap();
     let root = GraphDefinition {
+        anchors: vec![],
+        orders: vec![],
         id: root_id.clone(),
         body: GraphContributionV2 {
             contributor: "app".into(),
@@ -375,6 +379,8 @@ fn nested_aliases_reject_malformed_and_unused_links_before_expansion() {
         );
         // The malformed definitions remain rejected when outside the selected closure.
         let unused_root = GraphDefinition {
+            anchors: vec![],
+            orders: vec![],
             id: GraphDefinitionId::new("app/unused").unwrap(),
             body: GraphContributionV2 {
                 contributor: "app".into(),
@@ -447,6 +453,330 @@ fn retained_alias_paths_exhaust_bytes_before_depth_or_item_limits() {
                     port: "out".into(),
                 };
             }
+            defs.push(d);
+        }
+        let result = lower_recursive(
+            &defs,
+            &defs[0].id,
+            ExpansionBudget {
+                depth: count,
+                occurrences: count,
+                items: crate::MAX_COUNT,
+            },
+        );
+        if count == 4 {
+            result.unwrap();
+        } else {
+            assert_eq!(result.unwrap_err().message, "recursive byte budget");
+        }
+    }
+}
+
+fn anchor_fixture() -> (Vec<GraphDefinition>, GraphDefinitionId, ExpansionBudget) {
+    let (mut defs, root, _) = nested_alias_fixture();
+    for (name, visibility) in [
+        ("run", AnchorVisibility::Public),
+        ("hidden", AnchorVisibility::Private),
+    ] {
+        defs[1].anchors.push(GraphAnchor {
+            name: name.into(),
+            visibility,
+            target: AnchorTarget::LocalNode("demo/filter".into()),
+        });
+    }
+    defs[2].anchors.push(GraphAnchor {
+        name: "run".into(),
+        visibility: AnchorVisibility::Public,
+        target: AnchorTarget::Child {
+            child: "leaf".into(),
+            anchor: "run".into(),
+        },
+    });
+    let mut guard = defs[1].body.nodes[0].clone();
+    guard.id = "app/guard".into();
+    defs[0].body.nodes.push(guard);
+    defs[0].anchors = vec![
+        GraphAnchor {
+            name: "before".into(),
+            visibility: AnchorVisibility::Private,
+            target: AnchorTarget::LocalNode("app/guard".into()),
+        },
+        GraphAnchor {
+            name: "selected".into(),
+            visibility: AnchorVisibility::Public,
+            target: AnchorTarget::Child {
+                child: "left".into(),
+                anchor: "run".into(),
+            },
+        },
+        GraphAnchor {
+            name: "right-local".into(),
+            visibility: AnchorVisibility::Private,
+            target: AnchorTarget::Child {
+                child: "right".into(),
+                anchor: "run".into(),
+            },
+        },
+    ];
+    defs[0].orders = vec![
+        BoundaryOrder {
+            name: "left".into(),
+            before: AnchorRef::Local("before".into()),
+            after: AnchorRef::Local("selected".into()),
+        },
+        BoundaryOrder {
+            name: "right".into(),
+            before: AnchorRef::Local("before".into()),
+            after: AnchorRef::Child {
+                child: "right".into(),
+                anchor: "run".into(),
+            },
+        },
+    ];
+    (
+        defs,
+        root,
+        ExpansionBudget {
+            depth: 3,
+            occurrences: 5,
+            items: 46,
+        },
+    )
+}
+
+#[test]
+fn scoped_anchors_and_orders_preserve_visibility_every_hop_and_isolated_nodes() {
+    let (mut defs, root, budget) = anchor_fixture();
+    let graph = lower_recursive(&defs, &root, budget).unwrap();
+    let scope = GraphInstanceId::new(root.clone());
+    assert!(graph
+        .resolve_anchor(
+            &scope.child("missing").unwrap(),
+            &AnchorRef::Local("before".into())
+        )
+        .is_err());
+    let selected = graph
+        .resolve_anchor(&scope, &AnchorRef::Local("selected".into()))
+        .unwrap();
+    assert_eq!(
+        selected
+            .aliases
+            .iter()
+            .map(|a| a.authored.as_str())
+            .collect::<Vec<_>>(),
+        ["selected", "run", "run"]
+    );
+    assert_eq!(selected.node.instance.path(), ["left", "leaf"]);
+    let right = graph
+        .resolve_anchor(
+            &scope,
+            &AnchorRef::Child {
+                child: "right".into(),
+                anchor: "run".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(right.node.instance.path(), ["right", "leaf"]);
+    assert_ne!(selected.node, right.node);
+    let private = graph
+        .resolve_anchor(&scope, &AnchorRef::Local("before".into()))
+        .unwrap();
+    assert_eq!(private.visibility, AnchorVisibility::Private);
+    let id = LogicalId {
+        instance: scope.clone(),
+        authored: "left".into(),
+    };
+    assert_eq!(graph.orders[&id].before, private.aliases);
+    assert_eq!(graph.orders[&id].after, selected.aliases);
+    assert_eq!(
+        graph.edges[&EdgeOrigin::Order(id)],
+        LogicalEdge::Order {
+            before: private.node.clone(),
+            after: selected.node.clone()
+        }
+    );
+    let middle = scope.child("left").unwrap();
+    assert!(graph
+        .resolve_anchor(
+            &middle,
+            &AnchorRef::Child {
+                child: "leaf".into(),
+                anchor: "hidden".into()
+            }
+        )
+        .is_err());
+    assert!(graph
+        .resolve_anchor(
+            &middle.child("leaf").unwrap(),
+            &AnchorRef::Local("hidden".into())
+        )
+        .is_ok());
+    for r in [
+        AnchorRef::Local("demo/filter".into()),
+        AnchorRef::Child {
+            child: "left/leaf".into(),
+            anchor: "run".into(),
+        },
+        AnchorRef::Child {
+            child: "left".into(),
+            anchor: "hidden".into(),
+        },
+    ] {
+        assert!(graph.resolve_anchor(&scope, &r).is_err());
+    }
+    for d in &mut defs {
+        d.anchors.reverse();
+        d.orders.reverse();
+        d.children.reverse();
+    }
+    defs.reverse();
+    assert_eq!(graph, lower_recursive(&defs, &root, budget).unwrap());
+    for limited in [
+        ExpansionBudget {
+            items: budget.items - 1,
+            ..budget
+        },
+        ExpansionBudget { depth: 2, ..budget },
+        ExpansionBudget {
+            occurrences: 4,
+            ..budget
+        },
+    ] {
+        assert!(lower_recursive(&defs, &root, limited).is_err());
+    }
+}
+
+#[test]
+fn anchor_and_order_links_reject_hidden_raw_foreign_cyclic_and_oversized_metadata() {
+    let (base, root, budget) = anchor_fixture();
+    for case in 0..15 {
+        let mut defs = base.clone();
+        match case {
+            0 => {
+                defs[2].anchors[0].target = AnchorTarget::Child {
+                    child: "leaf".into(),
+                    anchor: "hidden".into(),
+                }
+            }
+            1 => {
+                defs[2].anchors[0].target = AnchorTarget::Child {
+                    child: "leaf".into(),
+                    anchor: "missing".into(),
+                }
+            }
+            2 => {
+                defs[2].anchors[0].target = AnchorTarget::Child {
+                    child: "missing".into(),
+                    anchor: "run".into(),
+                }
+            }
+            3 => defs[0].anchors[0].target = AnchorTarget::LocalNode("demo/filter".into()),
+            4 => defs[0].orders[0].after = AnchorRef::Local("demo/filter".into()),
+            5 => {
+                defs[0].orders[0].after = AnchorRef::Child {
+                    child: "left/leaf".into(),
+                    anchor: "run".into(),
+                }
+            }
+            6 => {
+                defs[0].orders[0].after = AnchorRef::Child {
+                    child: "left".into(),
+                    anchor: "missing".into(),
+                }
+            }
+            7 => defs[2].orders.push(BoundaryOrder {
+                name: "hidden".into(),
+                before: AnchorRef::Child {
+                    child: "leaf".into(),
+                    anchor: "hidden".into(),
+                },
+                after: AnchorRef::Local("run".into()),
+            }),
+            8 => {
+                let a = defs[1].anchors[0].clone();
+                defs[1].anchors.push(a);
+            }
+            9 => {
+                let o = defs[0].orders[0].clone();
+                defs[0].orders.push(o);
+            }
+            10 => defs[1].children.push(GraphChild {
+                name: "back".into(),
+                definition: root.clone(),
+            }),
+            11 => defs[0].anchors[0].name = "x".repeat(crate::MAX_BYTES + 1),
+            12 => defs[0].id = GraphDefinitionId::new("foreign/root").unwrap(),
+            13 => defs[2].anchors[0].visibility = AnchorVisibility::Private,
+            14 => defs[0].orders[0].name = "x".repeat(crate::MAX_BYTES + 1),
+            _ => unreachable!(),
+        }
+        assert!(
+            lower_recursive(&defs, &root, budget).is_err(),
+            "case {case}"
+        );
+        // Link validation cannot be bypassed by placing the malformed definition
+        // outside the selected closure.
+        let mut unused = definition();
+        unused.id = GraphDefinitionId::new("demo/unused").unwrap();
+        let unused_root = unused.id.clone();
+        defs.push(unused);
+        assert!(
+            lower_recursive(&defs, &unused_root, budget).is_err(),
+            "unused case {case}"
+        );
+    }
+    let (mut defs, root, _) = anchor_fixture();
+    defs[0].orders.push(BoundaryOrder {
+        name: "cycle".into(),
+        before: AnchorRef::Child {
+            child: "right".into(),
+            anchor: "run".into(),
+        },
+        after: AnchorRef::Local("before".into()),
+    });
+    assert_eq!(
+        lower_recursive(
+            &defs,
+            &root,
+            ExpansionBudget {
+                items: 128,
+                ..budget
+            }
+        )
+        .unwrap_err()
+        .message,
+        "recursive dependency cycle"
+    );
+}
+
+#[test]
+fn anchor_provenance_bytes_are_bounded_independently_of_depth_and_items() {
+    for count in [4, 32] {
+        let mut defs = Vec::new();
+        for i in 0..count {
+            let mut d = definition();
+            d.id = GraphDefinitionId::new(&format!("demo/anchor{i}")).unwrap();
+            d.inputs.clear();
+            d.outputs.clear();
+            let target = if i + 1 == count {
+                AnchorTarget::LocalNode("demo/filter".into())
+            } else {
+                d.body.nodes.clear();
+                let name = "x".repeat(256);
+                d.children.push(GraphChild {
+                    name: name.clone(),
+                    definition: GraphDefinitionId::new(&format!("demo/anchor{}", i + 1)).unwrap(),
+                });
+                AnchorTarget::Child {
+                    child: name,
+                    anchor: "public".into(),
+                }
+            };
+            d.anchors.push(GraphAnchor {
+                name: "public".into(),
+                visibility: AnchorVisibility::Public,
+                target,
+            });
             defs.push(d);
         }
         let result = lower_recursive(

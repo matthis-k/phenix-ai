@@ -76,6 +76,38 @@ pub struct BoundaryOutput {
     pub source: BoundaryFrom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorVisibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorTarget {
+    LocalNode(String),
+    Child { child: String, anchor: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphAnchor {
+    pub name: String,
+    pub visibility: AnchorVisibility,
+    pub target: AnchorTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorRef {
+    Local(String),
+    Child { child: String, anchor: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundaryOrder {
+    pub name: String,
+    pub before: AnchorRef,
+    pub after: AnchorRef,
+}
+
 /// Closed-body definition with explicit immediate-child placement and aliases.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphDefinition {
@@ -85,6 +117,8 @@ pub struct GraphDefinition {
     pub outputs: Vec<BoundaryOutput>,
     pub children: Vec<GraphChild>,
     pub wiring: Vec<BoundaryFlow>,
+    pub anchors: Vec<GraphAnchor>,
+    pub orders: Vec<BoundaryOrder>,
 }
 
 impl GraphDefinition {
@@ -95,6 +129,8 @@ impl GraphDefinition {
         result.outputs.sort_by(|a, b| a.port.name.cmp(&b.port.name));
         result.children.sort_by(|a, b| a.name.cmp(&b.name));
         result.wiring.sort_by(|a, b| a.name.cmp(&b.name));
+        result.anchors.sort_by(|a, b| a.name.cmp(&b.name));
+        result.orders.sort_by(|a, b| a.name.cmp(&b.name));
         result.validate()?;
         Ok(result)
     }
@@ -115,7 +151,55 @@ impl GraphDefinition {
         {
             return Err(bad("graph definition owner, boundary order or duplicate"));
         }
-        let local = |id: &str| self.body.nodes.iter().any(|n| n.id == id);
+        let local = |id: &str| {
+            self.body
+                .nodes
+                .binary_search_by(|n| n.id.as_str().cmp(id))
+                .is_ok()
+        };
+        if !sorted(self.anchors.iter().map(|a| a.name.as_str()))
+            || !sorted(self.orders.iter().map(|o| o.name.as_str()))
+            || self.anchors.iter().any(|a| !identifier(&a.name))
+            || self.orders.iter().any(|o| !identifier(&o.name))
+        {
+            return Err(bad("invalid anchor or Order identity"));
+        }
+        let child = |name: &str, anchor: &str| {
+            identifier(anchor)
+                && self
+                    .children
+                    .binary_search_by(|c| c.name.as_str().cmp(name))
+                    .is_ok()
+        };
+        for anchor in &self.anchors {
+            let valid = match &anchor.target {
+                AnchorTarget::LocalNode(node) => local(node),
+                AnchorTarget::Child {
+                    child: name,
+                    anchor,
+                } => child(name, anchor),
+            };
+            if !valid {
+                return Err(bad("unknown anchor node or child"));
+            }
+        }
+        for order in &self.orders {
+            for reference in [&order.before, &order.after] {
+                let valid = match reference {
+                    AnchorRef::Local(name) => {
+                        identifier(name)
+                            && self.anchors.binary_search_by(|a| a.name.cmp(name)).is_ok()
+                    }
+                    AnchorRef::Child {
+                        child: name,
+                        anchor,
+                    } => child(name, anchor),
+                };
+                if !valid {
+                    return Err(bad("unknown scoped Order anchor"));
+                }
+            }
+        }
         for edge in &self.body.edges {
             let (from, to) = match &edge.kind {
                 EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. } => {

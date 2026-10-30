@@ -2,11 +2,11 @@ use super::*;
 use composition::*;
 
 /// Deterministic bounded owner/local name only; grants no authority. `kind` is
-/// "node", "source", "body-edge" or "wire". Owner is the ORIGINAL contributor.
+/// "node", "source", "body-edge", "wire" or "order". Owner is the ORIGINAL contributor.
 pub fn recursive_effective_id(owner: &str, kind: &str, id: &LogicalId) -> Result<String, Failure> {
     if !phenix_contract::identifier(owner)
         || owner == "root"
-        || !matches!(kind, "node" | "source" | "body-edge" | "wire")
+        || !matches!(kind, "node" | "source" | "body-edge" | "wire" | "order")
         || !(phenix_contract::identifier(&id.authored)
             || phenix_contract::graph::valid_node_key(&id.authored))
     {
@@ -109,6 +109,7 @@ fn materialize(expanded: &ExpandedGraph) -> Result<Vec<GraphContributionV2>, Fai
         let (id, kind) = match origin {
             EdgeOrigin::Body(id) => (id, "body-edge"),
             EdgeOrigin::Wiring(id) => (id, "wire"),
+            EdgeOrigin::Order(id) => (id, "order"),
         };
         let effective = recursive_effective_id(owner(id), kind, id)?;
         if !ids.insert(effective.clone()) {
@@ -167,6 +168,15 @@ fn boundary_to_value(endpoint: &BoundaryTo) -> Value {
     }
 }
 
+fn anchor_ref_value(reference: &AnchorRef) -> Value {
+    match reference {
+        AnchorRef::Local(name) => Value::List(vec![text("local"), text(name)]),
+        AnchorRef::Child { child, anchor } => {
+            Value::List(vec![text("child"), text(child), text(anchor)])
+        }
+    }
+}
+
 // All alias hops have exact contracts; bodies plus the complete typed alias
 // topology therefore include their metadata, even for unused exports.
 fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result<Value, Failure> {
@@ -221,6 +231,40 @@ fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result
                         })
                         .collect(),
                 ),
+                Value::List(
+                    d.anchors
+                        .iter()
+                        .map(|a| {
+                            Value::List(vec![
+                                text(&a.name),
+                                text(match a.visibility {
+                                    AnchorVisibility::Public => "public",
+                                    AnchorVisibility::Private => "private",
+                                }),
+                                match &a.target {
+                                    AnchorTarget::LocalNode(node) => {
+                                        Value::List(vec![text("local-node"), text(node)])
+                                    }
+                                    AnchorTarget::Child { child, anchor } => {
+                                        Value::List(vec![text("child"), text(child), text(anchor)])
+                                    }
+                                },
+                            ])
+                        })
+                        .collect(),
+                ),
+                Value::List(
+                    d.orders
+                        .iter()
+                        .map(|o| {
+                            Value::List(vec![
+                                text(&o.name),
+                                anchor_ref_value(&o.before),
+                                anchor_ref_value(&o.after),
+                            ])
+                        })
+                        .collect(),
+                ),
             ]))
         })
         .collect::<Result<Vec<_>, Failure>>()?;
@@ -238,6 +282,8 @@ mod tests {
             |e| matches!(&e.kind, EdgeKind::Flow { to, .. } if to.node.starts_with("alpha/")),
         );
         let definition = GraphDefinition {
+            anchors: vec![],
+            orders: vec![],
             id: GraphDefinitionId::new("alpha/main").unwrap(),
             body,
             inputs: vec![],
@@ -361,6 +407,8 @@ mod tests {
             let (mut bodies, _) = super::super::tests::fixture();
             let body = bodies.remove(1);
             let leaf = GraphDefinition {
+                anchors: vec![],
+                orders: vec![],
                 id: GraphDefinitionId::new("beta/leaf").unwrap(),
                 inputs: vec![BoundaryInput {
                     port: body.nodes[0].inputs[0].clone(),
@@ -516,10 +564,146 @@ mod tests {
     }
 
     #[test]
+    fn anchor_orders_materialize_original_owner_exact_policy_and_identity_without_delivery() {
+        let (mut root, mut policy) = fixture();
+        let (mut bodies, _) = super::super::tests::fixture();
+        let leaf = GraphDefinition {
+            id: GraphDefinitionId::new("beta/leaf").unwrap(),
+            body: bodies.remove(1),
+            inputs: vec![],
+            outputs: vec![],
+            children: vec![],
+            wiring: vec![],
+            orders: vec![],
+            anchors: vec![GraphAnchor {
+                name: "ready".into(),
+                visibility: AnchorVisibility::Public,
+                target: AnchorTarget::LocalNode("beta/second".into()),
+            }],
+        };
+        let mut middle = leaf.clone();
+        middle.id = GraphDefinitionId::new("beta/middle").unwrap();
+        middle.children.push(GraphChild {
+            name: "leaf".into(),
+            definition: leaf.id.clone(),
+        });
+        middle.anchors[0].target = AnchorTarget::Child {
+            child: "leaf".into(),
+            anchor: "ready".into(),
+        };
+        root.children.push(GraphChild {
+            name: "nested".into(),
+            definition: middle.id.clone(),
+        });
+        root.anchors = vec![
+            GraphAnchor {
+                name: "before".into(),
+                visibility: AnchorVisibility::Private,
+                target: AnchorTarget::LocalNode("alpha/first".into()),
+            },
+            GraphAnchor {
+                name: "selected".into(),
+                visibility: AnchorVisibility::Public,
+                target: AnchorTarget::Child {
+                    child: "nested".into(),
+                    anchor: "ready".into(),
+                },
+            },
+        ];
+        root.orders.push(BoundaryOrder {
+            name: "wait".into(),
+            before: AnchorRef::Local("before".into()),
+            after: AnchorRef::Child {
+                child: "nested".into(),
+                anchor: "ready".into(),
+            },
+        });
+        let defs = [root.clone(), middle.clone(), leaf.clone()];
+        let expanded = lower_recursive(&defs, &root.id, budget()).unwrap();
+        let flat = materialize(&expanded).unwrap();
+        let id = LogicalId {
+            instance: GraphInstanceId::new(root.id.clone()),
+            authored: "wait".into(),
+        };
+        let effective = recursive_effective_id("alpha", "order", &id).unwrap();
+        assert_ne!(
+            effective,
+            recursive_effective_id("alpha", "wire", &id).unwrap()
+        );
+        let target = expanded
+            .resolve_anchor(&id.instance, &AnchorRef::Local("selected".into()))
+            .unwrap();
+        let target_id = recursive_effective_id("beta", "node", &target.node).unwrap();
+        assert!(flat[0].edges.iter().any(|e| e.id == effective
+            && matches!(&e.kind, EdgeKind::Order { after, .. } if *after == target_id)));
+        assert_eq!(flat[0].contributor, "alpha");
+        assert_eq!(expanded.orders[&id].after.len(), 2);
+        policy.sources.clear();
+        policy
+            .sources
+            .insert(flat[0].sources[0].id.clone(), flat[0].sources[0].security);
+        policy.delivery.clear();
+        let labels = policy.operations.values().next().unwrap().clone();
+        for owner in ["alpha", "beta"] {
+            policy
+                .operations
+                .insert((owner.into(), "example.api@1/run".into()), labels.clone());
+        }
+        let run = |p: &TrustedCompositionPolicy| {
+            super::super::compile(
+                &flat,
+                p,
+                |_| true,
+                |owner, _, _| {
+                    Ok((
+                        owner.into(),
+                        OperationSchema {
+                            name: "run".into(),
+                            request: phenix_contract::ValueSchema::String,
+                            response: phenix_contract::ValueSchema::String,
+                            error: phenix_contract::ValueSchema::String,
+                        },
+                        BTreeSet::from(["resource".into()]),
+                    ))
+                },
+            )
+        };
+        assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
+        policy.topology.insert(("alpha".into(), target_id));
+        assert!(
+            run(&policy).is_ok(),
+            "Order must not require a delivery grant"
+        );
+        let identity = metadata(&defs, &root.id).unwrap();
+        root.anchors[0].visibility = AnchorVisibility::Public;
+        assert_ne!(
+            identity,
+            metadata(&[root.clone(), middle.clone(), leaf.clone()], &root.id).unwrap()
+        );
+        root.anchors[0].visibility = AnchorVisibility::Private;
+        root.orders[0].after = AnchorRef::Local("selected".into());
+        let changed = [root.clone(), middle.clone(), leaf.clone()];
+        assert_eq!(
+            flat,
+            materialize(&lower_recursive(&changed, &root.id, budget()).unwrap()).unwrap()
+        );
+        assert_ne!(identity, metadata(&changed, &root.id).unwrap());
+        root.orders[0].after = defs[0].orders[0].after.clone();
+        root.anchors.reverse();
+        root.orders.reverse();
+        assert_eq!(
+            identity,
+            metadata(&[leaf, middle, root.clone()], &root.id).unwrap()
+        );
+    }
+
+    #[test]
     fn alias_kind_and_child_name_are_identity_metadata_not_flat_authority() {
         let (mut bodies, _) = super::super::tests::fixture();
         let body = bodies.remove(1);
         let mut leaf = GraphDefinition {
+            anchors: vec![],
+            orders: vec![],
             id: GraphDefinitionId::new("beta/leaf").unwrap(),
             body,
             inputs: vec![],
