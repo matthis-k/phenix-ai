@@ -335,6 +335,72 @@ fn sample() -> GraphContributionV2 {
 }
 
 #[test]
+fn invoke_each_has_closed_canonical_shape_and_finite_bounds() {
+    let mut graph = sample();
+    let node = &mut graph.nodes[1];
+    node.kind = NodeKind::InvokeEach {
+        collection: "Workers".into(),
+        operation: "model.api@1/run".into(),
+        include_self: true,
+        max: 256,
+    };
+    node.inputs[0].schema = ValueSchema::List(Box::new(ValueSchema::Struct(
+        [
+            ("route".into(), ValueSchema::U64),
+            ("input".into(), ValueSchema::String),
+        ]
+        .into(),
+    )));
+    node.outputs = vec![output(
+        "out",
+        ValueSchema::List(Box::new(ValueSchema::Tagged(
+            [
+                ("Ok".into(), Some(ValueSchema::Bool)),
+                ("Err".into(), Some(ValueSchema::String)),
+            ]
+            .into(),
+        ))),
+    )];
+    let bytes = graph.encode().unwrap();
+    assert_eq!(
+        GraphContributionV2::decode(&bytes)
+            .unwrap()
+            .encode()
+            .unwrap(),
+        bytes
+    );
+    for max in [0, 257, u32::MAX] {
+        let mut invalid = graph.clone();
+        let NodeKind::InvokeEach { max: bound, .. } = &mut invalid.nodes[1].kind else {
+            unreachable!()
+        };
+        *bound = max;
+        assert!(invalid.encode().is_err());
+    }
+    let mut invalid = graph.clone();
+    invalid.nodes[1].execution.on_domain_error = DomainErrorPolicy::FailRoot;
+    assert!(invalid.encode().is_err());
+    let mut invalid = graph.clone();
+    invalid.nodes[1].inputs[0].readiness = InputReadiness::Optional;
+    assert!(invalid.encode().is_err());
+    let mut invalid = graph.clone();
+    let ValueSchema::List(item) = &mut invalid.nodes[1].inputs[0].schema else {
+        unreachable!()
+    };
+    let ValueSchema::Struct(fields) = item.as_mut() else {
+        unreachable!()
+    };
+    fields.insert("provider".into(), ValueSchema::String);
+    assert!(invalid.encode().is_err());
+    let mut invalid = graph;
+    let NodeKind::InvokeEach { collection, .. } = &mut invalid.nodes[1].kind else {
+        unreachable!()
+    };
+    *collection = "Workers#0".into();
+    assert!(invalid.encode().is_err());
+}
+
+#[test]
 fn native_section_normalizes_frames_and_zero_pads() {
     let graph = sample();
     let section = graph.native_section().unwrap();

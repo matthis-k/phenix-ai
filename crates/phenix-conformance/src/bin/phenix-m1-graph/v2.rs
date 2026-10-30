@@ -7,6 +7,8 @@ use phenix_kernel::graph::v2::{
 use phenix_kernel::Outcome;
 use std::collections::BTreeMap;
 
+#[path = "v2/each.rs"]
+mod each;
 #[path = "v2/join.rs"]
 mod join;
 #[path = "v2/operators.rs"]
@@ -615,6 +617,7 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
     operators::run(packages, output);
     join::run(packages, output);
     readiness::run(packages, output);
+    each::run(packages, output);
     // Review regression: V1 evidence has a deliberately scoped label, while
     // separate native files attest the newer operator/Join/readiness subsets.
     // Reject missing files or accidental claims of full V2 / P1 parity.
@@ -624,6 +627,7 @@ pub(super) fn run(packages: &[String], definitions: &str, output: &Path) {
         ("graph-v2-join.json", "phenix.graph-v2-join.v1"),
         ("graph-v2-readiness.json", "phenix.graph-v2-readiness.v1"),
         ("graph-v2-recursive.json", "phenix.graph-v2-recursive.v1"),
+        ("graph-v2-each.json", "phenix.graph-v2-each.v1"),
     ];
     for (name, format) in evidence {
         let report: serde_json::Value =

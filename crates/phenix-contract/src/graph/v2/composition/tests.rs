@@ -230,6 +230,21 @@ fn recursive_expansion_is_canonical_and_preserves_occurrence_provenance() {
 }
 
 #[test]
+fn invoke_each_rejects_in_recursive_preflight_before_lowering_metadata() {
+    let (mut definitions, root, budget) = recursive_fixture();
+    definitions[1].body.nodes[0].kind = NodeKind::InvokeEach {
+        collection: "Workers".into(),
+        operation: "demo@1/run".into(),
+        include_self: false,
+        max: 8,
+    };
+    let failure = lower_recursive(&definitions, &root, budget).unwrap_err();
+    assert!(failure
+        .message
+        .contains("InvokeEach recursive lowering is unsupported"));
+}
+
+#[test]
 fn nested_local_wiring_and_owner_relative_invokes_are_preserved() {
     let (mut defs, root, budget) = recursive_fixture();
     // Make the shared leaf an Invoke owned by demo, placed under app twice.

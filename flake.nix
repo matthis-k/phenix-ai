@@ -101,7 +101,10 @@
             --describe ${describe}/bin/phenix-describe "$@"
         '';
       };
-      kernel = build "phenix-kernel" kernelSource;
+      kernel = (build "phenix-kernel" kernelSource).overrideAttrs {
+        doCheck = true;
+        cargoTestFlags = [ "-p" "phenix-kernel" "-p" "phenix-contract" ];
+      };
       conformanceBinary = build "phenix-conformance" conformanceSource;
       graphV2TurnBinary = conformanceBinary.overrideAttrs {
         cargoBuildFlags = [ "-p" "phenix-conformance" "--bin" "phenix-graph-v2-turn" ];

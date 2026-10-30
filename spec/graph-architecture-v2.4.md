@@ -1332,6 +1332,53 @@ A selected Model transport owns its HTTP/SSE or equivalent parser and its privat
 
 ### 10.5 Runtime tool fan-out boundary
 
+#### Priority B bounded InvokeEach freeze (30 October 2026)
+
+This addendum defines the intended next increment, not an implementation or
+acceptance claim. `InvokeEach` is one authored node with one complete
+`in: List<Struct{route: U64, input: T}>` and one
+`out: List<Tagged{Ok: U, Err: E}>`. Its declaration names one selected collection
+slot, one operation key, an optional self route, and a nonzero maximum membership
+of at most 256. Preparation freezes collection routes in selected ordinal order,
+followed by self when enabled. All routes must have identical request, response,
+error schemas and attested port security. Every route requires the declaring
+owner's existing operation grant. Route ordinals select existing authorizations;
+they never identify providers or grant authority. Collection cardinality and
+route order are generation-local and participate in the prepared identity.
+
+The complete finite list, every route ordinal and every request schema must be
+validated and charged against root limits before the first effect. Invalid
+membership, overflow or an out-of-range route fails without starting a branch.
+An empty list emits an empty result immediately. Branch identity is the
+host-issued original zero-based list ordinal supplementing root, activation and
+authored node. Branches retain independent existing dispatcher tickets and
+attenuated authority. Scheduling scans all eligible branches: a busy provider
+cannot block a distinct provider, and physical calls to the same provider remain
+serialized. There is no second executor, graph mutation or domain kernel API.
+
+Each admitted branch contributes exactly one typed Ok or Err outcome. Domain
+failure does not cancel successful siblings. Results collect in original list
+order, never completion order. Publication waits for every admitted outcome AND
+physical drain. Duplicate or late completions cannot replace an accepted outcome
+or publish twice. Infrastructure failure stops admission and cancels/drains all
+started siblings through the existing root ticket tree. Cancellation prevents
+publication, including late success. Existing root/generation/resource and
+classification checks apply independently to every invocation and delivery.
+
+Basic's V2 stages must separately admit/checkpoint the exact Model reply and
+pending call IDs before effects, map names through BasicTools' sealed catalog to
+route ordinals, invoke branches through InvokeEach, then validate exact ordered
+correlation and reconcile outcomes before preparing the deferred Model request.
+Branch handlers cannot concurrently mutate Basic's Running state. Infrastructure
+failure retains the durable pending calls for explicit recovery; domain failures
+become tool outcomes without erasing successful siblings. V1 remains unchanged.
+Recursive C1 lowering must either account for this operator completely or reject
+it explicitly before producing lowered metadata. Native controlled-pending
+distinct-provider overlap, reverse-order completion, mixed domain outcomes,
+empty/single/multiple admission, duplicate IDs/results, cancellation/late success,
+and the packaged normal multi-tool path are required acceptance, not implied by
+this freeze.
+
 The selected tools manager accepts a bounded `ToolCallBatch` with opaque model-provided *registered tool IDs plus arguments*, validates each against the attested, generation-local catalog, and routes execution through **preselected kernel-authorized contract bindings**. The model never supplies executable plugin identity or import index. Each tool call retains distinct ID, per-tool schema check, cancellation status, resource grant and result/error identity. The manager publishes a bounded batch result to the graph. This keeps P1 functionality without making static graph metadata depend on runtime MCP discovery. Runtime-discovered tools become usable only after authenticated, policy-approved registration/catalog refresh with verifiable executor bindings; dynamic code installation is a distinct generation/composition problem.
 
 If per-tool execution must become independently graph-editable, observable or joinable, define a generic `ForkMany<T>`/`CollectMany<T>` contract with bounded cardinality, closure and branch correlation. Do not add an agent-specific kernel tool fan-out API.

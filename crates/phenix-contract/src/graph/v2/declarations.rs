@@ -63,6 +63,12 @@ pub enum NodeKind {
         selector: String,
         operation: String,
     },
+    InvokeEach {
+        collection: String,
+        operation: String,
+        include_self: bool,
+        max: u32,
+    },
     Source {
         source: String,
     },
@@ -262,6 +268,52 @@ impl GraphContributionV2 {
                 port.schema.encode()?;
             }
             match &node.kind {
+                NodeKind::InvokeEach {
+                    collection,
+                    operation,
+                    max,
+                    ..
+                } => {
+                    if !identifier(collection)
+                        || !operation_key(operation)
+                        || !(1..=256).contains(max)
+                        || node.execution.on_domain_error != DomainErrorPolicy::RouteErr
+                        || node.inputs.len() != 1
+                        || node.inputs[0].name != "in"
+                        || node.inputs[0].readiness != InputReadiness::One
+                        || node.outputs.len() != 1
+                        || node.outputs[0].name != "out"
+                        || !node.inputs[0]
+                            .security
+                            .can_flow_to(node.outputs[0].security)
+                    {
+                        return Err(bad("invalid InvokeEach shape, bounds or security"));
+                    }
+                    let ValueSchema::List(item) = &node.inputs[0].schema else {
+                        return Err(bad("InvokeEach requires List input"));
+                    };
+                    let ValueSchema::Struct(fields) = item.as_ref() else {
+                        return Err(bad("InvokeEach requires route/input struct"));
+                    };
+                    if fields.len() != 2
+                        || fields.get("route") != Some(&ValueSchema::U64)
+                        || !fields.contains_key("input")
+                    {
+                        return Err(bad("InvokeEach requires exact route/input fields"));
+                    }
+                    let ValueSchema::List(outcome) = &node.outputs[0].schema else {
+                        return Err(bad("InvokeEach requires List output"));
+                    };
+                    let ValueSchema::Tagged(cases) = outcome.as_ref() else {
+                        return Err(bad("InvokeEach requires tagged outcomes"));
+                    };
+                    if cases.len() != 2
+                        || !cases.get("Ok").is_some_and(Option::is_some)
+                        || !cases.get("Err").is_some_and(Option::is_some)
+                    {
+                        return Err(bad("InvokeEach requires typed Ok/Err outcomes"));
+                    }
+                }
                 NodeKind::Invoke {
                     selector,
                     operation,
@@ -612,6 +664,18 @@ fn decode_source(value: Value) -> Result<SourceDecl, Failure> {
 }
 fn encode_node(n: &NodeDecl) -> Result<Value, Failure> {
     let kind = match &n.kind {
+        NodeKind::InvokeEach {
+            collection,
+            operation,
+            include_self,
+            max,
+        } => Value::map([
+            ("kind", string("invoke-each")),
+            ("collection", string(collection)),
+            ("operation", string(operation)),
+            ("include_self", Value::Bool(*include_self)),
+            ("max", Value::U64(u64::from(*max))),
+        ]),
         NodeKind::Invoke {
             selector,
             operation,
@@ -697,6 +761,20 @@ fn decode_node(value: Value) -> Result<NodeDecl, Failure> {
     let id = text(&mut f, "id")?;
     let mut k = fields(take(&mut f, "kind")?)?;
     let kind = match text(&mut k, "kind")?.as_str() {
+        "invoke-each" => NodeKind::InvokeEach {
+            collection: text(&mut k, "collection")?,
+            operation: text(&mut k, "operation")?,
+            include_self: match take(&mut k, "include_self")? {
+                Value::Bool(value) => value,
+                _ => return Err(bad("InvokeEach include_self must be Bool")),
+            },
+            max: match take(&mut k, "max")? {
+                Value::U64(value) => {
+                    u32::try_from(value).map_err(|_| bad("InvokeEach max exceeds u32"))?
+                }
+                _ => return Err(bad("InvokeEach max must be U64")),
+            },
+        },
         "invoke" => NodeKind::Invoke {
             selector: text(&mut k, "selector")?,
             operation: text(&mut k, "operation")?,

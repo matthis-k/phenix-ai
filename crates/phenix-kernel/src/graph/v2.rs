@@ -64,6 +64,7 @@ pub struct CompiledGraph {
     identity: String,
     declarations: Vec<GraphContributionV2>,
     routes: BTreeMap<String, String>,
+    each_routes: BTreeMap<String, Vec<(String, BTreeSet<String>)>>,
     predecessors: BTreeMap<String, BTreeSet<String>>,
     source_reachability: BTreeMap<String, BTreeSet<String>>,
     join_satisfiability: BTreeMap<String, Satisfiability>,
@@ -153,7 +154,7 @@ impl Prepared {
         declarations: &[GraphContributionV2],
         policy: &TrustedCompositionPolicy,
     ) -> Result<CompiledGraph, Failure> {
-        compile(
+        compile_each(
             declarations,
             policy,
             |owner| {
@@ -190,12 +191,52 @@ impl Prepared {
                     self.grants[&(owner.to_owned(), key.to_owned())].clone(),
                 ))
             },
+            |owner, slot| {
+                if !self.packages.get(owner).is_some_and(|package| {
+                    package.metadata().requires.iter().any(|import| {
+                        import.slot == slot
+                            && matches!(
+                                import.cardinality,
+                                phenix_contract::Cardinality::Many { .. }
+                            )
+                    })
+                }) {
+                    return Err(invalid("InvokeEach requires a declared Many collection"));
+                }
+                self.slot_counts
+                    .get(&(owner.into(), slot.into()))
+                    .copied()
+                    .ok_or_else(|| {
+                        fail(
+                            Code::MissingBinding,
+                            "InvokeEach collection is not selected",
+                        )
+                    })
+            },
         )
     }
 }
 
 // Private resolver seam for pure tests, not an alternate public selection API.
+#[cfg(test)]
 fn compile(
+    declarations: &[GraphContributionV2],
+    policy: &TrustedCompositionPolicy,
+    attested: impl FnMut(&str) -> bool,
+    resolve: impl FnMut(
+        &str,
+        &str,
+        &str,
+    ) -> Result<(String, OperationSchema, BTreeSet<String>), Failure>,
+) -> Result<CompiledGraph, Failure> {
+    compile_each(declarations, policy, attested, resolve, |_, _| {
+        Err(invalid(
+            "InvokeEach requires selected collection resolution",
+        ))
+    })
+}
+
+fn compile_each(
     declarations: &[GraphContributionV2],
     policy: &TrustedCompositionPolicy,
     mut attested: impl FnMut(&str) -> bool,
@@ -204,6 +245,7 @@ fn compile(
         &str,
         &str,
     ) -> Result<(String, OperationSchema, BTreeSet<String>), Failure>,
+    mut count: impl FnMut(&str, &str) -> Result<u64, Failure>,
 ) -> Result<CompiledGraph, Failure> {
     if declarations.len() > MAX_COUNT {
         return Err(invalid("aggregate graph-v2 declaration count limit"));
@@ -252,6 +294,7 @@ fn compile(
     let mut nodes = BTreeMap::new();
     let mut actions = BTreeSet::new();
     let mut routes = BTreeMap::new();
+    let mut each_routes = BTreeMap::new();
     let mut operation_grants = BTreeMap::new();
     let mut predecessors = BTreeMap::<String, BTreeSet<String>>::new();
     let mut flow_predecessors = predecessors.clone();
@@ -288,6 +331,60 @@ fn compile(
             }
         }
         for node in &declaration.nodes {
+            if let NodeKind::InvokeEach {
+                collection,
+                operation,
+                include_self,
+                ..
+            } = &node.kind
+            {
+                let count = count(&declaration.contributor, collection)?;
+                if count > 64 {
+                    return Err(invalid("InvokeEach selected route limit"));
+                }
+                let mut selected = Vec::new();
+                let phenix_contract::ValueSchema::List(item) = &node.inputs[0].schema else {
+                    unreachable!()
+                };
+                let phenix_contract::ValueSchema::Struct(fields) = item.as_ref() else {
+                    unreachable!()
+                };
+                let phenix_contract::ValueSchema::List(outcome) = &node.outputs[0].schema else {
+                    unreachable!()
+                };
+                let phenix_contract::ValueSchema::Tagged(cases) = outcome.as_ref() else {
+                    unreachable!()
+                };
+                for selector in (0..count)
+                    .map(|index| format!("{collection}#{index}"))
+                    .chain(include_self.then(String::new))
+                {
+                    let (provider, schema, resources) =
+                        resolve(&declaration.contributor, &selector, operation)?;
+                    if fields["input"] != schema.request
+                        || cases["Ok"].as_ref() != Some(&schema.response)
+                        || cases["Err"].as_ref() != Some(&schema.error)
+                    {
+                        return Err(fail(
+                            Code::SchemaRejected,
+                            "InvokeEach route schemas differ",
+                        ));
+                    }
+                    let labels = policy
+                        .operations
+                        .get(&(provider.clone(), operation.clone()))
+                        .ok_or_else(|| denied("missing InvokeEach operation attestation"))?;
+                    if node.inputs[0].security != labels.input
+                        || node.outputs[0].security != labels.ok
+                        || labels.ok != labels.err
+                        || !labels.input.can_flow_to(labels.ok)
+                    {
+                        return Err(denied("InvokeEach operation security mismatch"));
+                    }
+                    selected.push((provider, resources));
+                }
+                each_routes.insert(node.id.clone(), selected);
+            }
             predecessors.insert(node.id.clone(), BTreeSet::new());
             flow_predecessors.insert(node.id.clone(), BTreeSet::new());
             source_reachability.insert(
@@ -390,7 +487,11 @@ fn compile(
                     // when both authored nodes belong to one graph contributor.
                     let source_principal = routes.get(&from.node).unwrap_or(source_owner);
                     let target_principal = routes.get(&to.node).unwrap_or(target_owner);
-                    if source_owner != target_owner || source_principal != target_principal {
+                    if source_owner != target_owner
+                        || source_principal != target_principal
+                        || each_routes.contains_key(&from.node)
+                        || each_routes.contains_key(&to.node)
+                    {
                         let key = (
                             from.node.clone(),
                             from.port.clone(),
@@ -576,7 +677,29 @@ fn compile(
             .collect(),
     );
     let mut bytes = b"phenix.graph.offline-plan.v2\0".to_vec();
-    bytes.extend(Value::List(vec![canonical, route_values, policy_value(policy)]).encode()?);
+    let each_values = Value::List(
+        each_routes
+            .iter()
+            .map(|(node, routes)| {
+                Value::List(vec![
+                    text(node),
+                    Value::List(
+                        routes
+                            .iter()
+                            .map(|(provider, resources)| {
+                                Value::List(vec![text(provider), strings(resources)])
+                            })
+                            .collect(),
+                    ),
+                ])
+            })
+            .collect(),
+    );
+    let mut identity = vec![canonical, route_values, policy_value(policy)];
+    if !each_routes.is_empty() {
+        identity.push(each_values);
+    }
+    bytes.extend(Value::List(identity).encode()?);
     for edges in input_edges.values_mut() {
         edges.sort();
     }
@@ -585,6 +708,7 @@ fn compile(
         identity: phenix_artifact::digest(&bytes),
         declarations,
         routes,
+        each_routes,
         predecessors,
         source_reachability,
         join_satisfiability,

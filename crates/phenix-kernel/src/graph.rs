@@ -411,7 +411,7 @@ impl crate::resolve::Prepared {
     }
 }
 
-/// One completed serial graph operation. V2 identity is (root, activation, node).
+/// One completed graph operation. V2 identity is (root, activation, node, branch).
 /// Root IDs are kernel-local; activation IDs are deterministic within that root.
 #[derive(Debug, PartialEq, Eq)]
 pub struct GraphStep {
@@ -419,6 +419,7 @@ pub struct GraphStep {
     /// V2 initial activation is 0, then deferred admissions increase monotonically.
     /// V1 has no corresponding activation identity.
     pub activation: Option<u64>,
+    pub branch: Option<u32>,
     pub node: String,
     pub outcome: Outcome,
 }
@@ -435,6 +436,7 @@ pub struct GraphUpdate<'a> {
     /// V2 node-event activation; None for V1 and root lifecycle events.
     /// Together with root and the authored node, correlates pending work to steps.
     pub activation: Option<u64>,
+    pub branch: Option<u32>,
     pub event: GraphEvent<'a>,
 }
 
@@ -805,8 +807,27 @@ impl GraphExecution<'_> {
         })
     }
     fn emit(&self, event: GraphEvent<'_>, observe: &mut impl FnMut(&GraphUpdate<'_>)) {
+        let branch = match &event {
+            GraphEvent::NodePending { node } => self
+                .v2
+                .as_ref()
+                .and_then(|wave| wave.branch_identity(node).map(|(_, ordinal)| ordinal)),
+            GraphEvent::NodeFinished(step) => step.branch,
+            _ => None,
+        };
+        let event = match event {
+            GraphEvent::NodePending { node } => GraphEvent::NodePending {
+                node: self
+                    .v2
+                    .as_ref()
+                    .and_then(|wave| wave.branch_identity(node))
+                    .map_or(node, |(authored, _)| authored),
+            },
+            event => event,
+        };
         observe(&GraphUpdate {
             root: self.root.id,
+            branch,
             activation: match &event {
                 GraphEvent::NodeFinished(_)
                 | GraphEvent::NodePending { .. }
@@ -822,9 +843,16 @@ impl GraphExecution<'_> {
         result: Result<Outcome, Failure>,
         observe: &mut impl FnMut(&GraphUpdate<'_>),
     ) {
+        if self.v2.as_ref().is_some_and(|wave| wave.completed(&node)) {
+            return;
+        }
         match result {
             Ok(outcome) => {
                 if let Some(wave) = &mut self.v2 {
+                    let (authored, branch) = wave
+                        .branch_identity(&node)
+                        .map(|(node, ordinal)| (node.to_owned(), Some(ordinal)))
+                        .unwrap_or_else(|| (node.clone(), None));
                     if matches!(outcome, Outcome::Domain(_)) {
                         self.had_domain = true;
                     }
@@ -843,7 +871,8 @@ impl GraphExecution<'_> {
                     self.completed.push(GraphStep {
                         root: self.root.id,
                         activation: Some(wave.id),
-                        node: node.clone(),
+                        node: authored,
+                        branch,
                         outcome,
                     });
                     // V2 results may be protected. Only trusted steps() retains
@@ -864,6 +893,7 @@ impl GraphExecution<'_> {
                 self.completed.push(GraphStep {
                     root: self.root.id,
                     activation: None,
+                    branch: None,
                     node,
                     outcome,
                 });
