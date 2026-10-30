@@ -41,6 +41,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     provide(Task, slot = "task"),
     provide(SlowTask, slot = "slow"),
     provide(ReferenceSource, slot = "reference_source"),
+    require(SlowTask, slot = "Workers", many(min = 0)),
     profile = "state",
     graph(GRAPH)
 )]
@@ -126,6 +127,7 @@ mod provider {
 
     #[pending(SlowTask::run)]
     fn slow(state: &mut State, input: Start) -> live::PendingResult<String, String> {
+        assert!(state.worker.is_none());
         let (stop, wait) = std::sync::mpsc::channel();
         let (ready, started) = std::sync::mpsc::sync_channel(0);
         let worker = std::thread::spawn(move || {
@@ -139,6 +141,19 @@ mod provider {
         state.input = Some(input);
         state.polls = 0;
         state.cancelled = false;
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_A_EACH_CONTROL") {
+            use std::io::Write;
+            writeln!(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(std::path::Path::new(&path).with_extension("calls"))
+                    .unwrap(),
+                "{}",
+                state.input.as_ref().unwrap().text
+            )
+            .unwrap();
+        }
         live::PendingResult::Pending
     }
 
@@ -151,6 +166,13 @@ mod provider {
 
     #[poll(SlowTask::run)]
     fn poll(state: &mut State, host: &live::Host<'_>) -> live::PendingResult<String, String> {
+        if let Some(path) = std::env::var_os("PHENIX_GRAPH_A_EACH_CONTROL") {
+            let control = std::fs::read_to_string(path).unwrap();
+            if control.trim() != if state.cancelled { "drain" } else { "release" } {
+                return live::PendingResult::Pending;
+            }
+            state.polls = 3;
+        }
         state.polls += 1;
         if state.cancelled {
             assert!(
@@ -173,6 +195,9 @@ mod provider {
     #[cancel(SlowTask::run)]
     fn cancel(state: &mut State) -> Result<bool, Failure> {
         state.cancelled = true;
+        if std::env::var_os("PHENIX_GRAPH_A_EACH_CONTROL").is_some() {
+            return Ok(false);
+        }
         if state
             .input
             .as_ref()

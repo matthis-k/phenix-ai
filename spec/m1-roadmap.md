@@ -45,6 +45,19 @@ left intact. #1171 and the Python experiments remain isolated.
 | #1212: activation observation | `baba485426aa61f17044e1071b02148ab2602890` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40975538667), coordinator 23m32s. Trusted `(root, activation, node)` correlation, once-only pending observations, model activations 0/1/2. Not durable identity or concurrent-root isolation. |
 | #1213: packaged cancellation | `20f3ad16d473696085123aa076d57512d409e3e0` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40981365668), coordinator 20m48s. Physical-worker-witnessed initial/continuation cancellation, same-host/session recovery and stdin EOF after cancellation held until drain. |
 
+**Priority B worktree increment (30 October 2026, base #1214 `05041e75c`):**
+The v2.4 section 10.5 InvokeEach contract is frozen and initial contract/kernel
+source is present: selected homogeneous collection routes, bounded atomic list
+admission, branch ordinals, existing dispatcher/ticket scheduling and ordered
+typed collection after drain. C1 recursive lowering explicitly rejects this
+operator. Source tests cover canonical shape, route attestations/delivery denial,
+admission limits and reverse/duplicate domain outcomes. The existing kernel Nix
+derivation now requests kernel/contract unit tests. No local Cargo/Nix compilation
+or native acceptance was run. Basic's V2 tool stage still calls the synchronous
+loop; domain admission/reconciliation, native distinct-provider controlled tools,
+and packaged multi-tool acceptance remain unimplemented. This is NOT completed
+Priority B, verified native fanout, or a publishable end-to-end increment.
+
 The packaged JSONL cancellation acceptance is distinct from the controlled native
 fixtures and does not prove arbitrary direct kernel shutdown during pending work.
 A dependent deferred-gap recovery

@@ -15,6 +15,18 @@ struct DeferredActivation {
     resources: BTreeSet<String>,
 }
 
+struct EachBranch {
+    key: String,
+    route: usize,
+    request: Value,
+    started: bool,
+    outcome: Option<Value>,
+}
+
+struct EachBatch {
+    branches: Vec<EachBranch>,
+}
+
 // Deterministic work count, not wall-clock timing.
 #[cfg(test)]
 thread_local! {
@@ -89,6 +101,8 @@ pub(in crate::graph) struct Wave {
     causes: BTreeMap<String, ClosureEvidence>,
     values: usize,
     bytes: usize,
+    each: BTreeMap<String, EachBatch>,
+    branch_keys: BTreeMap<String, (String, u32)>,
 }
 
 impl Wave {
@@ -146,6 +160,8 @@ impl Wave {
             causes: BTreeMap::new(),
             values: 0,
             bytes: 0,
+            each: BTreeMap::new(),
+            branch_keys: BTreeMap::new(),
         })
     }
 
@@ -160,7 +176,9 @@ impl Wave {
         if self.done.contains(node) {
             return Ok(());
         }
-        self.executions += 1;
+        if !self.each.contains_key(node) {
+            self.executions += 1;
+        }
         if self.executions > MAX_ROOT_NODES {
             return Err(fail(
                 Code::InfrastructureFailure,
@@ -235,6 +253,8 @@ impl Wave {
                 let (owner, definition) = &self.nodes[node];
                 let target_owner = &self.nodes[&to.node].0;
                 if owner != target_owner
+                    || graph.each_routes.contains_key(node)
+                    || graph.each_routes.contains_key(&to.node)
                     || graph.routes.get(node).unwrap_or(owner)
                         != graph.routes.get(&to.node).unwrap_or(target_owner)
                 {
@@ -349,6 +369,8 @@ impl Wave {
                 let (target_owner, _) = &self.nodes[&to.node];
                 let mut resources = inherited.clone();
                 if owner != target_owner
+                    || graph.each_routes.contains_key(node)
+                    || graph.each_routes.contains_key(&to.node)
                     || graph.routes.get(node).unwrap_or(owner)
                         != graph.routes.get(&to.node).unwrap_or(target_owner)
                 {
@@ -418,6 +440,33 @@ impl Wave {
         node: &str,
         outcome: &Outcome,
     ) -> Result<bool, Failure> {
+        if self.completed(node) {
+            return Ok(false);
+        }
+        if let Some((authored, ordinal)) = self.branch_keys.get(node) {
+            let branch = &mut self.each.get_mut(authored).unwrap().branches[*ordinal as usize];
+            if branch.outcome.is_none() {
+                let value = match outcome {
+                    Outcome::Success(value) | Outcome::Domain(value) => value,
+                };
+                self.values += 1;
+                self.bytes = self
+                    .bytes
+                    .checked_add(value.encode()?.len())
+                    .ok_or_else(|| {
+                        fail(Code::InfrastructureFailure, "InvokeEach result byte limit")
+                    })?;
+                if self.values > MAX_ROOT_VALUES || self.bytes > MAX_ROOT_BYTES {
+                    return Err(fail(Code::InfrastructureFailure, "InvokeEach result limit"));
+                }
+                let (tag, value) = match outcome {
+                    Outcome::Success(value) => ("Ok", value),
+                    Outcome::Domain(value) => ("Err", value),
+                };
+                branch.outcome = Some(Value::map([(tag, value.clone())]));
+            }
+            return Ok(false);
+        }
         let policy = self.nodes[node].1.execution.on_domain_error;
         match outcome {
             Outcome::Success(value) => {
@@ -518,6 +567,101 @@ impl Wave {
             )
         })?;
         Ok(Resolution::Value(Some(Value::Map(fields)), resources))
+    }
+
+    pub(in crate::graph) fn branch_identity(&self, key: &str) -> Option<(&str, u32)> {
+        self.branch_keys
+            .get(key)
+            .map(|(node, ordinal)| (node.as_str(), *ordinal))
+    }
+
+    pub(in crate::graph) fn completed(&self, key: &str) -> bool {
+        if let Some((node, ordinal)) = self.branch_keys.get(key) {
+            self.done.contains(node)
+                || self
+                    .each
+                    .get(node)
+                    .is_none_or(|batch| batch.branches[*ordinal as usize].outcome.is_some())
+        } else {
+            self.done.contains(key)
+        }
+    }
+
+    fn admit_each(
+        &mut self,
+        graph: &CompiledGraph,
+        scope: &ScopedRequest,
+        node: &NodeDecl,
+        request: &Value,
+        mut resources: BTreeSet<String>,
+    ) -> Result<(), Failure> {
+        let NodeKind::InvokeEach { max, .. } = node.kind else {
+            unreachable!()
+        };
+        let Value::List(items) = request else {
+            return Err(invalid("InvokeEach input is not a list"));
+        };
+        if items.len() > max as usize || !node.inputs[0].schema.accepts(request) {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "InvokeEach membership admission rejected",
+            ));
+        }
+        let mut branches = Vec::new();
+        let bytes = request.encode()?.len();
+        if self.executions + items.len() + 1 > MAX_ROOT_NODES
+            || self.values + items.len() > MAX_ROOT_VALUES
+            || self
+                .bytes
+                .checked_add(bytes)
+                .is_none_or(|n| n > MAX_ROOT_BYTES)
+        {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "InvokeEach root admission limit",
+            ));
+        }
+        for (ordinal, item) in items.iter().enumerate() {
+            let Value::Map(fields) = item else {
+                unreachable!()
+            };
+            let Value::U64(route) = fields["route"] else {
+                unreachable!()
+            };
+            let route = usize::try_from(route)
+                .ok()
+                .filter(|route| *route < graph.each_routes[&node.id].len())
+                .ok_or_else(|| denied("InvokeEach route outside prepared authorizations"))?;
+            resources.retain(|resource| graph.each_routes[&node.id][route].1.contains(resource));
+            branches.push(EachBranch {
+                key: format!("$each:{}:{ordinal}", node.id),
+                route,
+                request: fields["input"].clone(),
+                started: false,
+                outcome: None,
+            });
+        }
+        if resources.is_empty()
+            || scope
+                .resource
+                .as_ref()
+                .is_some_and(|resource| !resources.contains(resource))
+        {
+            return Err(denied(
+                "InvokeEach collection outside common effective route scope",
+            ));
+        }
+        self.executions += branches.len() + 1;
+        self.values += branches.len();
+        self.bytes += bytes;
+        for (ordinal, branch) in branches.iter().enumerate() {
+            self.branch_keys
+                .insert(branch.key.clone(), (node.id.clone(), ordinal as u32));
+        }
+        self.resources.insert(node.id.clone(), resources);
+        self.started.insert(node.id.clone());
+        self.each.insert(node.id.clone(), EachBatch { branches });
+        Ok(())
     }
 
     // Terminal arrivals never change: once a required input closes, this remains
@@ -745,6 +889,95 @@ impl Wave {
 }
 
 impl GraphExecution<'_> {
+    fn pump_each(
+        &mut self,
+        observe: &mut impl FnMut(&crate::graph::GraphUpdate<'_>),
+    ) -> Result<(), Failure> {
+        let nodes: Vec<_> = self.v2.as_ref().unwrap().each.keys().cloned().collect();
+        for id in nodes {
+            let count = self.v2.as_ref().unwrap().each[&id].branches.len();
+            for ordinal in 0..count {
+                if self.stopped {
+                    return Ok(());
+                }
+                let wave = self.v2.as_mut().unwrap();
+                let branch = &mut wave.each.get_mut(&id).unwrap().branches[ordinal];
+                if branch.started {
+                    continue;
+                }
+                let graph = self.root.kernel.prepared.graph_v2.as_ref().unwrap();
+                let (provider, grants) = &graph.each_routes[&id][branch.route];
+                if self
+                    .root
+                    .kernel
+                    .state
+                    .borrow()
+                    .tickets
+                    .values()
+                    .any(|ticket| !ticket.quiescent && &ticket.selection.provider == provider)
+                {
+                    continue;
+                }
+                let (owner, node) = &wave.nodes[&id];
+                let NodeKind::InvokeEach { operation, .. } = &node.kind else {
+                    unreachable!()
+                };
+                let (interface, operation) = operation.split_once('/').unwrap();
+                let selection = Selection {
+                    interface: interface.into(),
+                    operation: operation.into(),
+                    provider: provider.clone(),
+                };
+                let resources = wave.resources[&id].intersection(grants).cloned().collect();
+                let key = branch.key.clone();
+                branch.started = true;
+                let original =
+                    std::mem::replace(&mut self.root.scope.authority.resources, resources);
+                let result =
+                    self.root
+                        .call_graph(owner, &selection, &branch.request, self.pending_allowed);
+                self.root.scope.authority.resources = original;
+                match result {
+                    Ok(Call::Ready(outcome)) => self.finish_node(key, Ok(outcome), observe),
+                    Ok(Call::Pending(ticket)) => {
+                        let ready = self.root.kernel.state.borrow().tickets[&ticket.id].logical
+                            != crate::pending::Logical::Pending;
+                        if ready {
+                            self.accept_poll(key, ticket, observe)?;
+                        } else {
+                            self.emit(
+                                crate::graph::GraphEvent::NodePending { node: &key },
+                                observe,
+                            );
+                            self.pending.insert(key, ticket);
+                        }
+                    }
+                    Err(failure) => self.finish_node(key, Err(failure), observe),
+                }
+            }
+            if self.stopped {
+                return Ok(());
+            }
+            let wave = self.v2.as_mut().unwrap();
+            let batch = &wave.each[&id];
+            if self.draining.is_empty()
+                && batch.branches.iter().all(|branch| branch.outcome.is_some())
+            {
+                let value = Value::List(
+                    batch
+                        .branches
+                        .iter()
+                        .map(|branch| branch.outcome.clone().unwrap())
+                        .collect(),
+                );
+                let graph = self.root.kernel.prepared.graph_v2.as_ref().unwrap();
+                wave.deliver(graph, &self.root.scope, &id, Some(("out", &value)), false)?;
+                wave.each.remove(&id);
+                self.waiting.remove(&id);
+            }
+        }
+        Ok(())
+    }
     pub(in crate::graph) fn advance_v2(&mut self) -> Result<(), Failure> {
         if self.stopped
             || !self.waiting.is_empty()
@@ -859,6 +1092,10 @@ impl GraphExecution<'_> {
                         self.waiting.remove(id);
                         continue;
                     }
+                    if matches!(node.kind, NodeKind::InvokeEach { .. }) {
+                        wave.admit_each(graph, &self.root.scope, &node, &request, resources)?;
+                        continue;
+                    }
                     let NodeKind::Invoke { operation, .. } = &node.kind else {
                         unreachable!()
                     };
@@ -915,6 +1152,7 @@ impl GraphExecution<'_> {
                 }
             }
         }
+        self.pump_each(observe)?;
         Ok(())
     }
 }
@@ -922,3 +1160,6 @@ impl GraphExecution<'_> {
 #[cfg(test)]
 #[path = "execute_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod each_tests;
