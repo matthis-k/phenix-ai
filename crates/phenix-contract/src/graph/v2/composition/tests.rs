@@ -39,17 +39,17 @@ fn definition() -> GraphDefinition {
         },
         inputs: vec![BoundaryInput {
             port: input,
-            target: InPortRef {
+            target: BoundaryTo::Local(InPortRef {
                 node: "demo/filter".into(),
                 port: "in".into(),
-            },
+            }),
         }],
         outputs: vec![BoundaryOutput {
             port: output,
-            source: OutPortRef {
+            source: BoundaryFrom::Local(OutPortRef {
                 node: "demo/filter".into(),
                 port: "out".into(),
-            },
+            }),
         }],
         children: vec![],
         wiring: vec![],
@@ -103,10 +103,16 @@ fn boundaries_reject_missing_duplicate_and_mismatched_contracts() {
     let base = definition();
     base.validate().unwrap();
     let mut d = base.clone();
-    d.inputs[0].target.port = "missing".into();
+    d.inputs[0].target = BoundaryTo::Local(InPortRef {
+        node: "demo/filter".into(),
+        port: "missing".into(),
+    });
     assert!(d.validate().is_err());
     let mut d = base.clone();
-    d.outputs[0].source.node = "other/filter".into();
+    d.outputs[0].source = BoundaryFrom::Local(OutPortRef {
+        node: "other/filter".into(),
+        port: "out".into(),
+    });
     assert!(d.validate().is_err());
     let mut d = base.clone();
     d.inputs.push(d.inputs[0].clone());
@@ -204,6 +210,262 @@ fn recursive_fixture() -> (Vec<GraphDefinition>, GraphDefinitionId, ExpansionBud
     )
 }
 
+fn nested_alias_fixture() -> (Vec<GraphDefinition>, GraphDefinitionId, ExpansionBudget) {
+    let (mut defs, root, _) = recursive_fixture();
+    let mut middle = defs[1].clone();
+    middle.id = GraphDefinitionId::new("demo/middle").unwrap();
+    middle.body.nodes.clear();
+    middle.children = vec![GraphChild {
+        name: "leaf".into(),
+        definition: defs[1].id.clone(),
+    }];
+    middle.inputs[0].target = BoundaryTo::Child {
+        child: "leaf".into(),
+        port: "in".into(),
+    };
+    middle.outputs[0].source = BoundaryFrom::Child {
+        child: "leaf".into(),
+        port: "out".into(),
+    };
+    for child in &mut defs[0].children {
+        child.definition = middle.id.clone();
+    }
+    defs[0].inputs = vec![BoundaryInput {
+        port: middle.inputs[0].port.clone(),
+        target: BoundaryTo::Child {
+            child: "left".into(),
+            port: "in".into(),
+        },
+    }];
+    defs[0].outputs = vec![BoundaryOutput {
+        port: middle.outputs[0].port.clone(),
+        source: BoundaryFrom::Child {
+            child: "right".into(),
+            port: "out".into(),
+        },
+    }];
+    defs.push(middle);
+    (
+        defs,
+        root,
+        ExpansionBudget {
+            depth: 3,
+            occurrences: 5,
+            items: 21,
+        },
+    )
+}
+
+#[test]
+fn multilevel_aliases_preserve_every_hop_and_canonical_occurrence_identity() {
+    let (mut defs, root, budget) = nested_alias_fixture();
+    let graph = lower_recursive(&defs, &root, budget).unwrap();
+    let instance = GraphInstanceId::new(root.clone());
+    for (maps, name, side) in [
+        (&graph.inputs, "in", "left"),
+        (&graph.outputs, "out", "right"),
+    ] {
+        let key = LogicalId {
+            instance: instance.clone(),
+            authored: name.into(),
+        };
+        let provenance = &maps[&key];
+        assert_eq!(provenance.endpoint.node.instance.path(), [side, "leaf"]);
+        assert_eq!(provenance.endpoint.node.authored, "demo/filter");
+        assert_eq!(
+            provenance.aliases,
+            vec![
+                key,
+                LogicalId {
+                    instance: instance.child(side).unwrap(),
+                    authored: name.into()
+                },
+                LogicalId {
+                    instance: instance.child(side).unwrap().child("leaf").unwrap(),
+                    authored: name.into()
+                },
+            ]
+        );
+        assert_eq!(maps[&provenance.aliases[1]].aliases.len(), 2);
+        assert_eq!(maps[&provenance.aliases[2]].aliases.len(), 1);
+    }
+    let origin = EdgeOrigin::Wiring(LogicalId {
+        instance,
+        authored: "connect".into(),
+    });
+    assert!(
+        matches!(&graph.edges[&origin], LogicalEdge::Flow { from, to }
+        if from.node.instance.path() == ["left", "leaf"] && to.node.instance.path() == ["right", "leaf"] && from.node != to.node)
+    );
+    for d in &mut defs {
+        d.children.reverse();
+        d.inputs.reverse();
+        d.outputs.reverse();
+        d.wiring.reverse();
+    }
+    defs.reverse();
+    assert_eq!(graph, lower_recursive(&defs, &root, budget).unwrap());
+    for limited in [
+        ExpansionBudget { depth: 2, ..budget },
+        ExpansionBudget {
+            occurrences: 4,
+            ..budget
+        },
+        ExpansionBudget {
+            items: 20,
+            ..budget
+        },
+    ] {
+        assert!(lower_recursive(&defs, &root, limited).is_err());
+    }
+}
+
+#[test]
+fn nested_aliases_reject_malformed_and_unused_links_before_expansion() {
+    let (base, root, budget) = nested_alias_fixture();
+    for case in 0..13 {
+        let mut defs = base.clone();
+        match case {
+            0 => {
+                defs[2].inputs[0].target = BoundaryTo::Child {
+                    child: "missing".into(),
+                    port: "in".into(),
+                }
+            }
+            1 => {
+                defs[2].inputs[0].target = BoundaryTo::Child {
+                    child: "leaf".into(),
+                    port: "private".into(),
+                }
+            }
+            2 => {
+                defs[2].outputs[0].source = BoundaryFrom::Child {
+                    child: "leaf".into(),
+                    port: "private".into(),
+                }
+            }
+            3 => defs[2].inputs[0].port.schema = ValueSchema::String,
+            4 => defs[2].inputs[0].port.readiness = InputReadiness::Optional,
+            5 => defs[2].inputs[0].port.security.integrity = IntegrityClass::Trusted,
+            6 => defs[2].outputs[0].port.schema = ValueSchema::String,
+            7 => defs[2].outputs[0].port.security.confidentiality = Classification::Secret,
+            8 => {
+                defs[2].inputs[0].target = BoundaryTo::Child {
+                    child: "leaf/nested".into(),
+                    port: "in".into(),
+                }
+            }
+            9 => defs[2].children[0].definition = defs[2].id.clone(),
+            10 => defs[2].children[0].definition = GraphDefinitionId::new("lost/leaf").unwrap(),
+            11 => {
+                // An actual body port is private unless exported under this name.
+                defs[1].inputs[0].port.name = "public".into();
+            }
+            12 => {
+                defs[2].inputs[0].target = BoundaryTo::Local(InPortRef {
+                    node: "demo/filter".into(),
+                    port: "in".into(),
+                })
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            lower_recursive(&defs, &root, budget).is_err(),
+            "case {case}"
+        );
+        // The malformed definitions remain rejected when outside the selected closure.
+        let unused_root = GraphDefinition {
+            id: GraphDefinitionId::new("app/unused").unwrap(),
+            body: GraphContributionV2 {
+                contributor: "app".into(),
+                nodes: vec![],
+                sources: vec![],
+                edges: vec![],
+                patches: vec![],
+            },
+            inputs: vec![],
+            outputs: vec![],
+            children: vec![],
+            wiring: vec![],
+        };
+        let unused = unused_root.id.clone();
+        defs.push(unused_root);
+        assert!(
+            lower_recursive(&defs, &unused, budget).is_err(),
+            "unused case {case}"
+        );
+    }
+}
+
+#[test]
+fn nested_feedback_is_deferred_not_an_instantaneous_cycle() {
+    let (mut defs, root, budget) = nested_alias_fixture();
+    let mut reverse = defs[0].wiring[0].clone();
+    reverse.name = "reverse".into();
+    reverse.from = BoundaryFrom::Child {
+        child: "right".into(),
+        port: "out".into(),
+    };
+    reverse.to = BoundaryTo::Child {
+        child: "left".into(),
+        port: "in".into(),
+    };
+    reverse.next = Some(DeferredWave::Next);
+    defs[0].wiring.push(reverse);
+    let budget = ExpansionBudget {
+        items: 22,
+        ..budget
+    };
+    lower_recursive(&defs, &root, budget).unwrap();
+    defs[0].wiring[1].next = None;
+    assert_eq!(
+        lower_recursive(&defs, &root, budget).unwrap_err().message,
+        "recursive dependency cycle"
+    );
+}
+
+#[test]
+fn retained_alias_paths_exhaust_bytes_before_depth_or_item_limits() {
+    for count in [4, 32] {
+        let mut defs = Vec::new();
+        for i in 0..count {
+            let mut d = definition();
+            d.id = GraphDefinitionId::new(&format!("demo/d{i}")).unwrap();
+            if i + 1 < count {
+                let child = "x".repeat(256);
+                d.body.nodes.clear();
+                d.children.push(GraphChild {
+                    name: child.clone(),
+                    definition: GraphDefinitionId::new(&format!("demo/d{}", i + 1)).unwrap(),
+                });
+                d.inputs[0].target = BoundaryTo::Child {
+                    child: child.clone(),
+                    port: "in".into(),
+                };
+                d.outputs[0].source = BoundaryFrom::Child {
+                    child,
+                    port: "out".into(),
+                };
+            }
+            defs.push(d);
+        }
+        let result = lower_recursive(
+            &defs,
+            &defs[0].id,
+            ExpansionBudget {
+                depth: count,
+                occurrences: count,
+                items: crate::MAX_COUNT,
+            },
+        );
+        if count == 4 {
+            result.unwrap();
+        } else {
+            assert_eq!(result.unwrap_err().message, "recursive byte budget");
+        }
+    }
+}
+
 #[test]
 fn recursive_expansion_is_canonical_and_preserves_occurrence_provenance() {
     let (mut defs, root, budget) = recursive_fixture();
@@ -257,7 +519,10 @@ fn nested_local_wiring_and_owner_relative_invokes_are_preserved() {
     err.name = "err".into();
     leaf.body.nodes[0].outputs[0].name = "ok".into();
     leaf.body.nodes[0].outputs.push(err);
-    leaf.outputs[0].source.port = "ok".into();
+    leaf.outputs[0].source = BoundaryFrom::Local(OutPortRef {
+        node: "demo/filter".into(),
+        port: "ok".into(),
+    });
     let mut middle = definition();
     middle.id = GraphDefinitionId::new("demo/middle").unwrap();
     middle.children = vec![GraphChild {
@@ -267,7 +532,7 @@ fn nested_local_wiring_and_owner_relative_invokes_are_preserved() {
     middle.wiring = vec![BoundaryFlow {
         next: None,
         name: "into".into(),
-        from: BoundaryFrom::Local(middle.outputs[0].source.clone()),
+        from: middle.outputs[0].source.clone(),
         to: BoundaryTo::Child {
             child: "nested".into(),
             port: "in".into(),
@@ -295,7 +560,7 @@ fn recursive_budgets_have_exact_boundaries() {
     let exact = ExpansionBudget {
         depth: 2,
         occurrences: 3,
-        items: 3,
+        items: 7,
     };
     lower_recursive(&defs, &root, exact).unwrap();
     for budget in [
@@ -304,7 +569,7 @@ fn recursive_budgets_have_exact_boundaries() {
             occurrences: 2,
             ..exact
         },
-        ExpansionBudget { items: 2, ..exact },
+        ExpansionBudget { items: 6, ..exact },
         ExpansionBudget { depth: 65, ..exact },
         ExpansionBudget {
             occurrences: crate::MAX_COUNT + 1,
@@ -360,7 +625,10 @@ fn repeated_payloads_exhaust_bytes_independently_of_items() {
     leaf.body.nodes[0].inputs[0].schema = ValueSchema::Struct(Default::default());
     leaf.body.nodes[0].inputs[0].readiness = InputReadiness::One;
     leaf.inputs[0].port = leaf.body.nodes[0].inputs[0].clone();
-    leaf.inputs[0].target.port = "start".into();
+    leaf.inputs[0].target = BoundaryTo::Local(InPortRef {
+        node: "demo/filter".into(),
+        port: "start".into(),
+    });
     leaf.body.nodes[0].outputs[0].schema = ValueSchema::Bytes;
     leaf.outputs[0].port.schema = ValueSchema::Bytes;
     leaf.body.nodes[0].kind = NodeKind::Constant {
@@ -370,7 +638,7 @@ fn repeated_payloads_exhaust_bytes_independently_of_items() {
     let budget = ExpansionBudget {
         depth: 2,
         occurrences: 33,
-        items: 32,
+        items: 96,
     };
     lower_recursive(&defs, &root, budget).unwrap();
     defs[0].children = (0..32)
@@ -396,11 +664,17 @@ fn recursive_api_is_publicly_exported() {
 #[test]
 fn deferred_internal_and_boundary_feedback_preserve_origins_without_same_wave_cycles() {
     let (mut defs, root, budget) = recursive_fixture();
+    let BoundaryFrom::Local(from) = defs[1].outputs[0].source.clone() else {
+        panic!()
+    };
+    let BoundaryTo::Local(to) = defs[1].inputs[0].target.clone() else {
+        panic!()
+    };
     let feedback = EdgeDecl {
         id: "demo/feedback".into(),
         kind: EdgeKind::Deferred {
-            from: defs[1].outputs[0].source.clone(),
-            to: defs[1].inputs[0].target.clone(),
+            from,
+            to,
             next: DeferredWave::Next,
         },
     };
@@ -473,7 +747,9 @@ fn deferred_rejects_invalid_ports_schemas_security_and_unexposed_crossings() {
                 defs[1].outputs[0].port.security.confidentiality = Classification::Secret;
             }
             4 => {
-                let from = defs[1].outputs[0].source.clone();
+                let BoundaryFrom::Local(from) = defs[1].outputs[0].source.clone() else {
+                    panic!()
+                };
                 defs[1].body.edges.push(EdgeDecl {
                     id: "demo/crossing".into(),
                     kind: EdgeKind::Deferred {
@@ -587,7 +863,9 @@ fn body_and_boundary_flows_check_real_ports_schemas_and_security() {
                 defs[1].outputs[0].port.security.confidentiality = Classification::Secret;
             }
             3 => {
-                let to = defs[1].inputs[0].target.clone();
+                let BoundaryTo::Local(to) = defs[1].inputs[0].target.clone() else {
+                    panic!()
+                };
                 defs[1].body.edges.push(EdgeDecl {
                     id: "demo/badport".into(),
                     kind: EdgeKind::Flow {
@@ -691,12 +969,20 @@ fn sources_local_order_and_both_boundary_directions_survive_lowering() {
         &defs,
         &root,
         ExpansionBudget {
-            items: 10,
+            items: 14,
             ..budget
         },
     )
     .unwrap();
-    assert!(lower_recursive(&defs, &root, ExpansionBudget { items: 9, ..budget }).is_err());
+    assert!(lower_recursive(
+        &defs,
+        &root,
+        ExpansionBudget {
+            items: 13,
+            ..budget
+        }
+    )
+    .is_err());
     defs[0].body.nodes.reverse();
     defs[0].body.edges.reverse();
     defs[0].wiring.reverse();

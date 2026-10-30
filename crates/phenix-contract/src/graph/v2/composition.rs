@@ -67,16 +67,16 @@ pub struct GraphInstance {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundaryInput {
     pub port: InputPort,
-    pub target: InPortRef,
+    pub target: BoundaryTo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundaryOutput {
     pub port: OutputPort,
-    pub source: OutPortRef,
+    pub source: BoundaryFrom,
 }
 
-/// Direct-boundary, closed-body definition with explicit recursive placement.
+/// Closed-body definition with explicit immediate-child placement and aliases.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphDefinition {
     pub id: GraphDefinitionId,
@@ -128,12 +128,24 @@ impl GraphDefinition {
             }
         }
         for boundary in &self.inputs {
+            if !identifier(&boundary.port.name) {
+                return Err(bad("invalid graph input boundary name"));
+            }
+            let target = match &boundary.target {
+                BoundaryTo::Local(p) => p,
+                BoundaryTo::Child { child, port } => {
+                    if !identifier(port) || !self.children.iter().any(|c| c.name == *child) {
+                        return Err(bad("unknown graph input boundary child or alias"));
+                    }
+                    continue;
+                }
+            };
             let endpoint = self
                 .body
                 .nodes
                 .iter()
-                .find(|n| n.id == boundary.target.node)
-                .and_then(|n| n.inputs.iter().find(|p| p.name == boundary.target.port))
+                .find(|n| n.id == target.node)
+                .and_then(|n| n.inputs.iter().find(|p| p.name == target.port))
                 .ok_or_else(|| bad("unknown graph boundary input endpoint"))?;
             let mut expected = endpoint.clone();
             expected.name = boundary.port.name.clone();
@@ -144,12 +156,24 @@ impl GraphDefinition {
             }
         }
         for boundary in &self.outputs {
+            if !identifier(&boundary.port.name) {
+                return Err(bad("invalid graph output boundary name"));
+            }
+            let source = match &boundary.source {
+                BoundaryFrom::Local(p) => p,
+                BoundaryFrom::Child { child, port } => {
+                    if !identifier(port) || !self.children.iter().any(|c| c.name == *child) {
+                        return Err(bad("unknown graph output boundary child or alias"));
+                    }
+                    continue;
+                }
+            };
             let endpoint = self
                 .body
                 .nodes
                 .iter()
-                .find(|n| n.id == boundary.source.node)
-                .and_then(|n| n.outputs.iter().find(|p| p.name == boundary.source.port))
+                .find(|n| n.id == source.node)
+                .and_then(|n| n.outputs.iter().find(|p| p.name == source.port))
                 .ok_or_else(|| bad("unknown graph boundary output endpoint"))?;
             let mut expected = endpoint.clone();
             expected.name = boundary.port.name.clone();

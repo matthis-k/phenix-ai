@@ -149,8 +149,26 @@ fn materialize(expanded: &ExpandedGraph) -> Result<Vec<GraphContributionV2>, Fai
     groups.into_values().map(|d| d.normalized()).collect()
 }
 
-// Boundary port metadata equals its body endpoint by normalization validation;
-// encoding body + boundary name/endpoint therefore includes the full metadata.
+fn boundary_from_value(endpoint: &BoundaryFrom) -> Value {
+    match endpoint {
+        BoundaryFrom::Local(p) => Value::List(vec![text("local"), text(&p.node), text(&p.port)]),
+        BoundaryFrom::Child { child, port } => {
+            Value::List(vec![text("child"), text(child), text(port)])
+        }
+    }
+}
+
+fn boundary_to_value(endpoint: &BoundaryTo) -> Value {
+    match endpoint {
+        BoundaryTo::Local(p) => Value::List(vec![text("local"), text(&p.node), text(&p.port)]),
+        BoundaryTo::Child { child, port } => {
+            Value::List(vec![text("child"), text(child), text(port)])
+        }
+    }
+}
+
+// All alias hops have exact contracts; bodies plus the complete typed alias
+// topology therefore include their metadata, even for unused exports.
 fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result<Value, Failure> {
     let mut definitions = definitions
         .iter()
@@ -167,11 +185,7 @@ fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result
                     d.inputs
                         .iter()
                         .map(|b| {
-                            Value::List(vec![
-                                text(&b.port.name),
-                                text(&b.target.node),
-                                text(&b.target.port),
-                            ])
+                            Value::List(vec![text(&b.port.name), boundary_to_value(&b.target)])
                         })
                         .collect(),
                 ),
@@ -179,11 +193,7 @@ fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result
                     d.outputs
                         .iter()
                         .map(|b| {
-                            Value::List(vec![
-                                text(&b.port.name),
-                                text(&b.source.node),
-                                text(&b.source.port),
-                            ])
+                            Value::List(vec![text(&b.port.name), boundary_from_value(&b.source)])
                         })
                         .collect(),
                 ),
@@ -197,22 +207,8 @@ fn metadata(definitions: &[GraphDefinition], root: &GraphDefinitionId) -> Result
                     d.wiring
                         .iter()
                         .map(|w| {
-                            let from = match &w.from {
-                                BoundaryFrom::Local(p) => {
-                                    Value::List(vec![text("local"), text(&p.node), text(&p.port)])
-                                }
-                                BoundaryFrom::Child { child, port } => {
-                                    Value::List(vec![text("child"), text(child), text(port)])
-                                }
-                            };
-                            let to = match &w.to {
-                                BoundaryTo::Local(p) => {
-                                    Value::List(vec![text("local"), text(&p.node), text(&p.port)])
-                                }
-                                BoundaryTo::Child { child, port } => {
-                                    Value::List(vec![text("child"), text(child), text(port)])
-                                }
-                            };
+                            let from = boundary_from_value(&w.from);
+                            let to = boundary_to_value(&w.to);
                             Value::List(vec![
                                 text(&w.name),
                                 from,
@@ -364,19 +360,29 @@ mod tests {
             let (mut root, mut policy) = fixture();
             let (mut bodies, _) = super::super::tests::fixture();
             let body = bodies.remove(1);
-            let child = GraphDefinition {
-                id: GraphDefinitionId::new("beta/child").unwrap(),
+            let leaf = GraphDefinition {
+                id: GraphDefinitionId::new("beta/leaf").unwrap(),
                 inputs: vec![BoundaryInput {
                     port: body.nodes[0].inputs[0].clone(),
-                    target: InPortRef {
+                    target: BoundaryTo::Local(InPortRef {
                         node: "beta/second".into(),
                         port: "in".into(),
-                    },
+                    }),
                 }],
                 body,
                 outputs: vec![],
                 children: vec![],
                 wiring: vec![],
+            };
+            let mut child = leaf.clone();
+            child.id = GraphDefinitionId::new("beta/middle").unwrap();
+            child.children.push(GraphChild {
+                name: "leaf".into(),
+                definition: leaf.id.clone(),
+            });
+            child.inputs[0].target = BoundaryTo::Child {
+                child: "leaf".into(),
+                port: "in".into(),
             };
             root.children.push(GraphChild {
                 name: "nested".into(),
@@ -394,7 +400,7 @@ mod tests {
                     port: "in".into(),
                 },
             });
-            let definitions = [root.clone(), child];
+            let definitions = [root.clone(), child, leaf];
             let mut changed = definitions.clone();
             changed[0].wiring[0].next = if next.is_some() {
                 None
@@ -415,6 +421,21 @@ mod tests {
                 next.is_some()
             );
             let flat = materialize(&expanded).unwrap();
+            let leaf_id = recursive_effective_id(
+                "beta",
+                "node",
+                &LogicalId {
+                    instance: GraphInstanceId::new(root.id.clone())
+                        .child("nested")
+                        .unwrap()
+                        .child("leaf")
+                        .unwrap(),
+                    authored: "beta/second".into(),
+                },
+            )
+            .unwrap();
+            assert!(flat[0].edges.iter().any(|e| matches!(&e.kind,
+                EdgeKind::Flow { to, .. } | EdgeKind::Deferred { to, .. } if to.node == leaf_id)));
             assert_eq!(flat[0].contributor, "alpha");
             assert_eq!(flat[1].contributor, "beta");
             assert_eq!(flat[0].edges.len(), 2);
@@ -463,9 +484,7 @@ mod tests {
                 )
             };
             assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
-            policy
-                .topology
-                .insert(("alpha".into(), flat[1].nodes[0].id.clone()));
+            policy.topology.insert(("alpha".into(), leaf_id));
             assert!(run(&policy).is_ok());
             policy.delivery.clear();
             assert_eq!(run(&policy).unwrap_err().code, Code::Denied);
@@ -497,6 +516,95 @@ mod tests {
     }
 
     #[test]
+    fn alias_kind_and_child_name_are_identity_metadata_not_flat_authority() {
+        let (mut bodies, _) = super::super::tests::fixture();
+        let body = bodies.remove(1);
+        let mut leaf = GraphDefinition {
+            id: GraphDefinitionId::new("beta/leaf").unwrap(),
+            body,
+            inputs: vec![],
+            outputs: vec![],
+            children: vec![],
+            wiring: vec![],
+        };
+        leaf.inputs.push(BoundaryInput {
+            port: leaf.body.nodes[0].inputs[0].clone(),
+            target: BoundaryTo::Local(InPortRef {
+                node: "beta/second".into(),
+                port: "in".into(),
+            }),
+        });
+        let mut alternate = leaf.inputs[0].clone();
+        alternate.port.name = "alternate".into();
+        leaf.inputs.push(alternate);
+        leaf.outputs.push(BoundaryOutput {
+            port: OutputPort {
+                name: "value".into(),
+                ..leaf.body.nodes[0]
+                    .outputs
+                    .iter()
+                    .find(|p| p.name == "ok")
+                    .unwrap()
+                    .clone()
+            },
+            source: BoundaryFrom::Local(OutPortRef {
+                node: "beta/second".into(),
+                port: "ok".into(),
+            }),
+        });
+        let mut root = leaf.clone();
+        root.id = GraphDefinitionId::new("beta/root").unwrap();
+        root.inputs.truncate(1);
+        root.inputs[0].target = BoundaryTo::Child {
+            child: "nested".into(),
+            port: "in".into(),
+        };
+        root.outputs[0].source = BoundaryFrom::Child {
+            child: "nested".into(),
+            port: "value".into(),
+        };
+        root.children = vec![GraphChild {
+            name: "nested".into(),
+            definition: leaf.id.clone(),
+        }];
+        let defs = [root.clone(), leaf.clone()];
+        let expanded = lower_recursive(&defs, &root.id, budget()).unwrap();
+        let flat = materialize(&expanded).unwrap();
+        let identity = metadata(&defs, &root.id).unwrap();
+        root.inputs[0].target = BoundaryTo::Child {
+            child: "nested".into(),
+            port: "alternate".into(),
+        };
+        let renamed = [root.clone(), leaf.clone()];
+        assert_eq!(
+            flat,
+            materialize(&lower_recursive(&renamed, &root.id, budget()).unwrap()).unwrap()
+        );
+        assert_ne!(identity, metadata(&renamed, &root.id).unwrap());
+        root.inputs[0].target = BoundaryTo::Local(InPortRef {
+            node: "beta/second".into(),
+            port: "in".into(),
+        });
+        root.outputs[0].source = leaf.outputs[0].source.clone();
+        let local = [root.clone(), leaf.clone()];
+        assert_eq!(
+            flat,
+            materialize(&lower_recursive(&local, &root.id, budget()).unwrap()).unwrap()
+        );
+        assert_ne!(identity, metadata(&local, &root.id).unwrap());
+        root.children[0].name = "other".into();
+        assert_ne!(
+            metadata(&local, &root.id).unwrap(),
+            metadata(&[root.clone(), leaf.clone()], &root.id).unwrap()
+        );
+        leaf.inputs.reverse();
+        assert_eq!(
+            identity,
+            metadata(&[leaf, defs[0].clone()], &root.id).unwrap()
+        );
+    }
+
+    #[test]
     fn unused_definitions_and_exposure_change_identity_metadata_not_flat_graph() {
         let (d, _) = fixture();
         let mut exposed = d.clone();
@@ -505,10 +613,10 @@ mod tests {
                 name: "exposed".into(),
                 ..d.body.nodes[0].outputs[0].clone()
             },
-            source: OutPortRef {
+            source: BoundaryFrom::Local(OutPortRef {
                 node: "alpha/source".into(),
                 port: "out".into(),
-            },
+            }),
         });
         let flat = |defs: &[GraphDefinition]| {
             materialize(&lower_recursive(defs, &d.id, budget()).unwrap()).unwrap()
