@@ -8,6 +8,10 @@ on:
       - "crates/phenix-plugin-basic-frontends/**"
       - "crates/phenix-basic-contracts/**"
       - "crates/phenix-basic-runtime/**"
+      - "crates/phenix-plugin-basic-agent/**"
+      - "crates/phenix-plugin-basic-tools/**"
+      - "crates/phenix-plugin-tool-receipts/**"
+      - "crates/phenix-plugin-tool-pending/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/r1-acp-v2-frontend.yml"
@@ -41,7 +45,11 @@ jobs:
         run: cargo clippy --locked -p phenix-plugin-basic-frontends --no-default-features --features acp_v2 --all-targets -- -D warnings
       - name: Lint stable v1 frontend
         run: cargo clippy --locked -p phenix-plugin-basic-frontends --no-default-features --features acp --all-targets -- -D warnings
+      - name: Lint opt-in graph agent and tool execution
+        run: cargo clippy --locked -p phenix-plugin-basic-agent -p phenix-plugin-basic-tools -p phenix-plugin-tool-receipts -p phenix-plugin-tool-pending --features phenix-plugin-basic-agent/graph-v2,phenix-plugin-basic-tools/graph-v2 --all-targets -- -D warnings
       - name: Check packaged host crate still compiles
         run: cargo check --locked -p phenix-basic-runtime
       - name: Check opt-in official SDK v1/v2 router compiles
         run: cargo check --locked -p phenix-basic-runtime --features acp_v2_preview
+      - name: Check opt-in graph host compiles
+        run: cargo check --locked -p phenix-basic-runtime --features graph-v2

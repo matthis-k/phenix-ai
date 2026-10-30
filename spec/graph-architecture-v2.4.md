@@ -1379,6 +1379,42 @@ empty/single/multiple admission, duplicate IDs/results, cancellation/late succes
 and the packaged normal multi-tool path are required acceptance, not implied by
 this freeze.
 
+**Basic integration freeze (30 October 2026):** V2 adds domain-only
+`BasicGraphTools::{admit,reconcile}`, `ToolGraph::{validate,plan,collect}` and
+`ToolGraphExecutor::{list,validate,invoke}` contracts. The existing V1 ToolRegistrations
+contract is unchanged. An invocation carries session, run, monotonic model-turn
+batch ordinal and the exact call (ID, registered name, arguments); both typed
+success and domain failure echo that complete invocation. BasicTools owns the
+InvokeEach node over its declared selected GraphContributors collection, with
+the builtin executor as the final self route. Its V2 catalog and planner use
+that same sealed collection. A Join carries the immutable admitted batch beside
+the ordered outcomes. Tools collect and Basic reconcile independently require
+exact cardinality and positional invocation equality, rejecting duplicate,
+foreign or reordered results before committing outcomes. No branch accesses
+Basic Running state. ToolGraph.validate is a selected pure validator called
+before durable admission; plan repeats that same sealed validation. Invalid JSON,
+builtin argument types, names and membership cannot create pending tool work.
+
+**Durable partial-outcome freeze (30 October 2026):** Each admitted executor
+MUST persist its exact typed terminal outcome through an independent selected
+ToolReceipts provider before returning success or domain failure. Immutable
+per-invocation receipts use the existing atomic Storage CAS contract, checking
+the batch fence and creating the immutable receipt in one transaction, not concurrent
+Session/Running mutation. Normal collection verifies every receipt. A batch seal
+fences further executor writes. Cancelled/draining callbacks never write receipts;
+failure to persist a terminal outcome is infrastructure failure, not a fabricated
+domain result. Receipt identity includes the complete invocation and call input.
+
+Only separately authorized post-drain host finalization or fenced owned-run
+recovery may seal an interrupted batch and import its durable receipts through
+GraphToolSession.recover. Session retains known outcomes and only unresolved
+calls remain pending; known success is never relabelled uncertain. Recovery
+reassembles tool messages in original invocation order and cannot overwrite an
+existing result. A separate operator-authorized resolve operation may supply a
+missing receipt after sealing; it cannot replace an existing receipt. Recovery
+never advances Model or retries effects. Receipt -> Session/Storage dependencies
+are acyclic; no Contributor -> Tools callback or second scheduler is introduced.
+
 The selected tools manager accepts a bounded `ToolCallBatch` with opaque model-provided *registered tool IDs plus arguments*, validates each against the attested, generation-local catalog, and routes execution through **preselected kernel-authorized contract bindings**. The model never supplies executable plugin identity or import index. Each tool call retains distinct ID, per-tool schema check, cancellation status, resource grant and result/error identity. The manager publishes a bounded batch result to the graph. This keeps P1 functionality without making static graph metadata depend on runtime MCP discovery. Runtime-discovered tools become usable only after authenticated, policy-approved registration/catalog refresh with verifiable executor bindings; dynamic code installation is a distinct generation/composition problem.
 
 If per-tool execution must become independently graph-editable, observable or joinable, define a generic `ForkMany<T>`/`CollectMany<T>` contract with bounded cardinality, closure and branch correlation. Do not add an agent-specific kernel tool fan-out API.

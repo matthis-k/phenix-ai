@@ -44,6 +44,7 @@ left intact. #1171 and the Python experiments remain isolated.
 | #1211: recursive Deferred | `5161d14651f6db34fd6974e1c6d77e8963c4e9f1` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40972410804), coordinator 23m38s. Internal/cross-boundary Deferred materialization, provenance, exact effective-ID policy and native execution. |
 | #1212: activation observation | `baba485426aa61f17044e1071b02148ab2602890` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40975538667), coordinator 23m32s. Trusted `(root, activation, node)` correlation, once-only pending observations, model activations 0/1/2. Not durable identity or concurrent-root isolation. |
 | #1213: packaged cancellation | `20f3ad16d473696085123aa076d57512d409e3e0` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40981365668), coordinator 20m48s. Physical-worker-witnessed initial/continuation cancellation, same-host/session recovery and stdin EOF after cancellation held until drain. |
+| #1214: deferred-gap recovery | `14cd8d3d9139a046a8f3490d21395100c21c5b39` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41021476597), coordinator 21m23s. Zero-lease cancellation, rejection before authorized durable finalization, and same-session recovery afterward. Native explicit host finalizer, not packaged gap timing. |
 
 **Priority B worktree increment (30 October 2026, base #1214 `05041e75c`):**
 The v2.4 section 10.5 InvokeEach contract is frozen and initial contract/kernel
@@ -56,7 +57,55 @@ derivation now requests kernel/contract unit tests. No local Cargo/Nix compilati
 or native acceptance was run. Basic's V2 tool stage still calls the synchronous
 loop; domain admission/reconciliation, native distinct-provider controlled tools,
 and packaged multi-tool acceptance remain unimplemented. This is NOT completed
-Priority B, verified native fanout, or a publishable end-to-end increment.
+Priority B, verified native fanout, or a publishable end-to-end increment. That
+foundation was subsequently committed as `fb8d3e815` in #1215.
+
+**Dependent Basic integration source (30 October 2026):**
+`feat/graph-v2-basic-tool-fanout-20261030` adds the BasicGraphTools admission and
+reconciliation contracts, ToolGraph sealed planning/collection and a new
+ToolGraphExecutor interface without changing V1 ToolRegistrations. V2 graph
+metadata now connects admit/checkpoint -> Tools plan -> InvokeEach -> correlated
+Join/collect -> Basic ordered checkpoint -> Deferred Model. The V1 synchronous
+effect loop is excluded from V2 compilation. Both typed branch outcomes echo the
+complete session/run/batch/call identity. Domain failures retain ordered successful
+siblings; cancellation/infra failure retains unresolved durable pending calls,
+with explicit Indeterminate reconciliation rather than automatic effect retry.
+
+New executable native modes in the existing graph-v2-turn runner cover distinct
+selected physical providers starting together, reverse completion, mixed domain
+failure, pending cancellation and late success, infrastructure sibling drain,
+duplicate IDs/results and same-host recovery after explicit reconciliation.
+The existing packaged gate includes controlled JSONL multi-tool joins and pending
+cancellation/EOF, plus the stock builtin multi-tool path. These are SOURCE TESTS,
+not execution evidence. Rustfmt, Python AST/Cargo TOML/static lock validation and
+Nix parsing are the only local verification; no Cargo/Nix compilation, native
+execution or GitHub exact-head acceptance is claimed. Generic kernel/contract
+source and the parallel generic-native acceptance work are outside this increment.
+
+**Pre-publication P1 corrections (source only, 30 October 2026):** Pure selected
+ToolGraph/ToolGraphExecutor validation now precedes both receipt admission and
+the assistant/pending Session checkpoint. Invalid JSON and non-string builtin
+arguments cannot leave never-started pending calls. Executors persist an immutable
+typed outcome through the independent Storage-backed tool-receipts plugin before
+returning any admitted terminal outcome. Each new receipt atomically CAS-checks
+the batch fence and creates its per-call record. Collection verifies those exact
+receipts before consuming the active batch; no executor mutates Session/Running.
+
+After cancellation drain or fenced owned-run recovery, a separately authorized
+receipt recovery root imports known results through GraphToolSession.recover.
+Known B remains durable if A is cancelled or fails; only A stays pending, and
+operator resolution of A cannot replace B. Recovery assembles original call order
+without restarting Model or replaying tools. Session's persisted V1 format and
+its existing reconcile operation are unchanged. Receipt -> Session/Storage and
+Contributor -> Receipt dependencies are acyclic, with explicit selected imports
+and grants; no kernel changes, second scheduler, or Contributor -> Tools callback
+were needed. The generic fixtures and #1214 manual-finalizer helper are untouched.
+
+The existing V2 gate now contains native and packaged invalid-argument, matching
+active-batch malformed collection, and B-success-then-A-cancel/infra cases. Package
+recovery inspects persisted per-call records and Session pending membership across
+a fresh host process. These remain unexecuted native/package test sources pending
+CI; local verification is limited to rustfmt and static Python/TOML/Nix checks.
 
 The packaged JSONL cancellation acceptance is distinct from the controlled native
 fixtures and does not prove arbitrary direct kernel shutdown during pending work.
@@ -66,12 +115,11 @@ durably marked the same old run Cancelled with no pending tool effects. Cancella
 callbacks gain no write authority. The deterministic gap fixture explicitly uses
 that manual host finalizer; it is not packaged deferred-gap scheduling evidence.
 
-The next execution milestone is bounded dynamic per-invocation tool fan-out and
-deterministic collection. Static Join/StaticMany and one invocation per authored
-node per wave cannot represent runtime-sized branch membership. The existing
-physical provider-busy guard must not be removed to manufacture concurrency.
-Freeze generic branch identity, closure, partial-failure and cancellation semantics
-before extending that algebra; retain selected dispatch and per-invocation grants.
+The next acceptance milestone is exact-head compilation and execution of bounded
+dynamic per-invocation fan-out and deterministic collection, including the
+dependent Basic integration and parallel generic native gates. The physical
+provider-busy guard remains required; selected dispatch and per-invocation grants
+must not be replaced by opaque imperative batch execution.
 
 The five C1 bundles are tracked independently in v2.4 section 7.12. Recursive
 Deferred resolves part of edge lowering, not direct nested/multi-level exports,

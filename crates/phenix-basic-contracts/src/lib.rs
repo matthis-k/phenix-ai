@@ -631,6 +631,238 @@ pub struct GraphTurnReply {
     pub reply: ModelReply,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolBatch {
+    pub session: String,
+    pub run: String,
+    pub batch: u64,
+    pub calls: Vec<ToolCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolInvocation {
+    pub session: String,
+    pub run: String,
+    pub batch: u64,
+    pub call: ToolCall,
+}
+
+impl GraphToolBatch {
+    pub fn invocations(&self) -> Vec<GraphToolInvocation> {
+        self.calls
+            .iter()
+            .cloned()
+            .map(|call| GraphToolInvocation {
+                session: self.session.clone(),
+                run: self.run.clone(),
+                batch: self.batch,
+                call,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct RoutedToolInvocation {
+    pub route: u64,
+    pub input: GraphToolInvocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolSuccess {
+    pub invocation: GraphToolInvocation,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolFailure {
+    pub invocation: Box<GraphToolInvocation>,
+    pub error: BasicError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub enum GraphToolOutcome {
+    Ok {
+        invocation: GraphToolInvocation,
+        text: String,
+    },
+    Err {
+        invocation: GraphToolInvocation,
+        error: BasicError,
+    },
+}
+
+impl GraphToolOutcome {
+    pub fn invocation(&self) -> &GraphToolInvocation {
+        match self {
+            Self::Ok { invocation, .. } | Self::Err { invocation, .. } => invocation,
+        }
+    }
+    pub fn tool_outcome(&self) -> ToolOutcome {
+        match self {
+            Self::Ok { text, .. } => ToolOutcome::Succeeded { text: text.clone() },
+            Self::Err { error, .. } => ToolOutcome::Failed {
+                output: String::new(),
+                reason: error.message.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolRecovery {
+    pub session: String,
+    pub run: String,
+    pub status: RunStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolRecoveryState {
+    pub batch: GraphToolBatch,
+    pub outcomes: Vec<Option<GraphToolOutcome>>,
+    pub status: RunStatus,
+}
+
+impl GraphToolRecoveryState {
+    pub fn validate(&self) -> Result<(), BasicError> {
+        if !matches!(self.status, RunStatus::Failed | RunStatus::Cancelled)
+            || self.batch.run.is_empty()
+            || self.batch.batch == 0
+            || self.batch.calls.len() > 256
+            || self.batch.calls.len() != self.outcomes.len()
+        {
+            return Err(error(
+                ErrorCode::InvalidReply,
+                "invalid receipt recovery membership",
+            ));
+        }
+        session_resource(&self.batch.session)?;
+        let mut ids = std::collections::BTreeSet::new();
+        for (invocation, outcome) in self.batch.invocations().iter().zip(&self.outcomes) {
+            if invocation.call.id.is_empty()
+                || !ids.insert(invocation.call.id.clone())
+                || outcome
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.invocation() != invocation)
+            {
+                return Err(error(
+                    ErrorCode::InvalidReply,
+                    "foreign or duplicate receipt",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[contract(id = "phenix.basic.tool-receipts@1")]
+pub trait ToolReceipts {
+    fn admit(&self, batch: GraphToolBatch) -> Result<(), BasicError>;
+    fn record(&self, outcome: GraphToolOutcome) -> Result<GraphToolOutcome, BasicError>;
+    fn read(&self, invocation: GraphToolInvocation)
+        -> Result<Option<GraphToolOutcome>, BasicError>;
+    fn seal(&self, batch: GraphToolBatch) -> Result<Vec<Option<GraphToolOutcome>>, BasicError>;
+    fn recover(&self, request: GraphToolRecovery) -> Result<SessionSnapshot, BasicError>;
+    fn resolve(&self, outcome: GraphToolOutcome) -> Result<GraphToolOutcome, BasicError>;
+}
+
+#[contract(id = "phenix.basic.graph-tool-session@1")]
+pub trait GraphToolSession {
+    fn recover(&self, request: GraphToolRecoveryState) -> Result<SessionSnapshot, BasicError>;
+}
+
+/// Executors call this only while their invocation retains live effect authority.
+pub fn complete_graph_tool(
+    host: &Host<'_>,
+    outcome: GraphToolOutcome,
+) -> CallResult<GraphToolSuccess, GraphToolFailure> {
+    let saved = host
+        .invoke::<ToolReceipts::record>("Receipts", &outcome)
+        .map_err(|failure| -> CallError<GraphToolFailure> {
+            match failure {
+                CallError::Kernel(failure) => CallError::Kernel(failure),
+                CallError::Domain(problem) => CallError::Kernel(Failure::new(
+                    Code::PluginFailed,
+                    format!("tool receipt failed: {}", problem.message),
+                )),
+            }
+        })?;
+    if saved != outcome {
+        return Err(CallError::Kernel(Failure::new(
+            Code::PluginFailed,
+            "tool receipt acknowledgement mismatch",
+        )));
+    }
+    match saved {
+        GraphToolOutcome::Ok { invocation, text } => Ok(GraphToolSuccess { invocation, text }),
+        GraphToolOutcome::Err { invocation, error } => Err(CallError::Domain(GraphToolFailure {
+            invocation: Box::new(invocation),
+            error,
+        })),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
+pub struct GraphToolCollection {
+    pub batch: GraphToolBatch,
+    pub outcomes: Vec<GraphToolOutcome>,
+}
+
+impl GraphToolCollection {
+    /// Validate the entire immutable correlation set before any domain mutation.
+    pub fn validate(&self) -> Result<(), BasicError> {
+        let mut ids = std::collections::BTreeSet::new();
+        if self.batch.run.is_empty()
+            || self.batch.batch == 0
+            || self.batch.calls.len() > 256
+            || self.batch.calls.len() != self.outcomes.len()
+        {
+            return Err(error(
+                ErrorCode::InvalidReply,
+                "invalid tool batch membership",
+            ));
+        }
+        session_resource(&self.batch.session)?;
+        for (expected, outcome) in self.batch.invocations().iter().zip(&self.outcomes) {
+            let invocation = match outcome {
+                GraphToolOutcome::Ok { invocation, .. }
+                | GraphToolOutcome::Err { invocation, .. } => invocation,
+            };
+            if expected.call.id.is_empty()
+                || !ids.insert(expected.call.id.clone())
+                || expected != invocation
+            {
+                return Err(error(
+                    ErrorCode::InvalidReply,
+                    "foreign, duplicate or reordered tool outcome",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[contract(id = "phenix.basic.graph-tool-executor@1")]
+pub trait ToolGraphExecutor {
+    fn list(&self) -> Result<Vec<ToolInfo>, BasicError>;
+    fn validate(&self, invocation: GraphToolInvocation) -> Result<(), BasicError>;
+    fn invoke(&self, invocation: GraphToolInvocation)
+        -> Result<GraphToolSuccess, GraphToolFailure>;
+}
+
+#[contract(id = "phenix.basic.graph-tools@1")]
+pub trait ToolGraph {
+    fn validate(&self, batch: GraphToolBatch) -> Result<(), BasicError>;
+    fn plan(&self, batch: GraphToolBatch) -> Result<Vec<RoutedToolInvocation>, BasicError>;
+    fn collect(&self, collection: GraphToolCollection) -> Result<GraphToolCollection, BasicError>;
+}
+
+#[contract(id = "phenix.basic.graph-tool-turn@1")]
+pub trait BasicGraphTools {
+    fn admit(&self, reply: GraphTurnReply) -> Result<GraphToolBatch, BasicError>;
+    fn reconcile(&self, collection: GraphToolCollection) -> Result<ModelRequest, BasicError>;
+}
+
 /// Graph-managed turns. Each stage consumes one admitted reply exactly once.
 #[contract(id = "phenix.basic.graph-turn@1")]
 pub trait BasicGraphTurn {
@@ -704,6 +936,11 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(BasicInput),
     define(BasicTurnPrepare),
     define(BasicGraphTurn),
+    define(BasicGraphTools),
+    define(ToolGraph),
+    define(ToolGraphExecutor),
+    define(ToolReceipts),
+    define(GraphToolSession),
     define(BasicTurnAdvance),
     // Optional imports must have a canonical definition even when the
     // advanced provider is not selected in the Basic-only composition.
@@ -719,6 +956,87 @@ pub mod definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_tool_outcomes_match_homogeneous_executor_ports_and_exact_correlation() {
+        let ValueSchema::Tagged(cases) = GraphToolOutcome::SCHEMA.owned().unwrap() else {
+            panic!()
+        };
+        assert_eq!(cases["Ok"], Some(GraphToolSuccess::SCHEMA.owned().unwrap()));
+        assert_eq!(
+            cases["Err"],
+            Some(GraphToolFailure::SCHEMA.owned().unwrap())
+        );
+        let batch = GraphToolBatch {
+            session: "s1".into(),
+            run: "run-1".into(),
+            batch: 1,
+            calls: vec![
+                ToolCall {
+                    id: "call-1".into(),
+                    tool: "uppercase".into(),
+                    arguments: r#""hello""#.into(),
+                },
+                ToolCall {
+                    id: "call-2".into(),
+                    tool: "fail".into(),
+                    arguments: r#""hello""#.into(),
+                },
+            ],
+        };
+        let inputs = batch.invocations();
+        let collection = GraphToolCollection {
+            batch,
+            outcomes: vec![
+                GraphToolOutcome::Ok {
+                    invocation: inputs[0].clone(),
+                    text: "HELLO".into(),
+                },
+                GraphToolOutcome::Err {
+                    invocation: inputs[1].clone(),
+                    error: error(ErrorCode::ToolFailed, "failed"),
+                },
+            ],
+        };
+        collection.validate().unwrap();
+        let Value::Map(mut tagged) = collection.outcomes[1].to_value() else {
+            panic!()
+        };
+        let payload = tagged.remove("Err").unwrap();
+        let failure = GraphToolFailure::from_value(payload.clone()).unwrap();
+        assert_eq!(failure.invocation.as_ref(), &inputs[1]);
+        assert_eq!(
+            failure.to_value().encode().unwrap(),
+            payload.encode().unwrap()
+        );
+        assert!(std::mem::size_of::<CallError<GraphToolFailure>>() < 128);
+        assert_eq!(
+            GraphToolCollection::from_value(collection.to_value()).unwrap(),
+            collection
+        );
+        for case in 0..7 {
+            let mut invalid = collection.clone();
+            match case {
+                0 => {
+                    invalid.outcomes.pop();
+                }
+                1 => invalid.outcomes[1] = invalid.outcomes[0].clone(),
+                2 => invalid.outcomes.reverse(),
+                3 => invalid.batch.run = "foreign".into(),
+                4 => invalid.batch.session = "s2".into(),
+                5 => invalid.batch.batch += 1,
+                _ => invalid.batch.calls[0].arguments = r#""different""#.into(),
+            }
+            assert!(
+                invalid.validate().is_err(),
+                "invalid correlation case {case}"
+            );
+        }
+        let mut empty = collection;
+        empty.batch.calls.clear();
+        empty.outcomes.clear();
+        empty.validate().unwrap();
+    }
 
     #[test]
     fn graph_decision_cases_match_stage_input_schema() {
@@ -1044,7 +1362,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 16);
+        assert_eq!(metadata.definitions.len(), 21);
         assert!(metadata
             .definitions
             .iter()

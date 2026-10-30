@@ -134,11 +134,27 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
     (definition.execute)(&input)
 }
 
+#[cfg(feature = "graph-v2")]
+#[used]
+#[no_mangle]
+#[link_section = ".phenix.graph"]
+pub static PHENIX_GRAPH: [u8; phenix_sdk::NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/graph-v2.bin"));
+
 #[phenix_sdk::plugin(
     id = "phenix.basic.tools",
     version = "1.0.0",
     provide(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
     provide(phenix_basic_contracts::ToolExecute, slot = "Tools"),
+    provide(phenix_basic_contracts::ToolGraph, slot = "GraphTools"),
+    provide(phenix_basic_contracts::ToolGraphExecutor, slot = "GraphBuiltin"),
+    require(phenix_basic_contracts::ToolReceipts, slot = "Receipts", optional),
+    require(phenix_basic_contracts::Storage, slot = "StorageAuthority", optional),
+    require(
+        phenix_basic_contracts::ToolGraphExecutor,
+        slot = "GraphContributors",
+        many(min = 0)
+    ),
     require(
         phenix_basic_contracts::ToolRegistrations,
         slot = "Contributors",
@@ -148,8 +164,9 @@ pub fn execute(call: &ToolCall) -> Result<String, BasicError> {
 mod plugin {
     use super::*;
     use phenix_basic_contracts::{
-        BasicError, Scope, ToolCatalog, ToolExecute, ToolPage, ToolQuery, ToolRegistrations,
-        ToolRequest, ToolResult,
+        BasicError, GraphToolBatch, GraphToolCollection, GraphToolFailure, GraphToolInvocation,
+        GraphToolSuccess, RoutedToolInvocation, Scope, ToolCatalog, ToolExecute, ToolGraph,
+        ToolGraphExecutor, ToolPage, ToolQuery, ToolRegistrations, ToolRequest, ToolResult,
     };
     use phenix_sdk::{CallError, CallResult, Host};
 
@@ -164,6 +181,7 @@ mod plugin {
     pub struct State {
         counts: BTreeMap<String, u64>,
         snapshot: Option<ToolSnapshot>,
+        planned: BTreeMap<String, (GraphToolBatch, bool)>,
     }
 
     fn selected_snapshot<'a>(
@@ -171,7 +189,11 @@ mod plugin {
         host: &Host<'_>,
     ) -> CallResult<&'a ToolSnapshot, BasicError> {
         if state.snapshot.is_none() {
-            let count = imports::Contributors::count(host)?;
+            let count = if cfg!(feature = "graph-v2") {
+                imports::GraphContributors::count(host)?
+            } else {
+                imports::Contributors::count(host)?
+            };
             if count > 64 {
                 return Err(CallError::Domain(error(
                     ErrorCode::InvalidInput,
@@ -185,8 +207,15 @@ mod plugin {
                 tools.push(tool(definition));
             }
             for index in 0..count {
-                let contributions =
-                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?;
+                let contributions = if cfg!(feature = "graph-v2") {
+                    imports::GraphContributors::invoke_at::<ToolGraphExecutor::list>(
+                        host,
+                        index,
+                        &(),
+                    )?
+                } else {
+                    imports::Contributors::invoke_at::<ToolRegistrations::list>(host, index, &())?
+                };
                 if contributions.len() > 256 {
                     return Err(CallError::Domain(error(
                         ErrorCode::InvalidInput,
@@ -280,6 +309,12 @@ mod plugin {
             .get(&request.call.tool)
             .copied()
             .ok_or_else(|| CallError::Domain(error(ErrorCode::NotFound, "tool not found")))?;
+        if cfg!(feature = "graph-v2") && route.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "V2 contributors require graph admission",
+            )));
+        }
         if request.call.id.is_empty() {
             return Err(CallError::Domain(error(
                 ErrorCode::InvalidInput,
@@ -312,6 +347,186 @@ mod plugin {
     fn count(state: &mut State, host: &Host<'_>, request: Scope) -> CallResult<u64, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         Ok(*state.counts.get(&request.session).unwrap_or(&0))
+    }
+
+    #[provide(ToolGraphExecutor::list)]
+    fn builtin_list() -> CallResult<Vec<ToolInfo>, BasicError> {
+        Ok(TOOLS.iter().map(tool).collect())
+    }
+
+    #[provide(ToolGraphExecutor::validate)]
+    fn validate_builtin(
+        host: &Host<'_>,
+        invocation: GraphToolInvocation,
+    ) -> CallResult<(), BasicError> {
+        phenix_basic_contracts::check_session(host, &invocation.session)?;
+        if invocation.call.id.is_empty()
+            || selected(&invocation.call.tool).is_none()
+            || serde_json::from_str::<String>(&invocation.call.arguments).is_err()
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "invalid builtin invocation",
+            )));
+        }
+        Ok(())
+    }
+
+    #[provide(ToolGraphExecutor::invoke)]
+    fn builtin_invoke(
+        host: &Host<'_>,
+        invocation: GraphToolInvocation,
+    ) -> CallResult<GraphToolSuccess, GraphToolFailure> {
+        phenix_basic_contracts::check_session(host, &invocation.session).map_err(|failure| {
+            match failure {
+                CallError::Kernel(failure) => CallError::Kernel(failure),
+                CallError::Domain(error) => CallError::Domain(GraphToolFailure {
+                    invocation: Box::new(invocation.clone()),
+                    error,
+                }),
+            }
+        })?;
+        if invocation.run.is_empty() || invocation.batch == 0 {
+            return Err(CallError::Domain(GraphToolFailure {
+                invocation: Box::new(invocation),
+                error: error(ErrorCode::InvalidInput, "missing tool batch identity"),
+            }));
+        }
+        let outcome = match super::execute(&invocation.call) {
+            Ok(text) => phenix_basic_contracts::GraphToolOutcome::Ok { invocation, text },
+            Err(error) => phenix_basic_contracts::GraphToolOutcome::Err { invocation, error },
+        };
+        phenix_basic_contracts::complete_graph_tool(host, outcome)
+    }
+
+    fn prepare_routes(
+        state: &mut State,
+        host: &Host<'_>,
+        batch: GraphToolBatch,
+    ) -> CallResult<Vec<RoutedToolInvocation>, BasicError> {
+        if !cfg!(feature = "graph-v2") {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "graph tool planning requires V2",
+            )));
+        }
+        phenix_basic_contracts::check_session(host, &batch.session)?;
+        if batch.run.is_empty() || batch.batch == 0 || batch.calls.len() > 256 {
+            return Err(CallError::Domain(error(
+                ErrorCode::InvalidInput,
+                "invalid graph tool batch",
+            )));
+        }
+        if state
+            .planned
+            .get(&batch.session)
+            .is_some_and(|(previous, _)| previous.run == batch.run && previous.batch >= batch.batch)
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool batch already planned",
+            )));
+        }
+        let self_route = imports::GraphContributors::count(host)? as u64;
+        let snapshot = selected_snapshot(state, host)?;
+        let mut ids = std::collections::BTreeSet::new();
+        let mut invocations = Vec::new();
+        for input in batch.invocations() {
+            if input.call.id.is_empty() || !ids.insert(input.call.id.clone()) {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "duplicate or empty tool call ID",
+                )));
+            }
+            let route = snapshot
+                .routes
+                .get(&input.call.tool)
+                .ok_or_else(|| CallError::Domain(error(ErrorCode::NotFound, "tool not found")))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&input.call.arguments).map_err(|_| {
+                    CallError::Domain(error(ErrorCode::InvalidInput, "invalid tool JSON"))
+                })?;
+            if route.is_none() && !parsed.is_string() {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidInput,
+                    "expected JSON string argument",
+                )));
+            }
+            if let Some(index) = route {
+                imports::GraphContributors::invoke_at::<ToolGraphExecutor::validate>(
+                    host, *index, &input,
+                )?;
+            }
+            invocations.push(RoutedToolInvocation {
+                route: route.map_or(self_route, |index| index as u64),
+                input,
+            });
+        }
+        Ok(invocations)
+    }
+
+    #[provide(ToolGraph::validate)]
+    fn validate(
+        state: &mut State,
+        host: &Host<'_>,
+        batch: GraphToolBatch,
+    ) -> CallResult<(), BasicError> {
+        prepare_routes(state, host, batch).map(|_| ())
+    }
+
+    #[provide(ToolGraph::plan)]
+    fn plan(
+        state: &mut State,
+        host: &Host<'_>,
+        batch: GraphToolBatch,
+    ) -> CallResult<Vec<RoutedToolInvocation>, BasicError> {
+        let invocations = prepare_routes(state, host, batch.clone())?;
+        state.planned.insert(batch.session.clone(), (batch, false));
+        Ok(invocations)
+    }
+
+    #[provide(ToolGraph::collect)]
+    fn collect(
+        state: &mut State,
+        host: &Host<'_>,
+        collection: GraphToolCollection,
+    ) -> CallResult<GraphToolCollection, BasicError> {
+        phenix_basic_contracts::check_session(host, &collection.batch.session)?;
+        collection.validate().map_err(CallError::Domain)?;
+        let admitted = state
+            .planned
+            .get_mut(&collection.batch.session)
+            .filter(|(batch, consumed)| batch == &collection.batch && !*consumed)
+            .ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::Denied, "not the planned tool batch"))
+            })?;
+        for outcome in &collection.outcomes {
+            if host
+                .invoke::<phenix_basic_contracts::ToolReceipts::read>(
+                    "Receipts",
+                    outcome.invocation(),
+                )?
+                .as_ref()
+                != Some(outcome)
+            {
+                return Err(CallError::Domain(error(
+                    ErrorCode::Denied,
+                    "tool collection has no exact durable receipt",
+                )));
+            }
+        }
+        let counter = state
+            .counts
+            .entry(collection.batch.session.clone())
+            .or_default();
+        let count = counter
+            .checked_add(collection.outcomes.len() as u64)
+            .ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::ToolFailed, "call count overflow"))
+            })?;
+        admitted.1 = true;
+        *counter = count;
+        Ok(collection)
     }
 }
 

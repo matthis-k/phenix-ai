@@ -278,7 +278,10 @@
         '';
       graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts" true;
       basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
-      basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
+      basicContractsBinary = (build "phenix-basic-contracts" basicContractsSource).overrideAttrs {
+        doCheck = true;
+        cargoTestFlags = [ "-p" "phenix-basic-contracts" ];
+      };
       basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" true;
       basicV2Definitions = definitionPackage "phenix-basic-v2-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" false;
       basicContractsCheck = pkgs.runCommand "phenix-basic-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -287,7 +290,12 @@
         import json, sys
         from pathlib import Path
         report = json.load(open(sys.argv[1]))
-        assert len(report["definitions"]) == 16
+        assert len(report["definitions"]) == 21
+        assert "phenix.basic.graph-tool-turn@1" in report["definitions"], report
+        assert "phenix.basic.graph-tools@1" in report["definitions"], report
+        assert "phenix.basic.graph-tool-executor@1" in report["definitions"], report
+        assert "phenix.basic.tool-receipts@1" in report["definitions"], report
+        assert "phenix.basic.graph-tool-session@1" in report["definitions"], report
         assert "phenix.basic.graph-turn@1" in report["definitions"], report
         assert "phenix.basic.tool-registrations@1" in report["definitions"], report
         assert "phenix.basic.turn-advance@1" in report["definitions"], report
@@ -1331,10 +1339,13 @@
         "phenix-plugin-storage-fixture"
         "phenix_plugin_storage_fixture"
         ./crates/phenix-plugin-storage-fixture;
-      basicSession = basicNativePlugin
+      basicSession = (basicNativePlugin
         "phenix-plugin-basic-session"
         "phenix_plugin_basic_session"
-        ./crates/phenix-plugin-basic-session;
+        ./crates/phenix-plugin-basic-session).overrideAttrs {
+          doCheck = true;
+          cargoTestFlags = [ "-p" "phenix-plugin-basic-session" ];
+        };
       storageSqlite = (basicNativePlugin
         "phenix-plugin-storage-sqlite"
         "phenix_plugin_storage_sqlite"
@@ -1587,17 +1598,49 @@
         cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
         cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
       };
+      basicV2Tools = basicTools.overrideAttrs {
+        pname = "phenix-plugin-basic-tools-v2";
+        cargoBuildFlags = [ "-p" "phenix-plugin-basic-tools" "--features" "graph-v2" ];
+        cargoTestFlags = [ "-p" "phenix-plugin-basic-tools" "--features" "graph-v2" ];
+        doCheck = true;
+      };
+      pendingToolA = basicNativePlugin "phenix-plugin-tool-pending" "phenix_plugin_tool_pending" ./crates/phenix-plugin-tool-pending;
+      toolReceipts = basicNativePlugin "phenix-plugin-tool-receipts" "phenix_plugin_tool_receipts" ./crates/phenix-plugin-tool-receipts;
+      pendingToolB = pendingToolA.overrideAttrs {
+        pname = "phenix-plugin-tool-pending-b";
+        cargoBuildFlags = [ "-p" "phenix-plugin-tool-pending" "--features" "alternate" ];
+      };
       basicV2CompositionSpec = basicCompositionSpec // {
-        artifacts = map (artifact: if artifact == "${basicAgent}" then "${basicV2Agent}" else artifact) basicCompositionSpec.artifacts;
+        artifacts = map (artifact:
+          if artifact == "${basicAgent}" then "${basicV2Agent}"
+          else if artifact == "${basicTools}" then "${basicV2Tools}" else artifact
+        ) basicCompositionSpec.artifacts ++ [ "${toolReceipts}" ];
+        slots = basicCompositionSpec.slots ++ [
+          (basicBinding "phenix.basic.agent" "GraphTools" "phenix.basic.tools" "GraphTools")
+          (basicBinding "phenix.basic.agent" "Receipts" "phenix.basic.tool-receipts" "Receipts")
+          (basicBinding "phenix.basic.tools" "Receipts" "phenix.basic.tool-receipts" "Receipts")
+          (basicBinding "phenix.basic.tool-receipts" "Storage" "phenix.basic.storage-sqlite" "Storage")
+          (basicBinding "phenix.basic.tool-receipts" "Session" "phenix.basic.session" "Session")
+          (basicBinding "phenix.basic.tool-receipts" "Recovery" "phenix.basic.session" "GraphRecovery")
+        ];
         definitions = [ "${basicV2Definitions}" ];
         grants = basicCompositionSpec.grants ++ map (key: let parts = pkgs.lib.splitString "/" key; in {
           caller = "phenix.basic.agent";
           interface = builtins.elemAt parts 0;
           operation = builtins.elemAt parts 1;
           resources = basicCompositionSpec.authority.resources;
-        }) basicV2StageKeys;
+        }) basicV2StageKeys ++ map (key: let parts = pkgs.lib.splitString "/" key; in {
+          caller = "phenix.basic.tools";
+          interface = builtins.elemAt parts 0;
+          operation = builtins.elemAt parts 1;
+          resources = basicCompositionSpec.authority.resources;
+        }) basicV2ToolKeys ++ map (item: let parts = pkgs.lib.splitString "/" item.key; in {
+          inherit (item) caller;
+          interface = builtins.elemAt parts 0; operation = builtins.elemAt parts 1;
+          resources = basicCompositionSpec.authority.resources;
+        }) basicV2ReceiptGrants;
         authority = basicCompositionSpec.authority // {
-          operations = basicCompositionSpec.authority.operations ++ basicV2StageKeys;
+          operations = pkgs.lib.unique (basicCompositionSpec.authority.operations ++ basicV2StageKeys ++ basicV2ToolKeys ++ map (item: item.key) basicV2ReceiptGrants);
         };
       };
       basicV2Composition = pkgs.writeText "phenix-basic-v2-composition.json"
@@ -1616,7 +1659,51 @@
         "phenix.basic.graph-turn@1/decide"
         "phenix.basic.graph-turn@1/tool"
         "phenix.basic.graph-turn@1/finish"
+        "phenix.basic.graph-tool-turn@1/admit"
+        "phenix.basic.graph-tool-turn@1/reconcile"
       ];
+      basicV2ToolKeys = [
+        "phenix.basic.graph-tools@1/validate"
+        "phenix.basic.graph-tools@1/plan"
+        "phenix.basic.graph-tools@1/collect"
+        "phenix.basic.graph-tool-executor@1/list"
+        "phenix.basic.graph-tool-executor@1/validate"
+        "phenix.basic.graph-tool-executor@1/invoke"
+      ];
+      basicV2ReceiptGrants = [
+        { caller = "phenix.basic.agent"; key = "phenix.basic.graph-tools@1/validate"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.tool-receipts@1/admit"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.tool-receipts@1/read"; }
+        { caller = "phenix.basic.agent"; key = "phenix.basic.tool-receipts@1/seal"; }
+        { caller = "phenix.basic.tools"; key = "phenix.basic.tool-receipts@1/record"; }
+        { caller = "phenix.basic.tools"; key = "phenix.basic.tool-receipts@1/read"; }
+        { caller = "phenix.basic.tool-receipts"; key = "phenix.basic.storage@1/read"; }
+        { caller = "phenix.basic.tool-receipts"; key = "phenix.basic.storage@1/transact"; }
+        { caller = "phenix.basic.tool-receipts"; key = "phenix.basic.session@1/open"; }
+        { caller = "phenix.basic.tool-receipts"; key = "phenix.basic.graph-tool-session@1/recover"; }
+        { caller = "root"; key = "phenix.basic.tool-receipts@1/recover"; }
+        { caller = "root"; key = "phenix.basic.tool-receipts@1/read"; }
+      ];
+      basicV2FanoutComposition = pkgs.writeText "phenix-basic-v2-fanout-composition.json"
+        (builtins.toJSON (basicV2CompositionSpec // {
+          artifacts = basicV2CompositionSpec.artifacts ++ [ "${pendingToolA}" "${pendingToolB}" ];
+          slots = basicV2CompositionSpec.slots ++ [
+            (basicBinding "phenix.basic.tools" "GraphContributors" "phenix.tool.pending-a" "GraphExecutor")
+            ((basicBinding "phenix.basic.tools" "GraphContributors" "phenix.tool.pending-b" "GraphExecutor") // { index = 1; })
+            (basicBinding "phenix.tool.pending-a" "Receipts" "phenix.basic.tool-receipts" "Receipts")
+            (basicBinding "phenix.tool.pending-b" "Receipts" "phenix.basic.tool-receipts" "Receipts")
+          ];
+          grants = basicV2CompositionSpec.grants ++ map (key: let parts = pkgs.lib.splitString "/" key; in {
+            caller = "root"; interface = builtins.elemAt parts 0; operation = builtins.elemAt parts 1;
+            resources = basicCompositionSpec.authority.resources;
+          }) [ "phenix.basic.graph-tools@1/collect" "phenix.basic.graph-tool-turn@1/reconcile" "phenix.basic.tool-receipts@1/resolve" "phenix.basic.tool-receipts@1/record" ] ++ map (caller: {
+            inherit caller; interface = "phenix.basic.tool-receipts@1"; operation = "record";
+            resources = basicCompositionSpec.authority.resources;
+          }) [ "phenix.tool.pending-a" "phenix.tool.pending-b" ];
+          authority = basicV2CompositionSpec.authority // {
+            operations = basicV2CompositionSpec.authority.operations ++ [ "phenix.basic.tool-receipts@1/resolve" ];
+          };
+        }));
       basicV2ControlledCheck = pkgs.runCommand "phenix-basic-v2-controlled-turns" { } ''
         mkdir -p "$out"
         for mode in pending pending-rounds cancel cancel-deferred cancel-continuation cancel-rounds-initial cancel-rounds-continuation fail-model; do
@@ -1627,6 +1714,13 @@
         ${pkgs.python3}/bin/python ${./tests/graph-v2-packaged-cancellation.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2ControlledComposition} "$out"
         test -s "$out/packaged-cancellation.json"
+        for mode in fanout fanout-mixed fanout-cancel fanout-infrastructure fanout-duplicate fanout-budget fanout-invalid-json fanout-invalid-type fanout-partial-cancel fanout-partial-infrastructure; do
+          PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-$mode.sqlite" \
+            ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2FanoutComposition} "$mode" > "$out/native-$mode.txt"
+        done
+        ${pkgs.python3}/bin/python ${./tests/graph-v2-packaged-tools.py} \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
+        test -s "$out/packaged-tools.json"
       '';
       basicV2Product = pkgs.runCommand "phenix-basic-v2-product" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p "$out"

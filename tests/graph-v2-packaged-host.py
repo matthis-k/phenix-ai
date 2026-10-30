@@ -111,13 +111,25 @@ assert journal_counts() == {
 after_rounds = prompt("hello-after-rounds-restart")
 assert "mock:hello-after-rounds-restart" in after_rounds, after_rounds
 
+before_multiple = journal_counts()
+multiple = prompt("tools:packaged-proof")
+assert "mock:call-1:PACKAGED-PROOF|call-2:14" in multiple, multiple
+assert journal_counts() == {
+    **before_multiple,
+    "PromptAccepted": before_multiple["PromptAccepted"] + 1,
+    "ModelStarted": before_multiple["ModelStarted"] + 2,
+    "ToolStarted": before_multiple["ToolStarted"] + 2,
+    "ToolFinished": before_multiple["ToolFinished"] + 2,
+    "Answer": before_multiple["Answer"] + 1,
+}, journal_counts()
+
 # Policy never substitutes for the composition's operation grants. Reject
 # before loading plugins or creating durable state, without touching metadata.
 denied = json.loads(Path(composition).read_text())
 denied["grants"] = [grant for grant in denied["grants"] if not (
     grant["caller"] == "phenix.basic.agent"
-    and grant["interface"] == "phenix.basic.graph-turn@1"
-    and grant["operation"] == "tool"
+    and grant["interface"] == "phenix.basic.graph-tool-turn@1"
+    and grant["operation"] == "reconcile"
 )]
 denied_path = output / "denied-composition.json"
 denied_path.write_text(json.dumps(denied))
@@ -135,6 +147,7 @@ assert not denied_database.exists()
     "domain_failure": failure, "recovery": recovery,
     "tool": tool, "tool_failure": tool_failure, "tool_restart": after_tool,
     "repeated_rounds": repeated, "repeated_restart": after_rounds,
+    "normal_multi_tool": multiple,
     "same_host_failure_recovery": same_host,
     "journal_counts": counts, "session_source": "SQLite basic_records after first default terminal prompt",
     "denied_before_load": rejected.stderr,

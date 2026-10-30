@@ -66,6 +66,16 @@ impl<T: Portable> Portable for Vec<T> {
         }
     }
 }
+/// Heap allocation changes Rust storage, not the canonical schema or wire value.
+impl<T: Portable> Portable for Box<T> {
+    const SCHEMA: StaticSchema = T::SCHEMA;
+    fn to_value(&self) -> WireValue {
+        self.as_ref().to_value()
+    }
+    fn from_value(value: WireValue) -> Result<Self, Failure> {
+        T::from_value(value).map(Box::new)
+    }
+}
 impl<T: Portable> Portable for Option<T> {
     const SCHEMA: StaticSchema = StaticSchema::Option(&T::SCHEMA);
     fn to_value(&self) -> WireValue {
@@ -78,5 +88,32 @@ impl<T: Portable> Portable for Option<T> {
             WireValue::List(mut v) if v.len() == 1 => Ok(Some(T::from_value(v.pop().unwrap())?)),
             _ => Err(invalid()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boxed_portable_is_schema_and_wire_transparent() {
+        let boxed = Box::new(42_u64);
+        assert_eq!(
+            <Box<u64>>::SCHEMA.owned().unwrap(),
+            u64::SCHEMA.owned().unwrap()
+        );
+        assert_eq!(boxed.to_value(), 42_u64.to_value());
+        let bytes = boxed.to_value().encode().unwrap();
+        assert_eq!(bytes, 42_u64.to_value().encode().unwrap());
+        assert_eq!(
+            Box::<u64>::from_value(WireValue::decode(&bytes).unwrap()).unwrap(),
+            boxed
+        );
+        assert_eq!(
+            Box::<u64>::from_value(WireValue::String("invalid".into()))
+                .unwrap_err()
+                .code,
+            Code::SchemaRejected
+        );
     }
 }
