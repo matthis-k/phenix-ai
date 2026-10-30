@@ -82,7 +82,7 @@ are verified byte-for-byte against that exact merged library revision.
 ## Declarative test checks
 
 `flake.nix` now locks `phenix-flake-ci` as a Nix input at
-`cd2403a45333a5211775bdf01b3ce45f28e02e5f`. That same immutable revision
+`e83c6029afc0140a242ae8240dbff6efe5979725`. That same immutable revision
 is used by the generated CI workflows and workflow verification checkout.
 The public `mkTestCases` and `testAssert` helpers create actual
 `checks.x86_64-linux.kernel-inspect-contract` and
@@ -94,7 +94,7 @@ nonexistent composition returns a nonzero exit code. Both are ordinary
 `checks`, so they are automatically included in the full Nix inventory.
 No shell assertion script, new CI registry, or second kernel/plugin build is
 introduced. See the upstream
-[declarative tests](https://github.com/matthis-k/phenix-flake-ci/blob/cd2403a45333a5211775bdf01b3ce45f28e02e5f/docs/declarative-tests.md)
+[declarative tests](https://github.com/matthis-k/phenix-flake-ci/blob/e83c6029afc0140a242ae8240dbff6efe5979725/docs/declarative-tests.md)
 for further examples, file-content assertions and grouped artifacts.
 
 ## Automatically discovered runnable tests

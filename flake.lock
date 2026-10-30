@@ -16,26 +16,26 @@
         "type": "github"
       }
     },
-    "root": {
-      "inputs": {
-        "nixpkgs": "nixpkgs",
-        "phenix-flake-ci": "phenix-flake-ci"
-      }
-    },
     "phenix-flake-ci": {
       "locked": {
-        "lastModified": 1793202310,
-        "narHash": "sha256-Qe4vaKFmlIQKRNEVLT3iTyJX7u06kR42F2LbSHTCj0E=",
+        "lastModified": 1793272695,
+        "narHash": "sha256-mv/D5BkrE51dfmjQdNSae4AoA+TmGxoIxQSngt8m/hw=",
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "cd2403a45333a5211775bdf01b3ce45f28e02e5f",
+        "rev": "e83c6029afc0140a242ae8240dbff6efe5979725",
         "type": "github"
       },
       "original": {
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "cd2403a45333a5211775bdf01b3ce45f28e02e5f",
+        "rev": "e83c6029afc0140a242ae8240dbff6efe5979725",
         "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "phenix-flake-ci": "phenix-flake-ci"
       }
     }
   },

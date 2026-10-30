@@ -195,6 +195,43 @@ pub struct PortSecurity {
 
 **Optional delivery is not ambiguity:** A raw incoming `T` value mapped to an `Optional<T>` input is wrapped as `Some(T)` by the scheduler. A closed input becomes `None` (`Value::Null`), as already defined in `Portable for Option<T>`. An unreceived input is *not* `None` until all potential producers have resolved. A `StaticMany<T>` port collects a finite, statically known set of edge candidates in stable `EdgeId` order with declared `0 <= min <= max`. Closed candidates are skipped; successful values are ordered by `EdgeId`. Once every candidate is terminal, produce `Vec<T>` if `min <= delivered_values <= max` (including an empty list when `min=0`); otherwise resolve `Closed(CardinalityUnsatisfied)`. An unhandled `Failed` candidate fails the collection, overriding normal closure. No timer, partial snapshot, or external source occurrence closes a collection. Dynamically open-ended streams and their close protocol are **out of scope** until explicitly specified; they may not use timeouts to synthesize successful closure.
 
+#### Readiness implementation clarification
+
+**Status:** Partially implemented V2 continuation. Compiler and runtime Optional /
+StaticMany readiness and native fixtures pass locally; exact-head single-store CI
+and full V2 acceptance remain required and are not claimed here. **Date:**
+27 October 2026. **Inspected commit:** `52b1c3261db182b9f595aac85d48fc238bddb83c`.
+**Scope:** complete input schemas, causal absence, and authority preservation.
+**Supersession:** none; makes the existing readiness/control-security rules
+explicit. **Owner:** M1 roadmap V2, following Join #1175. **Acceptance:** canonical
+schema/wire negatives, native Some/None/vector consumption, pending/failure
+terminality, stable EdgeId ordering, dormancy, and narrowed-resource/control
+classification tests before claiming compliance.
+
+`InputPort.schema` describes the complete consumed value, including any outer
+Option or List. One consumes that schema unchanged. Optional requires
+`Option(T)` and accepts candidate payloads of exactly `T`; StaticMany requires
+`List(T)` and accepts candidate payloads of exactly `T`. Only one outer layer is
+removed to check an edge. Invoke still receives exactly one complete request
+matching its selected OperationSchema; readiness never fills struct fields.
+Switch, Merge and Constant retain their specified One-only intrinsic shapes.
+
+Readiness does not create a source. Flow-only relevance to the admitted source
+is checked before absence can activate a node. Disconnected or Order-only
+Optional/min-zero nodes remain dormant. A relevant Join can use another causal
+input as the activation bound for a missing Optional/min-zero field. Required
+satisfiability obligations exclude Optional and min-zero collection inputs.
+
+Closure that can become observable None or an empty collection retains
+kernel-owned causal/control evidence and its attenuated resource bound. Closure
+from an inactive source supplies terminality, not authority from that source.
+Synthesis intersects the actual causal bounds and applicable prepared flow
+policy; it never falls back to the full root scope when evidence is absent or
+an intersection is empty. Observable absence outside the effective resource
+grant fails closed. Non-runnable consumers still discard late successes without
+performing a nonexistent destination delivery. None/collection presence, size
+and omissions retain conservative candidate/control security labels.
+
 **Zero-data control:** `Struct{}` is the existing portable `()` value carried on a `Flow`. `Order` carries no value and never activates. `Closed` and `Failed` are kernel scheduler states, not fabricated plugin `Value`s. A `Constant<T>` has one required `start: In<()>` and one `out: Out<T>`. On one successful `Flow<()>` arrival per wave it emits its verified Public literal once. If `start` closes or fails, output respectively closes or fails. An `Order` edge cannot activate it; source-triggered constants must be explicitly connected with a unit-valued Flow. Untriggered constants remain dormant. The compiler validates this shape and activation reachability.
 
 ### 2.2 Entity/data relationship

@@ -96,6 +96,19 @@ pub struct InputPort {
     pub readiness: InputReadiness,
     pub security: PortSecurity,
 }
+impl InputPort {
+    /// Candidate payload shape, removing exactly one readiness-owned wrapper.
+    pub fn candidate_schema(&self) -> Result<&ValueSchema, Failure> {
+        match (self.readiness, &self.schema) {
+            (InputReadiness::One, schema) => Ok(schema),
+            (InputReadiness::Optional, ValueSchema::Option(inner)) => Ok(inner),
+            (InputReadiness::StaticMany { min, max }, ValueSchema::List(inner)) if min <= max => {
+                Ok(inner)
+            }
+            _ => Err(bad("invalid input readiness schema or bounds")),
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputPort {
     pub name: String,
@@ -227,9 +240,7 @@ impl GraphContributionV2 {
                     return Err(bad("invalid input port name"));
                 }
                 port.schema.encode()?;
-                if port.readiness != InputReadiness::One {
-                    return Err(bad("unsupported graph-v2 input readiness"));
-                }
+                port.candidate_schema()?;
             }
             for port in &node.outputs {
                 if !identifier(&port.name) {
@@ -250,7 +261,9 @@ impl GraphContributionV2 {
                         || node.outputs[0].name != "err"
                         || node.outputs[1].name != "ok"
                     {
-                        return Err(bad("Invoke requires one One in request and err/ok outputs"));
+                        return Err(bad(
+                            "Invoke requires one complete in request and err/ok outputs",
+                        ));
                     }
                 }
                 NodeKind::Source { source } => {
@@ -271,6 +284,7 @@ impl GraphContributionV2 {
                 NodeKind::Constant { value } => {
                     if node.inputs.len() != 1
                         || node.inputs[0].name != "start"
+                        || node.inputs[0].readiness != InputReadiness::One
                         || node.inputs[0].schema != ValueSchema::Struct(Default::default())
                         || node.outputs.len() != 1
                         || node.outputs[0].name != "out"
@@ -290,7 +304,10 @@ impl GraphContributionV2 {
                     }
                 }
                 NodeKind::Switch { tagged_schema } => {
-                    if node.inputs.len() != 1 || node.inputs[0].name != "in" {
+                    if node.inputs.len() != 1
+                        || node.inputs[0].name != "in"
+                        || node.inputs[0].readiness != InputReadiness::One
+                    {
                         return Err(bad("Switch requires one One in"));
                     }
                     let input = &node.inputs[0];
@@ -318,6 +335,7 @@ impl GraphContributionV2 {
                 } => {
                     if node.inputs.len() != 1
                         || node.inputs[0].name != "in"
+                        || node.inputs[0].readiness != InputReadiness::One
                         || node.outputs.len() != 1
                         || node.outputs[0].name != "out"
                         || node.inputs[0].schema != node.outputs[0].schema
@@ -347,7 +365,7 @@ impl GraphContributionV2 {
                             .iter()
                             .any(|p| !p.security.can_flow_to(node.outputs[0].security))
                     {
-                        return Err(bad("Join All requires named One inputs and exact struct out without security downgrade"));
+                        return Err(bad("Join All requires named inputs and exact struct out without security downgrade"));
                     }
                 }
             }
@@ -618,7 +636,18 @@ fn encode_node(n: &NodeDecl) -> Result<Value, Failure> {
                 ("name", string(&p.name)),
                 ("schema", Value::Bytes(p.schema.encode()?)),
                 ("security", security(p.security)),
-                ("readiness", string("one")),
+                (
+                    "readiness",
+                    match p.readiness {
+                        InputReadiness::One => string("one"),
+                        InputReadiness::Optional => string("optional"),
+                        InputReadiness::StaticMany { min, max } => Value::map([
+                            ("kind", string("static-many")),
+                            ("min", Value::U64(u64::from(min))),
+                            ("max", Value::U64(u64::from(max))),
+                        ]),
+                    },
+                ),
             ]))
         })
         .collect::<Result<_, Failure>>()?;
@@ -694,15 +723,32 @@ fn decode_node(value: Value) -> Result<NodeDecl, Failure> {
             let name = text(&mut p, "name")?;
             let schema = schema(&mut p, "schema")?;
             let security = decode_security(take(&mut p, "security")?)?;
-            if text(&mut p, "readiness")? != "one" {
-                return Err(bad("unknown or unsupported input readiness"));
-            }
+            let readiness = match take(&mut p, "readiness")? {
+                Value::String(s) if s == "one" => InputReadiness::One,
+                Value::String(s) if s == "optional" => InputReadiness::Optional,
+                Value::Map(mut f) => {
+                    if text(&mut f, "kind")? != "static-many" {
+                        return Err(bad("unknown input readiness"));
+                    }
+                    let mut bound = |key| match take(&mut f, key)? {
+                        Value::U64(n) => {
+                            u32::try_from(n).map_err(|_| bad("readiness bound exceeds u32"))
+                        }
+                        _ => Err(bad("readiness bound must be U64")),
+                    };
+                    let min = bound("min")?;
+                    let max = bound("max")?;
+                    empty(f)?;
+                    InputReadiness::StaticMany { min, max }
+                }
+                _ => return Err(bad("unknown input readiness")),
+            };
             empty(p)?;
             Ok(InputPort {
                 name,
                 schema,
                 security,
-                readiness: InputReadiness::One,
+                readiness,
             })
         })
         .collect::<Result<_, Failure>>()?;
