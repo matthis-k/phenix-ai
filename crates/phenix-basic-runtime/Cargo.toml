@@ -8,6 +8,7 @@ license.workspace = true
 # Enables only an incomplete SDK v2 initialize handshake for development.
 # The packaged Basic ACP host uses the stable-v1 builder by default.
 acp_v2_preview = []
+graph-v2 = []
 
 [dependencies]
 zeroize = "=1.9.1"

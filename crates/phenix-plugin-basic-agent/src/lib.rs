@@ -1,6 +1,7 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
+#[cfg(not(feature = "graph-v2"))]
 use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
@@ -236,7 +237,10 @@ mod journal_page_tests {
     }
 }
 
-#[cfg(not(feature = "staged-graph"))]
+#[cfg(all(feature = "graph-v2", feature = "staged-graph"))]
+compile_error!("graph-v2 and staged-graph are separate opt-in compositions");
+
+#[cfg(not(any(feature = "staged-graph", feature = "graph-v2")))]
 const GRAPH: StaticGraphContribution = StaticGraphContribution {
     plugin: "phenix.basic.agent",
     events: &[],
@@ -274,11 +278,26 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
 #[path = "staged_graph_tests.rs"]
 mod staged_graph_tests;
 
+#[cfg(not(feature = "graph-v2"))]
+#[used]
+#[no_mangle]
+#[link_section = ".phenix.graph"]
+pub static PHENIX_GRAPH: [u8; phenix_sdk::NATIVE_SECTION_BYTES] =
+    phenix_sdk::descriptor::static_metadata::graph(GRAPH).native_section();
+
+#[cfg(feature = "graph-v2")]
+#[used]
+#[no_mangle]
+#[link_section = ".phenix.graph"]
+pub static PHENIX_GRAPH: [u8; phenix_sdk::NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/graph-v2.bin"));
+
 #[phenix_sdk::plugin(
     id = "phenix.basic.agent",
     version = "1.0.0",
     provide(phenix_basic_contracts::BasicInput, slot = "Input"),
     provide(phenix_basic_contracts::BasicTurnPrepare, slot = "Prepare"),
+    provide(phenix_basic_contracts::BasicGraphTurn, slot = "GraphTurn"),
     provide(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     provide(phenix_basic_contracts::BasicOutput, slot = "Output"),
     require(phenix_basic_contracts::Model, slot = "Model"),
@@ -292,8 +311,7 @@ mod staged_graph_tests;
     // The agent does not select or invoke a Storage provider itself.
     require(phenix_basic_contracts::Storage, slot = "Storage", optional),
     // Bound only by the opt-in Advanced graph composition.
-    require(phenix_basic_contracts::AdvancedPreparedModelRequest, slot = "Prepared", optional),
-    graph(super::GRAPH)
+    require(phenix_basic_contracts::AdvancedPreparedModelRequest, slot = "Prepared", optional)
 )]
 mod plugin {
     use phenix_basic_contracts::{
@@ -327,6 +345,7 @@ mod plugin {
     #[derive(Default)]
     pub struct State {
         active: Option<Running>,
+        graph_reply: Option<phenix_basic_contracts::ModelReply>,
         // The staged request is authoritative in this plugin. The graph
         // consumes a read-only, watched Phenix view of this Rust field.
         #[expose]
@@ -665,11 +684,17 @@ mod plugin {
         // same run, without re-creating a new Basic agent loop.
         // Publication CAS succeeds before the owned request is committed.
         // A failed publish leaves the plugin's previous request untouched.
+        #[cfg(not(feature = "graph-v2"))]
         state
             .publish_pending_model_request(host, Some(projected.clone()))
             .map_err(|err| {
                 Failure::new(Code::PluginFailed, format!("staged request publish: {err}"))
             })?;
+        // V2 passes the request on a typed Flow edge, not a watched-state wave.
+        #[cfg(feature = "graph-v2")]
+        {
+            state.pending_model_request = Some(projected.clone());
+        }
         state.active = Some(running);
         Ok(projected)
     }
@@ -678,6 +703,156 @@ mod plugin {
         Pending,
         Done(RunResult),
         RePrepared,
+    }
+
+    #[provide(phenix_basic_contracts::BasicGraphTurn::model)]
+    fn graph_model(
+        state: &mut State,
+        host: &Host<'_>,
+        request: ModelRequest,
+    ) -> CallResult<phenix_basic_contracts::ModelReply, BasicError> {
+        let source = state.pending_model_request.as_ref().ok_or_else(|| {
+            CallError::Domain(error(ErrorCode::Conflict, "no prepared graph turn"))
+        })?;
+        super::verify_staged_model_candidate(source, &request).map_err(CallError::Domain)?;
+        if state.active.as_ref().is_none_or(|running| {
+            running.run != request.run || running.input.session != request.session
+        }) {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "no active graph run",
+            )));
+        }
+        // Consume admission before effects so a duplicate stage cannot call Model twice.
+        state.pending_model_request = None;
+        // A final first reply traverses the fixed continuation stage without
+        // invoking Model again or accounting the reply twice.
+        if let Some(reply) = state.graph_reply.as_ref() {
+            if reply.calls.is_empty() {
+                return Ok(reply.clone());
+            }
+        }
+        match host.invoke::<Model::complete>("Model", &request) {
+            Ok(reply) => {
+                state.graph_reply = Some(reply.clone());
+                Ok(reply)
+            }
+            Err(failure) => {
+                let running = state.active.take().expect("validated active graph run");
+                let problem = match &failure {
+                    CallError::Domain(problem) => problem.clone(),
+                    CallError::Kernel(_) => error(ErrorCode::ModelFailed, "Model execution failed"),
+                };
+                stopped(host, running.session, &problem)?;
+                Err(failure)
+            }
+        }
+    }
+
+    #[provide(phenix_basic_contracts::BasicGraphTurn::tool)]
+    fn graph_tool(
+        state: &mut State,
+        host: &Host<'_>,
+        reply: phenix_basic_contracts::ModelReply,
+    ) -> CallResult<ModelRequest, BasicError> {
+        if state.graph_reply.as_ref() != Some(&reply) {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "not the admitted Model reply",
+            )));
+        }
+        let mut running = state
+            .active
+            .take()
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
+        if running.turns != 0 {
+            let problem = error(
+                ErrorCode::InvalidReply,
+                "graph slice requires an initial reply",
+            );
+            stopped(host, running.session, &problem)?;
+            return Err(CallError::Domain(problem));
+        }
+        if reply.calls.is_empty() {
+            let next = super::project_model_request(
+                &running.input.session,
+                &running.run,
+                &running.session.history,
+                &running.tools,
+                &running.skills,
+                &running.context,
+                &running.input.limits,
+            );
+            state.pending_model_request = Some(next.clone());
+            state.active = Some(running);
+            return Ok(next);
+        }
+        state.graph_reply = None;
+        let next = match (|| {
+            handle_model_reply(host, &mut running, Ok(reply))?;
+            prepare_next_model_request(host, &mut running)
+        })() {
+            Ok(next) => next,
+            Err(failure) => {
+                // Reconcile the durable snapshot, not partially applied in-memory
+                // tool results. Uncommitted effects must retain pending calls.
+                let current = host.invoke::<Session::open>(
+                    "Session",
+                    &Scope {
+                        session: running.input.session.clone(),
+                    },
+                )?;
+                if current.status == RunStatus::Running {
+                    match failure {
+                        CallError::Kernel(failure) => {
+                            running.session = current;
+                            return match reconcile_model_failure(host, &running, failure) {
+                                PendingResult::QuiescentFailure(failure) => {
+                                    Err(CallError::Kernel(failure))
+                                }
+                                PendingResult::Ready(result) => result,
+                                _ => unreachable!("failure reconciliation is synchronous"),
+                            };
+                        }
+                        CallError::Domain(ref problem) => stopped(host, current, problem)?,
+                    }
+                }
+                return Err(failure);
+            }
+        };
+        state.pending_model_request = Some(next.clone());
+        state.active = Some(running);
+        Ok(next)
+    }
+
+    #[provide(phenix_basic_contracts::BasicGraphTurn::finish)]
+    fn graph_finish(
+        state: &mut State,
+        host: &Host<'_>,
+        reply: phenix_basic_contracts::ModelReply,
+    ) -> CallResult<RunResult, BasicError> {
+        if state.graph_reply.as_ref() != Some(&reply) {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "not the admitted Model reply",
+            )));
+        }
+        state.graph_reply = None;
+        let mut running = state
+            .active
+            .take()
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
+        if running.turns > 1 || !reply.calls.is_empty() {
+            let problem = error(
+                ErrorCode::InvalidReply,
+                "graph continuation requires final answer",
+            );
+            stopped(host, running.session, &problem)?;
+            return Err(CallError::Domain(problem));
+        }
+        handle_model_reply(host, &mut running, Ok(reply))?.ok_or_else(|| {
+            CallError::Domain(error(ErrorCode::InvalidReply, "missing graph answer"))
+        })
     }
 
     // Consume one completed Model reply: account usage and streaming text,
@@ -1053,7 +1228,7 @@ mod plugin {
         host: &Host<'_>,
         request: PromptSubmitted,
     ) -> PendingResult<RunResult, BasicError> {
-        if cfg!(feature = "staged-graph") {
+        if cfg!(any(feature = "staged-graph", feature = "graph-v2")) {
             return PendingResult::Ready(Err(CallError::Domain(error(
                 ErrorCode::Denied,
                 "staged Basic requires the graph preparation admission path",

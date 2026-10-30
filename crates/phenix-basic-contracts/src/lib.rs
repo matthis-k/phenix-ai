@@ -619,6 +619,15 @@ pub trait BasicTurnPrepare {
     fn prepare(&self, request: PromptSubmitted) -> Result<ModelRequest, BasicError>;
 }
 
+/// Bounded graph-v2 acceptance stages. Model and tool effects are synchronous;
+/// the graph, not a plugin loop, orders the two model turns.
+#[contract(id = "phenix.basic.graph-turn@1")]
+pub trait BasicGraphTurn {
+    fn model(&self, request: ModelRequest) -> Result<ModelReply, BasicError>;
+    fn tool(&self, reply: ModelReply) -> Result<ModelRequest, BasicError>;
+    fn finish(&self, reply: ModelReply) -> Result<RunResult, BasicError>;
+}
+
 #[property(owner = "phenix.basic.agent", id = "pending_model_request", get, watch)]
 pub type BasicPendingModelRequest = Option<ModelRequest>;
 
@@ -682,6 +691,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(Storage),
     define(BasicInput),
     define(BasicTurnPrepare),
+    define(BasicGraphTurn),
     define(BasicTurnAdvance),
     // Optional imports must have a canonical definition even when the
     // advanced provider is not selected in the Basic-only composition.
@@ -995,7 +1005,7 @@ mod tests {
         );
         let metadata = ContractMetadata::decode(definitions::METADATA.bytes()).unwrap();
         assert_eq!(metadata.execution, MetadataExecution::None);
-        assert_eq!(metadata.definitions.len(), 15);
+        assert_eq!(metadata.definitions.len(), 16);
         assert!(metadata
             .definitions
             .iter()

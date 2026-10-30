@@ -9,6 +9,11 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 staged-graph = []
+graph-v2 = []
+
+[build-dependencies]
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-contract = { path = "../phenix-contract" }
 
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }

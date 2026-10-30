@@ -34,6 +34,28 @@ have M1 tests. The transition passed exact-head CI at `367420e33b`.
 [PR #781](https://github.com/matthis-k/phenix-ai/pull/781) completes S3b at
 `75a255b9`, with full CI and verified release evidence.
 
+## Opt-in Graph V2 packaged host
+
+`nix run .#phenix-basic-v2-terminal` runs the existing Basic terminal host
+with a canonically packaged Graph V2 `Source -> prepare -> model -> tool -> continuation -> finish` contribution. The
+opt-in host prepares that verified contribution with an explicit trusted
+source/operation security policy, then uses ordinary scoped action admission,
+ABI-3 dispatch and journal rendering. The agent plugin opens or creates the
+session on its first prompt; no preliminary session or authentication call is
+required for this scripted-model preset. Use `--session NAME` to resume a
+different session. The ordinary P1 launchers remain Graph V1 and unchanged.
+
+`nix build .#phenix-basic-v2-product` runs the packaged executable against a
+fresh SQLite database without a supplied session identity, reports the actual
+host-established session, and checks first-prompt rendering, restart/observer
+continuity, real packaged tool execution and tool failure, model failure/recovery, and denial
+before native loading when an operation grant is absent. It does not rewrite
+artifact metadata or use a test-only dispatcher or grants. No-tool turns pass
+through the fixed stages without an extra Model invocation. The same gate is
+registered as `checks.basic-v2-packaged-host`. This bounded increment is not
+Graph V2 P1 parity: provider authentication, HTTP transport and in-flight
+cancellation remain separately covered by the existing native gates.
+
 ## Durable session state
 
 Basic, verification and Advanced presets persist their SQLite session state in
