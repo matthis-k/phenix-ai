@@ -670,6 +670,28 @@ mod plugin {
         host: &Host<'_>,
         request: PromptSubmitted,
     ) -> CallResult<ModelRequest, BasicError> {
+        #[cfg(feature = "graph-v2")]
+        if let Some(running) = state.active.as_ref() {
+            if running.input.session == request.session && running.child.is_none() {
+                phenix_basic_contracts::check_session(host, &request.session)?;
+                let session = host.invoke::<Session::open>(
+                    "Session",
+                    &Scope {
+                        session: request.session.clone(),
+                    },
+                )?;
+                // Deferred-wave cancellation has no Model ticket to cancel.
+                // Only the host's durable finalization authorizes forgetting it.
+                if session.run == running.run
+                    && session.status == RunStatus::Cancelled
+                    && session.pending.is_empty()
+                {
+                    state.active = None;
+                    state.pending_model_request = None;
+                    state.graph_reply = None;
+                }
+            }
+        }
         if state.active.is_some() {
             return Err(CallError::Domain(error(
                 ErrorCode::Conflict,

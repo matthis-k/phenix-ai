@@ -30,6 +30,53 @@ The isolated rewrite #1171 is not a replacement for the working P1 composition.
 | Sessions/frontends | Basic/P1 contracts | Working graph-v1 Basic/session/frontend path | Model-before-session control, auth restoration, graph-v2 P1 parity | #1158, #1160 -> #1161; V5 | No graph-v2 product acceptance | In progress, unmerged P1 fixes |
 | Testing | v2.4 section 9 | M1 conformance and new offline security unit tests | Native V1 and full property/negative/product gates | V0 through V7 | #1164 exact head `76fc59da16b6552373d43ff452e1de98c8f08d94` CI green; evidence stack remains unmerged | In progress |
 
+#### Stacked execution acceptance (29 October 2026)
+
+The following unmerged increments extend the dated baseline above; they do not
+change the working V1 default or establish V2 P1 parity. The supplied heads of
+#1206 (`2d1ff0c4`), #1207 (`4bd4a7f8`) and #1208 (`2edc7cfa`) were verified and
+left intact. #1171 and the Python experiments remain isolated.
+
+| Increment | Exact accepted head | Evidence and scope |
+| --- | --- | --- |
+| #1209: repeated turns | `d3be19319af21f56dd237f72fe3e9385281260c1` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40965359696), coordinator 18m10s. Explicit Switch and bounded FIFO Deferred Next activations, final/one-tool/two-tool-round/budget/tool-failure native cases, packaged repeated turns/restart/journal failure. Tools within a batch remain serial. |
+| #1210: continuation drain | `8c27045cc7674cec8af86b94edaab4983cc60f00` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40968268658), coordinator 17m14s. Controlled pending initial and repeated continuation cancellation, exactly-once completion, late-success suppression and physical lease drain. |
+| #1211: recursive Deferred | `5161d14651f6db34fd6974e1c6d77e8963c4e9f1` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40972410804), coordinator 23m38s. Internal/cross-boundary Deferred materialization, provenance, exact effective-ID policy and native execution. |
+| #1212: activation observation | `baba485426aa61f17044e1071b02148ab2602890` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40975538667), coordinator 23m32s. Trusted `(root, activation, node)` correlation, once-only pending observations, model activations 0/1/2. Not durable identity or concurrent-root isolation. |
+| #1213: packaged cancellation | `20f3ad16d473696085123aa076d57512d409e3e0` | [Full exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/40981365668), coordinator 20m48s. Physical-worker-witnessed initial/continuation cancellation, same-host/session recovery and stdin EOF after cancellation held until drain. |
+
+The packaged JSONL cancellation acceptance is distinct from the controlled native
+fixtures and does not prove arbitrary direct kernel shutdown during pending work.
+A dependent deferred-gap recovery
+increment admits a new run only after a fresh authorized host finalizer has
+durably marked the same old run Cancelled with no pending tool effects. Cancellation
+callbacks gain no write authority. The deterministic gap fixture explicitly uses
+that manual host finalizer; it is not packaged deferred-gap scheduling evidence.
+
+The next execution milestone is bounded dynamic per-invocation tool fan-out and
+deterministic collection. Static Join/StaticMany and one invocation per authored
+node per wave cannot represent runtime-sized branch membership. The existing
+physical provider-busy guard must not be removed to manufacture concurrency.
+Freeze generic branch identity, closure, partial-failure and cancellation semantics
+before extending that algebra; retain selected dispatch and per-invocation grants.
+
+The five C1 bundles are tracked independently in v2.4 section 7.12. Recursive
+Deferred resolves part of edge lowering, not direct nested/multi-level exports,
+cross-boundary Order, public/private patch anchors, complete transformation
+provenance or all placement/ownership/security adversarial cases. No bundle is
+closed by these increments. Scoped concurrent state, durable graph recovery and
+real V2 ACP/Neovim/provider/auth parity remain open.
+
+CI cost evidence: expensive local builds were zero. The #1209 planner contains
+89 checks and 3,353 unique closure derivations, not 3,353 rebuilt outputs. #1209
+and #1210 each scheduled 454 unique remote derivations; 419 derivation paths were
+identical across the two runs. GitHub PR cache scopes prevent cross-PR archive
+reuse, while the existing shared publisher excludes PR events. Changing that
+requires an explicit trusted publication policy and approved destination/read
+configuration, with provider changes merged before consumer pins are regenerated.
+No unchanged-SHA reruns were requested; superseded known-failing coordinator runs
+were cancelled, and warning/security/shipping gates were not weakened.
+
 Integrated base/initial-wave scope: #1172 merged at
 `12e6f7becd0d3cd0ee1a63aec8b7b4ff4acb3c64` after all five exact-head flake
 shards and aggregate, official ACP SDK, cache isolation, formatting and workflow
