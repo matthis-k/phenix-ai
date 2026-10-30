@@ -134,11 +134,14 @@ def mutate(root, case):
         after = (before.replace(needle, alternate, 1) if needle in before
                  else before.replace(alternate, needle, 1))
     elif case == "H":
-        needle = 'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" ];'
-        assert before.count(needle) == 1, "verification composition declaration drift"
+        # Test-domain selection moved out of the inline flake declaration.
+        # Change only the selected history-test mix, not the product preset.
+        needle = ('historyVerificationCompositionSpec = agentMixes.testing.modelHistory {\n'
+                  '        base = basicCompositionSpec;\n'
+                  '        artifact = "${historyTestModel}";')
+        assert before.count(needle) == 1, "verification test-mix declaration drift"
         after = before.replace(
-            needle,
-            'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" "${httpModel}" ];', 1)
+            needle, needle + '\n        extraArtifacts = [ "${httpModel}" ];', 1)
         # This adds an existing already-built optional plugin, without modifying
         # any Rust source or the selected verification Model slot.
     elif case == "I":
