@@ -249,7 +249,13 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
     let mut instance = std::ptr::null_mut();
     unsafe { table.create.unwrap()(&mut instance).consume() }.unwrap();
     unsafe { table.initialize.unwrap()(instance, &host).consume() }.unwrap();
-    for text in ["failure", "panic", "failure"] {
+    // A normal synchronous failure does not poison state; a panic does.
+    // The post-panic call must be rejected rather than re-entering mutated state.
+    for (text, expected_message) in [
+        ("failure", "returned failure"),
+        ("panic", "caught state plugin panic"),
+        ("failure", "instance uninitialized or poisoned"),
+    ] {
         let bytes = Value::String(text.into()).encode().unwrap();
         let (status, value) = unsafe {
             table.invoke.unwrap()(
@@ -265,7 +271,9 @@ fn generated_native_lifecycle_pending_and_poisoning_use_v2() {
             status, 5,
             "synchronous {text} must release its native lease"
         );
-        assert_eq!(Failure::from_value(value).unwrap().code, Code::PluginFailed);
+        let error = Failure::from_value(value).unwrap();
+        assert_eq!(error.code, Code::PluginFailed);
+        assert_eq!(error.message, expected_message);
     }
     assert_eq!(
         unsafe { table.stop.unwrap()(instance).consume() }.unwrap(),
