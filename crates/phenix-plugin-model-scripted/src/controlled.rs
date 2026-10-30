@@ -15,12 +15,28 @@ mod plugin {
         worker: Option<(Sender<()>, JoinHandle<()>)>,
         cancelled: bool,
         request: Option<ModelRequest>,
+        pending: Option<std::path::PathBuf>,
     }
 
     fn drain(state: &mut State) {
         let (stop, worker) = state.worker.take().unwrap();
         stop.send(()).unwrap();
         worker.join().unwrap();
+        if let Some(path) = state.pending.take() {
+            std::fs::remove_file(path).expect("scripted Model pending witness");
+        }
+    }
+
+    fn control() -> Option<String> {
+        match std::env::var_os("PHENIX_SCRIPTED_MODEL_CONTROL_FILE") {
+            Some(path) => Some(
+                std::fs::read_to_string(path)
+                    .expect("scripted Model control file")
+                    .trim()
+                    .to_owned(),
+            ),
+            None => std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").ok(),
+        }
     }
 
     #[pending(Model::complete)]
@@ -32,7 +48,7 @@ mod plugin {
         if let Err(error) = phenix_basic_contracts::check_session(host, &request.session) {
             return PendingResult::Ready(Err(error));
         }
-        if std::env::var_os("PHENIX_SCRIPTED_MODEL_CONTROL").is_none() {
+        if control().is_none() {
             return PendingResult::Ready(
                 super::super::complete(&request).map_err(CallError::Domain),
             );
@@ -49,6 +65,20 @@ mod plugin {
         started.recv().unwrap();
         state.worker = Some((stop, worker));
         state.cancelled = false;
+        if let Some(path) = std::env::var_os("PHENIX_SCRIPTED_MODEL_CONTROL_FILE") {
+            let path = std::path::PathBuf::from(path).with_extension("pending");
+            let temporary = path.with_extension("pending.tmp");
+            let initial = request
+                .history
+                .last()
+                .is_some_and(|message| message.role() == phenix_basic_contracts::Role::User);
+            // ModelStarted precedes deferred admission; witness the real worker
+            // only after its startup handshake, before returning to the host.
+            std::fs::write(&temporary, if initial { "initial" } else { "continuation" })
+                .expect("scripted Model pending witness");
+            std::fs::rename(&temporary, &path).expect("scripted Model pending witness");
+            state.pending = Some(path);
+        }
         state.request = Some(request);
         PendingResult::Pending
     }
@@ -56,10 +86,11 @@ mod plugin {
     #[poll(Model::complete)]
     fn poll(state: &mut State) -> PendingResult<ModelReply, BasicError> {
         assert!(state.worker.is_some());
+        let control = control();
         if state.cancelled {
             // Keep the physical worker until the harness explicitly permits
             // drain, regardless of how many cleanup polls the runtime performs.
-            if std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").as_deref() != Ok("drain") {
+            if control.as_deref() != Some("drain") {
                 return PendingResult::Pending;
             }
             drain(state);
@@ -71,7 +102,7 @@ mod plugin {
                 usage: Default::default(),
             }));
         }
-        if std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").as_deref() == Ok("fail") {
+        if control.as_deref() == Some("fail") {
             drain(state);
             state.request = None;
             return PendingResult::QuiescentFailure(Failure::new(
@@ -79,7 +110,18 @@ mod plugin {
                 "controlled scripted Model failure",
             ));
         }
-        if std::env::var("PHENIX_SCRIPTED_MODEL_CONTROL").as_deref() == Ok("release") {
+        // Release only the first Model so an external host test can reliably
+        // hold the continuation without racing the host's next poll.
+        let initial = state
+            .request
+            .as_ref()
+            .unwrap()
+            .history
+            .last()
+            .is_some_and(|message| message.role() == phenix_basic_contracts::Role::User);
+        if control.as_deref() == Some("release")
+            || (control.as_deref() == Some("release-initial") && initial)
+        {
             drain(state);
             let request = state.request.take().unwrap();
             return PendingResult::Ready(
