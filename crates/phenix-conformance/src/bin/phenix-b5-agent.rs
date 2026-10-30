@@ -11,6 +11,8 @@ use phenix_kernel::{
     Call, Outcome, Poll,
 };
 use std::{collections::BTreeSet, fs, path::Path};
+#[path = "phenix-b5-agent/v2.rs"]
+mod v2;
 
 fn selection(key: &str, provider: &str) -> Selection {
     let (interface, operation) = key.split_once('/').unwrap();
@@ -89,8 +91,8 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     assert_eq!(
         args.len(),
-        10,
-        "AGENT MODEL TOOLS MEMORY SESSION JOURNAL SQLITE DEFINITIONS OUTPUT"
+        11,
+        "AGENT MODEL TOOLS MEMORY SESSION JOURNAL SQLITE DEFINITIONS OUTPUT TERMINAL"
     );
     let paths = args[1..8].to_vec();
     let defs = args[8].clone();
@@ -211,6 +213,7 @@ fn main() {
         },
         resource: Some("phenix.session.s1".into()),
     };
+    v2::run(composition.clone(), &args[10], output);
     // Reject duplicate and undeclared grants before any native code is loaded.
     let mut invalid = composition.clone();
     invalid.grants.push(invalid.grants[0].clone());

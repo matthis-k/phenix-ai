@@ -1514,10 +1514,14 @@
           ${p2ModelMeterFixtureCheck}
         test -s "$out/accepted.json"
       '';
+      scriptedModelControlled = scriptedModel.overrideAttrs (old: {
+        pname = "phenix-model-scripted-controlled";
+        cargoBuildFlags = old.cargoBuildFlags ++ [ "--features" "controlled-pending" ];
+      });
       basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
-        ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModel} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
+        ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModelControlled} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out ${frontendTerminal}
         test -s "$out/agent.json"
       '';
       frontendTerminal = basicNativePlugin

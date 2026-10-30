@@ -7,6 +7,9 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+controlled-pending = []
+
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }

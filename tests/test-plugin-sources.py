@@ -52,6 +52,35 @@ class PreparationTests(unittest.TestCase):
         self.assertIn(str(package), result["artifacts"])
         self.assertNotIn("plugin_sources", result)
 
+    def test_repeatable_cli_plugin_sources_generate_same_canonical_file(self):
+        first = self.root / "alpha"
+        second = self.root / "beta"
+        for directory in (first, second):
+            directory.mkdir()
+            (directory / "package.json").write_text("{}")
+        input_file = self.config(
+            plugin_sources=[{"source": "alpha"}],
+            slots=[{"caller": "explicit", "slot": "Catalog", "index": 0,
+                    "provider": "chosen", "export": "Catalog"}],
+            grants=[{"caller": "root", "interface": "i",
+                     "operation": "o", "resources": []}],
+        )
+        output = self.root / "out.json"
+        tool.prepare(input_file, output, "describe", self.root / "cache",
+                     "local", ["beta"])
+        result = json.loads(output.read_text())
+        self.assertEqual(result["artifacts"],
+                         sorted(["/nix/store/example-package", str(first), str(second)]))
+        self.assertEqual(result["slots"],
+                         json.loads(input_file.read_text())["slots"])
+        self.assertEqual(result["grants"],
+                         json.loads(input_file.read_text())["grants"])
+        self.assertNotIn("plugin_sources", result)
+        self.assertNotIn("builders", result)
+        with self.assertRaisesRegex(ValueError, "nonempty"):
+            tool.prepare(input_file, output, "describe", self.root / "cache",
+                         "local", [""])
+
     def test_library_is_described_and_packaged(self):
         library = self.root / "plugin.so"
         library.write_bytes(b"dummy-test-shared-object")

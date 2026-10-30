@@ -135,6 +135,10 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
     })
 }
 
+#[cfg(feature = "controlled-pending")]
+mod controlled;
+
+#[cfg(not(feature = "controlled-pending"))]
 #[phenix_sdk::plugin(
     id = "phenix.model.scripted",
     version = "1.0.0",
