@@ -1036,7 +1036,7 @@ does not rename the occurrence. Instance IDs do not carry generation or authorit
 A `GraphDefinition` reuses the flat declaration as its body, with matching
 contributor/definition owner. Its explicitly named input/output boundaries reuse
 `InputPort`, `OutputPort`, `InPortRef` and `OutPortRef`. Each maps to exactly one
-existing local endpoint, with exact complete schema, readiness (inputs) and
+existing local endpoint (extended to immediate-child aliases in 7.13), with exact complete schema, readiness (inputs) and
 security equality. Boundary names are unique per direction; aliases of the same
 endpoint are allowed when explicitly named. No inferred ports, relabeling,
 aggregation or wrapper removal occurs. Definition validation rejects all foreign
@@ -1057,7 +1057,7 @@ This increment is a pure contract transformation, not authenticated preparation,
 an artifact format, a scheduler or runtime admission. `GraphDefinition` gains
 explicit named children referencing definitions and explicit named boundary Flow
 wires. Existing direct boundary aliases still terminate at local body ports;
-exporting a child's port directly is outside this profile. A wire endpoint is
+exporting a child's port directly is added by section 7.13. A wire endpoint is
 either a local body port or an immediate child's named boundary, never an
 arbitrary descendant or foreign node. Child names and wire names are unique.
 Child definition ownership may differ from placement ownership.
@@ -1074,7 +1074,7 @@ Every Flow, including body flows, resolves real ports and requires exact candida
 schema equality and security flow compatibility without grants. Boundary aliases
 still require complete input schema/readiness/security equality. Local Order edges
 are preserved and participate with Flow in dependency-cycle rejection. Cross-child
-Order and all Deferred edges are unsupported, not silently dropped. Definition
+Order is unsupported; Deferred edges are added by 7.12, never silently dropped. Definition
 reference cycles and expanded dependency cycles fail closed; repeated acyclic
 uses are distinct occurrences. Cardinality/readiness admission remains a compiler
 obligation, not a claim made by structural lowering.
@@ -1091,13 +1091,14 @@ paths, including empty occurrences and dependency-checking copies. This is a
 resource bound, not a canonical encoding or an exact heap-size measure. Unknown definitions,
 duplicate identities, invalid endpoints, unsafe flows and budget exhaustion return
 failure without partial output. Unreachable definitions are shape-checked too;
-reference and dependency cycle checks concern the selected root closure.
+7.13 extends reference-cycle checks to all supplied definitions; instantaneous
+dependency cycle checks concern the selected root closure.
 
 The lowerer does not verify recursive definitions. No output is accepted as
 verified flat package metadata, and `Prepared::compile_graph_v2` retains its exact
 verified-byte equality gate. Section 7.11 freezes a separate trusted-host bridge;
-authenticated recursive packaging, direct nested exports and cross-boundary Order
-remain future work. Section 7.12 extends lowering to explicit Deferred activation.
+authenticated recursive packaging and cross-boundary Order remain future work.
+Section 7.12 adds explicit Deferred activation; 7.13 adds direct nested exports.
 
 ### 7.11 C1 trusted-host executable bridge freeze
 
@@ -1140,11 +1141,51 @@ inspection or unexecuted acceptance assertions.
 
 | Bundle | Starting capability | This increment | Remaining acceptance |
 | --- | --- | --- | --- |
-| Typed boundaries | Direct local exports and immediate-child wiring | Deferred wiring uses the same exact boundaries | Direct nested exports and multi-level aliases |
+| Typed boundaries | Direct local exports and immediate-child wiring | Deferred wiring and nested aliases (7.13), acceptance pending | Exact-head multi-level native and adversarial acceptance |
 | Edge semantics | Same-wave Flow and local Order | Internal and cross-boundary Deferred lowering | Cross-boundary Order and exact-head native Deferred acceptance |
 | Logical patch anchors | Structural occurrence identity | No change | Explicit public/private anchors and rejected hidden access |
-| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred origins and delivery-sensitive identity | Provenance through nested aliases and patch transformations |
+| Canonical provenance | Body/wiring origins and effective-ID mapping | Deferred origins, delivery-sensitive identity and nested alias chains (acceptance pending) | Exact-head alias acceptance and patch transformations |
 | Placement and authority | Verified bodies, trusted wiring, global exact-ID policy | Deferred topology/delivery denial assertions | Complete boundary, ownership, expansion and permission adversarial acceptance |
+
+### 7.13 C1 immediate-child nested boundary alias freeze
+
+This extends the direct-local-only boundary profile in 7.9-7.11. An input target
+is `BoundaryTo::Local(InPortRef)` or `BoundaryTo::Child { child, port }`; an output
+source is the corresponding `BoundaryFrom`. A Child hop names only an explicitly
+declared immediate child and one of its named public boundaries. A child boundary
+may itself alias another immediate child, to arbitrary levels within the existing
+depth bound. Descendant path strings, hidden child body ports, implicit
+aggregation and wrapper invocations are not supported.
+
+Every hop requires exact full schema, input readiness and security equality after
+renaming only the boundary name. All supplied definitions, including unreachable
+ones, are shape/link checked. Unknown child definitions, missing named aliases,
+invalid local ports and definition-reference cycles fail before native loading.
+Selected occurrence expansion remains bounded by ExpansionBudget depth and
+occurrences; items now also charges every retained alias-chain hop. Alias-chain
+identity bytes are charged before cloning against expanded MAX_BYTES. Empty
+occurrences still consume depth/occurrences. No alias traversal can bypass these
+limits. Flow/Order cycles remain invalid after leaf resolution; Deferred Next
+is typed and checked but excluded from the instantaneous cycle graph.
+
+ExpandedGraph retains separate canonical input/output maps keyed by occurrence
+and authored boundary name. Each BoundaryProvenance contains the resolved real
+LogicalPort and every named alias in outer-to-leaf order, including the local
+terminal alias. Children resolve before their parents without memoizing occurrence
+identity. Wiring uses these resolved endpoints; original declaration owners,
+body/wire origins and complete GraphInstanceId paths are preserved. Sorting
+definitions, children, boundaries and wiring makes input permutations immaterial.
+
+Recursive identity metadata includes the Local/Child discriminator and the local
+node/port or child/boundary name of every alias, including unused aliases and
+definitions. Bodies remain package-attested; host placement, wiring and alias
+metadata are trusted control-plane input, not package attestation or authority.
+Global compilation still requires exact effective source/topology/delivery grants;
+names, ancestry and aliases grant nothing. InvokeEach recursive lowering remains
+explicitly unsupported. No executor, dispatcher, pending manager or Basic gate
+changes are part of this increment. The five bundles in 7.12 remain independently
+open pending normative requirements AND exact-head acceptance, including the
+three-level repeated-occurrence native fixture and pre-constructor denials.
 
 ## 8. Module and file plan
 

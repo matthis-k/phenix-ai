@@ -134,12 +134,18 @@ fn definition_bytes(d: &GraphDefinition) -> Result<usize, Failure> {
         schema_bytes(schema, &mut bytes, 0)?;
     }
     for b in &d.inputs {
-        charge(&mut bytes, b.target.node.len())?;
-        charge(&mut bytes, b.target.port.len())?;
+        let (a, b) = match &b.target {
+            BoundaryTo::Local(p) => (&p.node, &p.port),
+            BoundaryTo::Child { child, port } => (child, port),
+        };
+        charge(&mut bytes, a.len() + b.len() + 1)?;
     }
     for b in &d.outputs {
-        charge(&mut bytes, b.source.node.len())?;
-        charge(&mut bytes, b.source.port.len())?;
+        let (a, b) = match &b.source {
+            BoundaryFrom::Local(p) => (&p.node, &p.port),
+            BoundaryFrom::Child { child, port } => (child, port),
+        };
+        charge(&mut bytes, a.len() + b.len() + 1)?;
     }
     for c in &d.children {
         charge(&mut bytes, c.name.len())?;
@@ -223,6 +229,13 @@ pub struct LogicalPort {
     pub port: String,
 }
 
+/// Descriptive public alias chain, outermost first, ending at a real body port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundaryProvenance {
+    pub endpoint: LogicalPort,
+    pub aliases: Vec<LogicalId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogicalEdge {
     Flow {
@@ -248,6 +261,8 @@ pub struct ExpandedGraph {
     pub nodes: BTreeMap<LogicalId, NodeDecl>,
     pub sources: BTreeMap<LogicalId, SourceDecl>,
     pub edges: BTreeMap<EdgeOrigin, LogicalEdge>,
+    pub inputs: BTreeMap<LogicalId, BoundaryProvenance>,
+    pub outputs: BTreeMap<LogicalId, BoundaryProvenance>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -323,11 +338,14 @@ pub fn lower_recursive(
     if !defs.contains_key(root) {
         return Err(bad("unknown recursive definition"));
     }
+    validate_links(&defs)?;
     let mut output = ExpandedGraph {
         instances: BTreeMap::new(),
         nodes: BTreeMap::new(),
         sources: BTreeMap::new(),
         edges: BTreeMap::new(),
+        inputs: BTreeMap::new(),
+        outputs: BTreeMap::new(),
     };
     expand(
         &defs,
@@ -336,7 +354,11 @@ pub fn lower_recursive(
         budget,
         &mut BTreeSet::new(),
         &mut output,
-        &mut ExpansionBytes { sizes, used: 0 },
+        &mut ExpansionBytes {
+            sizes,
+            used: 0,
+            items: 0,
+        },
     )?;
 
     // Kahn's algorithm includes same-wave Flow and Order dependencies, not
@@ -403,6 +425,169 @@ pub fn lower_recursive(
 struct ExpansionBytes {
     sizes: BTreeMap<GraphDefinitionId, usize>,
     used: usize,
+    items: usize,
+}
+
+fn child_definition<'a>(
+    defs: &'a BTreeMap<GraphDefinitionId, GraphDefinition>,
+    d: &GraphDefinition,
+    name: &str,
+) -> Result<&'a GraphDefinition, Failure> {
+    let index = d
+        .children
+        .binary_search_by(|c| c.name.as_str().cmp(name))
+        .map_err(|_| bad("unknown boundary child"))?;
+    defs.get(&d.children[index].definition)
+        .ok_or_else(|| bad("unknown child definition"))
+}
+
+fn input_contract<'a>(
+    defs: &'a BTreeMap<GraphDefinitionId, GraphDefinition>,
+    d: &'a GraphDefinition,
+    endpoint: &BoundaryTo,
+) -> Result<&'a InputPort, Failure> {
+    match endpoint {
+        BoundaryTo::Local(p) => d
+            .body
+            .nodes
+            .iter()
+            .find(|n| n.id == p.node)
+            .and_then(|n| n.inputs.iter().find(|i| i.name == p.port))
+            .ok_or_else(|| bad("unknown recursive input endpoint")),
+        BoundaryTo::Child { child, port } => {
+            let child = child_definition(defs, d, child)?;
+            let index = child
+                .inputs
+                .binary_search_by(|b| b.port.name.cmp(port))
+                .map_err(|_| bad("unknown child input boundary"))?;
+            Ok(&child.inputs[index].port)
+        }
+    }
+}
+
+fn output_contract<'a>(
+    defs: &'a BTreeMap<GraphDefinitionId, GraphDefinition>,
+    d: &'a GraphDefinition,
+    endpoint: &BoundaryFrom,
+) -> Result<&'a OutputPort, Failure> {
+    match endpoint {
+        BoundaryFrom::Local(p) => d
+            .body
+            .nodes
+            .iter()
+            .find(|n| n.id == p.node)
+            .and_then(|n| n.outputs.iter().find(|o| o.name == p.port))
+            .ok_or_else(|| bad("unknown recursive output endpoint")),
+        BoundaryFrom::Child { child, port } => {
+            let child = child_definition(defs, d, child)?;
+            let index = child
+                .outputs
+                .binary_search_by(|b| b.port.name.cmp(port))
+                .map_err(|_| bad("unknown child output boundary"))?;
+            Ok(&child.outputs[index].port)
+        }
+    }
+}
+
+// Check all links, even in unused definitions, without recursively walking aliases.
+fn validate_links(defs: &BTreeMap<GraphDefinitionId, GraphDefinition>) -> Result<(), Failure> {
+    let mut degree: BTreeMap<_, usize> = defs.keys().map(|id| (id, 0)).collect();
+    let mut parents: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for d in defs.values() {
+        for child in &d.children {
+            if !defs.contains_key(&child.definition) {
+                return Err(bad("unknown child definition"));
+            }
+            *degree.get_mut(&d.id).unwrap() += 1;
+            parents.entry(&child.definition).or_default().push(&d.id);
+        }
+        for b in &d.inputs {
+            let p = input_contract(defs, d, &b.target)?;
+            if b.port.schema != p.schema
+                || b.port.readiness != p.readiness
+                || b.port.security != p.security
+            {
+                return Err(bad(
+                    "graph boundary input schema, readiness or security mismatch",
+                ));
+            }
+        }
+        for b in &d.outputs {
+            let p = output_contract(defs, d, &b.source)?;
+            if b.port.schema != p.schema || b.port.security != p.security {
+                return Err(bad("graph boundary output schema or security mismatch"));
+            }
+        }
+        for w in &d.wiring {
+            let from = output_contract(defs, d, &w.from)?;
+            let to = input_contract(defs, d, &w.to)?;
+            if from.schema != *to.candidate_schema()? || !from.security.can_flow_to(to.security) {
+                return Err(bad("recursive flow schema or security mismatch"));
+            }
+        }
+    }
+    let mut ready: BTreeSet<_> = degree
+        .iter()
+        .filter(|(_, n)| **n == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    let mut visited = 0;
+    while let Some(id) = ready.pop_first() {
+        visited += 1;
+        for parent in parents.get(id).into_iter().flatten() {
+            let n = degree.get_mut(parent).unwrap();
+            *n -= 1;
+            if *n == 0 {
+                ready.insert(*parent);
+            }
+        }
+    }
+    if visited != defs.len() {
+        return Err(bad("recursive definition cycle"));
+    }
+    Ok(())
+}
+
+fn reserve_items(
+    bytes: &mut ExpansionBytes,
+    n: usize,
+    budget: ExpansionBudget,
+) -> Result<(), Failure> {
+    bytes.items = bytes
+        .items
+        .checked_add(n)
+        .filter(|n| *n <= budget.items)
+        .ok_or_else(|| bad("recursive expanded item budget"))?;
+    Ok(())
+}
+
+fn retain_boundary(
+    id: LogicalId,
+    endpoint: &LogicalPort,
+    inner: &[LogicalId],
+    bytes: &mut ExpansionBytes,
+    budget: ExpansionBudget,
+) -> Result<BoundaryProvenance, Failure> {
+    reserve_items(bytes, inner.len() + 1, budget)?;
+    for alias in std::iter::once(&id)
+        .chain(std::iter::once(&id))
+        .chain(inner)
+        .chain(std::iter::once(&endpoint.node))
+    {
+        charge(
+            &mut bytes.used,
+            alias.instance.root().as_str().len() + alias.authored.len() + 8,
+        )?;
+        for part in alias.instance.path() {
+            charge(&mut bytes.used, part.len() + 4)?;
+        }
+    }
+    charge(&mut bytes.used, endpoint.port.len())?;
+    let aliases = std::iter::once(id).chain(inner.iter().cloned()).collect();
+    Ok(BoundaryProvenance {
+        endpoint: endpoint.clone(),
+        aliases,
+    })
 }
 
 fn expand(
@@ -435,13 +620,7 @@ fn expand(
         .checked_mul(1 + added * 8)
         .ok_or_else(|| bad("recursive expanded byte budget"))?;
     charge(&mut bytes.used, identity_bytes)?;
-    if added
-        > budget
-            .items
-            .saturating_sub(out.nodes.len() + out.sources.len() + out.edges.len())
-    {
-        return Err(bad("recursive expanded item budget"));
-    }
+    reserve_items(bytes, added, budget)?;
     out.instances.insert(instance.clone(), id.clone());
     let logical = |authored: &str| LogicalId {
         instance: instance.clone(),
@@ -453,8 +632,8 @@ fn expand(
     for source in &d.body.sources {
         out.sources.insert(logical(&source.id), source.clone());
     }
-    // Reserve this occurrence's edges before descending so descendant budgets
-    // account for all ancestors, not just their already-emitted nodes.
+    // Base items, including wiring, were reserved before descending; emit body
+    // edges now and resolve aliases/wiring only after child maps are complete.
     for edge in &d.body.edges {
         let lowered = match &edge.kind {
             EdgeKind::Flow { from, to } => LogicalEdge::Flow {
@@ -486,71 +665,6 @@ fn expand(
         out.edges
             .insert(EdgeOrigin::Body(logical(&edge.id)), lowered);
     }
-    for wire in &d.wiring {
-        let child = |name: &str| -> Result<(&GraphDefinition, GraphInstanceId), Failure> {
-            let c = d
-                .children
-                .iter()
-                .find(|c| c.name == name)
-                .ok_or_else(|| bad("unknown boundary child"))?;
-            Ok((
-                defs.get(&c.definition)
-                    .ok_or_else(|| bad("unknown child definition"))?,
-                instance.child(name)?,
-            ))
-        };
-        let from = match &wire.from {
-            BoundaryFrom::Local(p) => LogicalPort {
-                node: logical(&p.node),
-                port: p.port.clone(),
-            },
-            BoundaryFrom::Child { child: name, port } => {
-                let (def, occurrence) = child(name)?;
-                let p = &def
-                    .outputs
-                    .iter()
-                    .find(|b| b.port.name == *port)
-                    .ok_or_else(|| bad("unknown child output boundary"))?
-                    .source;
-                LogicalPort {
-                    node: LogicalId {
-                        instance: occurrence,
-                        authored: p.node.clone(),
-                    },
-                    port: p.port.clone(),
-                }
-            }
-        };
-        let to = match &wire.to {
-            BoundaryTo::Local(p) => LogicalPort {
-                node: logical(&p.node),
-                port: p.port.clone(),
-            },
-            BoundaryTo::Child { child: name, port } => {
-                let (def, occurrence) = child(name)?;
-                let p = &def
-                    .inputs
-                    .iter()
-                    .find(|b| b.port.name == *port)
-                    .ok_or_else(|| bad("unknown child input boundary"))?
-                    .target;
-                LogicalPort {
-                    node: LogicalId {
-                        instance: occurrence,
-                        authored: p.node.clone(),
-                    },
-                    port: p.port.clone(),
-                }
-            }
-        };
-        out.edges.insert(
-            EdgeOrigin::Wiring(logical(&wire.name)),
-            match wire.next {
-                Some(next) => LogicalEdge::Deferred { from, to, next },
-                None => LogicalEdge::Flow { from, to },
-            },
-        );
-    }
     for c in &d.children {
         expand(
             defs,
@@ -561,6 +675,99 @@ fn expand(
             out,
             bytes,
         )?;
+    }
+    // Child maps are complete before resolving parent aliases. No shared
+    // occurrence identity or recursive alias traversal is introduced.
+    for b in &d.inputs {
+        let local;
+        let (endpoint, aliases): (_, &[LogicalId]) = match &b.target {
+            BoundaryTo::Local(p) => {
+                local = LogicalPort {
+                    node: logical(&p.node),
+                    port: p.port.clone(),
+                };
+                (&local, &[])
+            }
+            BoundaryTo::Child { child, port } => {
+                let key = LogicalId {
+                    instance: instance.child(child)?,
+                    authored: port.clone(),
+                };
+                let b = out
+                    .inputs
+                    .get(&key)
+                    .ok_or_else(|| bad("unknown child input boundary"))?;
+                (&b.endpoint, &b.aliases)
+            }
+        };
+        let id = logical(&b.port.name);
+        let provenance = retain_boundary(id.clone(), endpoint, aliases, bytes, budget)?;
+        out.inputs.insert(id, provenance);
+    }
+    for b in &d.outputs {
+        let local;
+        let (endpoint, aliases): (_, &[LogicalId]) = match &b.source {
+            BoundaryFrom::Local(p) => {
+                local = LogicalPort {
+                    node: logical(&p.node),
+                    port: p.port.clone(),
+                };
+                (&local, &[])
+            }
+            BoundaryFrom::Child { child, port } => {
+                let key = LogicalId {
+                    instance: instance.child(child)?,
+                    authored: port.clone(),
+                };
+                let b = out
+                    .outputs
+                    .get(&key)
+                    .ok_or_else(|| bad("unknown child output boundary"))?;
+                (&b.endpoint, &b.aliases)
+            }
+        };
+        let id = logical(&b.port.name);
+        let provenance = retain_boundary(id.clone(), endpoint, aliases, bytes, budget)?;
+        out.outputs.insert(id, provenance);
+    }
+    for wire in &d.wiring {
+        let from = match &wire.from {
+            BoundaryFrom::Local(p) => LogicalPort {
+                node: logical(&p.node),
+                port: p.port.clone(),
+            },
+            BoundaryFrom::Child { child, port } => out
+                .outputs
+                .get(&LogicalId {
+                    instance: instance.child(child)?,
+                    authored: port.clone(),
+                })
+                .ok_or_else(|| bad("unknown child output boundary"))?
+                .endpoint
+                .clone(),
+        };
+        let to = match &wire.to {
+            BoundaryTo::Local(p) => LogicalPort {
+                node: logical(&p.node),
+                port: p.port.clone(),
+            },
+            BoundaryTo::Child { child, port } => out
+                .inputs
+                .get(&LogicalId {
+                    instance: instance.child(child)?,
+                    authored: port.clone(),
+                })
+                .ok_or_else(|| bad("unknown child input boundary"))?
+                .endpoint
+                .clone(),
+        };
+        out.edges.insert(
+            EdgeOrigin::Wiring(logical(&wire.name)),
+            match wire.next {
+                Some(next) => LogicalEdge::Deferred { from, to, next },
+                None => LogicalEdge::Flow { from, to },
+            },
+        );
     }
     active.remove(id);
     Ok(())
