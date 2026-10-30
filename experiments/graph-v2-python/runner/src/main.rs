@@ -3,7 +3,6 @@
 use phenix_artifact::{digest, extract_graph_v2, VerifiedPackage};
 use phenix_contract::{
     graph::v2::*, Authority, Code, OperationSchema, ScopedRequest, Value, ValueSchema,
-    NATIVE_SECTION_BYTES,
 };
 use phenix_kernel::{
     graph::{
@@ -17,7 +16,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 const PY: &str = "example.python-host";
@@ -150,35 +148,27 @@ fn graph_declarations(
     ]
 }
 
-fn repackage(original: &str, out: &Path, graph: &GraphContributionV2) -> String {
+fn tamper_graph(original: &str, out: &Path, graph: &GraphContributionV2) -> String {
     fs::create_dir_all(out.join("lib")).unwrap();
     let source = Path::new(original);
-    let bytes = fs::read(source.join("lib/plugin.so")).unwrap();
-    assert!(
-        extract_graph_v2(&bytes).unwrap().is_none(),
-        "native fixture already contributed V2"
-    );
-    let normalized = graph.normalized().unwrap();
-    let encoded = normalized.encode().unwrap();
-    assert!(encoded.len() + 4 <= NATIVE_SECTION_BYTES);
-    let mut section = vec![0u8; NATIVE_SECTION_BYTES];
-    section[..4].copy_from_slice(&(encoded.len() as u32).to_be_bytes());
-    section[4..4 + encoded.len()].copy_from_slice(&encoded);
-    let section_path = out.join("graph-section.bin");
-    fs::write(&section_path, section).unwrap();
-    let outfile = out.join("lib/plugin.so");
-    let result = Command::new("objcopy")
-        .arg("--add-section")
-        .arg(format!(".phenix.graph={}", section_path.display()))
-        .arg(source.join("lib/plugin.so"))
-        .arg(&outfile)
-        .output()
+    let mut bytes = fs::read(source.join("lib/plugin.so")).unwrap();
+    let original = extract_graph_v2(&bytes)
+        .unwrap()
+        .unwrap()
+        .native_section()
         .unwrap();
-    assert!(
-        result.status.success(),
-        "objcopy: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    let normalized = graph.normalized().unwrap();
+    let section = normalized.native_section().unwrap();
+    // Negative-only tampering of an existing section, never baseline injection.
+    let offsets: Vec<_> = bytes
+        .windows(original.len())
+        .enumerate()
+        .filter_map(|(i, window)| (window == original).then_some(i))
+        .collect();
+    assert_eq!(offsets.len(), 1);
+    bytes[offsets[0]..offsets[0] + section.len()].copy_from_slice(&section);
+    let outfile = out.join("lib/plugin.so");
+    fs::write(&outfile, bytes).unwrap();
     let final_bytes = fs::read(&outfile).unwrap();
     assert_eq!(extract_graph_v2(&final_bytes).unwrap().unwrap(), normalized);
     fs::copy(source.join("descriptor.bin"), out.join("descriptor.bin")).unwrap();
@@ -292,10 +282,11 @@ fn main() {
         ValueSchema::Struct(BTreeMap::from([("text".into(), ValueSchema::String),]))
     );
     let graphs = graph_declarations(&py_schema, &rust_schema);
-    let packages = [
-        repackage(&argv[1], &work.join("py-v2"), &graphs[0]),
-        repackage(&argv[2], &work.join("rust-v2"), &graphs[1]),
-    ];
+    for (package, graph) in [(&argv[1], &graphs[0]), (&argv[2], &graphs[1])] {
+        let verified = VerifiedPackage::verify_trusted_read_only(Path::new(package)).unwrap();
+        assert_eq!(verified.graph_v2().unwrap(), &graph.normalized().unwrap());
+    }
+    let packages = [argv[1].clone(), argv[2].clone()];
     let base = compose(packages);
     let trusted = trust();
 
@@ -335,7 +326,7 @@ fn main() {
         .unwrap()
         .inputs[0]
         .schema = ValueSchema::String;
-    let bad_path = repackage(&argv[1], &work.join("schema-spoof"), &spoof);
+    let bad_path = tamper_graph(&argv[1], &work.join("schema-spoof"), &spoof);
     let mut bad = base.clone();
     bad.artifacts[0] = bad_path;
     verify_negative(bad, &trusted, Code::SchemaRejected);
@@ -386,6 +377,7 @@ fn main() {
         ("private", Code::PluginFailed),
         ("raise", Code::PluginFailed),
         ("wrong-result", Code::PluginFailed),
+        ("panic", Code::PluginFailed),
         ("enrich:undeclared", Code::Denied),
         ("enrich:stale", Code::Denied),
         ("enrich:panic", Code::PluginFailed),

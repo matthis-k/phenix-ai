@@ -15,6 +15,11 @@ use pyo3::{
 };
 
 static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
+#[used]
+#[no_mangle]
+#[link_section = ".phenix.graph"]
+pub static PHENIX_GRAPH_V2: [u8; phenix_sdk::NATIVE_SECTION_BYTES] =
+    *include_bytes!(concat!(env!("OUT_DIR"), "/graph.bin"));
 thread_local! {
     static CURRENT: RefCell<Option<(u64, *const c_void)>> = const { RefCell::new(None) };
     static HOST_FAILURE: RefCell<Option<CallError<TransformError>>> = const { RefCell::new(None) };

@@ -1,0 +1,17 @@
+[package]
+name = "phenix-graph-provider-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "../graph-build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+phenix-sdk = { path = "../../../crates/phenix-sdk" }
+example-contracts = { path = "../../../examples/contracts" }
+
+[build-dependencies]
+phenix-contract = { path = "../../../crates/phenix-contract" }
+example-contracts = { path = "../../../examples/contracts" }
