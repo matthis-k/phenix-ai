@@ -111,8 +111,39 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                     .text()
                     .strip_prefix("tools-fail:")
                     .map(|input| (input, ["fail", "length"]))
+            })
+            .or_else(|| {
+                prompt
+                    .text()
+                    .strip_prefix("fanout:")
+                    .map(|input| (input, ["pending-a", "pending-b"]))
+            })
+            .or_else(|| {
+                prompt
+                    .text()
+                    .strip_prefix("fanout-fail:")
+                    .map(|input| (input, ["pending-a", "pending-b"]))
+            })
+            .or_else(|| {
+                prompt
+                    .text()
+                    .strip_prefix("duplicate-tools:")
+                    .map(|input| (input, ["uppercase", "length"]))
             });
-        if let Some(input) = single {
+        if matches!(prompt.text(), "invalid-tool-json" | "invalid-tool-type") {
+            (
+                String::new(),
+                vec![ToolCall {
+                    id: "call-1".into(),
+                    tool: "uppercase".into(),
+                    arguments: if prompt.text() == "invalid-tool-json" {
+                        "not-json".into()
+                    } else {
+                        "123".into()
+                    },
+                }],
+            )
+        } else if let Some(input) = single {
             if !request.tools.iter().any(|entry| entry.id == "uppercase") {
                 return Err(error(ErrorCode::InvalidInput, "required tool unavailable"));
             }
@@ -134,9 +165,23 @@ pub fn complete(request: &ModelRequest) -> Result<ModelReply, BasicError> {
                 .into_iter()
                 .enumerate()
                 .map(|(index, tool)| ToolCall {
-                    id: format!("call-{}", index + 1),
+                    id: format!(
+                        "call-{}",
+                        if prompt.text().starts_with("duplicate-tools:") {
+                            1
+                        } else {
+                            index + 1
+                        }
+                    ),
                     tool: tool.into(),
-                    arguments: serde_json::to_string(input).expect("serialize string"),
+                    arguments: serde_json::to_string(
+                        if tool == "pending-b" && prompt.text().starts_with("fanout-fail:") {
+                            "fail"
+                        } else {
+                            input
+                        },
+                    )
+                    .expect("serialize string"),
                 })
                 .collect();
             (String::new(), calls)

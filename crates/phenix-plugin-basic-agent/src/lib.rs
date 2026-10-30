@@ -298,11 +298,16 @@ pub static PHENIX_GRAPH: [u8; phenix_sdk::NATIVE_SECTION_BYTES] =
     provide(phenix_basic_contracts::BasicInput, slot = "Input"),
     provide(phenix_basic_contracts::BasicTurnPrepare, slot = "Prepare"),
     provide(phenix_basic_contracts::BasicGraphTurn, slot = "GraphTurn"),
+    provide(phenix_basic_contracts::BasicGraphTools, slot = "GraphTools"),
     provide(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     provide(phenix_basic_contracts::BasicOutput, slot = "Output"),
     require(phenix_basic_contracts::Model, slot = "Model"),
     require(phenix_basic_contracts::ToolCatalog, slot = "Catalog"),
     require(phenix_basic_contracts::ToolExecute, slot = "Tools"),
+    require(phenix_basic_contracts::ToolGraph, slot = "GraphTools", optional),
+    // Preserve selected catalog/validator authority through the nested Tools call.
+    require(phenix_basic_contracts::ToolGraphExecutor, slot = "GraphExecutorAuthority", optional),
+    require(phenix_basic_contracts::ToolReceipts, slot = "Receipts", optional),
     require(phenix_basic_contracts::Skills, slot = "Skills"),
     require(phenix_basic_contracts::Context, slot = "Context"),
     require(phenix_basic_contracts::Session, slot = "Session"),
@@ -319,9 +324,11 @@ mod plugin {
         BasicTurnPrepare, CatalogCursor, Context, ErrorCode, Event, EventJournal, EventKind,
         EventPage, GraphStateChange, JournalAppend, JournalQuery, Message, Model, ModelRequest,
         ObserverCheckpoint, ObserverRequest, PromptSubmitted, RunResult, RunStatus, Scope, Session,
-        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolExecute, ToolInfo, ToolOutcome,
-        ToolQuery, ToolRequest, TurnAdvanceOutcome, Usage,
+        SessionSnapshot, Skills, ToolCatalog, ToolCompletion, ToolInfo, ToolOutcome, ToolQuery,
+        TurnAdvanceOutcome, Usage,
     };
+    #[cfg(not(feature = "graph-v2"))]
+    use phenix_basic_contracts::{ToolExecute, ToolRequest};
     use phenix_sdk::{
         Blob, CallError, CallResult, Code, Failure, Host, ImportCall, ImportPoll, PendingImport,
         PendingResult,
@@ -346,6 +353,7 @@ mod plugin {
     pub struct State {
         active: Option<Running>,
         graph_reply: Option<phenix_basic_contracts::ModelReply>,
+        graph_batch: Option<phenix_basic_contracts::GraphToolBatch>,
         // The staged request is authoritative in this plugin. The graph
         // consumes a read-only, watched Phenix view of this Rust field.
         #[expose]
@@ -683,12 +691,13 @@ mod plugin {
                 // Deferred-wave cancellation has no Model ticket to cancel.
                 // Only the host's durable finalization authorizes forgetting it.
                 if session.run == running.run
-                    && session.status == RunStatus::Cancelled
+                    && session.status != RunStatus::Running
                     && session.pending.is_empty()
                 {
                     state.active = None;
                     state.pending_model_request = None;
                     state.graph_reply = None;
+                    state.graph_batch = None;
                 }
             }
         }
@@ -836,6 +845,7 @@ mod plugin {
         state.active = None;
         state.pending_model_request = None;
         state.graph_reply = None;
+        state.graph_batch = None;
         Ok(true)
     }
 
@@ -864,6 +874,12 @@ mod plugin {
         host: &Host<'_>,
         request: phenix_basic_contracts::GraphTurnReply,
     ) -> CallResult<ModelRequest, BasicError> {
+        if cfg!(feature = "graph-v2") {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "V2 tool effects require graph fanout",
+            )));
+        }
         let reply = request.reply;
         if state.graph_reply.as_ref() != Some(&reply) {
             return Err(CallError::Domain(error(
@@ -916,6 +932,272 @@ mod plugin {
         state.pending_model_request = Some(next.clone());
         state.active = Some(running);
         Ok(next)
+    }
+
+    #[provide(phenix_basic_contracts::BasicGraphTools::admit)]
+    fn graph_admit_tools(
+        state: &mut State,
+        host: &Host<'_>,
+        request: phenix_basic_contracts::GraphTurnReply,
+    ) -> CallResult<phenix_basic_contracts::GraphToolBatch, BasicError> {
+        if !cfg!(feature = "graph-v2")
+            || state.graph_reply.as_ref() != Some(&request.reply)
+            || state.graph_batch.is_some()
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "not the admitted graph reply",
+            )));
+        }
+        let active = state
+            .active
+            .as_ref()
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
+        phenix_basic_contracts::check_session(host, &active.input.session)?;
+        if active.child.is_some() {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "graph Model is still pending",
+            )));
+        }
+        let mut running = state
+            .active
+            .take()
+            .ok_or_else(|| CallError::Domain(error(ErrorCode::Conflict, "no active graph run")))?;
+        state.graph_reply = None;
+        let result = (|| {
+            let reply = request.reply;
+            if reply.calls.is_empty()
+                || reply.calls.len() > 256
+                || !running.session.pending.is_empty()
+            {
+                return Err(CallError::Domain(error(
+                    ErrorCode::InvalidReply,
+                    "invalid tool batch membership",
+                )));
+            }
+            let mut ids = BTreeSet::new();
+            for call in &reply.calls {
+                if call.id.is_empty()
+                    || !ids.insert(call.id.clone())
+                    || !running.tools.iter().any(|tool| tool.id == call.tool)
+                {
+                    return Err(CallError::Domain(error(
+                        ErrorCode::InvalidReply,
+                        "duplicate, empty or unknown tool call",
+                    )));
+                }
+            }
+            let total = running
+                .calls
+                .checked_add(reply.calls.len() as u64)
+                .ok_or_else(|| {
+                    CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
+                })?;
+            if running
+                .input
+                .limits
+                .tool_calls
+                .is_some_and(|limit| total > limit)
+            {
+                return Err(CallError::Domain(error(
+                    ErrorCode::TurnLimit,
+                    "tool call limit reached",
+                )));
+            }
+            running.turns = running.turns.checked_add(1).ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::TurnLimit, "model turn overflow"))
+            })?;
+            add_usage(&mut running.usage, &reply.usage)?;
+            add_usage(&mut running.session.usage, &reply.usage)?;
+            reconcile_text(host, &running, &reply.text)?;
+            let batch = phenix_basic_contracts::GraphToolBatch {
+                session: running.input.session.clone(),
+                run: running.run.clone(),
+                batch: running.turns,
+                calls: reply.calls.clone(),
+            };
+            host.invoke::<phenix_basic_contracts::ToolGraph::validate>("GraphTools", &batch)?;
+            host.invoke::<phenix_basic_contracts::ToolReceipts::admit>("Receipts", &batch)?;
+            running
+                .session
+                .history
+                .push(Message::assistant(reply.text, reply.calls.clone()));
+            running.session.pending = reply.calls;
+            running.session = checkpoint(host, running.session.clone())?;
+            for call in &batch.calls {
+                event(
+                    host,
+                    &batch.session,
+                    &batch.run,
+                    EventKind::ToolStarted,
+                    call.tool.clone(),
+                    &call.id,
+                )?;
+            }
+            Ok(batch)
+        })();
+        match result {
+            Ok(batch) => {
+                state.graph_batch = Some(batch.clone());
+                state.active = Some(running);
+                Ok(batch)
+            }
+            Err(failure) => {
+                graph_tool_failure(host, &running.input.session, &running.run, &failure)?;
+                Err(failure)
+            }
+        }
+    }
+
+    #[provide(phenix_basic_contracts::BasicGraphTools::reconcile)]
+    fn graph_reconcile_tools(
+        state: &mut State,
+        host: &Host<'_>,
+        collection: phenix_basic_contracts::GraphToolCollection,
+    ) -> CallResult<ModelRequest, BasicError> {
+        phenix_basic_contracts::check_session(host, &collection.batch.session)?;
+        collection.validate().map_err(CallError::Domain)?;
+        if !cfg!(feature = "graph-v2")
+            || state.graph_batch.as_ref() != Some(&collection.batch)
+            || state.active.as_ref().is_none_or(|running| {
+                running.run != collection.batch.run
+                    || running.input.session != collection.batch.session
+                    || running.turns != collection.batch.batch
+                    || running.session.pending != collection.batch.calls
+                    || running.child.is_some()
+            })
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "not the admitted tool collection",
+            )));
+        }
+        for outcome in &collection.outcomes {
+            if host
+                .invoke::<phenix_basic_contracts::ToolReceipts::read>(
+                    "Receipts",
+                    outcome.invocation(),
+                )?
+                .as_ref()
+                != Some(outcome)
+            {
+                return Err(CallError::Domain(error(
+                    ErrorCode::Denied,
+                    "tool outcome has no exact durable receipt",
+                )));
+            }
+        }
+        let sealed = host
+            .invoke::<phenix_basic_contracts::ToolReceipts::seal>("Receipts", &collection.batch)?;
+        if sealed
+            != collection
+                .outcomes
+                .iter()
+                .cloned()
+                .map(Some)
+                .collect::<Vec<_>>()
+        {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "sealed tool receipts changed",
+            )));
+        }
+        state.graph_batch = None;
+        let mut running = state.active.take().expect("validated graph batch");
+        let result = (|| {
+            let mut completions = Vec::new();
+            for outcome in collection.outcomes {
+                let (invocation, outcome, completion, text) = match outcome {
+                    phenix_basic_contracts::GraphToolOutcome::Ok { invocation, text } => (
+                        invocation,
+                        ToolOutcome::Succeeded { text: text.clone() },
+                        ToolCompletion::Succeeded,
+                        text,
+                    ),
+                    phenix_basic_contracts::GraphToolOutcome::Err { invocation, error } => (
+                        invocation,
+                        ToolOutcome::Failed {
+                            output: String::new(),
+                            reason: error.message.clone(),
+                        },
+                        ToolCompletion::Failed,
+                        error.message,
+                    ),
+                };
+                running
+                    .session
+                    .history
+                    .push(Message::tool(invocation.call.id.clone(), outcome));
+                completions.push((invocation.call.id, completion, text));
+            }
+            running.session.pending.clear();
+            // One ordered checkpoint, after all admitted outcomes and physical drain.
+            running.session = checkpoint(host, running.session.clone())?;
+            running.calls = running
+                .calls
+                .checked_add(completions.len() as u64)
+                .ok_or_else(|| {
+                    CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
+                })?;
+            for (call, completion, text) in completions {
+                event_with_data(
+                    host,
+                    &running.input.session,
+                    &running.run,
+                    EventKind::ToolFinished,
+                    text,
+                    &call,
+                    phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?,
+                )?;
+            }
+            prepare_next_model_request(host, &mut running)
+        })();
+        match result {
+            Ok(next) => {
+                state.pending_model_request = Some(next.clone());
+                state.active = Some(running);
+                Ok(next)
+            }
+            Err(failure) => {
+                graph_tool_failure(host, &running.input.session, &running.run, &failure)?;
+                Err(failure)
+            }
+        }
+    }
+
+    fn graph_tool_failure(
+        host: &Host<'_>,
+        session: &str,
+        run: &str,
+        failure: &CallError<BasicError>,
+    ) -> CallResult<(), BasicError> {
+        let mut current = host.invoke::<Session::open>(
+            "Session",
+            &Scope {
+                session: session.into(),
+            },
+        )?;
+        if current.run != run {
+            return Err(CallError::Domain(error(
+                ErrorCode::Conflict,
+                "tool failure belongs to a different durable run",
+            )));
+        }
+        if current.status == RunStatus::Running {
+            current.status = if current.pending.is_empty() {
+                RunStatus::Failed
+            } else {
+                RunStatus::Indeterminate
+            };
+            let current = checkpoint(host, current)?;
+            let message = match failure {
+                CallError::Domain(problem) => problem.message.clone(),
+                CallError::Kernel(_) => "graph tool stage failed".into(),
+            };
+            event(host, session, &current.run, EventKind::Failure, message, "")?;
+        }
+        Ok(())
     }
 
     #[provide(phenix_basic_contracts::BasicGraphTurn::finish)]
@@ -1005,88 +1287,98 @@ mod plugin {
             }));
         }
 
-        let count = u64::try_from(response.calls.len())
-            .map_err(|_| CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls")))?;
-        let new_total = running
-            .calls
-            .checked_add(count)
-            .ok_or_else(|| CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow")))?;
-        if running
-            .input
-            .limits
-            .tool_calls
-            .is_some_and(|max| new_total > max)
+        #[cfg(feature = "graph-v2")]
+        return Err(CallError::Domain(error(
+            ErrorCode::Denied,
+            "V2 tool replies require graph admission",
+        )));
+
+        #[cfg(not(feature = "graph-v2"))]
         {
-            let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
-            stopped(host, running.session.clone(), &problem)?;
-            return Err(CallError::Domain(problem));
-        }
-        let mut ids = BTreeSet::new();
-        for call in &response.calls {
-            if call.id.is_empty() || !ids.insert(call.id.clone()) {
-                let problem = error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
+            let count = u64::try_from(response.calls.len()).map_err(|_| {
+                CallError::Domain(error(ErrorCode::TurnLimit, "too many tool calls"))
+            })?;
+            let new_total = running.calls.checked_add(count).ok_or_else(|| {
+                CallError::Domain(error(ErrorCode::TurnLimit, "tool call overflow"))
+            })?;
+            if running
+                .input
+                .limits
+                .tool_calls
+                .is_some_and(|max| new_total > max)
+            {
+                let problem = error(ErrorCode::TurnLimit, "tool call limit reached");
                 stopped(host, running.session.clone(), &problem)?;
                 return Err(CallError::Domain(problem));
             }
-        }
-        running
-            .session
-            .history
-            .push(Message::assistant(response.text, response.calls.clone()));
-        running.session.pending = response.calls.clone();
-        running.session = checkpoint(host, running.session.clone())?;
-
-        for call in response.calls {
-            event(
-                host,
-                &running.input.session,
-                &running.run,
-                EventKind::ToolStarted,
-                call.tool.clone(),
-                &call.id,
-            )?;
-            let outcome = host.invoke::<ToolExecute::execute>(
-                "Tools",
-                &ToolRequest {
-                    session: running.input.session.clone(),
-                    run: running.run.clone(),
-                    call: call.clone(),
-                },
-            );
-            let tool_outcome = match outcome {
-                Ok(result) => ToolOutcome::Succeeded { text: result.text },
-                Err(CallError::Domain(problem)) => ToolOutcome::Failed {
-                    output: String::new(),
-                    reason: problem.message,
-                },
-                Err(other) => return Err(other),
-            };
-            let (completion, event_text) = match &tool_outcome {
-                ToolOutcome::Succeeded { text } => (ToolCompletion::Succeeded, text.clone()),
-                ToolOutcome::Failed { reason, .. } => (ToolCompletion::Failed, reason.clone()),
-            };
+            let mut ids = BTreeSet::new();
+            for call in &response.calls {
+                if call.id.is_empty() || !ids.insert(call.id.clone()) {
+                    let problem = error(ErrorCode::InvalidReply, "duplicate or empty tool call ID");
+                    stopped(host, running.session.clone(), &problem)?;
+                    return Err(CallError::Domain(problem));
+                }
+            }
             running
                 .session
                 .history
-                .push(Message::tool(call.id.clone(), tool_outcome));
-            running
-                .session
-                .pending
-                .retain(|pending| pending.id != call.id);
+                .push(Message::assistant(response.text, response.calls.clone()));
+            running.session.pending = response.calls.clone();
             running.session = checkpoint(host, running.session.clone())?;
-            let data = phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
-            event_with_data(
-                host,
-                &running.input.session,
-                &running.run,
-                EventKind::ToolFinished,
-                event_text,
-                &call.id,
-                data,
-            )?;
+
+            for call in response.calls {
+                event(
+                    host,
+                    &running.input.session,
+                    &running.run,
+                    EventKind::ToolStarted,
+                    call.tool.clone(),
+                    &call.id,
+                )?;
+                let outcome = host.invoke::<ToolExecute::execute>(
+                    "Tools",
+                    &ToolRequest {
+                        session: running.input.session.clone(),
+                        run: running.run.clone(),
+                        call: call.clone(),
+                    },
+                );
+                let tool_outcome = match outcome {
+                    Ok(result) => ToolOutcome::Succeeded { text: result.text },
+                    Err(CallError::Domain(problem)) => ToolOutcome::Failed {
+                        output: String::new(),
+                        reason: problem.message,
+                    },
+                    Err(other) => return Err(other),
+                };
+                let (completion, event_text) = match &tool_outcome {
+                    ToolOutcome::Succeeded { text } => (ToolCompletion::Succeeded, text.clone()),
+                    ToolOutcome::Failed { reason, .. } => (ToolCompletion::Failed, reason.clone()),
+                };
+                running
+                    .session
+                    .history
+                    .push(Message::tool(call.id.clone(), tool_outcome));
+                running
+                    .session
+                    .pending
+                    .retain(|pending| pending.id != call.id);
+                running.session = checkpoint(host, running.session.clone())?;
+                let data =
+                    phenix_basic_contracts::encode(&completion).map_err(CallError::Kernel)?;
+                event_with_data(
+                    host,
+                    &running.input.session,
+                    &running.run,
+                    EventKind::ToolFinished,
+                    event_text,
+                    &call.id,
+                    data,
+                )?;
+            }
+            running.calls = new_total;
+            Ok(None)
         }
-        running.calls = new_total;
-        Ok(None)
     }
 
     // Each model reply, immediate or polled, resumes this same continuation.
@@ -1192,6 +1484,12 @@ mod plugin {
         host: &Host<'_>,
         notice: GraphStateChange,
     ) -> PendingResult<TurnAdvanceOutcome, BasicError> {
+        if cfg!(feature = "graph-v2") {
+            return PendingResult::Ready(Err(CallError::Domain(error(
+                ErrorCode::Denied,
+                "V2 Model continuation requires Deferred graph admission",
+            ))));
+        }
         if notice.epoch == 0
             || notice.properties != ["phenix.advanced.graph-preparer/prepared_model_request"]
         {

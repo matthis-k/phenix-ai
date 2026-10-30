@@ -1960,6 +1960,7 @@ name = "phenix-plugin-basic-tools"
 version = "0.1.0"
 dependencies = [
  "phenix-basic-contracts",
+ "phenix-contract",
  "phenix-sdk",
  "serde_json",
 ]
@@ -2150,6 +2151,24 @@ dependencies = [
  "phenix-basic-contracts",
  "phenix-sdk",
  "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-tool-pending"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "phenix-plugin-tool-receipts"
+version = "0.1.0"
+dependencies = [
+ "phenix-basic-contracts",
+ "phenix-sdk",
+ "sha2 0.10.9",
 ]
 
 [[package]]

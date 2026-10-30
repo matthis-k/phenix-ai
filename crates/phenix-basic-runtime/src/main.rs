@@ -6,12 +6,12 @@ mod model_selection_state;
 mod provider_deployment;
 use phenix_basic_contracts::{
     BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
-    ObserverCheckpoint, ObserverRequest, RenderRequest, RunStatus, Scope, SessionSnapshot,
-    Submission,
+    ObserverCheckpoint, ObserverRequest, RenderRequest, RunResult, RunStatus, Scope,
+    SessionSnapshot, Submission,
 };
 use phenix_contract::{Portable, ScopedRequest, Value};
 use phenix_kernel::{
-    graph::{GraphCompletion, GraphExecution, GraphStatus},
+    graph::{GraphCompletion, GraphExecution, GraphStatus, GraphStep},
     resolve::{Composition, Prepared, Selection},
     Kernel, Outcome,
 };
@@ -255,6 +255,36 @@ fn begin_submission<'a>(
         .map_err(|e| format!("{e:?}"))
 }
 
+/// Recognize the selected Basic product's public terminal result rather than
+/// depending on the private ID or placement of the final graph node.
+/// InvokeEach child outcomes are not independent completed Basic turns.
+fn completed_basic_turn(steps: &[GraphStep]) -> bool {
+    steps.iter().any(|step| {
+        step.branch.is_none()
+            && matches!(
+                &step.outcome,
+                Outcome::Success(value) if RunResult::from_value(value.clone()).is_ok()
+            )
+    })
+}
+
+/// Child-invocation errors are part of the tool batch's typed outcome and may
+/// be reconciled by the parent. Only non-branched domain failures are terminal
+/// errors for the product host.
+fn first_unhandled_domain_error(steps: &[GraphStep]) -> Result<Option<BasicError>, String> {
+    for step in steps {
+        if step.branch.is_some() {
+            continue;
+        }
+        if let Outcome::Domain(value) = &step.outcome {
+            return BasicError::from_value(value.clone())
+                .map(Some)
+                .map_err(|error| format!("{error:?}"));
+        }
+    }
+    Ok(None)
+}
+
 fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     let cancelled = match execution.completion() {
         Some(GraphCompletion::Success | GraphCompletion::Domain) => false,
@@ -265,11 +295,11 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     if execution.steps().is_empty() && !cancelled {
         return Err("prompt action did not activate a graph node".into());
     }
-    for step in execution.steps() {
-        if let Outcome::Domain(value) = &step.outcome {
-            let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-            return Err(format!("{:?}: {}", cause.code, cause.message));
-        }
+    if let Some(cause) = first_unhandled_domain_error(execution.steps())? {
+        return Err(format!("{:?}: {}", cause.code, cause.message));
+    }
+    if cfg!(feature = "graph-v2") && !cancelled && !completed_basic_turn(execution.steps()) {
+        return Err("graph completed without a final Basic answer".into());
     }
     Ok(cancelled)
 }
@@ -280,16 +310,16 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
 /// remain fatal. ACP retains its SDK request-error path.
 fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
     if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
-        for step in execution.steps() {
-            if let Outcome::Domain(value) = &step.outcome {
-                let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-                if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
-                    || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
-                {
-                    return Ok(false);
-                }
-                return Err(format!("{:?}: {}", cause.code, cause.message));
+        if completed_basic_turn(execution.steps()) {
+            return finish_submission(execution);
+        }
+        if let Some(cause) = first_unhandled_domain_error(execution.steps())? {
+            if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
+                || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
+            {
+                return Ok(false);
             }
+            return Err(format!("{:?}: {}", cause.code, cause.message));
         }
         return Err("domain graph finished without a domain outcome".into());
     }
@@ -308,16 +338,31 @@ fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
             session: session.into(),
         },
     ))?;
-    if snapshot.status != RunStatus::Running || !snapshot.pending.is_empty() {
+    if snapshot.status != RunStatus::Running
+        || (!cfg!(feature = "graph-v2") && !snapshot.pending.is_empty())
+    {
         return Err("cancelled run has unresolved session work".into());
     }
-    snapshot.status = RunStatus::Cancelled;
-    let snapshot: SessionSnapshot = completed(invoke(
-        kernel,
-        "phenix.basic.session",
-        "phenix.basic.session@1/checkpoint",
-        snapshot,
-    ))?;
+    if cfg!(feature = "graph-v2") && !snapshot.pending.is_empty() {
+        snapshot = completed(invoke(
+            kernel,
+            "phenix.basic.tool-receipts",
+            "phenix.basic.tool-receipts@1/recover",
+            phenix_basic_contracts::GraphToolRecovery {
+                session: session.into(),
+                run: snapshot.run.clone(),
+                status: RunStatus::Cancelled,
+            },
+        ))?;
+    } else {
+        snapshot.status = RunStatus::Cancelled;
+        snapshot = completed(invoke(
+            kernel,
+            "phenix.basic.session",
+            "phenix.basic.session@1/checkpoint",
+            snapshot,
+        ))?;
+    }
     completed(invoke::<u64>(
         kernel,
         "phenix.basic.event-journal",
@@ -483,7 +528,11 @@ fn recover_owned_run(
         },
     ))?;
     let recovering = verified_recovery(&marker, &snapshot.run);
-    if snapshot.status == RunStatus::Running {
+    let receipt_cleanup = cfg!(feature = "graph-v2")
+        && snapshot.status == RunStatus::Indeterminate
+        && !snapshot.pending.is_empty()
+        && (verified_owner(&marker, &snapshot.run) || recovering);
+    if snapshot.status == RunStatus::Running || receipt_cleanup {
         if !verified_owner(&marker, &snapshot.run) && !recovering {
             return Err("running session has no matching fenced owner marker".into());
         }
@@ -492,17 +541,30 @@ fn recover_owned_run(
         if !recovering {
             set_marker(owner, RECOVERY_MARKER, Some(&snapshot.run))?;
         }
-        snapshot.status = if snapshot.pending.is_empty() {
-            RunStatus::Failed
+        if cfg!(feature = "graph-v2") && !snapshot.pending.is_empty() {
+            snapshot = completed(invoke(
+                kernel,
+                "phenix.basic.tool-receipts",
+                "phenix.basic.tool-receipts@1/recover",
+                phenix_basic_contracts::GraphToolRecovery {
+                    session: session.into(),
+                    run: snapshot.run.clone(),
+                    status: RunStatus::Failed,
+                },
+            ))?;
         } else {
-            RunStatus::Indeterminate
-        };
-        snapshot = completed(invoke(
-            kernel,
-            "phenix.basic.session",
-            "phenix.basic.session@1/checkpoint",
-            snapshot,
-        ))?;
+            snapshot.status = if snapshot.pending.is_empty() {
+                RunStatus::Failed
+            } else {
+                RunStatus::Indeterminate
+            };
+            snapshot = completed(invoke(
+                kernel,
+                "phenix.basic.session",
+                "phenix.basic.session@1/checkpoint",
+                snapshot,
+            ))?;
+        }
     } else if !recovering {
         if marker.starts_with(RECOVERY_MARKER) {
             return Err("recovery marker does not match durable session run".into());
@@ -1027,6 +1089,8 @@ fn prepare_agent(spec: Composition) -> Result<Prepared, phenix_contract::Failure
         "phenix.basic.graph-turn@1/decide",
         "phenix.basic.graph-turn@1/tool",
         "phenix.basic.graph-turn@1/finish",
+        "phenix.basic.graph-tool-turn@1/admit",
+        "phenix.basic.graph-tool-turn@1/reconcile",
     ] {
         policy.operations.insert(
             ("phenix.basic.agent".into(), key.into()),
@@ -1034,6 +1098,81 @@ fn prepare_agent(spec: Composition) -> Result<Prepared, phenix_contract::Failure
                 input: label,
                 ok: label,
                 err: label,
+            },
+        );
+    }
+    for (provider, keys) in [
+        (
+            "phenix.basic.tools",
+            &[
+                "phenix.basic.graph-tools@1/plan",
+                "phenix.basic.graph-tools@1/collect",
+                "phenix.basic.graph-tool-executor@1/invoke",
+            ][..],
+        ),
+        (
+            "phenix.tool.pending-a",
+            &["phenix.basic.graph-tool-executor@1/invoke"][..],
+        ),
+        (
+            "phenix.tool.pending-b",
+            &["phenix.basic.graph-tool-executor@1/invoke"][..],
+        ),
+    ] {
+        for key in keys {
+            policy.operations.insert(
+                (provider.into(), (*key).into()),
+                OperationSecurity {
+                    input: label,
+                    ok: label,
+                    err: label,
+                },
+            );
+        }
+    }
+    for node in ["plan", "join", "collect"] {
+        policy.topology.insert((
+            "phenix.basic.agent".into(),
+            format!("phenix.basic.tools/{node}"),
+        ));
+    }
+    for (from, port, to, input) in [
+        (
+            "phenix.basic.agent/admit",
+            "ok",
+            "phenix.basic.tools/plan",
+            "in",
+        ),
+        (
+            "phenix.basic.agent/admit",
+            "ok",
+            "phenix.basic.tools/join",
+            "batch",
+        ),
+        (
+            "phenix.basic.tools/collect",
+            "ok",
+            "phenix.basic.agent/tool",
+            "in",
+        ),
+        (
+            "phenix.basic.tools/plan",
+            "ok",
+            "phenix.basic.tools/each",
+            "in",
+        ),
+        (
+            "phenix.basic.tools/each",
+            "out",
+            "phenix.basic.tools/join",
+            "outcomes",
+        ),
+    ] {
+        policy.delivery.insert(
+            (from.into(), port.into(), to.into(), input.into()),
+            phenix_kernel::graph::v2::FlowGrant {
+                resources: spec.authority.resources.clone(),
+                maximum_classification: Classification::Confidential,
             },
         );
     }
@@ -1404,6 +1543,77 @@ mod bounded_stdio_tests {
         assert_eq!(
             bounded_input_line(&mut input).unwrap_err().kind(),
             ErrorKind::InvalidData,
+        );
+    }
+}
+
+#[cfg(test)]
+mod graph_outcome_contract_tests {
+    use super::{completed_basic_turn, first_unhandled_domain_error};
+    use phenix_basic_contracts::{error, ErrorCode, ModelReply, RunResult, Usage};
+    use phenix_contract::Portable;
+    use phenix_kernel::{graph::GraphStep, Outcome};
+
+    fn step(node: &str, branch: Option<u32>, outcome: Outcome) -> GraphStep {
+        GraphStep {
+            root: 7,
+            activation: Some(2),
+            branch,
+            node: node.into(),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn final_answer_is_detected_by_public_result_not_private_node_name() {
+        let result = RunResult {
+            session: "session".into(),
+            run: "run".into(),
+            answer: "done".into(),
+            model_turns: 1,
+            tool_calls: 0,
+            usage: Usage::default(),
+        };
+        assert!(completed_basic_turn(&[step(
+            "renamed.agent/any-node",
+            None,
+            Outcome::Success(result.to_value()),
+        )]));
+        assert!(!completed_basic_turn(&[step(
+            "renamed.tools/child",
+            Some(0),
+            Outcome::Success(result.to_value()),
+        )]));
+        assert!(!completed_basic_turn(&[step(
+            "renamed.agent/model",
+            None,
+            Outcome::Success(
+                ModelReply {
+                    text: "not a final answer".into(),
+                    calls: Vec::new(),
+                    usage: Usage::default(),
+                }
+                .to_value(),
+            ),
+        )]));
+    }
+
+    #[test]
+    fn tool_child_domain_error_is_not_host_terminal_failure() {
+        let child = step(
+            "any.tools/executor",
+            Some(1),
+            Outcome::Domain(error(ErrorCode::ToolFailed, "recovered").to_value()),
+        );
+        assert!(first_unhandled_domain_error(&[child]).unwrap().is_none());
+        let root = step(
+            "any.agent/operation",
+            None,
+            Outcome::Domain(error(ErrorCode::ModelFailed, "terminal").to_value()),
+        );
+        assert_eq!(
+            first_unhandled_domain_error(&[root]).unwrap().unwrap().code,
+            ErrorCode::ModelFailed
         );
     }
 }

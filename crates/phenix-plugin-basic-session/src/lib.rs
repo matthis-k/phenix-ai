@@ -64,10 +64,99 @@ pub fn reconcile_snapshot(
     Ok(())
 }
 
+fn recover_graph_snapshot(
+    snapshot: &mut SessionSnapshot,
+    request: &phenix_basic_contracts::GraphToolRecoveryState,
+) -> Result<(), BasicError> {
+    use phenix_basic_contracts::Role;
+    request.validate()?;
+    if snapshot.session != request.batch.session
+        || snapshot.run != request.batch.run
+        || !matches!(
+            snapshot.status,
+            RunStatus::Running
+                | RunStatus::Indeterminate
+                | RunStatus::Failed
+                | RunStatus::Cancelled
+        )
+    {
+        return Err(error(
+            ErrorCode::Conflict,
+            "receipt recovery does not own this session run",
+        ));
+    }
+    let assistant = snapshot
+        .history
+        .iter()
+        .rposition(|message| message.role() == Role::Assistant)
+        .filter(|index| snapshot.history[*index].calls() == request.batch.calls)
+        .ok_or_else(|| {
+            error(
+                ErrorCode::Conflict,
+                "receipt recovery assistant batch changed",
+            )
+        })?;
+    let tail = &snapshot.history[assistant + 1..];
+    let mut seen = std::collections::BTreeSet::new();
+    for message in tail {
+        let outcome = request
+            .outcomes
+            .iter()
+            .flatten()
+            .find(|outcome| outcome.invocation().call.id == message.call_id())
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::Conflict,
+                    "existing tool result has no matching immutable receipt",
+                )
+            })?;
+        if !seen.insert(message.call_id())
+            || *message != Message::tool(message.call_id(), outcome.tool_outcome())
+        {
+            return Err(error(
+                ErrorCode::Conflict,
+                "receipt recovery cannot replace a tool result",
+            ));
+        }
+    }
+    if snapshot
+        .pending
+        .iter()
+        .any(|call| !request.batch.calls.contains(call))
+        || request.batch.calls.iter().any(|call| {
+            snapshot.pending.iter().any(|pending| pending == call)
+                == seen.contains(call.id.as_str())
+        })
+    {
+        return Err(error(
+            ErrorCode::Conflict,
+            "receipt recovery pending membership changed",
+        ));
+    }
+    let mut history = snapshot.history[..assistant + 1].to_vec();
+    let mut pending = Vec::new();
+    for (call, outcome) in request.batch.calls.iter().zip(&request.outcomes) {
+        if let Some(outcome) = outcome {
+            history.push(Message::tool(call.id.clone(), outcome.tool_outcome()));
+        } else {
+            pending.push(call.clone());
+        }
+    }
+    snapshot.history = history;
+    snapshot.pending = pending;
+    snapshot.status = if snapshot.pending.is_empty() {
+        request.status.clone()
+    } else {
+        RunStatus::Indeterminate
+    };
+    Ok(())
+}
+
 #[phenix_sdk::plugin(
     id = "phenix.basic.session",
     version = "1.0.0",
     provide(phenix_basic_contracts::Session, slot = "Session"),
+    provide(phenix_basic_contracts::GraphToolSession, slot = "GraphRecovery"),
     require(phenix_basic_contracts::Storage, slot = "Storage")
 )]
 mod plugin {
@@ -227,6 +316,28 @@ mod plugin {
             }
         }
     }
+
+    #[provide(phenix_basic_contracts::GraphToolSession::recover)]
+    fn recover_graph(
+        state: &mut State,
+        host: &Host<'_>,
+        request: phenix_basic_contracts::GraphToolRecoveryState,
+    ) -> CallResult<SessionSnapshot, BasicError> {
+        phenix_basic_contracts::check_session(host, &request.batch.session)?;
+        let before = state.current(host, &request.batch.session)?.clone();
+        let mut current = before.clone();
+        super::recover_graph_snapshot(&mut current, &request).map_err(CallError::Domain)?;
+        if current == before {
+            return Ok(before);
+        }
+        match commit(host, current) {
+            Ok(committed) => Ok(state.committed(committed)),
+            Err(failure) => {
+                state.invalidate(&request.batch.session);
+                Err(failure)
+            }
+        }
+    }
     #[cfg(test)]
     mod state_tests {
         use super::*;
@@ -251,6 +362,79 @@ mod plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_receipts_preserve_known_b_and_resolve_only_a_in_original_order() {
+        use phenix_basic_contracts::{
+            GraphToolBatch, GraphToolOutcome, GraphToolRecoveryState, ToolCall,
+        };
+        let batch = GraphToolBatch {
+            session: "one".into(),
+            run: "run-1".into(),
+            batch: 1,
+            calls: vec![
+                ToolCall {
+                    id: "a".into(),
+                    tool: "pending-a".into(),
+                    arguments: "\"input\"".into(),
+                },
+                ToolCall {
+                    id: "b".into(),
+                    tool: "pending-b".into(),
+                    arguments: "\"input\"".into(),
+                },
+            ],
+        };
+        let invocations = batch.invocations();
+        let b = GraphToolOutcome::Ok {
+            invocation: invocations[1].clone(),
+            text: "known B".into(),
+        };
+        let mut snapshot = empty("one");
+        snapshot.status = RunStatus::Running;
+        snapshot.run = batch.run.clone();
+        snapshot.history = vec![
+            Message::user("prompt"),
+            Message::assistant(String::new(), batch.calls.clone()),
+        ];
+        snapshot.pending = batch.calls.clone();
+        let mut request = GraphToolRecoveryState {
+            batch,
+            outcomes: vec![None, Some(b.clone())],
+            status: RunStatus::Cancelled,
+        };
+        recover_graph_snapshot(&mut snapshot, &request).unwrap();
+        assert_eq!(
+            snapshot
+                .pending
+                .iter()
+                .map(|call| call.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a"]
+        );
+        assert_eq!(snapshot.status, RunStatus::Indeterminate);
+        assert_eq!(
+            snapshot.history.last().unwrap(),
+            &Message::tool("b", b.tool_outcome())
+        );
+        let retained = snapshot.clone();
+        let mut forgetting_b = request.clone();
+        forgetting_b.outcomes[1] = None;
+        assert!(recover_graph_snapshot(&mut snapshot, &forgetting_b).is_err());
+        assert_eq!(snapshot, retained);
+        request.outcomes[0] = Some(GraphToolOutcome::Err {
+            invocation: invocations[0].clone(),
+            error: error(ErrorCode::ToolFailed, "operator resolved A"),
+        });
+        recover_graph_snapshot(&mut snapshot, &request).unwrap();
+        assert!(snapshot.pending.is_empty());
+        assert_eq!(snapshot.status, RunStatus::Cancelled);
+        assert_eq!(snapshot.history[2].call_id(), "a");
+        assert_eq!(snapshot.history[3], Message::tool("b", b.tool_outcome()));
+        let resolved = snapshot.clone();
+        recover_graph_snapshot(&mut snapshot, &request).unwrap();
+        assert_eq!(snapshot, resolved);
+    }
     use phenix_basic_contracts::{Role, ToolCall, ToolOutcome};
 
     #[test]

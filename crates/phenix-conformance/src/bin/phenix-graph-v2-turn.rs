@@ -17,15 +17,35 @@ use phenix_kernel::{
     Call, Outcome, Poll,
 };
 
+#[path = "graph-v2-turn/tools.rs"]
+mod tools;
+
+fn tool_round(calls: usize) -> Vec<&'static str> {
+    let mut nodes = vec![
+        "phenix.basic.agent/model",
+        "phenix.basic.agent/decide",
+        "phenix.basic.agent/admit",
+        "phenix.basic.tools/plan",
+    ];
+    nodes.extend(std::iter::repeat_n("phenix.basic.tools/each", calls));
+    nodes.extend(["phenix.basic.tools/collect", "phenix.basic.agent/tool"]);
+    nodes
+}
+
 fn observe(
     update: &GraphUpdate<'_>,
     completions: &mut usize,
-    pending: &mut Vec<(u64, Option<u64>, String)>,
+    pending: &mut Vec<(u64, Option<u64>, String, Option<u32>)>,
 ) {
     match &update.event {
         GraphEvent::NodeFinished(_) => panic!("V2 exposed a payload-bearing callback"),
         GraphEvent::NodePending { node } => {
-            let identity = (update.root, update.activation, (*node).to_owned());
+            let identity = (
+                update.root,
+                update.activation,
+                (*node).to_owned(),
+                update.branch,
+            );
             assert!(identity.1.is_some());
             assert!(!pending.contains(&identity), "duplicate pending admission");
             pending.push(identity);
@@ -72,9 +92,9 @@ fn main() {
     };
     if deny_tool {
         composition.grants.retain(|grant| {
-            !(grant.caller == "phenix.basic.agent"
-                && grant.interface == "phenix.basic.tool@1"
-                && grant.operation == "execute")
+            !(grant.caller == "phenix.basic.tools"
+                && grant.interface == "phenix.basic.graph-tool-executor@1"
+                && grant.operation == "invoke")
         });
     }
     let label = PortSecurity {
@@ -98,6 +118,8 @@ fn main() {
         "phenix.basic.graph-turn@1/decide",
         "phenix.basic.graph-turn@1/tool",
         "phenix.basic.graph-turn@1/finish",
+        "phenix.basic.graph-tool-turn@1/admit",
+        "phenix.basic.graph-tool-turn@1/reconcile",
     ] {
         policy.operations.insert(
             ("phenix.basic.agent".into(), key.into()),
@@ -108,14 +130,102 @@ fn main() {
             },
         );
     }
+    for (provider, keys) in [
+        (
+            "phenix.basic.tools",
+            &[
+                "phenix.basic.graph-tools@1/plan",
+                "phenix.basic.graph-tools@1/collect",
+                "phenix.basic.graph-tool-executor@1/invoke",
+            ][..],
+        ),
+        (
+            "phenix.tool.pending-a",
+            &["phenix.basic.graph-tool-executor@1/invoke"][..],
+        ),
+        (
+            "phenix.tool.pending-b",
+            &["phenix.basic.graph-tool-executor@1/invoke"][..],
+        ),
+    ] {
+        for key in keys {
+            policy.operations.insert(
+                (provider.into(), (*key).into()),
+                OperationSecurity {
+                    input: label,
+                    ok: label,
+                    err: label,
+                },
+            );
+        }
+    }
+    for node in ["plan", "join", "collect"] {
+        policy.topology.insert((
+            "phenix.basic.agent".into(),
+            format!("phenix.basic.tools/{node}"),
+        ));
+    }
+    for (from, port, to, input) in [
+        (
+            "phenix.basic.agent/admit",
+            "ok",
+            "phenix.basic.tools/plan",
+            "in",
+        ),
+        (
+            "phenix.basic.agent/admit",
+            "ok",
+            "phenix.basic.tools/join",
+            "batch",
+        ),
+        (
+            "phenix.basic.tools/collect",
+            "ok",
+            "phenix.basic.agent/tool",
+            "in",
+        ),
+        (
+            "phenix.basic.tools/plan",
+            "ok",
+            "phenix.basic.tools/each",
+            "in",
+        ),
+        (
+            "phenix.basic.tools/each",
+            "out",
+            "phenix.basic.tools/join",
+            "outcomes",
+        ),
+    ] {
+        policy.delivery.insert(
+            (from.into(), port.into(), to.into(), input.into()),
+            phenix_kernel::graph::v2::FlowGrant {
+                resources: composition.authority.resources.clone(),
+                maximum_classification: Classification::Confidential,
+            },
+        );
+    }
     let scope = ScopedRequest {
         authority: composition.authority.clone(),
         resource: composition.resource.clone(),
     };
-    let kernel = Prepared::prepare_graph_v2(composition, &policy)
-        .unwrap()
-        .load()
-        .unwrap();
+    let prepared = Prepared::prepare_graph_v2(composition, &policy);
+    if deny_tool {
+        let Err(failure) = prepared else {
+            panic!("ungranted tool graph prepared")
+        };
+        assert_eq!(failure.code, phenix_contract::Code::Denied);
+        return;
+    }
+    let kernel = prepared.unwrap().load().unwrap();
+    if mode
+        .as_deref()
+        .is_some_and(|mode| mode.starts_with("fanout"))
+    {
+        tools::run(&kernel, scope, mode.as_deref().unwrap());
+        kernel.shutdown().unwrap();
+        return;
+    }
     let direct_root = kernel
         .admit_root(Selection {
             interface: "phenix.basic.input@1".into(),
@@ -190,22 +300,26 @@ fn main() {
         assert_eq!(run.steps().len(), 1);
         if mode.as_deref() == Some("cancel-deferred") {
             std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
-            assert_eq!(
-                run.pump(|update| observe(update, &mut completions, &mut pending))
-                    .unwrap(),
-                GraphStatus::Pending
-            );
+            for _ in 0..32 {
+                assert_eq!(
+                    run.pump(|update| observe(update, &mut completions, &mut pending))
+                        .unwrap(),
+                    GraphStatus::Pending
+                );
+                if run
+                    .steps()
+                    .last()
+                    .is_some_and(|step| step.node == "phenix.basic.agent/tool")
+                {
+                    break;
+                }
+            }
             assert_eq!(
                 run.steps()
                     .iter()
                     .map(|step| step.node.as_str())
                     .collect::<Vec<_>>(),
-                vec![
-                    "phenix.basic.agent/prepare",
-                    "phenix.basic.agent/model",
-                    "phenix.basic.agent/decide",
-                    "phenix.basic.agent/tool",
-                ]
+                [vec!["phenix.basic.agent/prepare"], tool_round(1)].concat()
             );
             assert_eq!(
                 pending.len(),
@@ -226,7 +340,7 @@ fn main() {
                 run.pump(|_| panic!("late cancellation effect")).unwrap(),
                 GraphStatus::Finished
             );
-            assert_eq!(run.steps().len(), 4);
+            assert_eq!(run.steps().len(), 8);
             assert_eq!(pending.len(), 1);
             drop(run);
 
@@ -433,7 +547,7 @@ fn main() {
             // continuation physically pending before requesting cancellation.
             for round in 1..=rounds {
                 std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
-                for _ in 0..8 {
+                for _ in 0..64 {
                     assert_eq!(
                         run.pump(|update| {
                             assert!(!matches!(update.event, GraphEvent::Finished(_)));
@@ -442,18 +556,14 @@ fn main() {
                         .unwrap(),
                         GraphStatus::Pending
                     );
-                    if run.steps().len() == 1 + 3 * round {
+                    if run.steps().len() == 1 + 7 * round {
                         break;
                     }
                 }
                 std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "hold");
                 let mut expected = vec!["phenix.basic.agent/prepare"];
                 for _ in 0..round {
-                    expected.extend([
-                        "phenix.basic.agent/model",
-                        "phenix.basic.agent/decide",
-                        "phenix.basic.agent/tool",
-                    ]);
+                    expected.extend(tool_round(1));
                 }
                 assert_eq!(
                     run.steps()
@@ -593,7 +703,7 @@ fn main() {
         std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
         // Every Model stage suspends, including both repeated continuations.
         let mut continuation_pending = std::collections::BTreeSet::new();
-        for _ in 0..8 {
+        for _ in 0..64 {
             let status = run
                 .pump(|update| {
                     observe(update, &mut completions, &mut pending);
@@ -606,7 +716,7 @@ fn main() {
                     .iter()
                     .filter(|step| step.node == "phenix.basic.agent/model")
                     .count();
-                assert_eq!(run.steps().len(), 1 + 3 * completed_models);
+                assert_eq!(run.steps().len(), 1 + 7 * completed_models);
                 if completed_models > 0 {
                     // Repeated polls of one admission are not new continuations.
                     continuation_pending.insert(completed_models);
@@ -627,40 +737,13 @@ fn main() {
         std::env::remove_var("PHENIX_SCRIPTED_MODEL_CONTROL");
     }
     let mut pumped = Ok(GraphStatus::Pending);
-    for _ in 0..8 {
+    for _ in 0..64 {
         pumped = run.pump(|update| {
             observe(update, &mut completions, &mut pending);
         });
         if matches!(pumped, Ok(GraphStatus::Finished) | Err(_)) {
             break;
         }
-    }
-    if deny_tool {
-        assert_eq!(pumped.unwrap_err().code, phenix_contract::Code::Denied);
-        assert_ne!(run.completion(), Some(GraphCompletion::Success));
-        let Outcome::Success(value) = run
-            .invoke_selected(
-                &Selection {
-                    interface: "phenix.basic.session@1".into(),
-                    operation: "open".into(),
-                    provider: "phenix.basic.session".into(),
-                },
-                &Scope {
-                    session: "s1".into(),
-                }
-                .to_value(),
-            )
-            .unwrap()
-        else {
-            panic!("session read failed")
-        };
-        let session = SessionSnapshot::from_value(value).unwrap();
-        assert_eq!(session.status, RunStatus::Failed);
-        assert_eq!(session.pending.len(), 1);
-        drop(run);
-        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
-        kernel.shutdown().unwrap();
-        return;
     }
     assert_eq!(pumped.unwrap(), GraphStatus::Finished);
     assert_eq!(completions, 1);
@@ -719,7 +802,14 @@ fn main() {
         kernel.shutdown().unwrap();
         return;
     }
-    assert_eq!(run.completion(), Some(GraphCompletion::Success));
+    assert_eq!(
+        run.completion(),
+        Some(if mode.as_deref() == Some("tool-failure") {
+            GraphCompletion::Domain
+        } else {
+            GraphCompletion::Success
+        })
+    );
     let rounds = if mode.as_deref() == Some("final") {
         0
     } else if repeated {
@@ -729,11 +819,11 @@ fn main() {
     };
     let mut expected = vec!["phenix.basic.agent/prepare"];
     for _ in 0..rounds {
-        expected.extend([
-            "phenix.basic.agent/model",
-            "phenix.basic.agent/decide",
-            "phenix.basic.agent/tool",
-        ]);
+        expected.extend(tool_round(if mode.as_deref() == Some("tool-failure") {
+            2
+        } else {
+            1
+        }));
     }
     expected.extend([
         "phenix.basic.agent/model",
@@ -754,7 +844,7 @@ fn main() {
         .map(|step| {
             assert_eq!(step.root, root);
             assert!(step.activation.is_some());
-            (step.root, step.activation, step.node.clone())
+            (step.root, step.activation, step.node.clone(), step.branch)
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -776,12 +866,12 @@ fn main() {
         assert_eq!(
             pending
                 .iter()
-                .filter(|(_, _, node)| node == "phenix.basic.agent/model")
+                .filter(|(_, _, node, _)| node == "phenix.basic.agent/model")
                 .cloned()
                 .collect::<Vec<_>>(),
             identities
                 .iter()
-                .filter(|(_, _, node)| node == "phenix.basic.agent/model")
+                .filter(|(_, _, node, _)| node == "phenix.basic.agent/model")
                 .cloned()
                 .collect::<Vec<_>>()
         );
@@ -847,7 +937,7 @@ fn main() {
     assert_eq!(
         run.steps()
             .iter()
-            .map(|step| (step.root, step.activation, step.node.clone()))
+            .map(|step| (step.root, step.activation, step.node.clone(), step.branch))
             .collect::<Vec<_>>(),
         identities
     );
