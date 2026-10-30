@@ -1616,7 +1616,7 @@
       ];
       basicV2ControlledCheck = pkgs.runCommand "phenix-basic-v2-controlled-turns" { } ''
         mkdir -p "$out"
-        for mode in pending cancel fail-model; do
+        for mode in pending pending-rounds cancel cancel-continuation cancel-rounds-initial cancel-rounds-continuation fail-model; do
           PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-$mode.sqlite" \
             ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2ControlledComposition} "$mode" \
             > "$out/native-$mode.txt"
