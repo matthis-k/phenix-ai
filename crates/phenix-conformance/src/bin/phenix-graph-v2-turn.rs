@@ -11,11 +11,29 @@ use phenix_contract::{graph::v2::*, Portable, ScopedRequest};
 use phenix_kernel::{
     graph::{
         v2::{OperationSecurity, SourceOwnerPolicy, TrustedCompositionPolicy},
-        GraphCompletion, GraphEvent, GraphStatus,
+        GraphCompletion, GraphEvent, GraphStatus, GraphUpdate,
     },
     resolve::{Composition, Prepared, Selection},
     Call, Outcome, Poll,
 };
+
+fn observe(
+    update: &GraphUpdate<'_>,
+    completions: &mut usize,
+    pending: &mut Vec<(u64, Option<u64>, String)>,
+) {
+    match &update.event {
+        GraphEvent::NodeFinished(_) => panic!("V2 exposed a payload-bearing callback"),
+        GraphEvent::NodePending { node } => {
+            let identity = (update.root, update.activation, (*node).to_owned());
+            assert!(identity.1.is_some());
+            assert!(!pending.contains(&identity), "duplicate pending admission");
+            pending.push(identity);
+        }
+        GraphEvent::Finished(_) => *completions += 1,
+        _ => {}
+    }
+}
 
 fn main() {
     let path = std::env::args().nth(1).expect("COMPOSITION");
@@ -150,14 +168,25 @@ fn main() {
         )
         .unwrap();
     let mut completions = 0;
+    let mut pending = Vec::new();
     if controlled {
-        assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert_eq!(
+            run.pump(|update| observe(update, &mut completions, &mut pending))
+                .unwrap(),
+            GraphStatus::Pending
+        );
         assert_eq!(run.steps().len(), 1);
         assert_eq!(run.steps()[0].node, "phenix.basic.agent/prepare");
         assert!(run.completion().is_none());
         assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
         // Repeated polls must neither re-admit the stage nor start another Model.
-        assert_eq!(run.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        let pending_before_poll = pending.clone();
+        assert_eq!(
+            run.pump(|update| observe(update, &mut completions, &mut pending))
+                .unwrap(),
+            GraphStatus::Pending
+        );
+        assert_eq!(pending, pending_before_poll);
         assert_eq!(run.steps().len(), 1);
         if let Some(rounds) = cancel_at {
             // Release one Model at a time, stopping with the requested
@@ -166,7 +195,11 @@ fn main() {
                 std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "release");
                 for _ in 0..8 {
                     assert_eq!(
-                        run.pump(|_| panic!("premature completion")).unwrap(),
+                        run.pump(|update| {
+                            assert!(!matches!(update.event, GraphEvent::Finished(_)));
+                            observe(update, &mut completions, &mut pending);
+                        })
+                        .unwrap(),
                         GraphStatus::Pending
                     );
                     if run.steps().len() == 1 + 3 * round {
@@ -190,7 +223,11 @@ fn main() {
                     expected
                 );
                 assert_eq!(
-                    run.pump(|_| panic!("premature completion")).unwrap(),
+                    run.pump(|update| {
+                        assert!(!matches!(update.event, GraphEvent::Finished(_)));
+                        observe(update, &mut completions, &mut pending);
+                    })
+                    .unwrap(),
                     GraphStatus::Pending
                 );
                 assert_eq!(kernel.inspect()["pending"]["physical_leases"], 2);
@@ -275,9 +312,7 @@ fn main() {
             std::env::set_var("PHENIX_SCRIPTED_MODEL_CONTROL", "fail");
             let failure = run
                 .pump(|update| {
-                    if matches!(update.event, GraphEvent::Finished(_)) {
-                        completions += 1;
-                    }
+                    observe(update, &mut completions, &mut pending);
                 })
                 .unwrap_err();
             assert_eq!(failure.code, phenix_contract::Code::PluginFailed);
@@ -321,9 +356,7 @@ fn main() {
         for _ in 0..8 {
             let status = run
                 .pump(|update| {
-                    if matches!(update.event, GraphEvent::Finished(_)) {
-                        completions += 1;
-                    }
+                    observe(update, &mut completions, &mut pending);
                 })
                 .unwrap();
             if status == GraphStatus::Pending && kernel.inspect()["pending"]["physical_leases"] == 2
@@ -356,9 +389,7 @@ fn main() {
     let mut pumped = Ok(GraphStatus::Pending);
     for _ in 0..8 {
         pumped = run.pump(|update| {
-            if matches!(update.event, GraphEvent::Finished(_)) {
-                completions += 1;
-            }
+            observe(update, &mut completions, &mut pending);
         });
         if matches!(pumped, Ok(GraphStatus::Finished) | Err(_)) {
             break;
@@ -476,6 +507,45 @@ fn main() {
             .collect::<Vec<_>>(),
         expected
     );
+    let root = run.steps()[0].root;
+    let identities = run
+        .steps()
+        .iter()
+        .map(|step| {
+            assert_eq!(step.root, root);
+            assert!(step.activation.is_some());
+            (step.root, step.activation, step.node.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        identities
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        identities.len()
+    );
+    assert_eq!(
+        run.steps()
+            .iter()
+            .filter(|step| step.node == "phenix.basic.agent/model")
+            .map(|step| step.activation)
+            .collect::<Vec<_>>(),
+        (0..=rounds).map(Some).collect::<Vec<_>>()
+    );
+    if controlled {
+        assert_eq!(
+            pending
+                .iter()
+                .filter(|(_, _, node)| node == "phenix.basic.agent/model")
+                .cloned()
+                .collect::<Vec<_>>(),
+            identities
+                .iter()
+                .filter(|(_, _, node)| node == "phenix.basic.agent/model")
+                .cloned()
+                .collect::<Vec<_>>()
+        );
+    }
     let Outcome::Success(value) = &run.steps().last().unwrap().outcome else {
         panic!("missing final answer")
     };
@@ -533,6 +603,13 @@ fn main() {
     assert_eq!(
         run.pump(|_| panic!("duplicate completion")).unwrap(),
         GraphStatus::Finished
+    );
+    assert_eq!(
+        run.steps()
+            .iter()
+            .map(|step| (step.root, step.activation, step.node.clone()))
+            .collect::<Vec<_>>(),
+        identities
     );
     drop(run);
     assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);

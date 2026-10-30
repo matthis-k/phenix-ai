@@ -69,7 +69,7 @@ impl ClosureEvidence {
 }
 
 pub(in crate::graph) struct Wave {
-    _id: u64,
+    pub(in crate::graph) id: u64,
     queue: std::collections::VecDeque<DeferredActivation>,
     emitted: BTreeMap<String, DeferredActivation>,
     executions: usize,
@@ -128,7 +128,7 @@ impl Wave {
             })
             .collect();
         Ok(Self {
-            _id: 0,
+            id: 0,
             queue: Default::default(),
             emitted: BTreeMap::new(),
             executions: 0,
@@ -759,7 +759,7 @@ impl GraphExecution<'_> {
         let Some(activation) = wave.queue.pop_front() else {
             return Ok(());
         };
-        if wave._id + 1 >= MAX_ROOT_WAVES {
+        if wave.id + 1 >= MAX_ROOT_WAVES {
             return Err(fail(
                 Code::InfrastructureFailure,
                 "graph-v2 root wave limit",
@@ -767,7 +767,7 @@ impl GraphExecution<'_> {
         }
         let graph = self.root.kernel.prepared.graph_v2.as_ref().unwrap();
         let mut next = Wave::new(graph, &format!("$deferred:{}", activation.edge))?;
-        next._id = wave._id + 1;
+        next.id = wave.id + 1;
         next.values = wave.values;
         next.bytes = wave.bytes;
         next.executions = wave.executions;
@@ -903,6 +903,10 @@ impl GraphExecution<'_> {
                             if ready {
                                 self.accept_poll(id.clone(), ticket, observe)?;
                             } else {
+                                self.emit(
+                                    crate::graph::GraphEvent::NodePending { node: id },
+                                    observe,
+                                );
                                 self.pending.insert(id.clone(), ticket);
                             }
                         }

@@ -411,9 +411,14 @@ impl crate::resolve::Prepared {
     }
 }
 
-/// One completed serial graph operation, identified by its contributing node.
+/// One completed serial graph operation. V2 identity is (root, activation, node).
+/// Root IDs are kernel-local; activation IDs are deterministic within that root.
 #[derive(Debug, PartialEq, Eq)]
 pub struct GraphStep {
+    pub root: u64,
+    /// V2 initial activation is 0, then deferred admissions increase monotonically.
+    /// V1 has no corresponding activation identity.
+    pub activation: Option<u64>,
     pub node: String,
     pub outcome: Outcome,
 }
@@ -427,6 +432,9 @@ pub struct GraphStep {
 #[derive(Debug)]
 pub struct GraphUpdate<'a> {
     pub root: u64,
+    /// V2 node-event activation; None for V1 and root lifecycle events.
+    /// Together with root and the authored node, correlates pending work to steps.
+    pub activation: Option<u64>,
     pub event: GraphEvent<'a>,
 }
 
@@ -799,6 +807,12 @@ impl GraphExecution<'_> {
     fn emit(&self, event: GraphEvent<'_>, observe: &mut impl FnMut(&GraphUpdate<'_>)) {
         observe(&GraphUpdate {
             root: self.root.id,
+            activation: match &event {
+                GraphEvent::NodeFinished(_)
+                | GraphEvent::NodePending { .. }
+                | GraphEvent::NodeSkipped { .. } => self.v2.as_ref().map(|wave| wave.id),
+                _ => None,
+            },
             event,
         });
     }
@@ -827,6 +841,8 @@ impl GraphExecution<'_> {
                         }
                     }
                     self.completed.push(GraphStep {
+                        root: self.root.id,
+                        activation: Some(wave.id),
                         node: node.clone(),
                         outcome,
                     });
@@ -845,7 +861,12 @@ impl GraphExecution<'_> {
                         self.stopped = true;
                     }
                 }
-                self.completed.push(GraphStep { node, outcome });
+                self.completed.push(GraphStep {
+                    root: self.root.id,
+                    activation: None,
+                    node,
+                    outcome,
+                });
                 self.emit(
                     GraphEvent::NodeFinished(self.completed.last().unwrap()),
                     observe,
