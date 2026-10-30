@@ -1081,6 +1081,12 @@ impl GraphExecution<'_> {
         if self.stopped {
             self.cancel_pending()?;
         }
+        if self.v2.is_some() {
+            if let Err(failure) = self.advance_v2() {
+                self.failure = Some(failure);
+                self.stopped = true;
+            }
+        }
         // A finished wave may have published watched cells. Activate their
         // hooks before declaring the admitted root terminal. Hooks can publish
         // further epochs; each is observed after its own wave settles.

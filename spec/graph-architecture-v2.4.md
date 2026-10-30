@@ -458,6 +458,27 @@ Enforce explicit nonzero bounded limits for waves/root, values and bytes/root, q
 
 ### 3.7 Runtime invocation sequence
 
+#### Deferred base-profile addendum (29 October 2026)
+
+The base declaration encoding for `DeferredWave::Next` is an edge kind object
+with exactly `kind: "deferred"`, `from`, `to`, and `next: "next"`. Port references
+use the same node/port objects as Flow. Authored DeferredEntry sources remain
+unsupported; a deferred edge itself identifies its compiler-owned admission.
+Each selected successful delivery queues one separate wave. Closed and failed
+outputs do not enqueue values. At wave settlement, emitted activations are
+appended in canonical EdgeId order to the root FIFO, after existing queued work.
+Admission waits for physical ticket drain and allocates successive root-local
+activation IDs starting with zero for the external wave. No candidate or join
+state is shared between waves. Existing dispatcher, cancellation, generation,
+and attenuated delivery authority remain authoritative.
+
+The implementation bounds each root to 256 waves (including the initial wave),
+1,024 queued deferred activations, 4,096 node resolutions, 16,384 values and
+16 MiB of encoded values. Values and bytes include successful outputs and edge
+deliveries; these counters are cumulative, not reset at deferred admission.
+Exhaustion is InfrastructureFailure and stops root admission. These are current
+implementation defaults, not a claim of completed native release acceptance.
+
 ```mermaid
 sequenceDiagram
     participant External as External trigger

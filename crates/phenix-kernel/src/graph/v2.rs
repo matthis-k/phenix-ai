@@ -345,9 +345,10 @@ fn compile(
     for declaration in &declarations {
         for edge in &declaration.edges {
             let endpoints = match &edge.kind {
-                EdgeKind::Flow { from, to } => [&from.node, &to.node],
+                EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. } => {
+                    [&from.node, &to.node]
+                }
                 EdgeKind::Order { before, after } => [before, after],
-                EdgeKind::Deferred { .. } => return Err(invalid("deferred unsupported")),
             };
             for endpoint in endpoints {
                 let (owner, _) = nodes
@@ -362,7 +363,7 @@ fn compile(
                 }
             }
             match &edge.kind {
-                EdgeKind::Flow { from, to } => {
+                EdgeKind::Flow { from, to } | EdgeKind::Deferred { from, to, .. } => {
                     let (source_owner, source) = nodes
                         .get(&from.node)
                         .ok_or_else(|| invalid("missing flow source"))?;
@@ -407,13 +408,22 @@ fn compile(
                             ));
                         }
                     }
-                    *candidates
-                        .entry((to.node.clone(), to.port.clone()))
-                        .or_default() += 1;
+                    if matches!(edge.kind, EdgeKind::Flow { .. }) {
+                        *candidates
+                            .entry((to.node.clone(), to.port.clone()))
+                            .or_default() += 1;
+                    }
                     input_edges
                         .entry((to.node.clone(), to.port.clone()))
                         .or_default()
                         .push(edge.id.clone());
+                    if matches!(edge.kind, EdgeKind::Deferred { .. }) {
+                        source_reachability
+                            .get_mut(&to.node)
+                            .unwrap()
+                            .insert(format!("$deferred:{}", edge.id));
+                        continue;
+                    }
                     predecessors
                         .get_mut(&to.node)
                         .unwrap()
@@ -429,7 +439,6 @@ fn compile(
                     }
                     predecessors.get_mut(after).unwrap().insert(before.clone());
                 }
-                EdgeKind::Deferred { .. } => return Err(invalid("deferred unsupported")),
             }
         }
     }
@@ -486,11 +495,16 @@ fn compile(
             .collect();
         let reachable: Vec<BTreeSet<String>> = incoming
             .iter()
-            .map(|edges| {
-                edges
+            .zip(node.inputs.iter().filter(|input| matches!(input.readiness, InputReadiness::One | InputReadiness::StaticMany { min: 1.., .. })))
+            .map(|(edges, input)| {
+                let mut sources: BTreeSet<String> = edges
                     .iter()
                     .flat_map(|from| source_reachability[&from.node].iter().cloned())
-                    .collect()
+                    .collect();
+                sources.extend(declarations.iter().flat_map(|d| &d.edges).filter(|edge| {
+                    matches!(&edge.kind, EdgeKind::Deferred { to, .. } if to.node == node.id && to.port == input.name)
+                }).map(|edge| format!("$deferred:{}", edge.id)));
+                sources
             })
             .collect();
         if source_reachability[&node.id].is_empty() || reachable.iter().any(BTreeSet::is_empty) {

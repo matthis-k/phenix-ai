@@ -93,6 +93,24 @@ with sqlite3.connect(database) as db:
 recovered = prompt("hello-after-continuation-fault")
 assert "mock:hello-after-continuation-fault" in recovered, (continuation_failure, recovered)
 
+# The same packaged graph must revisit model.in twice, not stop at a fixed
+# continuation or replay tool effects when the host restarts.
+before_rounds = journal_counts()
+repeated = prompt("rounds:packaged-proof")
+assert "mock:rounds:PACKAGED-PROOF" in repeated, repeated
+assert repeated.count("tool: uppercase") == 2, repeated
+assert repeated.count("tool result: PACKAGED-PROOF") == 2, repeated
+assert journal_counts() == {
+    **before_rounds,
+    "PromptAccepted": before_rounds["PromptAccepted"] + 1,
+    "ModelStarted": before_rounds["ModelStarted"] + 3,
+    "ToolStarted": before_rounds["ToolStarted"] + 2,
+    "ToolFinished": before_rounds["ToolFinished"] + 2,
+    "Answer": before_rounds["Answer"] + 1,
+}, journal_counts()
+after_rounds = prompt("hello-after-rounds-restart")
+assert "mock:hello-after-rounds-restart" in after_rounds, after_rounds
+
 # Policy never substitutes for the composition's operation grants. Reject
 # before loading plugins or creating durable state, without touching metadata.
 denied = json.loads(Path(composition).read_text())
@@ -116,6 +134,7 @@ assert not denied_database.exists()
     "session": session, "first_prompt": first, "restart": second,
     "domain_failure": failure, "recovery": recovery,
     "tool": tool, "tool_failure": tool_failure, "tool_restart": after_tool,
+    "repeated_rounds": repeated, "repeated_restart": after_rounds,
     "same_host_failure_recovery": same_host,
     "journal_counts": counts, "session_source": "SQLite basic_records after first default terminal prompt",
     "denied_before_load": rejected.stderr,
