@@ -6,7 +6,10 @@
 //! HTTP errors never expose token response bodies or credential values.
 use crate::siwc::TOKEN_URL;
 use crate::siwc_verified::{TokenEnvelope, JWKS_URL, MAX_JWKS_BODY, MAX_TOKEN_BODY};
-use curl::easy::{Easy2, Handler, List, WriteError};
+use openidconnect::reqwest::blocking::Client;
+use openidconnect::reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use openidconnect::reqwest::redirect::Policy;
+use std::io::Read;
 use std::time::Duration;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -20,7 +23,6 @@ pub enum TransportError {
     Rejected,
     TooLarge,
     InvalidTokenResponse,
-    /// The request never received a usable HTTP response.
     Network,
     Timeout,
     Tls,
@@ -28,79 +30,55 @@ pub enum TransportError {
     HttpStatus(u16),
 }
 
-#[derive(Default)]
-struct BoundedBody {
-    bytes: Vec<u8>,
-    bound: usize,
-    too_large: bool,
-}
-// Protect partial token responses on rejected, interrupted and oversized
-// exchanges, not just on successful token parsing.
-impl Drop for BoundedBody {
-    fn drop(&mut self) {
-        self.bytes.zeroize();
-    }
-}
-
-impl Handler for BoundedBody {
-    fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if self
-            .bytes
-            .len()
-            .checked_add(data.len())
-            .is_none_or(|n| n > self.bound)
-        {
-            self.too_large = true;
-            return Ok(0);
-        }
-        self.bytes.extend_from_slice(data);
-        Ok(data.len())
-    }
+/// The shared OAuth2/OIDC transport uses the same reqwest + Rustls stack as
+/// oldmain's working Codex flow. No hand-built libcurl POST/response state.
+///
+/// The OAuth code is single use. Do not retry a failed token request: even
+/// when the transport reports an error the server may have consumed it.
+fn client() -> Result<Client, TransportError> {
+    Client::builder()
+        .use_rustls_tls()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| TransportError::Unavailable)
 }
 
-/// Preserve safe transport failure categories without passing curl's error
-/// buffer, token response, authorization code or request URL to the client.
-fn classify_curl_error(problem: &curl::Error) -> TransportError {
-    if problem.is_operation_timedout() {
+/// Map only coarse error categories; reqwest errors may include URLs,
+/// private proxy configuration or headers. They never reach the ACP client.
+fn request_error(error: &openidconnect::reqwest::Error) -> TransportError {
+    if error.is_timeout() {
         TransportError::Timeout
-    } else if problem.is_peer_failed_verification()
-        || problem.is_ssl_connect_error()
-        || problem.is_ssl_cacert_badfile()
-        || problem.is_ssl_certproblem()
-    {
-        TransportError::Tls
     } else {
         TransportError::Network
     }
 }
 
-/// This is deliberately an implementation helper, not an arbitrary HTTP
-/// request exposed to provider credentials or client-side URLs.
+/// Only trusted static endpoints or a revocation endpoint validated to the
+/// exact configured issuer origin may reach this helper. Never follow any
+/// redirects, or emit returned response bodies on error.
 fn request(url: &str, post: Option<&str>, limit: usize) -> Result<Vec<u8>, TransportError> {
-    request_with_auth(url, post, limit, None, false)
+    request_with_auth(url, post, Some(limit), None, false)
 }
 
 fn request_with_auth(
     url: &str,
     post: Option<&str>,
-    limit: usize,
+    max_bytes: Option<usize>,
     bearer: Option<&str>,
     allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
-    let mut easy = Easy2::new(BoundedBody {
-        bytes: Vec::new(),
-        bound: limit,
-        too_large: false,
-    });
-    let mut headers = List::new();
-    headers
-        .append("Accept: application/json")
-        .map_err(|_| TransportError::Unavailable)?;
-    if post.is_some() {
-        headers
-            .append("Content-Type: application/x-www-form-urlencoded")
-            .map_err(|_| TransportError::Unavailable)?;
+    let client = client()?;
+    let mut builder = if let Some(form) = post {
+        client
+            .post(url)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+    } else {
+        client.get(url)
     }
+    .header(ACCEPT, "application/json");
     if let Some(token) = bearer {
         if token.is_empty()
             || token.len() > 4096
@@ -110,52 +88,48 @@ fn request_with_auth(
         {
             return Err(TransportError::InvalidForm);
         }
-        headers
-            .append(&format!("Authorization: Bearer {token}"))
-            .map_err(|_| TransportError::Unavailable)?;
+        builder = builder.header(
+            AUTHORIZATION,
+            openidconnect::reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| TransportError::InvalidForm)?,
+        );
     }
-    easy.url(url).map_err(|_| TransportError::Unavailable)?;
-    easy.http_headers(headers)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.follow_location(false)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.connect_timeout(Duration::from_secs(5))
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.timeout(Duration::from_secs(15))
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_peer(true)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.ssl_verify_host(true)
-        .map_err(|_| TransportError::Unavailable)?;
-    easy.signal(false)
-        .map_err(|_| TransportError::Unavailable)?;
-    if let Some(form) = post {
-        easy.post(true).map_err(|_| TransportError::Unavailable)?;
-        easy.post_fields_copy(form.as_bytes())
-            .map_err(|_| TransportError::Unavailable)?;
-    } else {
-        easy.get(true).map_err(|_| TransportError::Unavailable)?;
-    }
-    let outcome = easy.perform();
-    let code = easy.response_code().unwrap_or_default();
-    if easy.get_ref().too_large {
-        return Err(TransportError::TooLarge);
-    }
-    // Curl can fail before an HTTP response exists, even though the browser
-    // sign-in itself succeeded. Preserve that distinction for safe UX.
-    outcome.map_err(|problem| classify_curl_error(&problem))?;
-    // Never follow redirects or accept error/redirect HTML as OAuth tokens.
-    // HTTP status is safe diagnostic metadata; the response body remains secret.
-    match code {
+    let mut response = builder.send().map_err(|error| request_error(&error))?;
+    // The HTTP status is safe metadata. Error bodies and redirects never
+    // become tokens; don't even buffer their contents.
+    match response.status().as_u16() {
         200 => {}
-        400 | 401 | 403 => return Err(TransportError::Rejected),
-        0 => return Err(TransportError::Network),
-        status => return Err(TransportError::HttpStatus(status as u16)),
+        // OAuth token endpoints return an opaque Rejected error. For bearer
+        // catalog reads the status is safe diagnostic metadata, allowing the
+        // provider to distinguish expired auth from quota and server errors.
+        400 | 401 | 403 if bearer.is_none() => return Err(TransportError::Rejected),
+        status => return Err(TransportError::HttpStatus(status)),
     }
-    if !allow_empty && easy.get_ref().bytes.is_empty() {
+
+    // OAuth token/JWKS responses have protocol-imposed bounds. Model catalog
+    // size has no implicit product cap; an explicit caller policy may set one.
+    // Secret-bearing response memory remains zeroized on every error path.
+    let mut raw = Zeroizing::new(Vec::new());
+    match max_bytes {
+        Some(limit) => {
+            (&mut response)
+                .take(limit.saturating_add(1) as u64)
+                .read_to_end(&mut raw)
+                .map_err(|_| TransportError::Network)?;
+            if raw.len() > limit {
+                return Err(TransportError::TooLarge);
+            }
+        }
+        None => {
+            response
+                .read_to_end(&mut raw)
+                .map_err(|_| TransportError::Network)?;
+        }
+    }
+    if !allow_empty && raw.is_empty() {
         return Err(TransportError::Unavailable);
     }
-    Ok(std::mem::take(&mut easy.get_mut().bytes))
+    Ok(std::mem::take(&mut raw))
 }
 
 fn valid_form(form: &str) -> bool {
@@ -189,7 +163,11 @@ pub fn chatgpt_models(access_token: &str) -> Result<Vec<u8>, TransportError> {
     request_with_auth(
         "https://api.openai.com/v1/models",
         None,
-        256 * 1024,
+        std::env::var("PHENIX_CHATGPT_MODEL_CATALOG_MAX_BYTES")
+            .ok()
+            .map(|value| value.parse::<usize>())
+            .transpose()
+            .map_err(|_| TransportError::InvalidForm)?,
         Some(access_token),
         false,
     )
@@ -258,7 +236,7 @@ pub fn revoke_renewable_session(
         .append_pair("token_type_hint", "refresh_token")
         .append_pair("client_id", issued_client_id);
     let form = Zeroizing::new(form.finish());
-    let response = request_with_auth(endpoint.as_str(), Some(&form), 4096, None, true)?;
+    let response = request_with_auth(endpoint.as_str(), Some(&form), Some(4096), None, true)?;
     // SIWC defines an empty 200 for both a revoked and already-invalid token.
     // A nonempty response is not a confirmed remote sign-out.
     if !response.is_empty() {
@@ -327,7 +305,7 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
             String::from_utf8(bytes).unwrap()
         });
-        let outcome = request_with_auth(&address, post, limit, None, allow_empty);
+        let outcome = request_with_auth(&address, post, Some(limit), None, allow_empty);
         (outcome, server.join().unwrap())
     }
 
@@ -425,6 +403,50 @@ mod tests {
                 Err(TransportError::InvalidForm)
             );
         }
+    }
+
+    #[test]
+    fn subscription_catalog_uses_bounded_bearer_get_over_shared_transport() {
+        let catalog =
+            r#"{"models":[{"slug":"gpt-test","display_name":"Test","visibility":"list"}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            catalog.len(),
+            catalog,
+        );
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!(
+            "http://127.0.0.1:{}/models",
+            server.local_addr().unwrap().port()
+        );
+        let worker = thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = [0u8; 4096];
+            let count = socket.read(&mut buf).unwrap();
+            socket.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(buf[..count].to_vec()).unwrap()
+        });
+        let received = request_with_auth(
+            &endpoint,
+            None,
+            Some(MAX_TOKEN_BODY),
+            Some("test-bearer"),
+            false,
+        )
+        .expect("catalog response");
+        let request = worker.join().unwrap();
+        assert!(request.starts_with("GET /models HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-bearer"));
+        assert_eq!(received, catalog.as_bytes());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&received).unwrap()["models"][0]["slug"],
+            "gpt-test"
+        );
     }
 
     #[test]

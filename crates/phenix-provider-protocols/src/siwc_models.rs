@@ -4,8 +4,8 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-const MAX_CATALOG_BYTES: usize = 256 * 1024;
-const MAX_MODELS: usize = 256;
+// Provider catalog size is not a product policy. The optional transport
+// resource limit is controlled by the user, never compiled into this parser.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatGptModel {
@@ -36,20 +36,20 @@ fn valid_display_name(label: &str) -> bool {
 /// Preserve server ordering and show only visibility:list, per SIWC docs.
 /// A populated catalog does not by itself prove plan scope or inference quota.
 pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogError> {
-    if body.len() > MAX_CATALOG_BYTES {
-        return Err(CatalogError::TooLarge);
-    }
     let json: Value = serde_json::from_slice(body).map_err(|_| CatalogError::InvalidShape)?;
     let models = json
         .get("models")
         .and_then(Value::as_array)
         .ok_or(CatalogError::InvalidShape)?;
-    if models.len() > MAX_MODELS {
-        return Err(CatalogError::TooLarge);
-    }
     let mut result = Vec::new();
     let mut ids = BTreeSet::new();
     for entry in models {
+        // The documented picker filters visibility before reading a model's
+        // display fields. Hidden and future entries need not carry every
+        // field required for a visible, selectable model.
+        if entry.get("visibility").and_then(Value::as_str) != Some("list") {
+            continue;
+        }
         let slug = entry
             .get("slug")
             .and_then(Value::as_str)
@@ -58,24 +58,16 @@ pub fn parse_chatgpt_models(body: &[u8]) -> Result<Vec<ChatGptModel>, CatalogErr
             .get("display_name")
             .and_then(Value::as_str)
             .ok_or(CatalogError::InvalidModel)?;
-        let visibility = entry
-            .get("visibility")
-            .and_then(Value::as_str)
-            .ok_or(CatalogError::InvalidModel)?;
         if !valid_slug(slug) || !valid_display_name(label) {
             return Err(CatalogError::InvalidModel);
         }
         if !ids.insert(slug) {
             return Err(CatalogError::DuplicateModel);
         }
-        // New/undocumented visibility values are never selectable.
-        // An unknown hidden tier should not suppress unrelated listed models.
-        if visibility == "list" {
-            result.push(ChatGptModel {
-                slug: slug.to_owned(),
-                display_name: label.to_owned(),
-            });
-        }
+        result.push(ChatGptModel {
+            slug: slug.to_owned(),
+            display_name: label.to_owned(),
+        });
     }
     Ok(result)
 }
@@ -107,6 +99,69 @@ mod tests {
     }
 
     #[test]
+    fn hidden_catalog_entries_need_no_picker_fields() {
+        let response = br#"{"models":[
+          {"visibility":"hide"},
+          {"visibility":"hidden","slug":"bad slug","metadata":{"future":true}},
+          {"visibility":"list","slug":"gpt-test","display_name":"Test"}
+        ]}"#;
+        assert_eq!(
+            parse_chatgpt_models(response).unwrap(),
+            vec![ChatGptModel {
+                slug: "gpt-test".into(),
+                display_name: "Test".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn large_hidden_catalog_keeps_only_authorized_visible_models() {
+        // Reproduces account catalogs with hundreds of hidden records and
+        // >256 KiB of model metadata: earlier versions reported TooLarge.
+        let mut models = (0..512)
+            .map(|i| {
+                serde_json::json!({
+                    "visibility": "hidden",
+                    "slug": format!("internal-{i}"),
+                    "metadata": "x".repeat(1024),
+                })
+            })
+            .collect::<Vec<_>>();
+        models.insert(
+            200,
+            serde_json::json!({
+                "visibility": "list",
+                "slug": "gpt-visible",
+                "display_name": "Visible model",
+            }),
+        );
+        let body = serde_json::to_vec(&serde_json::json!({ "models": models })).unwrap();
+        assert!(body.len() > 256 * 1024);
+
+        assert_eq!(
+            parse_chatgpt_models(&body).unwrap(),
+            vec![ChatGptModel {
+                slug: "gpt-visible".into(),
+                display_name: "Visible model".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn large_raw_and_visible_catalogs_have_no_implicit_count_cap() {
+        let catalog = serde_json::json!({
+            "models": (0..4097).map(|i| serde_json::json!({
+                "visibility": "list",
+                "slug": format!("gpt-{i}"),
+                "display_name": format!("Model {i}"),
+            })).collect::<Vec<_>>(),
+        });
+        let parsed = parse_chatgpt_models(&serde_json::to_vec(&catalog).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 4097);
+        assert_eq!(parsed[4096].slug, "gpt-4096");
+    }
+
+    #[test]
     fn oauth_schema_is_not_the_api_key_list_response() {
         assert_eq!(
             parse_chatgpt_models(br#"{"object":"list","data":[{"id":"gpt-5"}]}"#),
@@ -126,9 +181,5 @@ mod tests {
         ] {
             assert!(parse_chatgpt_models(body).is_err(), "{body:?}");
         }
-        assert_eq!(
-            parse_chatgpt_models(&vec![b' '; MAX_CATALOG_BYTES + 1]),
-            Err(CatalogError::TooLarge)
-        );
     }
 }

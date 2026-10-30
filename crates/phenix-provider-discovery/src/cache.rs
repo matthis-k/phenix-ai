@@ -4,11 +4,10 @@
 //! specific profile saw, but never proves its current authorization to infer.
 //! The runtime must revalidate account, model and protocol before dispatch.
 
-use crate::{CatalogPage, MAX_CATALOG_BYTES, MAX_MODELS};
+use crate::CatalogPage;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const DEFAULT_DYNAMIC_TTL_SECONDS: u64 = 15 * 60;
-const MAX_CACHED_IDENTITIES: usize = 512;
 const MAX_DYNAMIC_TTL_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -68,43 +67,23 @@ pub struct CatalogView {
 
 /// Check provider-supplied pages even when they did not pass through the
 /// built-in JSON decoder. Plugins may declare static models or use their own
-/// adapters, but none may store unbounded or ambiguous catalog data.
+/// adapters. Validate identities and duplicate entries without imposing catalog size limits.
 fn validate_page(page: &CatalogPage) -> Result<(), CacheError> {
-    const MAX_FIELD_BYTES: usize = 4096;
-    if page.models.len() > MAX_MODELS {
-        return Err(CacheError::InvalidCatalog);
-    }
-    let mut size = 0usize;
     let mut ids = BTreeSet::new();
     for model in &page.models {
         for field in [&model.id, &model.label] {
-            if field.is_empty()
-                || field.len() > MAX_FIELD_BYTES
-                || field.chars().any(char::is_control)
-            {
+            if field.is_empty() || field.chars().any(char::is_control) {
                 return Err(CacheError::InvalidCatalog);
             }
-            size = size
-                .checked_add(field.len())
-                .ok_or(CacheError::InvalidCatalog)?;
         }
         if !ids.insert(model.id.as_str()) {
             return Err(CacheError::InvalidCatalog);
         }
     }
     if let Some(cursor) = &page.next_provider_cursor {
-        if cursor.is_empty()
-            || cursor.len() > MAX_FIELD_BYTES
-            || cursor.chars().any(char::is_control)
-        {
+        if cursor.is_empty() || cursor.chars().any(char::is_control) {
             return Err(CacheError::InvalidCatalog);
         }
-        size = size
-            .checked_add(cursor.len())
-            .ok_or(CacheError::InvalidCatalog)?;
-    }
-    if size > MAX_CATALOG_BYTES {
-        return Err(CacheError::InvalidCatalog);
     }
     Ok(())
 }
@@ -153,9 +132,6 @@ impl CatalogCache {
             {
                 return Err(CacheError::StaleRefresh);
             }
-        }
-        if self.entries.len() >= MAX_CACHED_IDENTITIES && !self.entries.contains_key(&key) {
-            return Err(CacheError::TooManyIdentities);
         }
         let expires_at = match policy {
             CachePolicy::LocalDeclared => {
@@ -465,7 +441,34 @@ mod tests {
         assert!(cache.is_empty());
     }
     #[test]
-    fn rejects_ambiguous_or_unbounded_pages_without_changing_revision() {
+    fn preserves_large_catalog_without_arbitrary_size_or_count_limits() {
+        let mut cache = CatalogCache::default();
+        let models = (0..4097)
+            .map(|index| CatalogModel {
+                id: format!("model-{index}"),
+                label: "model description ".repeat(32),
+            })
+            .collect::<Vec<_>>();
+        let revision = cache
+            .put(
+                key(Some("work")),
+                100,
+                7,
+                CachePolicy::Dynamic { ttl_seconds: 30 },
+                CatalogPage {
+                    models,
+                    next_provider_cursor: None,
+                },
+            )
+            .unwrap();
+        assert!(revision > 0);
+        let view = cache.view(&key(Some("work")), 101, 7).unwrap();
+        assert_eq!(view.page.models.len(), 4097);
+        assert_eq!(view.page.models[4096].id, "model-4096");
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_malformed_pages_without_changing_revision() {
         let mut cache = CatalogCache::default();
         let account = key(Some("work"));
         let first = cache
@@ -478,7 +481,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut invalid_pages = vec![
+        let invalid_pages = vec![
             CatalogPage {
                 models: vec![CatalogModel {
                     id: String::new(),
@@ -510,29 +513,7 @@ mod tests {
                 models: vec![],
                 next_provider_cursor: Some("".into()),
             },
-            CatalogPage {
-                models: vec![],
-                next_provider_cursor: Some("x".repeat(4097)),
-            },
         ];
-        invalid_pages.push(CatalogPage {
-            models: (0..=MAX_MODELS)
-                .map(|index| CatalogModel {
-                    id: format!("m{index}"),
-                    label: "Entry".into(),
-                })
-                .collect(),
-            next_provider_cursor: None,
-        });
-        invalid_pages.push(CatalogPage {
-            models: (0..300)
-                .map(|index| CatalogModel {
-                    id: format!("m{index}"),
-                    label: "x".repeat(4096),
-                })
-                .collect(),
-            next_provider_cursor: None,
-        });
 
         for page in invalid_pages {
             assert_eq!(

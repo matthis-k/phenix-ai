@@ -34,6 +34,17 @@ pub enum ProviderErrorCode {
     Unavailable,
     Conflict,
     AuthenticationRequired,
+    // The account-scoped catalog may be unavailable for a specific reason.
+    // Only typed codes cross the ACP authority boundary; never response bodies.
+    DiscoveryNetwork,
+    DiscoveryTimeout,
+    DiscoveryUnauthorized,
+    DiscoveryRateLimited,
+    DiscoveryServerError,
+    DiscoveryInvalidResponse,
+    DiscoveryIssuerUnavailable,
+    DiscoveryRejected,
+    DiscoveryTooLarge,
     // Local credential generation was revoked, but the remote refresh
     // session could not be confirmed revoked (network/issuer unavailable).
     RemoteRevocationUnconfirmed,

@@ -5,19 +5,20 @@
 //! verification, granted plan scope and securely persisted named-account data.
 //! No tokens, PKCE values, callback codes or id_token_hint enter ACP messages.
 use phenix_provider_auth_strategies::BrowserAttempt;
-use phenix_provider_builtins::{discovered_model_page, registrations};
+use phenix_provider_builtins::{discovered_model_page_from_cursor, registrations};
 use phenix_provider_contracts::{
     AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart, AuthenticatedProfile,
     AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity, CredentialImport,
     CredentialProfile, CredentialProfileStatus, CredentialRotation, CredentialSecret, ModelPage,
     ModelQuery, ProviderDescriptor, ProviderError, ProviderErrorCode,
 };
-use phenix_provider_discovery::http::fetch_bearer_catalog;
 use phenix_provider_protocols::{
     oauth_loopback::CallbackError,
     siwc::{AuthorizationAttempt, Registration, RegistrationError},
-    siwc_models::parse_chatgpt_models,
-    siwc_transport::{exchange_token, issuer_jwks, revoke_renewable_session, TransportError},
+    siwc_models::{parse_chatgpt_models, CatalogError},
+    siwc_transport::{
+        chatgpt_models, exchange_token, issuer_jwks, revoke_renewable_session, TransportError,
+    },
     siwc_verified::{
         refresh_form, verify_chatgpt_identity, verify_chatgpt_persisted_identity,
         VerificationError, VerifiedChatGptIdentity,
@@ -90,6 +91,65 @@ fn token_exchange_error(error: TransportError) -> ProviderError {
             "OAuth token endpoint returned unexpected HTTP status {status}",
         )),
     }
+}
+
+fn model_discovery_transport_error(error: TransportError) -> ProviderError {
+    // Account/response contents and token-bearing reqwest errors never leave
+    // this provider. Only coarse statuses from the fixed issuer/catalog URLs.
+    match error {
+        TransportError::Network | TransportError::Tls => problem(
+            ProviderErrorCode::DiscoveryNetwork,
+            "ChatGPT model catalog network or TLS connection failed",
+        ),
+        TransportError::Timeout => problem(
+            ProviderErrorCode::DiscoveryTimeout,
+            "ChatGPT model catalog request timed out",
+        ),
+        TransportError::Rejected | TransportError::HttpStatus(401 | 403) => problem(
+            ProviderErrorCode::DiscoveryUnauthorized,
+            "ChatGPT model catalog rejected this OAuth token (HTTP 401/403)",
+        ),
+        TransportError::HttpStatus(429) => problem(
+            ProviderErrorCode::DiscoveryRateLimited,
+            "ChatGPT model catalog is rate limited (HTTP 429)",
+        ),
+        TransportError::HttpStatus(500..=599) => problem(
+            ProviderErrorCode::DiscoveryServerError,
+            "ChatGPT model catalog returned a server error (HTTP 5xx)",
+        ),
+        TransportError::TooLarge => problem(
+            ProviderErrorCode::DiscoveryTooLarge,
+            "ChatGPT model catalog exceeded the maximum size",
+        ),
+        TransportError::Unavailable | TransportError::InvalidTokenResponse => problem(
+            ProviderErrorCode::DiscoveryInvalidResponse,
+            "ChatGPT model catalog returned no usable response",
+        ),
+        TransportError::InvalidForm => problem(
+            ProviderErrorCode::DiscoveryRejected,
+            "ChatGPT model catalog bearer was invalid",
+        ),
+        TransportError::HttpStatus(_) => problem(
+            ProviderErrorCode::DiscoveryRejected,
+            "ChatGPT model catalog returned an unexpected HTTP status",
+        ),
+    }
+}
+
+fn model_discovery_parse_error(error: CatalogError) -> ProviderError {
+    let code = if matches!(error, CatalogError::TooLarge) {
+        ProviderErrorCode::DiscoveryTooLarge
+    } else {
+        ProviderErrorCode::DiscoveryInvalidResponse
+    };
+    problem(code, "ChatGPT model catalog has an invalid response schema")
+}
+
+fn issuer_jwks_error() -> ProviderError {
+    problem(
+        ProviderErrorCode::DiscoveryIssuerUnavailable,
+        "ChatGPT issuer signing keys could not be fetched",
+    )
 }
 
 fn identity_verification_error(error: VerificationError) -> ProviderError {
@@ -460,8 +520,7 @@ mod plugin {
                     "ChatGPT refresh failed; reauthorize if revoked",
                 ))
             })?;
-            let keys = issuer_jwks()
-                .map_err(|_| CallError::Domain(unavailable("issuer identity keys unavailable")))?;
+            let keys = issuer_jwks().map_err(|_| CallError::Domain(issuer_jwks_error()))?;
             let verified = verify_chatgpt_persisted_identity(
                 &tokens,
                 &keys,
@@ -503,8 +562,7 @@ mod plugin {
                 "ChatGPT login not completed",
             ))
         })?;
-        let keys =
-            issuer_jwks().map_err(|_| CallError::Domain(unavailable("issuer keys unavailable")))?;
+        let keys = issuer_jwks().map_err(|_| CallError::Domain(issuer_jwks_error()))?;
         let bundle = phenix_provider_protocols::siwc_verified::TokenEnvelope {
             access_token: account.access_token.clone(),
             refresh_token: account.refresh_token.clone(),
@@ -632,25 +690,28 @@ mod plugin {
                 "model catalog account not authorized",
             )));
         }
-        if query.cursor.is_some() || query.limit == 0 || query.limit > 256 {
+        if query.limit == 0 || query.limit > 256 {
             return Err(CallError::Domain(denied(
                 "invalid ChatGPT model page request",
             )));
         }
         let account = authorized_account(host, &identity)?;
-        // The subscription catalog uses a different wire schema, but its
-        // authenticated, bounded GET is the same strategy as other providers.
-        let response =
-            fetch_bearer_catalog("https://api.openai.com/v1/models", &account.access_token)
-                .map_err(|_| CallError::Domain(unavailable("ChatGPT model catalog unavailable")))?;
+        // Use the same verified reqwest/Rustls transport as OAuth token
+        // exchange. The old generic discovery adapter still uses libcurl,
+        // which failed for this user's real sign-in environment. Account
+        // selection, bounded JSON, TLS, redirects and token ownership remain
+        // enforced by the shared SIWC helper.
+        let response = chatgpt_models(&account.access_token)
+            .map_err(|error| CallError::Domain(model_discovery_transport_error(error)))?;
         let discovered = parse_chatgpt_models(&response)
-            .map_err(|_| CallError::Domain(unavailable("invalid ChatGPT model catalog")))?;
-        discovered_model_page(
+            .map_err(|error| CallError::Domain(model_discovery_parse_error(error)))?;
+        discovered_model_page_from_cursor(
             identity.profile_id(),
             CONNECTION,
             "openai-responses",
             "responses",
             query.limit,
+            query.cursor.as_deref(),
             discovered
                 .into_iter()
                 .map(|item| (item.slug, item.display_name)),

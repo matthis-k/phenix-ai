@@ -5,7 +5,7 @@
 //! revalidate and authorize every selected account and model.
 
 pub mod catalog;
-pub use catalog::discovered_model_page;
+pub use catalog::{discovered_model_page, discovered_model_page_from_cursor};
 
 use phenix_provider_contracts::{
     AdapterBinding, ApiKeyOptions, ApiKeyPresentation, AuthenticationKind, AuthenticationMethod,
