@@ -2261,6 +2261,36 @@
           exit 1
         fi
       '';
+      # Isolated ACP provider control tests. These no longer run inside
+      # basic-host-smoke, so provider/selection failures have their own gate.
+      basicAcpProviderManagementCheck = pkgs.runCommand "phenix-acp-provider-management" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/acp-provider-management.sqlite"
+        python ${./tests/acp-provider-management-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} \
+          ${providerManagementComposition} ${basicHttpComposition} "$out"
+        test -s "$out/acp-provider-management.json"
+      '';
+      nativeModelSelectionCheck = pkgs.runCommand "phenix-native-model-selection" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-native-model-select-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicHttpComposition} ${providerLoopbackManagementComposition} "$out"
+        test -s "$out/native-model-acceptance.json"
+      '';
+      nativeRoutingRestartCheck = pkgs.runCommand "phenix-native-routing-restart" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        mkdir -p "$out"
+        python ${./tests/acp-native-routing-restart-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime \
+          ${basicComposition} ${basicHttpComposition} "$out"
+        test -s "$out/native-routing-restart.json"
+      '';
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
@@ -2276,12 +2306,6 @@
         test -s "$out/terminal-sessions.json"
         python ${./tests/acp-stdio-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} $out
         test -s "$out/acp-product.json"
-        python ${./tests/acp-provider-management-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${providerManagementComposition} ${basicHttpComposition} $out
-        test -s "$out/acp-provider-management.json"
-        python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} ${providerLoopbackManagementComposition} $out/c9-selected
-        test -s "$out/c9-selected/native-model-acceptance.json"
-        python ${./tests/acp-native-routing-restart-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${basicHttpComposition} $out
-        test -s "$out/native-routing-restart.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"
         # A caller that sets neither the explicit variable nor HOME must still
         # resolve the XDG state default instead of failing session ownership.
@@ -2669,7 +2693,7 @@
       } ''
         mkdir -p $out
         python ${./tests/p1-release-evidence.py} --self-test
-        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} ${p1AuthLauncherProductCheck} ${p1CombinedAuthProductCheck} $out
+        python ${./tests/p1-release-evidence.py} ${basicProductCheck} ${basicPendingHttpProductCheck} ${shippingCheck} ${p1AuthLauncherProductCheck} ${p1CombinedAuthProductCheck} ${basicAcpProviderManagementCheck} ${nativeModelSelectionCheck} ${nativeRoutingRestartCheck} $out
         test -s "$out/evidence.json"
       '';
       release = pkgs.runCommand "phenix-m1-release" { } ''
@@ -3070,6 +3094,9 @@
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
+        basic-acp-provider-management = basicAcpProviderManagementCheck;
+        p1-native-model-selection = nativeModelSelectionCheck;
+        p1-native-routing-restart = nativeRoutingRestartCheck;
         basic-acp-credentials = basicCredentialAcpCheck;
         basic-history-verification = historyVerificationCheck;
         basic-streaming = basicStreamingCheck;
