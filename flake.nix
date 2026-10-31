@@ -2986,6 +2986,22 @@
       };
     in
     {
+      # Evaluation-only regression inputs: these are the actual product runners,
+      # not their broader Python/product-check wrappers.
+      runnerIsolation.${system} = {
+        runners = {
+          phenix-p2-model-meter-product = p2ModelMeterProductRunner;
+          phenix-p2-compaction-product = p2CompactionProductRunner;
+          phenix-p2-source-evidence = p2SourceEvidenceRunner;
+          phenix-p2-evidence-store = p2EvidenceStoreRunner;
+          phenix-p2-project-storage = p2ProjectStorageRunner;
+        };
+        controls = {
+          inherit kernel;
+          environment = environmentProductCheck;
+          sdk = sdk;
+        };
+      };
       packages.${system} = {
         # Runnable test.* packages are discovered by generic CI automatically.
         # They are thin executable wrappers over already-built artifacts:
