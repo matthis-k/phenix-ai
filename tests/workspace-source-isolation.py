@@ -67,9 +67,9 @@ def main():
         original_flake = flake.read_text()
         baseline = evaluate(snapshot)
 
-        # An unrelated workspace member must never become part of source input
-        # identities for existing isolated packages, including full check source
-        # closures that do not include the unselected member's actual directory.
+        # An unrelated workspace member must not change source identities for
+        # independently selected packages. The full-workspace check, however,
+        # must reject the newly declared member until its source is included.
         match = re.search(r'(?m)^members = \[([^\n]*)\]$', original_manifest)
         if not match or MEMBER not in match.group(1):
             raise AssertionError("unexpected root workspace manifest structure")
