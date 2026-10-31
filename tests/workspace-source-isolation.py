@@ -106,6 +106,7 @@ def main():
         # independent build identities must remain bit-for-bit stable.
         if original_manifest.count(MEMBER) != 1 or MEMBER not in original_flake:
             raise AssertionError("HTTP plugin move fixture no longer matches tree")
+        (snapshot / MOVED).parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(snapshot / MEMBER), str(snapshot / MOVED))
         manifest.write_text(original_manifest.replace(MEMBER, MOVED))
         flake.write_text(original_flake.replace(MEMBER, MOVED))
