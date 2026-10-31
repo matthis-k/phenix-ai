@@ -47,7 +47,7 @@ tests/                                # existing integration tests until migrate
 examples/                             # SDK examples, not shipping plugins
 ```
 
-The `plugins/`, `products/`, and `testing/` directories are **created as documented destinations** in this PR. The listed child Cargo crates and `*.nix` declarations are **not created** here. Existing shipping code, Cargo members, Nix file sets and products remain in place. Do not add empty crates or fake compatibility shims for a diagram.
+The original layout PR created `plugins/`, `products/`, and `testing/` as documented destinations, not child Cargo crates or product declarations. Run3 subsequently consolidated five acceptance runners into `testing/products/phenix-p2-products` with isolated per-binary Nix sources, and relocated the independent Environment implementation to `plugins/shared/phenix-plugin-environment`. See [Run3 evidence](run3-crate-consolidation.md) for exact-head versus local verification. Other destinations remain proposed. Do not add empty crates or fake compatibility shims for a diagram.
 
 ## Concrete migration mapping
 

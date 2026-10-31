@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "testing/products/*"]
+members = ["crates/*", "testing/products/*", "plugins/shared/phenix-plugin-environment"]
 resolver = "2"
 
 [workspace.package]

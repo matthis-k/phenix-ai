@@ -1,16 +1,18 @@
 # Run 3 Crate Consolidation Inventory
 
-**Status:** five P2 acceptance runner packages consolidated locally and focused Nix gates verified; broader relocation remains proposed. Uncommitted and not integrated.
+**Status:** five P2 acceptance runner packages consolidated in draft PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121`, with exact-head CI verified. Runner isolation followed at `50e7df808f4fb5a9b7255820b030b02fd1c35d44`, also exact-head CI verified. Environment relocation is the next independently committed, focused-test-verified increment. None is integrated.
 
 **Baseline:** `d9c4c9f62dcb94cc2d83679475d08b34fc9d50a9`, inspected 2026-10-31.
 
 **Scope:** all root workspace packages, nested workspaces/standalone Rust fixtures, Cargo dependency boundaries, plugin contracts and product selections.
 
-**Owner:** Run3 implements the low-coupling P2 runner increment in `/tmp/opencode/phenix-ai-run3`. Verification below applies to the dirty worktree based on the baseline SHA, not a new committed head. Run2 is outside this increment and was not modified.
+**Owner:** Run3 in `/tmp/opencode/phenix-ai-run3`, dependent on open PR #1220 at the baseline SHA. Historical local verification below predates the committed runner head; subsequent evidence is distinguished below. Run2 and the divergent main checkout were not modified.
 
 **Precedence:** [contribution guidance](../CONTRIBUTING.md), [layout target](plugin-layout.md), [plugin rules](plugin-dos-and-donts.md), [spec index](../spec/README.md) and the existing M1/P2 roadmaps. This is an inventory and organization proposal, not a replacement graph or runtime specification.
 
 ## Evidence And Measurement
+
+The baseline inventory and original local test narrative below are historical. Current exact-head CI, measured invalidation and the next local relocation are recorded in the follow-up sections; statements about uncommitted runner work or unrun full gates describe the earlier verification session only.
 
 At baseline, `Cargo.toml:1-3` selected only `crates/*`. The implemented workspace selects `crates/*` and `testing/products/*`, not the nested example/experimental workspaces. The exhaustive inventory below describes baseline packages unless explicitly marked implemented. Runtime ports are evidenced by each plugin's `src/lib.rs` declaration. Definitions are not executable exports; Cargo dependencies are not runtime import bindings; Nix package availability is not product selection.
 
@@ -18,7 +20,7 @@ At baseline, `Cargo.toml:1-3` selected only `crates/*`. The implemented workspac
 
 | Measurement | Baseline | Proposed target | Implemented increment |
 | --- | ---: | ---: | --- |
-| Root workspace package manifests | 55 | 51 | 51 (50 in crates, one in testing/products) |
+| Root workspace package manifests | 55 | 51 | 51 (49 in crates, one in testing/products, one in plugins/shared) |
 | Foundational packages | 5 | 5 | 5 |
 | Shared domain contract-set packages | 5 | 5 | 5 |
 | `phenix-plugin-*` package manifests | 31 | 31 | 31 |
@@ -74,6 +76,38 @@ devenv test
 The successful contract derivation checked the workspace including `phenix-p2-products` and completed workspace tests and doctests. This is additional focused verification of the dirty tree, not full flake/release acceptance. The workspace-required `devenv test` was attempted but did not run any tests because the executable is absent from PATH; it is not a passing gate. `maintenance.nix` and `.stitch.json` remain absent. No commit was created.
 
 Rationale: these executables share the kernel/Advanced acceptance layer but own no production plugin state or loading identity. Grouping them removes duplicated package/dependency declarations without merging production lifecycles. The accepted cost is broader invalidation: all five derivations consume the same source closure and dependency union, while still compiling separately per binary. Nix build logs confirm five distinct runner derivations, not one shared compilation. The root-manifest/lock update also invalidates isolated consumer builds in this migration. No baseline-versus-target timing/cache benchmark was performed; do not market this as a performance optimization. Broader physical moves and production merges remain deferred.
+
+### Exact-Head Closure And Rebuild Measurement
+
+On 2026-10-31, all reported checks for PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121` completed successfully, except the intentionally skipped legacy candidate `flake-checks`. No CI failure required a shipping-code fix. The [generated four-builder run](https://github.com/matthis-k/phenix-ai/actions/runs/41157912213) independently reports that exact `headSha`: evaluation, all four builders, DAG scheduler, both discovered runnable package tests and final acceptance passed. Final acceptance verified check-output commit identity and shipping evidence. Formatting, deterministic history, cache isolation, official ACP SDK, typed v1/v2 and pinned workflow generation also passed. This supersedes the earlier pending-CI/full-acceptance statements for that committed increment, not for the new dirty tree. #1220 remains open; neither PR was merged.
+
+Rebuild measurement used archived snapshots of the baseline and committed Run3 head in temporary directories outside the checkout. Each snapshot exposed the five existing runner derivations and kernel control through temporary flake outputs. `nix eval --impure --json` recorded their `drvPath` before and after adding one blank line to only the source-evidence runner. No runtime code or dependencies changed.
+
+| Source-only perturbation | Baseline | Committed Run3 |
+| --- | ---: | ---: |
+| Runner derivations invalidated | 1/5 | 5/5 |
+| Unrelated runner derivations invalidated | 0 | 4 |
+| Kernel control invalidated | No | No |
+
+Thus the original consolidation measurably increased unnecessary runner rebuild invalidation. The [runner isolation follow-up](run3-runner-isolation.md) fixes this: independent whitespace edits to every runner each invalidate only its own product, with all four unrelated products and kernel/Environment/SDK controls unchanged. It still builds five separate derivations; fewer Cargo packages do not imply shared compilation. No duration, substitution/cache-hit rate or binary-size benefit was measured. Counts from parsed manifests confirm 55/148 packages/internal dependency declarations before and 51/133 afterward. The runner fix's [exact-head generated CI](https://github.com/matthis-k/phenix-ai/actions/runs/41167127142) passed evaluation, all four builders, both runnable packages and final shipping-evidence verification.
+
+### Environment Relocation Follow-Up
+
+The next focused increment moves only `crates/phenix-plugin-environment` to `plugins/shared/phenix-plugin-environment`. Its implementation source is byte-identical to the committed head. Its two Cargo path dependencies, explicit workspace membership, Nix plugin closure, workspace closure and isolated-manifest pruning change together. `Cargo.lock` remains unchanged and Nix lock validation passes. Counts remain 51 packages, 133 internal dependency declarations and 31 plugin packages.
+
+This low-coupling plugin has no runtime imports. Preserve its independent native artifact, `phenix.environment.default` identity, `phenix.environment@1` contract and Environment export; no state or authority is transferred. The selected Environment product continues using the same supplied artifact and definitions. Basic/Advanced selections and CI's flake-check discovery require no edits because neither refers to its source directory; Environment is not silently added to those products. No ACP observer integration changes.
+
+On Linux x86_64, the Environment follow-up was reverified after the runner isolation commit and passed:
+
+```sh
+nix build --no-link -L \
+  path:.#checks.x86_64-linux.environment-product \
+  path:.#checks.x86_64-linux.m1-contract \
+  path:.#checks.x86_64-linux.m1-public-sdk
+git diff --check
+```
+
+The selected product retains wrong-resource, traversal and missing-grant rejection, XDG/workspace resolution and no-filesystem-effects assertions. Workspace tests/Clippy and public SDK isolation passed. `git show HEAD:crates/phenix-plugin-environment/src/lib.rs | cmp - plugins/shared/phenix-plugin-environment/src/lib.rs` confirmed byte identity, including plugin identity and contract declarations. `devenv test` could not start because `devenv` is absent. Remote exact-head verification is required after this increment's push; earlier CI must not be attributed to it. Next candidate: independently packaged SQLite Storage, subject to auditing its native dependency closure and restart/CAS/authority product gates before moving it.
 
 ## Before And Target Trees
 
@@ -135,7 +169,7 @@ The eventual workspace member patterns must explicitly include the destination d
 
 ## Complete Package Mapping
 
-For this section, package names are abbreviated by removing only the `phenix-` prefix. Current path is always `crates/phenix-<name>`. Target directory prefixes are `C = crates`, `S = plugins/shared`, `B = plugins/basic`, `A = plugins/advanced`, `F = testing/fixtures`, `T = testing/testkit`, `P = testing/products`. A target such as `B/same` means `plugins/basic/phenix-<name>` with the existing Cargo package name. All mappings are **proposed**, including rows that retain the current path.
+For this baseline mapping, package names are abbreviated by removing only the `phenix-` prefix. Baseline path is always `crates/phenix-<name>`. Target directory prefixes are `C = crates`, `S = plugins/shared`, `B = plugins/basic`, `A = plugins/advanced`, `F = testing/fixtures`, `T = testing/testkit`, `P = testing/products`. A target such as `B/same` means `plugins/basic/phenix-<name>` with the existing Cargo package name. Mappings remain **proposed** except the committed five-runner consolidation and local Environment relocation documented above.
 
 Dependency shorthand: `c=contract`, `s=sdk`, `m=macros`, `k=kernel`, `a=artifact`, `b=basic-contracts`, `v=advanced-contracts`, `p=provider-contracts`, `e=environment-contracts`, `w=workspace-contracts`, `r=p2-compaction-replay`, `pb=provider-builtins`, `pa=provider-auth-strategies`, `pd=provider-discovery`, `pp=provider-protocols`, `pc=provider-credential-files`. Each abbreviation means the full `phenix-` package. `?` is an optional Cargo dependency, `build:` is a separate build dependency, `dev:` is a dev dependency. Internal dependency cells are exhaustive direct declarations; external dependencies follow separately.
 

@@ -19,15 +19,19 @@
             fileset = pkgs.lib.fileset.unions paths;
           };
         in
-        if !(builtins.elem ./Cargo.toml paths)
-          || builtins.elem ./testing/products/phenix-p2-products paths
-          || builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths then src
+        if !(builtins.elem ./Cargo.toml paths) then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
           chmod u+w "$out/Cargo.toml"
-          # Source-isolated builds and the public SDK exclude test products.
-          substituteInPlace "$out/Cargo.toml" \
-            --replace-fail ', "testing/products/*"' ""
+          # Prune explicit members absent from source-isolated builds and the SDK.
+          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "testing/products/*"' ""
+          ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
+          ''}
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
@@ -55,6 +59,7 @@
         ./Cargo.toml
         ./Cargo.lock
         ./crates
+        ./plugins/shared/phenix-plugin-environment
         ./testing/products/phenix-p2-products
         ./examples
         ./include
@@ -332,7 +337,7 @@
         "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
       environmentPluginSource = subset (publicPaths ++ [
         ./crates/phenix-environment-contracts
-        ./crates/phenix-plugin-environment
+        ./plugins/shared/phenix-plugin-environment
       ]);
       environmentPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-environment";
