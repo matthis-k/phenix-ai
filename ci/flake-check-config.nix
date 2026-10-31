@@ -55,6 +55,10 @@ ci.mkFlakeCheckConfig {
   };
   cache = {
     keyPrefix = "phenix-m1";
-    keyFiles = [ "flake.lock" "Cargo.lock" "examples/Cargo.lock" ];
+    # Nix paths validate their own closure content. A flake.lock update to the
+    # CI implementation must not hide otherwise identical, reusable outputs.
+    # Keep the two Cargo dependency locks as the coarse compatibility group;
+    # exact path hashes still determine what Nix actually substitutes.
+    keyFiles = [ "Cargo.lock" "examples/Cargo.lock" ];
   };
 }
