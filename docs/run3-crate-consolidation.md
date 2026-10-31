@@ -1,6 +1,6 @@
 # Run 3 Crate Consolidation Inventory
 
-**Status:** five P2 acceptance runner packages consolidated in draft PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121`, with exact-head CI verified. Runner isolation followed at `50e7df808f4fb5a9b7255820b030b02fd1c35d44` and Environment relocation at `d7412fba7e862a8a0f470a5c566aa3bede2d0d67`, both exact-head CI verified. SQLite relocation is the next independently committed, focused-test-verified increment. None is integrated.
+**Status:** committed HEAD is `9fac7b992b338021bf2ecd8a5c60d7514a18f018`, parent `6a5d3424930e685a119693c377f5f8731a4b2b3f`. Five P2 acceptance packages are consolidated, runner source isolation and its automated regression are implemented, and Environment and Basic SQLite Storage are relocated. Each increment has verified exact-head CI as recorded below. These commits belong to draft PR #1221, not an integrated release. HTTP relocation is dirty work by another agent and remains proposed here until its next committed increment; this HEAD's CI does not cover it.
 
 **Baseline:** `d9c4c9f62dcb94cc2d83679475d08b34fc9d50a9`, inspected 2026-10-31.
 
@@ -12,11 +12,11 @@
 
 ## Evidence And Measurement
 
-The baseline inventory and original local test narrative below are historical. Current exact-head CI, measured invalidation and the next local relocation are recorded in the follow-up sections; statements about uncommitted runner work or unrun full gates describe the earlier verification session only.
+The baseline inventory and original local test narrative below are historical. Current exact-head CI and measured invalidation are recorded separately from those earlier local sessions and from the proposed HTTP relocation.
 
-At baseline, `Cargo.toml:1-3` selected only `crates/*`. The implemented workspace selects `crates/*` and `testing/products/*`, not the nested example/experimental workspaces. The exhaustive inventory below describes baseline packages unless explicitly marked implemented. Runtime ports are evidenced by each plugin's `src/lib.rs` declaration. Definitions are not executable exports; Cargo dependencies are not runtime import bindings; Nix package availability is not product selection.
+At baseline, `Cargo.toml:1-3` selected only `crates/*`. The committed workspace selects `crates/*`, `testing/products/*` and the explicit relocated Environment/SQLite members under `plugins/shared`, not the nested example/experimental workspaces. The exhaustive inventory below describes baseline packages unless explicitly marked implemented. Runtime ports are evidenced by each plugin's `src/lib.rs` declaration. Definitions are not executable exports; Cargo dependencies are not runtime import bindings; Nix package availability is not product selection.
 
-`maintenance.nix` and `.stitch.json` are absent. No substitutes are introduced. Repository guidance names `nix flake check -L`, `nix run .#phenix-m1-demo` and `nix build .#phenix-m1-release` as acceptance commands. Focused Nix results are recorded below; full acceptance/release gates were not run. Cargo is not on the default shell PATH. Counts are source/manifest measurements, not transitive resolved edges or performance measurements.
+`maintenance.nix` and `.stitch.json` are absent. No substitutes are introduced. Repository guidance names `nix flake check -L`, `nix run .#phenix-m1-demo` and `nix build .#phenix-m1-release` as acceptance commands. The historical local sessions ran focused Nix gates, not the full acceptance/release commands; `devenv test` could not start because `devenv` was absent. Remote full generated acceptance subsequently passed at the committed heads below. This does not turn the unavailable local gate into a pass. Cargo was not on the default shell PATH in those sessions. Counts describe committed HEAD, excluding the dirty HTTP move, and are source/manifest measurements, not transitive resolved edges or performance measurements.
 
 | Measurement | Baseline | Proposed target | Implemented increment |
 | --- | ---: | ---: | --- |
@@ -40,7 +40,7 @@ The dependency counts are declarations, not unique transitive edges: count match
 
 ### Actual Migration And Verification
 
-The five baseline `crates/phenix-p2-{model-meter-product,compaction-product,source-evidence,evidence-store,project-storage}` packages are replaced by unpublished `testing/products/phenix-p2-products`. Each old `src/main.rs` is byte-identical to its new `src/bin/<old-binary-name>.rs` (compared against `git show HEAD:<old-path>`). No common orchestrator, compatibility package, CLI rename or scenario change is introduced. The new manifest has the dependency union; `Cargo.lock` removes five local package entries and adds one, without registry version changes.
+The five baseline `crates/phenix-p2-{model-meter-product,compaction-product,source-evidence,evidence-store,project-storage}` packages are replaced by unpublished `testing/products/phenix-p2-products`. Each old `src/main.rs` was byte-identical to its new `src/bin/<old-binary-name>.rs`, compared against the baseline commit's old path. No common orchestrator, compatibility package, CLI rename or scenario change is introduced. The new manifest has the dependency union; `Cargo.lock` removes five local package entries and adds one, without registry version changes.
 
 `flake.nix` shares `p2ProductsSource` and selects each binary with `-p phenix-p2-products --bin <existing-name>`. Source-isolated builds and the exported public SDK strip the unavailable testing member glob from their copied root manifest; they do not acquire private kernel or test-product sources. Existing product scripts, check names, selections, identities, grants, CI discovery, generic conformance and HTTP runner remain unchanged.
 
@@ -60,9 +60,9 @@ nix build --no-link -L \
 git diff --check
 ```
 
-The first Git-backed `.#` attempt failed because untracked new package files are excluded from Git flake sources. `path:.` includes the actual uncommitted tree without staging. Two build attempts hit tool time limits; retries completed successfully using completed store outputs. All five release runner binaries built offline through Nix with lock consistency validation, and all eight P2 gates plus the isolated public SDK gate passed. These gates retain real kernel/native SQLite, restart, stale CAS, scope denial, source freshness and live membership revocation scenarios. Full `nix flake check`, demo, release, broad ACP/observer/auth parity and external-plugin acceptance remain unrun; focused results do not claim full release acceptance.
+The first Git-backed `.#` attempt failed because untracked new package files are excluded from Git flake sources. `path:.` included that uncommitted tree without staging. Two build attempts hit tool time limits; retries completed successfully using completed store outputs. All five release runner binaries built offline through Nix with lock consistency validation, and all eight P2 gates plus the isolated public SDK gate passed. These gates retain real kernel/native SQLite, restart, stale CAS, scope denial, source freshness and live membership revocation scenarios. At that local stage, full `nix flake check`, demo, release, broad ACP/observer/auth parity and external-plugin acceptance had not been run; those focused results alone did not establish full release acceptance. Subsequent remote generated acceptance is recorded below.
 
-Latest follow-up verification on 2026-10-31 confirmed that `contractSource` in `flake.nix` explicitly includes `./testing/products/phenix-p2-products`. This source-closure fix preserves the new workspace member for the workspace-wide contract check; unlike isolated SDK consumers, that check must not strip the testing member glob. The fix was already present when this follow-up began; no further code change was needed.
+Historical local follow-up verification on 2026-10-31 confirmed that `contractSource` in `flake.nix` explicitly includes `./testing/products/phenix-p2-products`. This source-closure fix preserves the new workspace member for the workspace-wide contract check; unlike isolated SDK consumers, that check must not strip the testing member glob. The fix was already present when that follow-up began; no further code change was needed.
 
 ```sh
 nix eval --impure --raw --expr builtins.currentSystem
@@ -73,13 +73,13 @@ devenv test
 # Could not start: devenv: command not found.
 ```
 
-The successful contract derivation checked the workspace including `phenix-p2-products` and completed workspace tests and doctests. This is additional focused verification of the dirty tree, not full flake/release acceptance. The workspace-required `devenv test` was attempted but did not run any tests because the executable is absent from PATH; it is not a passing gate. `maintenance.nix` and `.stitch.json` remain absent. No commit was created.
+The successful contract derivation checked the workspace including `phenix-p2-products` and completed workspace tests and doctests. This was additional focused verification of the then-dirty tree, not full flake/release acceptance. The workspace-required `devenv test` was attempted but did not run any tests because the executable was absent from PATH; it was not a passing gate. `maintenance.nix` and `.stitch.json` were absent. That local verification session created no commit; the consolidation was subsequently committed at `a014a07d1822b39cc7e35ed791c3a3e104663121`.
 
-Rationale: these executables share the kernel/Advanced acceptance layer but own no production plugin state or loading identity. Grouping them removes duplicated package/dependency declarations without merging production lifecycles. The accepted cost is broader invalidation: all five derivations consume the same source closure and dependency union, while still compiling separately per binary. Nix build logs confirm five distinct runner derivations, not one shared compilation. The root-manifest/lock update also invalidates isolated consumer builds in this migration. No baseline-versus-target timing/cache benchmark was performed; do not market this as a performance optimization. Broader physical moves and production merges remain deferred.
+Rationale: these executables share the kernel/Advanced acceptance layer but own no production plugin state or loading identity. Grouping them removes duplicated package/dependency declarations without merging production lifecycles. The original cost was broader invalidation: all five derivations consumed the same source closure and dependency union, while still compiling separately per binary. The later isolation fix narrows each runner's source closure; the shared dependency union remains. Nix build logs confirm five distinct runner derivations, not one shared compilation. The consolidation's root-manifest/lock update also invalidated isolated consumer builds. No baseline-versus-target timing/cache benchmark was performed; do not market this as a performance optimization. Environment and SQLite physical moves subsequently committed; other moves and production merges remain deferred.
 
 ### Exact-Head Closure And Rebuild Measurement
 
-On 2026-10-31, all reported checks for PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121` completed successfully, except the intentionally skipped legacy candidate `flake-checks`. No CI failure required a shipping-code fix. The [generated four-builder run](https://github.com/matthis-k/phenix-ai/actions/runs/41157912213) independently reports that exact `headSha`: evaluation, all four builders, DAG scheduler, both discovered runnable package tests and final acceptance passed. Final acceptance verified check-output commit identity and shipping evidence. Formatting, deterministic history, cache isolation, official ACP SDK, typed v1/v2 and pinned workflow generation also passed. This supersedes the earlier pending-CI/full-acceptance statements for that committed increment, not for the new dirty tree. #1220 remains open; neither PR was merged.
+On 2026-10-31, all reported checks for PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121` completed successfully, except the intentionally skipped legacy candidate `flake-checks`. No CI failure required a shipping-code fix. The [generated four-builder run](https://github.com/matthis-k/phenix-ai/actions/runs/41157912213) independently reports that exact `headSha`: evaluation, all four builders, DAG scheduler, both discovered runnable package tests and final acceptance passed. Final acceptance verified check-output commit identity and shipping evidence. Formatting, deterministic history, cache isolation, official ACP SDK, typed v1/v2 and pinned workflow generation also passed. This resolved the pending CI/full acceptance at that historical stage for that committed increment; later increments have separate evidence below. #1220 remains open; neither PR was merged.
 
 Rebuild measurement used archived snapshots of the baseline and committed Run3 head in temporary directories outside the checkout. Each snapshot exposed the five existing runner derivations and kernel control through temporary flake outputs. `nix eval --impure --json` recorded their `drvPath` before and after adding one blank line to only the source-evidence runner. No runtime code or dependencies changed.
 
@@ -93,7 +93,7 @@ Thus the original consolidation measurably increased unnecessary runner rebuild 
 
 ### Environment Relocation Follow-Up
 
-The next focused increment moves only `crates/phenix-plugin-environment` to `plugins/shared/phenix-plugin-environment`. Its implementation source is byte-identical to the committed head. Its two Cargo path dependencies, explicit workspace membership, Nix plugin closure, workspace closure and isolated-manifest pruning change together. `Cargo.lock` remains unchanged and Nix lock validation passes. Counts remain 51 packages, 133 internal dependency declarations and 31 plugin packages.
+The committed Environment increment `d7412fba7e862a8a0f470a5c566aa3bede2d0d67` moved only `crates/phenix-plugin-environment` to `plugins/shared/phenix-plugin-environment`. Its implementation source was byte-identical to its parent. Its two Cargo path dependencies, explicit workspace membership, Nix plugin closure, workspace closure and isolated-manifest pruning changed together. `Cargo.lock` remained unchanged and Nix lock validation passed. Counts remain 51 packages, 133 internal dependency declarations and 31 plugin packages.
 
 This low-coupling plugin has no runtime imports. Preserve its independent native artifact, `phenix.environment.default` identity, `phenix.environment@1` contract and Environment export; no state or authority is transferred. The selected Environment product continues using the same supplied artifact and definitions. Basic/Advanced selections and CI's flake-check discovery require no edits because neither refers to its source directory; Environment is not silently added to those products. No ACP observer integration changes.
 
@@ -107,7 +107,7 @@ nix build --no-link -L \
 git diff --check
 ```
 
-The selected product retains wrong-resource, traversal and missing-grant rejection, XDG/workspace resolution and no-filesystem-effects assertions. Workspace tests/Clippy and public SDK isolation passed. `git show HEAD:crates/phenix-plugin-environment/src/lib.rs | cmp - plugins/shared/phenix-plugin-environment/src/lib.rs` confirmed byte identity, including plugin identity and contract declarations. `devenv test` could not start because `devenv` is absent. Remote exact-head verification is required after this increment's push; earlier CI must not be attributed to it. Next candidate: independently packaged SQLite Storage, subject to auditing its native dependency closure and restart/CAS/authority product gates before moving it.
+The selected product retains wrong-resource, traversal and missing-grant rejection, XDG/workspace resolution and no-filesystem-effects assertions. Workspace tests/Clippy and public SDK isolation passed. Comparison with the preceding runner-isolation commit's old source confirmed byte identity, including plugin identity and contract declarations. `devenv test` could not start because `devenv` was absent. Remote exact-head verification was pending at that local stage and subsequently passed as recorded below. SQLite Storage was then the next candidate and has since been committed and verified separately.
 
 Environment subsequently passed [generated exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41167975166)
 at `d7412fba7e862a8a0f470a5c566aa3bede2d0d67`, including all builders,
@@ -115,10 +115,9 @@ both runnable packages and independent final shipping-evidence verification.
 
 ### SQLite Relocation Follow-Up
 
-Only Basic Storage moves from `crates/phenix-plugin-storage-sqlite` to
-`plugins/shared/phenix-plugin-storage-sqlite`. The implementation source is
-byte-identical to the preceding commit (`git show HEAD:<old>/src/lib.rs | cmp -
-<new>/src/lib.rs`). This preserves `phenix.basic.storage-sqlite`, its Storage
+Commit `6a5d3424930e685a119693c377f5f8731a4b2b3f` moved only Basic Storage from `crates/phenix-plugin-storage-sqlite` to
+`plugins/shared/phenix-plugin-storage-sqlite`. The implementation source was
+byte-identical to the preceding Environment commit's old source. This preserves `phenix.basic.storage-sqlite`, its Storage
 export, `phenix.basic.storage@1`, no runtime imports, schema versions, transactions,
 CAS and recovery logic. The independent native artifact and `rusqlite = "0.37.0"`
 plus Nix SQLite/pkg-config dependency boundary remain unchanged. No contract or
@@ -151,14 +150,21 @@ manifest and pruning derivations change even where the final isolated manifest
 normalizes away the relocated member. These moves are organizational, not cache
 optimizations; runner-source perturbation isolation remains a separate result.
 Counts remain 51 workspace packages, 133 internal dependency declarations and
-31 plugin packages. `devenv test` remains blocked by the missing executable;
+31 plugin packages. The local `devenv test` attempt was blocked by the missing executable;
 `maintenance.nix` and `.stitch.json` remain absent. Remote exact-head verification
-must follow this increment's push. Next candidate: independent HTTP Model,
+subsequently passed in [run 41170082526](https://github.com/matthis-k/phenix-ai/actions/runs/41170082526)
+at `6a5d3424930e685a119693c377f5f8731a4b2b3f`: evaluation, all four builders,
+both runnable tests and independent final shipping-evidence acceptance succeeded.
+Next proposed candidate: independent HTTP Model,
 after auditing provider-protocol/native curl closures and private install/CAS,
 denial and selected HTTP product gates; no production crate merge is implied.
 
 `nix flake check --no-build path:.` passed evaluation of every exported check and
 package for this increment. This is evaluation only, not a local full build gate.
+
+### Automated Runner Regression At Current HEAD
+
+Commit `9fac7b992b338021bf2ecd8a5c60d7514a18f018` adds the automated regression described in [runner isolation](run3-runner-isolation.md), without another relocation. Its [generated exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41194107549) passed evaluation, all four builders, the DAG scheduler, both runnable test packages and independent final acceptance. On 2026-10-31 UTC, final acceptance completed at `10:50:36Z` after independently checking output commit identity, shipping evidence and executable-test results. The [existing cache-isolation workflow](https://github.com/matthis-k/phenix-ai/actions/runs/41194107132) also passed at this exact SHA; its mandatory five-runner regression step succeeded at `10:47:17Z` and its job completed at `10:50:41Z`. Mandatory here means an enforced workflow step, not a claim that GitHub branch-protection settings changed. Neither run covers the dirty HTTP relocation.
 
 ## Before And Target Trees
 
@@ -210,7 +216,7 @@ testing/fixtures/                  7 retained packages
 testing/testkit/phenix-conformance/  retained package, existing binaries
 testing/products/
   phenix-http-selected-product/     retained isolated native HTTP gate
-  phenix-p2-products/                proposed 5-to-1 multi-binary package
+  phenix-p2-products/                implemented 5-to-1 multi-binary package
 products/                           eventual thin declarations, no new runtime crate
 mixes/                              preserve current declarations until migrated together
 examples/ experiments/ tests/       unchanged nested/standalone package boundaries
@@ -220,7 +226,7 @@ The eventual workspace member patterns must explicitly include the destination d
 
 ## Complete Package Mapping
 
-For this baseline mapping, package names are abbreviated by removing only the `phenix-` prefix. Baseline path is always `crates/phenix-<name>`. Target directory prefixes are `C = crates`, `S = plugins/shared`, `B = plugins/basic`, `A = plugins/advanced`, `F = testing/fixtures`, `T = testing/testkit`, `P = testing/products`. A target such as `B/same` means `plugins/basic/phenix-<name>` with the existing Cargo package name. Mappings remain **proposed** except the committed five-runner consolidation and local Environment relocation documented above.
+For this baseline mapping, package names are abbreviated by removing only the `phenix-` prefix. Baseline path is always `crates/phenix-<name>`. Target directory prefixes are `C = crates`, `S = plugins/shared`, `B = plugins/basic`, `A = plugins/advanced`, `F = testing/fixtures`, `T = testing/testkit`, `P = testing/products`. A target such as `B/same` means `plugins/basic/phenix-<name>` with the existing Cargo package name. The five-runner consolidation and Environment/Basic SQLite relocations are **committed**; other moves, including HTTP, remain **proposed**. Unchanged foundational paths are retained, not pending moves.
 
 Dependency shorthand: `c=contract`, `s=sdk`, `m=macros`, `k=kernel`, `a=artifact`, `b=basic-contracts`, `v=advanced-contracts`, `p=provider-contracts`, `e=environment-contracts`, `w=workspace-contracts`, `r=p2-compaction-replay`, `pb=provider-builtins`, `pa=provider-auth-strategies`, `pd=provider-discovery`, `pp=provider-protocols`, `pc=provider-credential-files`. Each abbreviation means the full `phenix-` package. `?` is an optional Cargo dependency, `build:` is a separate build dependency, `dev:` is a dev dependency. Internal dependency cells are exhaustive direct declarations; external dependencies follow separately.
 
@@ -265,8 +271,8 @@ No interface-per-crate split is proposed. Keep domain modules inside these sets.
 | plugin-tool-receipts | s, b | B/same | Independent receipt/recovery capability and selected graph artifact; authority/session interactions need their own acceptance. |
 | plugin-basic-frontends | s, b | B/same | One source crate intentionally builds mutually exclusive terminal/JSONL/ACP artifacts. ACP and observer semantics remain untouched. |
 | plugin-model-http | s, b, p, pp | S/same | Replaceable network Model and private model-control state with restricted credential/transport semantics; not an agent dependency. |
-| plugin-storage-sqlite | s, b | S/same | Native SQLite dependency and independently replaceable durable Storage implementation, schema/CAS/restart boundary. |
-| plugin-environment | s, e | S/same | Independently loaded Environment provider with no Basic/plugin implementation dependency. |
+| plugin-storage-sqlite | s, b | S/same (committed) | Native SQLite dependency and independently replaceable durable Storage implementation, schema/CAS/restart boundary. |
+| plugin-environment | s, e | S/same (committed) | Independently loaded Environment provider with no Basic/plugin implementation dependency. |
 | plugin-provider-builtins | s, p, pb | S/same | Loaded catalog/registration aggregator identity distinct from reusable builtin data and real auth providers. |
 | plugin-provider-openai-api | s, p, pb, pa, pd | S/same | Selected API-key provider/account authority and auth lifecycle; separately packaged production and loopback-test variants. |
 | plugin-provider-chatgpt | s, p, pb, pa, pd, pp | S/same | OAuth/OIDC state, browser flow, bearer handoff and exact account grants are distinct from API-key auth. |
@@ -300,13 +306,13 @@ No interface-per-crate split is proposed. Keep domain modules inside these sets.
 | plugin-storage-fixture | s, b | F/same | Retain replaceable in-memory Storage test artifact without SQLite or production test-mode branching. |
 | conformance | c, a, k, b | T/same | Retain generic ABI/kernel/SDK acceptance executables isolated from provider/P2 changes; existing many-binary package demonstrates test grouping. |
 | http-selected-product | c, k, b, p | P/same | Retain native private Model installation/HTTP gate. `flake.nix:1304-1313` explicitly isolates this from generic conformance to avoid rebuild coupling. |
-| p2-model-meter-product | v, b, c, k | P/phenix-p2-products, `src/bin/phenix-p2-model-meter-product.rs` | Proposed merge: package is an acceptance executable, not a plugin/state owner; retain binary name and scenarios. |
-| p2-compaction-product | c, k, b, v, r | P/phenix-p2-products, `src/bin/phenix-p2-compaction-product.rs` | Proposed merge: same kernel/Advanced acceptance layer; preserve separate process/restart invocations. |
-| p2-source-evidence | c, k, b, v | P/phenix-p2-products, `src/bin/phenix-p2-source-evidence.rs` | Proposed merge: native source-verifier test executable, not production source ownership. |
-| p2-evidence-store | c, k, b, v | P/phenix-p2-products, `src/bin/phenix-p2-evidence-store.rs` | Proposed merge: native ledger acceptance executable; keep journal seed in separate process. |
-| p2-project-storage | c, k, v | P/phenix-p2-products, `src/bin/phenix-p2-project-storage.rs` | Proposed merge: project isolation/revision test executable; not the SQLite plugin. |
+| p2-model-meter-product | v, b, c, k | P/phenix-p2-products, `src/bin/phenix-p2-model-meter-product.rs` | Committed merge: package is an acceptance executable, not a plugin/state owner; binary name and scenarios retained. |
+| p2-compaction-product | c, k, b, v, r | P/phenix-p2-products, `src/bin/phenix-p2-compaction-product.rs` | Committed merge: same kernel/Advanced acceptance layer; separate process/restart invocations preserved. |
+| p2-source-evidence | c, k, b, v | P/phenix-p2-products, `src/bin/phenix-p2-source-evidence.rs` | Committed merge: native source-verifier test executable, not production source ownership. |
+| p2-evidence-store | c, k, b, v | P/phenix-p2-products, `src/bin/phenix-p2-evidence-store.rs` | Committed merge: native ledger acceptance executable; journal seed kept in separate process. |
+| p2-project-storage | c, k, v | P/phenix-p2-products, `src/bin/phenix-p2-project-storage.rs` | Committed merge: project isolation/revision test executable; not the SQLite plugin. |
 
-The implemented `phenix-p2-products` package is a separate **test-only build boundary**, not merged into generic conformance or any production plugin. Its normal dependency union is c, k, b, v, r, serde_json, sha2. Each binary keeps its existing entry point/CLI/output evidence contract; Nix uses `-p phenix-p2-products --bin <existing-name>`. There is no common workflow interpreter, shared orchestrator or compatibility crate at the five old paths. The shared source broadens invalidation compared with the five baseline closures; the actual migration section records this tradeoff without claiming a measured performance gain. The other target relocations in the mapping remain proposed.
+The implemented `phenix-p2-products` package is a separate **test-only build boundary**, not merged into generic conformance or any production plugin. Its normal dependency union is c, k, b, v, r, serde_json, sha2. Each binary keeps its existing entry point/CLI/output evidence contract; Nix uses `-p phenix-p2-products --bin <existing-name>`. There is no common workflow interpreter, shared orchestrator or compatibility crate at the five old paths. The original shared-source invalidation regression was corrected by per-runner source filtering; shared dependency/manifest changes can still invalidate all five derivations. No performance gain is claimed. Environment and Basic SQLite relocations are committed; remaining target relocations are proposed.
 
 ### External Dependency Inventory
 
@@ -401,7 +407,7 @@ Basic declares event `phenix.basic.prompt` and action `phenix.basic.submit` (`li
 Arrows mean **depends on**, not data flow or grants. The complete direct Cargo adjacency list is the package mapping above; these diagrams show its architectural projections.
 
 ```text
-CURRENT CARGO
+BASELINE CARGO (production edges retained)
 SDK -----------------------> macros -------> contract
  |-----------------------------------------> contract
 Basic/Environment/Workspace contracts ------> SDK
@@ -420,7 +426,7 @@ conformance/HTTP/five P2 runners -----------> kernel + their listed contract set
 ```
 
 ```text
-PROPOSED CARGO
+IMPLEMENTED RUNNER CONSOLIDATION
 All production/library/plugin edges above remain unchanged.
 five P2 runner package nodes -> one test-only phenix-p2-products package
 phenix-p2-products -> kernel, contract, Basic, Advanced, compaction replay
@@ -548,16 +554,16 @@ The graph/Python workspace manifest selects plugin/provider/runner; two Python-t
 3. **Durability is not observation.** Journal append, receipts, storage CAS, checkpoints, membership and evidence versioning remain required owned effects. Do not turn them into asynchronous notifications, duplicate their state in a combined agent, or introduce another scheduler/event bus.
 4. **Provider helper boundaries have real constraints.** Contracts currently depend on protocols; merging protocols upward creates a cycle. Builtin data deliberately has no network I/O, discovery has HTTP dependencies, auth has feature-gated browser flow, credentials have backend/OS restrictions. Smaller crate count alone does not justify broadening these closures.
 5. **Fixture selection needs an explicit decision.** Scripted is both deterministic fixture-like code and the actual default offline Model. Keep its current selections during moves. A future production/offline split needs its own composition/guard acceptance; do not claim all fixtures are already excluded or silently change the shipping default.
-6. **P2 runner consolidation has a cache tradeoff.** The implemented five-to-one merge broadens source invalidation and dependency union. Individual executable names, tests and derivations are preserved; HTTP and generic conformance remain isolated. Timing/cache comparisons remain unmeasured, as detailed above.
+6. **P2 runner consolidation has a cache tradeoff.** The original five-to-one merge broadened source invalidation; the committed isolation fix and automated regression now enforce 1/5 runner-source invalidation. Shared dependency/manifest edits can still invalidate all five. Individual executable names, tests and derivations are preserved; HTTP and generic conformance remain isolated. Timing/cache comparisons remain unmeasured, as detailed above.
 7. **Relocations are atomic build changes.** Update Cargo members, path dependencies (including nested fixture/workspace paths), lockfile, build-script inputs, Nix filesets/public source exports/library copy names/product references, CI generation/prebuild/cache references, tests and tools together. `ci/flake-check-config.nix` discovers checks from flake, has five shards and a prebuild hotset with kernel/describe/conformance/examples/Basic contracts/journal/SQLite. Preserve source-isolated per-plugin derivations (`flake.nix:1214-1240`); do not batch production plugins just to match folders.
-8. **Full acceptance is outstanding.** Focused P2 and public SDK verification passed as recorded above. Canonical flake acceptance, demo/release and broader user-flow parity remain unverified by this task. Keep existing M1 user flows supported while staged migration proceeds.
+8. **Local and remote acceptance are distinct.** Historical local sessions passed focused gates but did not run the full flake/demo/release commands, and `devenv test` could not start. Remote generated full acceptance subsequently passed at each recorded exact head, including current HEAD. This does not prove unmeasured performance, complete graph-v2 parity or removal of Advanced scaffold constraints, and does not cover the proposed dirty HTTP move. Keep existing M1 user flows supported while staged migration proceeds.
 
 ## Implemented Versus Proposed
 
 | State | This document's claim |
 | --- | --- |
 | Implemented at inspected baseline | 55 root packages and the source-declared dependencies, identities, definitions, fixture variants and product selections above. Source inspection is not an assertion that all tests pass. |
-| Implemented locally | Five P2 packages replaced by one unpublished multi-binary package under testing/products; root Cargo membership, lockfile and Nix filesets/build selectors updated. All five Rust entry points remain byte-identical. 51 root packages, 133 internal dependency declarations, 31 unchanged plugin packages. |
-| Proposed | Remaining product-aligned relocations of retained packages. No production domain merge, runtime identity, contract, grant or selection change is implemented. |
-| Changed files | Root Cargo.toml, Cargo.lock, flake.nix; removal of five old Cargo.toml/src/main.rs pairs; new testing/products/phenix-p2-products manifest and five src/bin files; this inventory. |
-| Verified / integrated | Eight affected P2 product gates, public SDK gate, byte-identity and manifest counts verified on the dirty baseline-based Run3 tree. Full acceptance and performance comparisons remain outstanding. Uncommitted, not merged/integrated. Run2, ACP, observers and broader graph/domain consolidation remain untouched. |
+| Committed through current HEAD | Five P2 packages replaced by one unpublished multi-binary package under testing/products; per-runner Nix source isolation and automated regression implemented. Environment and Basic SQLite moved to plugins/shared with implementation bytes unchanged. 51 root packages: 48 in crates, one in testing/products, two in plugins/shared; 133 internal dependency declarations; 31 unchanged plugin packages. |
+| Proposed | Remaining product-aligned relocations, including the other agent's dirty HTTP move. No production domain merge, runtime identity, contract, grant or selection change is implemented by the committed increments. |
+| Committed change scope | Cargo membership/path dependencies and consolidation lockfile; flake closures, pruning and selectors; five runner package replacements; Environment/SQLite source relocations; tests/p2-runner-isolation.py and its existing cache-isolation workflow integration. This documentation reconciliation changes only the two Run3 documents. |
+| Verified / integrated | Historical focused gates, byte identity and counts plus exact-head generated remote acceptance for consolidation, isolation, Environment, SQLite and current HEAD are recorded above. Current HEAD also passes the mandatory cache-isolation regression. Local devenv remains unavailable; timing/cache-hit benefits and complete graph-v2 parity are not established. Committed, not merged/integrated; no CI evidence here covers dirty HTTP. Run2, ACP, observers and broader graph/domain consolidation remain untouched. |
