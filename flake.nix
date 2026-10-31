@@ -83,20 +83,30 @@
         chmod u+w $out
         cp -r ${exampleSource}/examples $out/examples
       '';
-      contractSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates
-        ./plugins/shared/phenix-plugin-environment
-        ./plugins/shared/phenix-plugin-storage-sqlite
-        ./plugins/shared/phenix-plugin-model-http
-        ./testing/products/phenix-p2-products
-        ./examples
-        ./include
-        ./tests/abi.c
-        ./tests/m1-architecture.py
-        ./tests/generation-identity-v2.json
-      ];
+      contractSource =
+        let
+          paths = [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./crates
+            ./plugins/shared/phenix-plugin-environment
+            ./plugins/shared/phenix-plugin-storage-sqlite
+            ./plugins/shared/phenix-plugin-model-http
+            ./testing/products/phenix-p2-products
+            ./examples
+            ./include
+            ./tests/abi.c
+            ./tests/m1-architecture.py
+            ./tests/generation-identity-v2.json
+          ];
+        in
+        # The full workspace check must never silently exclude a newly added
+        # Cargo member. Other source-isolated consumers may omit it safely.
+        assert pkgs.lib.assertMsg (
+          builtins.all (workspaceMemberIncluded paths)
+            rootWorkspaceManifest.workspace.members
+        ) "full Cargo workspace check excludes a declared member; update contractSource";
+        subset paths;
       artifactSource = subset [
         ./Cargo.toml
         ./Cargo.lock
