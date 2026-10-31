@@ -55,3 +55,42 @@ Basic-agent integration and frontend streaming/cancellation parity.
 
 Protocol references: [Chat Completions](https://developers.openai.com/api/reference/resources/chat/completions),
 [curl Rust callbacks](https://docs.rs/curl/0.4.51/curl/easy/trait.Handler.html).
+
+## PR #1227 destination-policy correction
+
+Implementation audit against base `88371239c3ad825df63c153c1d5e5bb91217f182`:
+the three outbound HTTP constructors are Model `transport::run_with_resolver`,
+discovery `http::fetch_bearer_catalog`, and SIWC `request_with_mode`. Each
+authorizes the complete DNS answer before constructing credential headers or
+copying a secret POST into curl, pins the authorized addresses on a fresh curl
+handle, disables proxies and redirects, and retains the original URL hostname
+for Host/SNI and mandatory TLS peer/hostname verification. SIWC token exchange,
+refresh, JWKS, issuer discovery, revocation and catalog requests all use this
+same transport. PKCE/OIDC helpers do not introduce another HTTP client; the
+OAuth callback listener is inbound literal loopback, not an outbound transport.
+Provider credential-store access is separately scoped to the authorized account
+before plaintext access. Catalog/OAuth tokens can already exist in provider
+memory before destination resolution; this is not a claim that no plaintext
+exists before DNS, only that rejected destinations receive no credential bytes.
+
+The classification follows the IANA IPv4/IPv6 Special-Purpose Address Registries
+(both updated 2025-10-09), with a deliberately stricter IPv6 native-unicast rule
+rejecting translation, mapped/compatible, Teredo, 6to4 and ORCHID/DETs prefixes.
+Globally reachable native exceptions are not classified as private merely
+because they are special-purpose. In particular, `192.0.0.1` was already
+rejected at the base: its `192.0.0.0/16` exclusion was too broad, not a bypass.
+The correction narrows that exclusion to the IANA blocks, honors the `.9`/`.10`
+exceptions and restores globally reachable AS112/AMT entries. Boundary tests
+cover denied ranges, adjacent addresses, all of `192.0.0.0/24`, native IPv6
+exceptions, mapped/transition targets and mixed-family DNS answers.
+
+Cancellation is checked immediately after resolution, before model credential
+decoding. System `ToSocketAddrs`/NSS resolution itself remains synchronous,
+outside curl deadlines and cancellation: a stalled resolver can delay worker
+drain and retain its native-image lease indefinitely. There is no existing
+bounded resolver abstraction in this tree. A detached thread with a receive
+timeout would not cancel or bound the underlying resolver work; replacing NSS
+with direct DNS changes semantics. The lifecycle-owned resolver follow-up and
+deterministic stalled-resolution acceptance are tracked in
+[#1230](https://github.com/matthis-k/phenix-ai/issues/1230). No bounded-DNS or
+bounded-cancellation guarantee is made by this correction.

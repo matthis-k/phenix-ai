@@ -1170,8 +1170,10 @@
       httpModel = (basicNativePlugin
         "phenix-plugin-model-http"
         "phenix_plugin_model_http").overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
+          nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config pkgs.python3 pkgs.openssl ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
+          doCheck = true;
+          cargoTestFlags = [ "-p" "phenix-plugin-model-http" ];
         });
       # Isolated executable provider fixture for ACP C9 product acceptance.
       # Unlike installed registration-only builtins it deliberately publishes
@@ -2529,6 +2531,7 @@
           pkgs.rustfmt
           pkgs.python3
           pkgs.clippy
+          pkgs.openssl
         ];
         buildPhase = ''
           export CARGO_HOME=$TMPDIR/cargo-home
@@ -3194,6 +3197,8 @@
         m1-lifecycle-product = lifecycleProduct;
       } // declarativeCliChecks;
       devShells.${system}.default = pkgs.mkShell {
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.curl pkgs.zlib ];
         packages = [
           pkgs.cargo
           pkgs.rustc
@@ -3202,6 +3207,7 @@
           pkgs.binutils
           pkgs.lld
           pkgs.python3
+          pkgs.openssl
         ];
       };
       formatter.${system} = pkgs.nixfmt;

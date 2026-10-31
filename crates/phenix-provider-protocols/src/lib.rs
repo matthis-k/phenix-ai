@@ -1,10 +1,10 @@
 //! Shared provider connection validation. Network authority stays in Phenix.
 //!
-//! This validates the *configured* URL only. A runtime HTTP transport must
-//! still reject redirects and revalidate resolved addresses before dispatch.
+//! URL validation alone is not connection authority. Runtime HTTP transports
+//! resolve and authorize addresses before dispatch and pin the result in curl.
 //! Do not treat an approved URL as permission to connect or use credentials.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
 use url::Url;
 
 #[cfg(feature = "oauth-loopback")]
@@ -73,6 +73,113 @@ pub enum EndpointProblem {
     Fragment,
     LocalHttpNotAllowed,
     UnsafeLocalHost,
+    ResolutionFailed,
+    UnsafeAddress,
+}
+
+/// An immutable curl DNS-cache entry. Keep the original URL for Host and TLS SNI.
+#[derive(Debug)]
+pub struct ResolvedDestination {
+    pub url: String,
+    pub resolve_entry: String,
+}
+
+/// Resolve once, reject the entire answer if any address is prohibited, and pin
+/// the authorized addresses. A fresh curl handle must disable proxies/redirects.
+pub fn resolve_destination(
+    endpoint: &str,
+    mode: EndpointMode,
+) -> Result<ResolvedDestination, EndpointProblem> {
+    resolve_destination_with(endpoint, mode, |host, port| {
+        (host, port)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|_| EndpointProblem::ResolutionFailed)
+    })
+}
+
+fn resolve_destination_with(
+    endpoint: &str,
+    mode: EndpointMode,
+    resolve: impl FnOnce(&str, u16) -> Result<Vec<IpAddr>, EndpointProblem>,
+) -> Result<ResolvedDestination, EndpointProblem> {
+    let checked = validate_endpoint(endpoint, mode)?;
+    let url = Url::parse(&checked.url).map_err(|_| EndpointProblem::Malformed)?;
+    let port = url
+        .port_or_known_default()
+        .ok_or(EndpointProblem::Malformed)?;
+    let literal = match url.host().ok_or(EndpointProblem::Malformed)? {
+        url::Host::Ipv4(ip) => Some(IpAddr::V4(ip)),
+        url::Host::Ipv6(ip) => Some(IpAddr::V6(ip)),
+        _ => None,
+    };
+    let host = url.host_str().ok_or(EndpointProblem::Malformed)?;
+    let addresses = match literal {
+        Some(ip) => vec![ip],
+        None => resolve(host, port)?,
+    };
+    if addresses.is_empty() {
+        return Err(EndpointProblem::ResolutionFailed);
+    }
+    if addresses.iter().any(|ip| {
+        !(public_address(*ip)
+            || (mode == EndpointMode::LocalLoopback && literal == Some(*ip) && ip.is_loopback()))
+    }) {
+        return Err(EndpointProblem::UnsafeAddress);
+    }
+    let address = addresses
+        .into_iter()
+        .map(|ip| match ip {
+            IpAddr::V4(ip) => ip.to_string(),
+            IpAddr::V6(ip) => format!("[{ip}]"),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(ResolvedDestination {
+        url: checked.url,
+        resolve_entry: format!("{host}:{port}:{address}"),
+    })
+}
+
+fn public_address(ip: IpAddr) -> bool {
+    // IANA IPv4/IPv6 Special-Purpose Address Registries, updated 2025-10-09:
+    // https://www.iana.org/assignments/iana-ipv4-special-registry/
+    // https://www.iana.org/assignments/iana-ipv6-special-registry/
+    // Honor globally reachable exceptions. Our stricter native-unicast policy
+    // additionally excludes IPv6 translation, Teredo, 6to4 and ORCHID/DETs.
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, c, d] = ip.octets();
+            if [a, b, c] == [192, 0, 0] && matches!(d, 9 | 10) {
+                return true;
+            }
+            !(a == 0
+                || a == 10
+                || a == 127
+                || a >= 224
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 169 && b == 254)
+                || (a == 172 && (16..=31).contains(&b))
+                || (a == 192
+                    && (b == 168 || (b == 0 && matches!(c, 0 | 2)) || (b == 88 && c == 99)))
+                || (a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)))
+                || (a == 203 && b == 0 && c == 113))
+        }
+        IpAddr::V6(ip) => {
+            let s = ip.segments();
+            let ietf_global =
+                (s[..6] == [0x2001, 1, 0, 0, 0, 0] && s[6] == 0 && matches!(s[7], 1..=3))
+                    || s[..2] == [0x2001, 3]
+                    || s[..3] == [0x2001, 4, 0x112];
+            // Only native global unicast; exclude mapped/compatible, NAT64,
+            // local, multicast, transition, documentation and special ranges.
+            (s[0] & 0xe000) == 0x2000
+                && (!(s[0] == 0x2001 && s[1] < 0x200) || ietf_global)
+                && !(s[0] == 0x2001 && s[1] == 0xdb8)
+                && s[0] != 0x2002
+                && !(s[0] == 0x3fff && s[1] < 0x1000)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +271,205 @@ pub fn same_credential_origin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolved_policy_rejects_special_and_mixed_answers() {
+        for address in [
+            "0.0.0.0",
+            "10.1.2.3",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.16.0.1",
+            "192.168.0.1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "192.88.99.1",
+            "198.18.0.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:8.8.8.8",
+            "64:ff9b::a00:1",
+            "fc00::1",
+            "fe80::1",
+            "ff02::1",
+            "2001:db8::1",
+            "2001::1",
+            "2002:808:808::1",
+            "3fff::1",
+        ] {
+            let ip = address.parse().unwrap();
+            assert!(!public_address(ip), "{address}");
+            for answers in [vec![ip], vec!["8.8.8.8".parse().unwrap(), ip]] {
+                assert!(
+                    matches!(
+                        resolve_destination_with(
+                            "https://provider.invalid/models",
+                            EndpointMode::LocalLoopback,
+                            |_, _| Ok(answers)
+                        ),
+                        Err(EndpointProblem::UnsafeAddress)
+                    ),
+                    "{address}"
+                );
+            }
+        }
+        for address in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(public_address(address.parse().unwrap()));
+        }
+        let destination =
+            resolve_destination_with("https://provider.invalid", EndpointMode::Remote, |_, _| {
+                Ok(vec![
+                    "2606:4700:4700::1111".parse().unwrap(),
+                    "1.1.1.1".parse().unwrap(),
+                ])
+            })
+            .unwrap();
+        assert_eq!(
+            destination.resolve_entry,
+            "provider.invalid:443:[2606:4700:4700::1111],1.1.1.1"
+        );
+    }
+
+    #[test]
+    fn iana_boundaries_and_native_unicast_exceptions() {
+        for (first, last) in [
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.88.99.0", "192.88.99.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+        ] {
+            let first = u32::from(first.parse::<std::net::Ipv4Addr>().unwrap());
+            let last = u32::from(last.parse::<std::net::Ipv4Addr>().unwrap());
+            for address in [first, last] {
+                assert!(!public_address(std::net::Ipv4Addr::from(address).into()));
+            }
+            for address in [first.checked_sub(1), last.checked_add(1)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(public_address(std::net::Ipv4Addr::from(address).into()));
+            }
+        }
+        for last in 0..=255 {
+            let ip = std::net::Ipv4Addr::new(192, 0, 0, last);
+            assert_eq!(public_address(ip.into()), matches!(last, 9 | 10), "{ip}");
+        }
+        for address in [
+            "192.0.1.0",
+            "192.0.255.255",
+            "192.31.196.1",
+            "192.52.193.1",
+            "192.175.48.1",
+            "2001:1::1",
+            "2001:1::2",
+            "2001:1::3",
+            "2001:3::",
+            "2001:3:ffff:ffff:ffff:ffff:ffff:ffff",
+            "2001:4:112::",
+            "2001:4:112:ffff:ffff:ffff:ffff:ffff",
+            "2001:200::",
+            "2620:4f:8000::1",
+            "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "3fff:1000::",
+            "223.255.255.255",
+        ] {
+            assert!(public_address(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "::8.8.8.8",
+            "::ffff:0:8.8.8.8",
+            "64:ff9b:1::1",
+            "100:0:0:1::1",
+            "2001:1::",
+            "2001:1::4",
+            "2001:2:ffff::1",
+            "2001:4:111:ffff::1",
+            "2001:4:113::",
+            "2001:20::1",
+            "2001:30::1",
+            "2001:1ff:ffff::1",
+            "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "4000::",
+            "5f00::1",
+        ] {
+            let ip = address.parse().unwrap();
+            assert!(!public_address(ip), "{address}");
+            for answers in [
+                vec![ip, "1.1.1.1".parse().unwrap()],
+                vec!["2606:4700::1111".parse().unwrap(), ip],
+            ] {
+                assert!(
+                    matches!(
+                        resolve_destination_with(
+                            "https://provider.invalid",
+                            EndpointMode::Remote,
+                            |_, _| Ok(answers)
+                        ),
+                        Err(EndpointProblem::UnsafeAddress)
+                    ),
+                    "{address}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resolution_is_a_single_immutable_snapshot_and_literals_skip_dns() {
+        let mut calls = 0;
+        let destination = resolve_destination_with(
+            "https://provider.invalid:8443/models",
+            EndpointMode::Remote,
+            |host, port| {
+                calls += 1;
+                assert_eq!((host, port), ("provider.invalid", 8443));
+                Ok(vec!["8.8.8.8".parse().unwrap()])
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(destination.resolve_entry, "provider.invalid:8443:8.8.8.8");
+        // A later DNS change cannot mutate the entry handed to curl; the next
+        // request must authorize again and reject the changed answer.
+        assert!(matches!(
+            resolve_destination_with(
+                "https://provider.invalid:8443/models",
+                EndpointMode::Remote,
+                |_, _| Ok(vec!["127.0.0.1".parse().unwrap()])
+            ),
+            Err(EndpointProblem::UnsafeAddress)
+        ));
+        assert_eq!(destination.resolve_entry, "provider.invalid:8443:8.8.8.8");
+        for endpoint in ["http://127.0.0.1:1234", "https://[::1]:1234"] {
+            assert!(resolve_destination_with(
+                endpoint,
+                EndpointMode::LocalLoopback,
+                |_, _| panic!("literal must not resolve")
+            )
+            .is_ok());
+            assert!(resolve_destination(endpoint, EndpointMode::Remote).is_err());
+        }
+        assert!(matches!(
+            resolve_destination_with("https://provider.invalid", EndpointMode::Remote, |_, _| Ok(
+                vec![]
+            )),
+            Err(EndpointProblem::ResolutionFailed)
+        ));
+    }
 
     #[test]
     fn default_remote_requires_https() {

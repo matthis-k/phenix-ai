@@ -28,6 +28,42 @@ fn request() -> ModelRequest {
         limits: Limits::default(),
     }
 }
+
+#[test]
+fn unsafe_destination_is_rejected_before_secret_exposure_or_connection() {
+    use std::sync::{atomic::AtomicBool, Arc, Mutex};
+    let listener = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let config = request::Config {
+        endpoint: format!(
+            "https://0.0.0.0:{}/v1",
+            listener.local_addr().unwrap().port()
+        ),
+        model: "fixture".into(),
+        protocol: phenix_provider_protocols::Protocol::OpenaiChat,
+        provider_max_tokens: None,
+        // UTF-8 decoding would fail if the transport exposed this secret first.
+        credential: Some(phenix_provider_contracts::CredentialSecret::new(vec![0xff]).unwrap()),
+        presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+        ca_file: None,
+    };
+    let result = crate::transport::run_with_notify(
+        config,
+        vec![],
+        request(),
+        Arc::new(Mutex::new(String::new())),
+        Arc::new(AtomicBool::new(false)),
+        || {},
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        crate::failed("HTTP destination rejected")
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
 fn frame(value: Value) -> String {
     format!("data: {value}\r\n\r\n")
 }
