@@ -25,6 +25,15 @@ Historical successful runs (different inventories/cache states):
 - [28 October single-runner full DAG](https://github.com/matthis-k/phenix-ai/actions/runs/40612620171): roughly 64m.
 
 The target is 10–15 minutes, not a verified result for current Graph V2.
+
+The native GitHub Actions Nix store cache groups by `Cargo.lock` and
+`examples/Cargo.lock`, **not** the entire `flake.lock`. Upgrading the CI
+library no longer changes the cache prefix by itself. Nix derivation and
+output hashes, not the cache key, remain the source of compatibility and
+correctness. GitHub Actions still enforces branch scoping: PRs can read a
+compatible default/base-branch cache but cannot read a sibling PR's cache.
+A compatible cache must exist in a branch visible to the PR for this to help.
+Measure cache hits and total duration before claiming a speedup.
 Compare exact-head plan/output coverage and observed timings; do not
 claim a speedup, skip failed checks, or expose trusted secrets to PR code.
 
