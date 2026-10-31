@@ -11,36 +11,56 @@
       a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
+      # Treat workspace membership as evaluated metadata, not an input path
+      # to every isolated build. Nix still hashes all actually selected source
+      # files and their relative paths, Cargo.lock and build dependencies.
+      rootWorkspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      workspaceMemberIncluded =
+        paths: member:
+        let
+          # Root members use either a direct path or the trailing /* glob.
+          # A selected parent directory or descendant source path includes it.
+          relative = pkgs.lib.removeSuffix "/*" member;
+          absolute = "${toString ./.}/${relative}";
+        in
+        pkgs.lib.any (
+          path:
+          let
+            selected = toString path;
+          in
+          selected == absolute
+          || pkgs.lib.hasPrefix "${absolute}/" selected
+          || pkgs.lib.hasPrefix "${selected}/" absolute
+        ) paths;
       subset =
         paths:
         let
+          includeWorkspace = builtins.elem ./Cargo.toml paths;
+          sourcePaths = builtins.filter (path: path != ./Cargo.toml) paths;
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = pkgs.lib.fileset.unions paths;
+            fileset = pkgs.lib.fileset.unions sourcePaths;
           };
+          # Re-render only the selected member list. An unrelated package
+          # move must not change this manifest or a consumer's derivation.
+          selectedWorkspace = rootWorkspaceManifest.workspace // {
+            # Workspace member ordering does not affect Cargo semantics.
+            members = builtins.sort builtins.lessThan (
+              builtins.filter (workspaceMemberIncluded sourcePaths)
+                rootWorkspaceManifest.workspace.members
+            );
+          };
+          selectedManifest = (pkgs.formats.toml { }).generate "Cargo.toml" (
+            rootWorkspaceManifest // { workspace = selectedWorkspace; }
+          );
         in
-        if !(builtins.elem ./Cargo.toml paths) then src
-        else pkgs.runCommand "source" { } ''
-          cp -r ${src} "$out"
-          chmod u+w "$out/Cargo.toml"
-          # Prune explicit members absent from source-isolated builds and the SDK.
-          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "testing/products/*"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
-          ''}
-        '';
+        if !includeWorkspace then src
+        else
+          pkgs.runCommand "source" { } ''
+            cp -r ${src} "$out"
+            chmod u+w "$out"
+            cp ${selectedManifest} "$out/Cargo.toml"
+          '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
       publicPaths = [
@@ -63,20 +83,30 @@
         chmod u+w $out
         cp -r ${exampleSource}/examples $out/examples
       '';
-      contractSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates
-        ./plugins/shared/phenix-plugin-environment
-        ./plugins/shared/phenix-plugin-storage-sqlite
-        ./plugins/shared/phenix-plugin-model-http
-        ./testing/products/phenix-p2-products
-        ./examples
-        ./include
-        ./tests/abi.c
-        ./tests/m1-architecture.py
-        ./tests/generation-identity-v2.json
-      ];
+      contractSource =
+        let
+          paths = [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./crates
+            ./plugins/shared/phenix-plugin-environment
+            ./plugins/shared/phenix-plugin-storage-sqlite
+            ./plugins/shared/phenix-plugin-model-http
+            ./testing/products/phenix-p2-products
+            ./examples
+            ./include
+            ./tests/abi.c
+            ./tests/m1-architecture.py
+            ./tests/generation-identity-v2.json
+          ];
+        in
+        # The full workspace check must never silently exclude a newly added
+        # Cargo member. Other source-isolated consumers may omit it safely.
+        assert pkgs.lib.assertMsg (
+          builtins.all (workspaceMemberIncluded paths)
+            rootWorkspaceManifest.workspace.members
+        ) "full Cargo workspace check excludes a declared member; update contractSource";
+        subset paths;
       artifactSource = subset [
         ./Cargo.toml
         ./Cargo.lock
@@ -2991,6 +3021,18 @@
       };
     in
     {
+      # Minimal concrete outputs for content-stable source identity checks.
+      # These are build derivations, not wrappers or cloned implementations.
+      sourceIsolation.${system} = {
+        inherit kernel sdk;
+        environment = environmentPlugin;
+        sqlite = storageSqlite;
+        http = httpModel;
+        scripted = scriptedModel;
+        basic-runtime = basicRuntime;
+        contract = contractCheck;
+        p2-runner = p2SourceEvidenceRunner;
+      };
       # Evaluation-only regression inputs: these are the actual product runners,
       # not their broader Python/product-check wrappers.
       runnerIsolation.${system} = {
