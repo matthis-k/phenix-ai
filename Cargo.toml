@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "testing/products/*", "plugins/shared/phenix-plugin-environment", "plugins/shared/phenix-plugin-storage-sqlite", "plugins/shared/phenix-plugin-model-http"]
+members = ["crates/*", "testing/products/*", "plugins/shared/phenix-plugin-environment", "plugins/shared/phenix-plugin-storage-sqlite", "plugins/shared/phenix-plugin-model-http", "plugins/shared/phenix-provider-credential-files", "plugins/shared/phenix-plugin-provider-credential-files"]
 resolver = "2"
 
 [workspace.package]
