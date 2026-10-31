@@ -36,6 +36,10 @@
             substituteInPlace "$out/Cargo.toml" \
               --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
           ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
+          ''}
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
@@ -65,6 +69,7 @@
         ./crates
         ./plugins/shared/phenix-plugin-environment
         ./plugins/shared/phenix-plugin-storage-sqlite
+        ./plugins/shared/phenix-plugin-model-http
         ./testing/products/phenix-p2-products
         ./examples
         ./include
@@ -1299,12 +1304,12 @@
       httpModel = (basicNativePlugin
         "phenix-plugin-model-http"
         "phenix_plugin_model_http"
-        ./crates/phenix-plugin-model-http).overrideAttrs (old: {
+        ./plugins/shared/phenix-plugin-model-http).overrideAttrs (old: {
           src = subset (publicPaths ++ [
             ./crates/phenix-basic-contracts
             ./crates/phenix-provider-contracts
             ./crates/phenix-provider-protocols
-            ./crates/phenix-plugin-model-http
+            ./plugins/shared/phenix-plugin-model-http
           ]);
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
