@@ -11,44 +11,20 @@
       a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
-      subset =
+      cargoWorkspace = import ./ci/cargo-workspace.nix { lib = pkgs.lib; root = ./.; };
+      subset = subsetWith false;
+      wholeWorkspace = subsetWith true;
+      subsetWith = whole:
         paths:
         let
           lib = pkgs.lib;
           fileset = lib.fileset.unions paths;
-          manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          # Match Cargo's path globs against actual included manifests, not
-          # guessed paths (which may not exist in an isolated source).
-          matches = patterns: member: builtins.any (pattern:
-            builtins.match (lib.concatMapStrings (part:
-              if builtins.isList part then
-                let token = builtins.head part; in
-                if token == "**/" then "(.*/)?"
-                else if token == "**" then ".*"
-                else if token == "*" then "[^/]*"
-                else if token == "?" then "[^/]"
-                else if lib.hasPrefix "[!" token then "[^${lib.removePrefix "[!" token}"
-                else token
-              else lib.escapeRegex part
-            ) (builtins.split "(\\*\\*/|\\*\\*|\\*|\\?|[[][^][]+[]])" pattern)) member != null
-          ) patterns;
           candidates = map (path:
             lib.removeSuffix "/Cargo.toml" (lib.removePrefix "${toString ./.}/" (toString path))
           ) (lib.fileset.toList (lib.fileset.intersection fileset
             (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)));
-          members = builtins.filter (member:
-            matches manifest.workspace.members member
-            && !(matches (manifest.workspace.exclude or []) member)
-          ) candidates;
-          normalizedManifest = (pkgs.formats.toml {}).generate "Cargo.toml" (manifest // {
-            workspace = manifest.workspace // {
-              inherit members;
-            } // lib.optionalAttrs (manifest.workspace ? default-members) {
-              default-members = builtins.filter (matches manifest.workspace.default-members) members;
-            } // lib.optionalAttrs (manifest.workspace ? exclude) {
-              exclude = builtins.filter (matches manifest.workspace.exclude) candidates;
-            };
-          });
+          normalizedManifest = (pkgs.formats.toml {}).generate "Cargo.toml"
+            (cargoWorkspace.normalize candidates);
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = if builtins.elem ./Cargo.toml paths then
@@ -56,6 +32,7 @@
             else fileset;
           };
         in
+        assert !whole || cargoWorkspace.requireWhole candidates;
         if !(builtins.elem ./Cargo.toml paths) then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
@@ -84,20 +61,15 @@
         chmod u+w $out
         cp -r ${exampleSource}/examples $out/examples
       '';
-      contractSource = subset [
+      contractSource = wholeWorkspace ((map (member: ./. + "/${member}") cargoWorkspace.members) ++ [
         ./Cargo.toml
         ./Cargo.lock
-        ./crates
-        ./plugins/shared/phenix-plugin-environment
-        ./plugins/shared/phenix-plugin-storage-sqlite
-        ./plugins/shared/phenix-plugin-model-http
-        ./testing/products/phenix-p2-products
         ./examples
         ./include
         ./tests/abi.c
         ./tests/m1-architecture.py
         ./tests/generation-identity-v2.json
-      ];
+      ]);
       artifactSource = subset [
         ./Cargo.toml
         ./Cargo.lock
@@ -3012,6 +2984,10 @@
       };
     in
     {
+      wholeWorkspaceIsolation.${system} = {
+        members = cargoWorkspace.members;
+        source = contractSource;
+      };
       # Evaluation-only regression inputs: these are the actual product runners,
       # not their broader Python/product-check wrappers.
       runnerIsolation.${system} = {

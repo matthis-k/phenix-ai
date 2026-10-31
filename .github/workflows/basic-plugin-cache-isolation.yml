@@ -31,6 +31,8 @@ jobs:
         run: python3 -m py_compile .github/scripts/basic-plugin-cache-evidence.py
       - name: Verify workspace membership, HTTP relocation and five P2 runner perturbations
         run: python3 tests/p2-runner-isolation.py
+      - name: Verify Cargo workspace membership semantics offline
+        run: nix develop --command python3 tests/cargo-workspace.py
       - name: Derive source impact and real reverse dependencies
         run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --output incremental-ci-evidence
       - name: Preserve machine-readable evidence even on failure
