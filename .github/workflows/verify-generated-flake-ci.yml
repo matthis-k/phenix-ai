@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: matthis-k/phenix-flake-ci
-          ref: cd2403a45333a5211775bdf01b3ce45f28e02e5f
+          ref: 5ac9c10ab144a20f32d542f663779b7d642cab49
           path: .ci-tools/flake-ci
           persist-credentials: false
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
