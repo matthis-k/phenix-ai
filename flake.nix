@@ -14,32 +14,53 @@
       subset =
         paths:
         let
+          lib = pkgs.lib;
+          fileset = lib.fileset.unions paths;
+          manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          # Match Cargo's path globs against actual included manifests, not
+          # guessed paths (which may not exist in an isolated source).
+          matches = patterns: member: builtins.any (pattern:
+            builtins.match (lib.concatMapStrings (part:
+              if builtins.isList part then
+                let token = builtins.head part; in
+                if token == "**/" then "(.*/)?"
+                else if token == "**" then ".*"
+                else if token == "*" then "[^/]*"
+                else if token == "?" then "[^/]"
+                else if lib.hasPrefix "[!" token then "[^${lib.removePrefix "[!" token}"
+                else token
+              else lib.escapeRegex part
+            ) (builtins.split "(\\*\\*/|\\*\\*|\\*|\\?|[[][^][]+[]])" pattern)) member != null
+          ) patterns;
+          candidates = map (path:
+            lib.removeSuffix "/Cargo.toml" (lib.removePrefix "${toString ./.}/" (toString path))
+          ) (lib.fileset.toList (lib.fileset.intersection fileset
+            (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)));
+          members = builtins.filter (member:
+            matches manifest.workspace.members member
+            && !(matches (manifest.workspace.exclude or []) member)
+          ) candidates;
+          normalizedManifest = (pkgs.formats.toml {}).generate "Cargo.toml" (manifest // {
+            workspace = manifest.workspace // {
+              inherit members;
+            } // lib.optionalAttrs (manifest.workspace ? default-members) {
+              default-members = builtins.filter (matches manifest.workspace.default-members) members;
+            } // lib.optionalAttrs (manifest.workspace ? exclude) {
+              exclude = builtins.filter (matches manifest.workspace.exclude) candidates;
+            };
+          });
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = pkgs.lib.fileset.unions paths;
+            fileset = if builtins.elem ./Cargo.toml paths then
+              lib.fileset.difference fileset ./Cargo.toml
+            else fileset;
           };
         in
         if !(builtins.elem ./Cargo.toml paths) then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
-          chmod u+w "$out/Cargo.toml"
-          # Prune explicit members absent from source-isolated builds and the SDK.
-          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "testing/products/*"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
-          ''}
+          chmod u+w "$out"
+          cp ${normalizedManifest} "$out/Cargo.toml"
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
