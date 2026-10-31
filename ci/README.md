@@ -93,7 +93,7 @@ are verified byte-for-byte against that exact merged library revision.
 ## Declarative test checks
 
 `flake.nix` now locks `phenix-flake-ci` as a Nix input at
-`cd2403a45333a5211775bdf01b3ce45f28e02e5f`. That same immutable revision
+`5ac9c10ab144a20f32d542f663779b7d642cab49` (trial in #1224). That same immutable revision
 is used by the generated CI workflows and workflow verification checkout.
 The public `mkTestCases` and `testAssert` helpers create actual
 `checks.x86_64-linux.kernel-inspect-contract` and
@@ -139,3 +139,15 @@ This is an opt-in migration: old Nix checks still run, and `test.*` packages
 are additional separately executed post-build tests. Cargo workspace tests
 remain in the existing complete check DAG until a compiled-test-artifact
 adapter provides strict no-recompile separation.
+
+## GitHub-only cross-PR cache trial (#1224)
+
+The opt-in `ci.trusted.remote.ghcrCache = true` setting tests a GHCR OCI
+snapshot in the trusted native Nix workflow. Its sole credential is the
+repository-scoped `GITHUB_TOKEN` with generated `packages: write` permission.
+The untrusted/fork workflow has neither that permission nor cache publishing.
+Only final accepted runs promote a candidate image to the cross-PR shared tag.
+This is an experimental cache trial, not an established performance win.
+Stage/pull timings and archive size must be compared to the previous exact-head
+~20–25-minute runs; a multi-gigabyte transfer may be slower than compilation.
+The library revision is immutable but currently under review in upstream #47.
