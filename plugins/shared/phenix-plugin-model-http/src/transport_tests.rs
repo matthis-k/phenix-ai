@@ -56,6 +56,39 @@ fn run(
 }
 
 #[test]
+fn cancellation_during_resolution_precedes_credential_decoding() {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let mut config = config("https://provider.invalid/completions".into(), None);
+    // Invalid UTF-8 distinguishes the cancellation gate from credential use.
+    config.credential = Some(phenix_provider_contracts::CredentialSecret::new(vec![0xff]).unwrap());
+    let request = ModelRequest {
+        session: "fixture".into(),
+        run: "fixture".into(),
+        history: vec![],
+        tools: vec![],
+        skills: vec![],
+        context: vec![],
+        limits: Default::default(),
+    };
+    let result = run_with_resolver(
+        config,
+        vec![],
+        request,
+        Arc::new(Mutex::new(String::new())),
+        cancelled.clone(),
+        || {},
+        |_| {
+            cancelled.store(true, Ordering::Release);
+            Ok(ResolvedDestination {
+                url: "https://provider.invalid/completions".into(),
+                resolve_entry: "provider.invalid:443:1.1.1.1".into(),
+            })
+        },
+    );
+    assert_eq!(result.unwrap_err(), failed("HTTP model cancelled"));
+}
+
+#[test]
 fn ipv6_literal_loopback_uses_real_curl_resolve_entry() {
     let listener = match TcpListener::bind("[::1]:0") {
         Ok(listener) => listener,

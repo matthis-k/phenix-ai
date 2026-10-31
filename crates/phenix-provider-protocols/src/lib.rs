@@ -142,9 +142,17 @@ fn resolve_destination_with(
 }
 
 fn public_address(ip: IpAddr) -> bool {
+    // IANA IPv4/IPv6 Special-Purpose Address Registries, updated 2025-10-09:
+    // https://www.iana.org/assignments/iana-ipv4-special-registry/
+    // https://www.iana.org/assignments/iana-ipv6-special-registry/
+    // Honor globally reachable exceptions. Our stricter native-unicast policy
+    // additionally excludes IPv6 translation, Teredo, 6to4 and ORCHID/DETs.
     match ip {
         IpAddr::V4(ip) => {
-            let [a, b, c, _] = ip.octets();
+            let [a, b, c, d] = ip.octets();
+            if [a, b, c] == [192, 0, 0] && matches!(d, 9 | 10) {
+                return true;
+            }
             !(a == 0
                 || a == 10
                 || a == 127
@@ -153,24 +161,22 @@ fn public_address(ip: IpAddr) -> bool {
                 || (a == 169 && b == 254)
                 || (a == 172 && (16..=31).contains(&b))
                 || (a == 192
-                    && (b == 168
-                        || b == 0
-                        || (b == 88 && c == 99)
-                        || (b == 31 && c == 196)
-                        || (b == 52 && c == 193)
-                        || (b == 175 && c == 48)))
+                    && (b == 168 || (b == 0 && matches!(c, 0 | 2)) || (b == 88 && c == 99)))
                 || (a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)))
                 || (a == 203 && b == 0 && c == 113))
         }
         IpAddr::V6(ip) => {
             let s = ip.segments();
+            let ietf_global =
+                (s[..6] == [0x2001, 1, 0, 0, 0, 0] && s[6] == 0 && matches!(s[7], 1..=3))
+                    || s[..2] == [0x2001, 3]
+                    || s[..3] == [0x2001, 4, 0x112];
             // Only native global unicast; exclude mapped/compatible, NAT64,
             // local, multicast, transition, documentation and special ranges.
             (s[0] & 0xe000) == 0x2000
-                && !(s[0] == 0x2001 && s[1] < 0x200)
+                && (!(s[0] == 0x2001 && s[1] < 0x200) || ietf_global)
                 && !(s[0] == 0x2001 && s[1] == 0xdb8)
                 && s[0] != 0x2002
-                && !(s[0] == 0x2620 && s[1] == 0x4f && s[2] == 0x8000)
                 && !(s[0] == 0x3fff && s[1] < 0x1000)
         }
     }
@@ -276,7 +282,7 @@ mod tests {
             "169.254.169.254",
             "172.16.0.1",
             "192.168.0.1",
-            "192.0.0.9",
+            "192.0.0.1",
             "192.0.2.1",
             "192.88.99.1",
             "198.18.0.1",
@@ -328,6 +334,98 @@ mod tests {
             destination.resolve_entry,
             "provider.invalid:443:[2606:4700:4700::1111],1.1.1.1"
         );
+    }
+
+    #[test]
+    fn iana_boundaries_and_native_unicast_exceptions() {
+        for (first, last) in [
+            ("0.0.0.0", "0.255.255.255"),
+            ("10.0.0.0", "10.255.255.255"),
+            ("100.64.0.0", "100.127.255.255"),
+            ("127.0.0.0", "127.255.255.255"),
+            ("169.254.0.0", "169.254.255.255"),
+            ("172.16.0.0", "172.31.255.255"),
+            ("192.0.2.0", "192.0.2.255"),
+            ("192.88.99.0", "192.88.99.255"),
+            ("192.168.0.0", "192.168.255.255"),
+            ("198.18.0.0", "198.19.255.255"),
+            ("198.51.100.0", "198.51.100.255"),
+            ("203.0.113.0", "203.0.113.255"),
+        ] {
+            let first = u32::from(first.parse::<std::net::Ipv4Addr>().unwrap());
+            let last = u32::from(last.parse::<std::net::Ipv4Addr>().unwrap());
+            for address in [first, last] {
+                assert!(!public_address(std::net::Ipv4Addr::from(address).into()));
+            }
+            for address in [first.checked_sub(1), last.checked_add(1)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(public_address(std::net::Ipv4Addr::from(address).into()));
+            }
+        }
+        for last in 0..=255 {
+            let ip = std::net::Ipv4Addr::new(192, 0, 0, last);
+            assert_eq!(public_address(ip.into()), matches!(last, 9 | 10), "{ip}");
+        }
+        for address in [
+            "192.0.1.0",
+            "192.0.255.255",
+            "192.31.196.1",
+            "192.52.193.1",
+            "192.175.48.1",
+            "2001:1::1",
+            "2001:1::2",
+            "2001:1::3",
+            "2001:3::",
+            "2001:3:ffff:ffff:ffff:ffff:ffff:ffff",
+            "2001:4:112::",
+            "2001:4:112:ffff:ffff:ffff:ffff:ffff",
+            "2001:200::",
+            "2620:4f:8000::1",
+            "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "3fff:1000::",
+            "223.255.255.255",
+        ] {
+            assert!(public_address(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "::8.8.8.8",
+            "::ffff:0:8.8.8.8",
+            "64:ff9b:1::1",
+            "100:0:0:1::1",
+            "2001:1::",
+            "2001:1::4",
+            "2001:2:ffff::1",
+            "2001:4:111:ffff::1",
+            "2001:4:113::",
+            "2001:20::1",
+            "2001:30::1",
+            "2001:1ff:ffff::1",
+            "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "4000::",
+            "5f00::1",
+        ] {
+            let ip = address.parse().unwrap();
+            assert!(!public_address(ip), "{address}");
+            for answers in [
+                vec![ip, "1.1.1.1".parse().unwrap()],
+                vec!["2606:4700::1111".parse().unwrap(), ip],
+            ] {
+                assert!(
+                    matches!(
+                        resolve_destination_with(
+                            "https://provider.invalid",
+                            EndpointMode::Remote,
+                            |_, _| Ok(answers)
+                        ),
+                        Err(EndpointProblem::UnsafeAddress)
+                    ),
+                    "{address}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -137,6 +137,11 @@ fn run_with_resolver(
         return Err(failed("HTTP model cancelled"));
     }
     let destination = resolve(&config.endpoint).map_err(|_| failed("HTTP destination rejected"))?;
+    // System DNS cannot be interrupted here. Do not expose credentials or
+    // construct a transfer if cancellation arrived while it was blocked.
+    if cancelled.load(Ordering::Acquire) {
+        return Err(failed("HTTP model cancelled"));
+    }
     let mut handle = Easy2::new(Transfer {
         stream: Stream::new(config.protocol),
         progress,
