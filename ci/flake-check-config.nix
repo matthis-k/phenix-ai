@@ -18,6 +18,8 @@ ci.mkFlakeCheckConfig {
         credentials = "oidc";
         workers = 4;
         slotsPerWorker = 2;
+        # Trial only: GHCR OCI snapshots shared across trusted PRs.
+        ghcrCache = true;
       };
     };
     pullRequest.backend = "nix-dag";
