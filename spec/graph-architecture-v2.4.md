@@ -1359,7 +1359,10 @@ acceptance passed with complete restart-local replay equality and an actual
 controlled Model cancellation-callback witness (including EOF) before the
 bounded no-completion observation. The witness is private fixture state,
 removed on physical drain, not a public Model option or runtime mechanism.
-Exact-head CI is pending. This does not close V5 or full
+Exact-head CI passed at `7e3f7f62d` in
+[#1229](https://github.com/matthis-k/phenix-ai/pull/1229), including all 89
+checks, four builders, both executable test packages and final acceptance.
+This does not close V5 or full
 P1 parity: provider/auth/HTTP, Neovim, concurrent state and draft ACP-v2
 protocol acceptance are outside this slice. See the bounded ACP parity table
 in [the owning roadmap](m1-roadmap.md#bounded-v2-acp-product-entry-31-october-2026).
