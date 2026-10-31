@@ -11,36 +11,54 @@
       a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
+      # Treat workspace membership as evaluated metadata, not an input path
+      # to every isolated build. Nix still hashes all actually selected source
+      # files and their relative paths, Cargo.lock and build dependencies.
+      rootWorkspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      workspaceMemberIncluded =
+        paths: member:
+        let
+          # Root members use either a direct path or the trailing /* glob.
+          # A selected parent directory or descendant source path includes it.
+          relative = pkgs.lib.removeSuffix "/*" member;
+          absolute = "${toString ./.}/${relative}";
+        in
+        pkgs.lib.any (
+          path:
+          let
+            selected = toString path;
+          in
+          selected == absolute
+          || pkgs.lib.hasPrefix "${absolute}/" selected
+          || pkgs.lib.hasPrefix "${selected}/" absolute
+        ) paths;
       subset =
         paths:
         let
+          includeWorkspace = builtins.elem ./Cargo.toml paths;
+          sourcePaths = builtins.filter (path: path != ./Cargo.toml) paths;
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = pkgs.lib.fileset.unions paths;
+            fileset = pkgs.lib.fileset.unions sourcePaths;
           };
+          # Re-render only the selected member list. An unrelated package
+          # move must not change this manifest or a consumer's derivation.
+          selectedWorkspace = rootWorkspaceManifest.workspace // {
+            members = builtins.filter
+              (workspaceMemberIncluded sourcePaths)
+              rootWorkspaceManifest.workspace.members;
+          };
+          selectedManifest = (pkgs.formats.toml { }).generate "Cargo.toml" (
+            rootWorkspaceManifest // { workspace = selectedWorkspace; }
+          );
         in
-        if !(builtins.elem ./Cargo.toml paths) then src
-        else pkgs.runCommand "source" { } ''
-          cp -r ${src} "$out"
-          chmod u+w "$out/Cargo.toml"
-          # Prune explicit members absent from source-isolated builds and the SDK.
-          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "testing/products/*"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
-          ''}
-        '';
+        if !includeWorkspace then src
+        else
+          pkgs.runCommand "source" { } ''
+            cp -r ${src} "$out"
+            chmod u+w "$out"
+            cp ${selectedManifest} "$out/Cargo.toml"
+          '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
       publicPaths = [
