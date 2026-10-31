@@ -11,47 +11,42 @@
       a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
-      subset =
+      cargoWorkspace = import ./ci/cargo-workspace.nix { lib = pkgs.lib; root = ./.; };
+      subset = subsetWith false;
+      wholeWorkspace = subsetWith true;
+      packagePaths = names: map (path: ./. + "/${path}") (cargoWorkspace.closure names);
+      packageExtras = names: pkgs.lib.optionals
+        (builtins.elem cargoWorkspace.packages.phenix-kernel (cargoWorkspace.closure names))
+        [ ./tests/generation-identity-v2.json ];
+      sourceFor = names: subset ([ ./Cargo.toml ./Cargo.lock ] ++ packagePaths names ++ packageExtras names);
+      subsetWith = whole:
         paths:
         let
+          lib = pkgs.lib;
+          fileset = lib.fileset.unions paths;
+          candidates = map (path:
+            lib.removeSuffix "/Cargo.toml" (lib.removePrefix "${toString ./.}/" (toString path))
+          ) (lib.fileset.toList (lib.fileset.intersection fileset
+            (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)));
+          normalizedManifest = (pkgs.formats.toml {}).generate "Cargo.toml"
+            (cargoWorkspace.normalize candidates);
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = pkgs.lib.fileset.unions paths;
+            fileset = if builtins.elem ./Cargo.toml paths then
+              lib.fileset.difference fileset ./Cargo.toml
+            else fileset;
           };
         in
+        assert !whole || cargoWorkspace.requireWhole candidates;
         if !(builtins.elem ./Cargo.toml paths) then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
-          chmod u+w "$out/Cargo.toml"
-          # Prune explicit members absent from source-isolated builds and the SDK.
-          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "testing/products/*"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
-          ''}
+          chmod u+w "$out"
+          cp ${normalizedManifest} "$out/Cargo.toml"
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
-      publicPaths = [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates/phenix-contract
-        ./crates/phenix-sdk
-        ./crates/phenix-macros
-        ./include
-      ];
-      publicSource = subset publicPaths;
+      publicSource = subset ([ ./Cargo.toml ./Cargo.lock ./include ] ++ packagePaths "phenix-sdk");
       agentMixes = import ./mixes/default.nix { lib = pkgs.lib; };
       pythonPrototypeSource = pkgs.runCommand "phenix-python-poc-source" { } ''
         cp -r ${subset [ ./tools/phenix_python ./examples/python-trivial ]} "$out"
@@ -63,34 +58,17 @@
         chmod u+w $out
         cp -r ${exampleSource}/examples $out/examples
       '';
-      contractSource = subset [
+      contractSource = wholeWorkspace ((map (member: ./. + "/${member}") cargoWorkspace.members) ++ [
         ./Cargo.toml
         ./Cargo.lock
-        ./crates
-        ./plugins/shared/phenix-plugin-environment
-        ./plugins/shared/phenix-plugin-storage-sqlite
-        ./plugins/shared/phenix-plugin-model-http
-        ./testing/products/phenix-p2-products
         ./examples
         ./include
         ./tests/abi.c
         ./tests/m1-architecture.py
         ./tests/generation-identity-v2.json
-      ];
-      artifactSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates/phenix-contract
-        ./crates/phenix-artifact
-      ];
-      kernelSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates/phenix-contract
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./tests/generation-identity-v2.json
-      ];
+      ]);
+      artifactSource = sourceFor "phenix-artifact";
+      kernelSource = sourceFor "phenix-kernel";
       build =
         name: src:
         rust.buildRustPackage {
@@ -105,21 +83,7 @@
           preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
           doCheck = false;
         };
-      conformanceSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates/phenix-contract
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-conformance
-        ./crates/phenix-sdk
-        ./crates/phenix-macros
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-environment-contracts
-        ./tests/generation-identity-v2.json
-      ];
+      conformanceSource = sourceFor "phenix-conformance";
       describe = build "phenix-artifact" artifactSource;
       pluginSourceTool = pkgs.writeShellApplication {
         name = "phenix-plugin-sources";
@@ -305,7 +269,7 @@
           ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
         '';
       graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts" true;
-      basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
+      basicContractsSource = sourceFor "phenix-basic-contracts";
       basicContractsBinary = (build "phenix-basic-contracts" basicContractsSource).overrideAttrs {
         doCheck = true;
         cargoTestFlags = [ "-p" "phenix-basic-contracts" ];
@@ -332,7 +296,7 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
-      environmentContractsSource = subset (publicPaths ++ [ ./crates/phenix-environment-contracts ]);
+      environmentContractsSource = sourceFor "phenix-environment-contracts";
       environmentContractsBinary = rust.buildRustPackage {
         pname = "phenix-environment-contracts";
         version = "0.1.0";
@@ -345,10 +309,7 @@
       };
       environmentDefinitions = definitionPackage "phenix-environment-contracts"
         "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
-      environmentPluginSource = subset (publicPaths ++ [
-        ./crates/phenix-environment-contracts
-        ./plugins/shared/phenix-plugin-environment
-      ]);
+      environmentPluginSource = sourceFor "phenix-plugin-environment";
       environmentPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-environment";
         version = "0.1.0";
@@ -374,7 +335,7 @@
         python ${./tests/environment-product.py} ${kernel}/bin/phenix-kernel ${environmentPlugin} ${environmentDefinitions} "$out"
         test -s "$out/evidence.json"
       '';
-      workspaceContractsSource = subset (publicPaths ++ [ ./crates/phenix-workspace-contracts ]);
+      workspaceContractsSource = sourceFor "phenix-workspace-contracts";
       workspaceContractsBinary = rust.buildRustPackage {
         pname = "phenix-workspace-contracts";
         version = "0.1.0";
@@ -387,11 +348,7 @@
       };
       workspaceDefinitions = definitionPackage "phenix-workspace-contracts"
         "${workspaceContractsBinary}/bin/phenix-workspace-contracts" false;
-      workspacePluginSource = subset (publicPaths ++ [
-        ./crates/phenix-workspace-contracts
-        ./crates/phenix-plugin-workspace-selection
-        ./crates/phenix-basic-contracts
-      ]);
+      workspacePluginSource = sourceFor "phenix-plugin-workspace-selection";
       workspacePlugin = rust.buildRustPackage {
         pname = "phenix-plugin-workspace-selection";
         version = "0.1.0";
@@ -417,13 +374,7 @@
         python ${./tests/workspace-product.py} ${kernel}/bin/phenix-kernel ${workspacePlugin} ${storageSqlite} ${workspaceDefinitions} ${basicDefinitions} "$out"
         test -s "$out/evidence.json"
       '';
-      providerBuiltinsPluginSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-builtins
-        ./crates/phenix-provider-builtins
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerBuiltinsPluginSource = sourceFor "phenix-plugin-provider-builtins";
       providerBuiltinsPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-provider-builtins";
         version = "0.1.0";
@@ -455,12 +406,7 @@
           ${kernel}/bin/phenix-kernel ${providerBuiltinsPlugin} ${providerDefinitions} "$out" ${providerOpenAiApi} ${providerCredentialStore} ${providerChatGpt}
         touch "$out/verified"
       '';
-      providerBuiltinsSource = subset (publicPaths ++ [
-        ./crates/phenix-provider-builtins
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerBuiltinsSource = sourceFor "phenix-provider-builtins";
       providerBuiltinsCheck = rust.buildRustPackage {
         pname = "phenix-provider-builtins";
         version = "0.1.0";
@@ -477,15 +423,7 @@
       };
       # Opt-in provider plugin: real per-profile API-key verification. The
       # default Basic composition and metadata-only provider remain unchanged.
-      providerOpenAiApiSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-openai-api
-        ./crates/phenix-provider-auth-strategies
-        ./crates/phenix-provider-builtins
-        ./crates/phenix-provider-discovery
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerOpenAiApiSource = sourceFor "phenix-plugin-provider-openai-api";
       providerOpenAiApi = rust.buildRustPackage {
         pname = "phenix-plugin-provider-openai-api";
         version = "0.1.0";
@@ -507,15 +445,7 @@
       # Provider-owned ChatGPT authorization-code/OIDC plugin. This is
       # dormant unless a separate launcher explicitly composes its exact
       # named-account credential grants and provider auth routes.
-      providerChatGptSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-chatgpt
-        ./crates/phenix-provider-auth-strategies
-        ./crates/phenix-provider-discovery
-        ./crates/phenix-provider-builtins
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerChatGptSource = sourceFor "phenix-plugin-provider-chatgpt";
       providerChatGpt = rust.buildRustPackage {
         pname = "phenix-plugin-provider-chatgpt";
         version = "0.1.0";
@@ -886,13 +816,7 @@
           ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
         grep -F '"shipping_launcher_authority_exercised": true' "$out/streamed/openai-api-auth-product.json"
       '';
-      providerCredentialStoreSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-credential-files
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-provider-credential-files
-      ]);
+      providerCredentialStoreSource = sourceFor "phenix-plugin-provider-credential-files";
       providerCredentialStore = rust.buildRustPackage {
         pname = "phenix-plugin-provider-credential-files";
         version = "0.1.0";
@@ -917,12 +841,7 @@
         python ${./tests/provider-credential-store-product.py} \
           ${kernel}/bin/phenix-kernel ${providerCredentialStore} ${providerDefinitions} "$out"
       '';
-      providerSecretServiceSource = subset (publicPaths ++ [
-        ./crates/phenix-plugin-provider-secret-service
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerSecretServiceSource = sourceFor "phenix-plugin-provider-secret-service";
       providerSecretService = rust.buildRustPackage {
         pname = "phenix-plugin-provider-secret-service";
         version = "0.1.0";
@@ -954,7 +873,7 @@
         dbus-run-session --config-file=${pkgs.dbus}/share/dbus-1/session.conf -- python ${./tests/provider-secret-service-product.py} \
           ${kernel}/bin/phenix-kernel ${providerSecretService} ${providerDefinitions} "$out"
       '';
-      providerCredentialFilesSource = subset (publicPaths ++ [ ./crates/phenix-provider-credential-files ]);
+      providerCredentialFilesSource = sourceFor "phenix-provider-credential-files";
       providerCredentialFilesCheck = rust.buildRustPackage {
         pname = "phenix-provider-credential-files";
         version = "0.1.0";
@@ -969,7 +888,7 @@
           touch $out/verified
         '';
       };
-      providerProtocolsSource = subset (publicPaths ++ [ ./crates/phenix-provider-protocols ./crates/phenix-basic-contracts ]);
+      providerProtocolsSource = sourceFor "phenix-provider-protocols";
       providerProtocolsCheck = rust.buildRustPackage {
         pname = "phenix-provider-protocols";
         version = "0.1.0";
@@ -984,7 +903,7 @@
           touch $out/verified
         '';
       };
-      providerDiscoverySource = subset (publicPaths ++ [ ./crates/phenix-provider-discovery ./crates/phenix-provider-protocols ./crates/phenix-basic-contracts ]);
+      providerDiscoverySource = sourceFor "phenix-provider-discovery";
       providerDiscoveryCheck = rust.buildRustPackage {
         pname = "phenix-provider-discovery";
         version = "0.1.0";
@@ -999,11 +918,7 @@
           touch $out/verified
         '';
       };
-      providerContractsSource = subset (publicPaths ++ [
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-basic-contracts
-      ]);
+      providerContractsSource = sourceFor "phenix-provider-contracts";
       providerContractsBinary = rust.buildRustPackage {
         pname = "phenix-provider-contracts";
         version = "0.1.0";
@@ -1030,10 +945,7 @@
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
       '';
-      advancedContractsSource = subset (publicPaths ++ [
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-      ]);
+      advancedContractsSource = sourceFor "phenix-advanced-contracts";
       advancedContractsBinary = rust.buildRustPackage {
         pname = "phenix-advanced-contracts";
         version = "0.1.0";
@@ -1049,11 +961,7 @@
       p2ModelMeterFixtureCheck = rust.buildRustPackage {
         pname = "phenix-plugin-model-meter-fixture";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-model-meter-fixture
-        ]);
+        src = sourceFor "phenix-plugin-model-meter-fixture";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-model-meter-fixture" ];
         cargoTestFlags = [ "-p" "phenix-plugin-model-meter-fixture" ];
@@ -1069,15 +977,12 @@
         '';
       };
       # One test-only package; retain per-binary builds and product invocations.
-      p2ProductsSource = name: subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-compaction-replay
-        ./testing/products/phenix-p2-products/Cargo.toml
-        (./testing/products/phenix-p2-products/src/bin + "/${name}.rs")
-      ]);
+      p2ProductsSource = name: subset ([ ./Cargo.toml ./Cargo.lock ]
+        ++ map (path: ./. + "/${path}")
+          (builtins.filter (path: path != cargoWorkspace.packages.phenix-p2-products)
+            (cargoWorkspace.closure "phenix-p2-products"))
+        ++ map (path: ./. + "/${path}") (cargoWorkspace.projectBin "phenix-p2-products" name)
+        ++ packageExtras "phenix-p2-products");
       p2ProductRunner = name: (build "phenix-p2-products" (p2ProductsSource name)).overrideAttrs {
         pname = name;
         cargoBuildFlags = [ "-p" "phenix-p2-products" "--bin" name ];
@@ -1097,11 +1002,7 @@
       p2CompactionReplayCheck = rust.buildRustPackage {
         pname = "phenix-p2-compaction-replay";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-p2-compaction-replay
-        ]);
+        src = sourceFor "phenix-p2-compaction-replay";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-p2-compaction-replay" ];
         cargoTestFlags = [ "-p" "phenix-p2-compaction-replay" ];
@@ -1114,12 +1015,7 @@
       p2SelectedModelSummarizer = rust.buildRustPackage {
         pname = "phenix-plugin-advanced-summarizer";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-p2-compaction-replay
-          ./crates/phenix-plugin-advanced-summarizer
-        ]);
+        src = sourceFor "phenix-plugin-advanced-summarizer";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
         cargoTestFlags = [ "-p" "phenix-plugin-advanced-summarizer" ];
@@ -1137,12 +1033,7 @@
       compactionCheckpointStore = rust.buildRustPackage {
         pname = "phenix-plugin-compaction-checkpoints";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-p2-compaction-replay
-          ./crates/phenix-plugin-compaction-checkpoints
-        ]);
+        src = sourceFor "phenix-plugin-compaction-checkpoints";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-compaction-checkpoints" ];
         cargoTestFlags = [ "-p" "phenix-plugin-compaction-checkpoints" ];
@@ -1182,11 +1073,7 @@
       evidenceJournal = rust.buildRustPackage {
         pname = "phenix-plugin-evidence-journal";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-evidence-journal
-        ]);
+        src = sourceFor "phenix-plugin-evidence-journal";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-evidence-journal" ];
         cargoTestFlags = [ "-p" "phenix-plugin-evidence-journal" ];
@@ -1204,11 +1091,7 @@
       evidenceStore = rust.buildRustPackage {
         pname = "phenix-plugin-evidence-store";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-evidence-store
-        ]);
+        src = sourceFor "phenix-plugin-evidence-store";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-evidence-store" ];
         cargoTestFlags = [ "-p" "phenix-plugin-evidence-store" ];
@@ -1228,11 +1111,7 @@
         version = "0.1.0";
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.sqlite ];
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-project-storage-sqlite
-        ]);
+        src = sourceFor "phenix-plugin-project-storage-sqlite";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-project-storage-sqlite" ];
         cargoTestFlags = [ "-p" "phenix-plugin-project-storage-sqlite" ];
@@ -1253,14 +1132,11 @@
       # previously shared a Cargo batch. Common SDK/contracts remain shared
       # source dependencies, so changes to them legitimately rebuild consumers.
       # Example fixture plugins may still be batch-built for conformance speed.
-      basicNativePlugin = name: library: pluginPath:
+      basicNativePlugin = name: library:
         rust.buildRustPackage {
           pname = name;
           version = "0.1.0";
-          src = subset (publicPaths ++ [
-            ./crates/phenix-basic-contracts
-            pluginPath
-          ]);
+          src = sourceFor name;
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" name ];
           preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
@@ -1283,34 +1159,17 @@
       '';
       scriptedModel = basicNativePlugin
         "phenix-plugin-model-scripted"
-        "phenix_plugin_model_scripted"
-        ./crates/phenix-plugin-model-scripted;
+        "phenix_plugin_model_scripted";
       # Verification remains outside the default Basic product and batches.
       advancedModelAdapter = (basicNativePlugin
         "phenix-plugin-advanced-model-adapter"
-        "phenix_plugin_advanced_model_adapter"
-        ./crates/phenix-plugin-advanced-model-adapter).overrideAttrs (_: {
-          src = subset (publicPaths ++ [
-            ./crates/phenix-basic-contracts
-            ./crates/phenix-advanced-contracts
-            ./crates/phenix-p2-compaction-replay
-            ./crates/phenix-plugin-advanced-model-adapter
-          ]);
-        });
+        "phenix_plugin_advanced_model_adapter");
       historyTestModel = basicNativePlugin
         "phenix-plugin-model-history-test"
-        "phenix_plugin_model_history_test"
-        ./crates/phenix-plugin-model-history-test;
+        "phenix_plugin_model_history_test";
       httpModel = (basicNativePlugin
         "phenix-plugin-model-http"
-        "phenix_plugin_model_http"
-        ./plugins/shared/phenix-plugin-model-http).overrideAttrs (old: {
-          src = subset (publicPaths ++ [
-            ./crates/phenix-basic-contracts
-            ./crates/phenix-provider-contracts
-            ./crates/phenix-provider-protocols
-            ./plugins/shared/phenix-plugin-model-http
-          ]);
+        "phenix_plugin_model_http").overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
         });
@@ -1320,15 +1179,7 @@
       # user provider management, shipped client or distribution compositions.
       c9LoopbackProvider = (basicNativePlugin
         "phenix-plugin-provider-loopback-fixture"
-        "phenix_plugin_provider_loopback_fixture"
-        ./crates/phenix-plugin-provider-loopback-fixture).overrideAttrs (old: {
-          src = subset (publicPaths ++ [
-            ./crates/phenix-basic-contracts
-            ./crates/phenix-provider-contracts
-            ./crates/phenix-provider-protocols
-            ./crates/phenix-plugin-provider-loopback-fixture
-          ]);
-        });
+        "phenix_plugin_provider_loopback_fixture");
       providerRuntimeProductCheck = pkgs.runCommand "phenix-provider-runtime-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1339,14 +1190,7 @@
       '';
       # Provider-specific real native install product: separate from generic
       # phenix-conformance so provider edits do not rebuild kernel fixtures.
-      selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-http-selected-product
-      ]));
+      selectedHttpModelRunner = build "phenix-http-selected-product" (sourceFor "phenix-http-selected-product");
       httpModelCheck = pkgs.runCommand "phenix-b4-http" {
         nativeBuildInputs = [ pkgs.python3 pkgs.openssl ];
       } ''
@@ -1361,31 +1205,25 @@
       '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
-        "phenix_plugin_basic_tools"
-        ./crates/phenix-plugin-basic-tools;
+        "phenix_plugin_basic_tools";
       toolFixture = basicNativePlugin
         "phenix-plugin-tool-fixture"
-        "phenix_plugin_tool_fixture"
-        ./crates/phenix-plugin-tool-fixture;
+        "phenix_plugin_tool_fixture";
       eventJournal = basicNativePlugin
         "phenix-plugin-event-journal"
-        "phenix_plugin_event_journal"
-        ./crates/phenix-plugin-event-journal;
+        "phenix_plugin_event_journal";
       storageFixture = basicNativePlugin
         "phenix-plugin-storage-fixture"
-        "phenix_plugin_storage_fixture"
-        ./crates/phenix-plugin-storage-fixture;
+        "phenix_plugin_storage_fixture";
       basicSession = (basicNativePlugin
         "phenix-plugin-basic-session"
-        "phenix_plugin_basic_session"
-        ./crates/phenix-plugin-basic-session).overrideAttrs {
+        "phenix_plugin_basic_session").overrideAttrs {
           doCheck = true;
           cargoTestFlags = [ "-p" "phenix-plugin-basic-session" ];
         };
       storageSqlite = (basicNativePlugin
         "phenix-plugin-storage-sqlite"
-        "phenix_plugin_storage_sqlite"
-        ./plugins/shared/phenix-plugin-storage-sqlite).overrideAttrs (old: {
+        "phenix_plugin_storage_sqlite").overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
         });
@@ -1470,8 +1308,7 @@
       '';
       basicMemory = basicNativePlugin
         "phenix-plugin-basic-memory"
-        "phenix_plugin_basic_memory"
-        ./crates/phenix-plugin-basic-memory;
+        "phenix_plugin_basic_memory";
       basicMemoryCheck = pkgs.runCommand "phenix-b3-memory" { } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-memory.db"
@@ -1481,17 +1318,13 @@
       '';
       basicAgent = basicNativePlugin
         "phenix-plugin-basic-agent"
-        "phenix_plugin_basic_agent"
-        ./crates/phenix-plugin-basic-agent;
+        "phenix_plugin_basic_agent";
       # Verification-only feature-variant of the very same Basic agent.
       # The P1 preset and batched default-feature binary are unchanged.
       basicStagedAgent = rust.buildRustPackage {
         pname = "phenix-plugin-basic-agent-staged";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-plugin-basic-agent
-        ]);
+        src = sourceFor "phenix-plugin-basic-agent";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
         cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
@@ -1520,11 +1353,7 @@
       basicGraphPreparerPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-advanced-preparer-graph";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-advanced-preparer-graph
-        ]);
+        src = sourceFor "phenix-plugin-advanced-preparer-graph";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-advanced-preparer-graph" ];
         cargoTestFlags = [ "-p" "phenix-plugin-advanced-preparer-graph" ];
@@ -1542,11 +1371,7 @@
       basicNoopPreparerPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-advanced-preparer-noop";
         version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-advanced-contracts
-          ./crates/phenix-plugin-advanced-preparer-noop
-        ]);
+        src = sourceFor "phenix-plugin-advanced-preparer-noop";
         cargoLock.lockFile = ./Cargo.lock;
         cargoBuildFlags = [ "-p" "phenix-plugin-advanced-preparer-noop" ];
         cargoTestFlags = [ "-p" "phenix-plugin-advanced-preparer-noop" ];
@@ -1584,8 +1409,7 @@
       '';
       frontendTerminal = basicNativePlugin
         "phenix-plugin-basic-frontends"
-        "phenix_plugin_basic_frontends"
-        ./crates/phenix-plugin-basic-frontends;
+        "phenix_plugin_basic_frontends";
       frontendJsonl = frontendTerminal.overrideAttrs (old: {
         pname = "phenix-basic-frontend-jsonl";
         cargoBuildFlags = old.cargoBuildFlags ++ [
@@ -1608,21 +1432,7 @@
         ${conformanceBinary}/bin/phenix-f1-frontends ${frontendTerminal} ${frontendJsonl} ${basicDefinitions} $out
         test -s "$out/frontends.json"
       '';
-      basicRuntimeSource = subset [
-        ./Cargo.toml
-        ./Cargo.lock
-        ./crates/phenix-contract
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-sdk
-        ./crates/phenix-macros
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-provider-contracts
-        ./crates/phenix-provider-protocols
-        ./crates/phenix-environment-contracts
-        ./crates/phenix-basic-runtime
-        ./tests/generation-identity-v2.json
-      ];
+      basicRuntimeSource = sourceFor "phenix-basic-runtime";
       basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
       basicV2Runtime = basicRuntime.overrideAttrs {
         doCheck = true;
@@ -1640,8 +1450,8 @@
         cargoTestFlags = [ "-p" "phenix-plugin-basic-tools" "--features" "graph-v2" ];
         doCheck = true;
       };
-      pendingToolA = basicNativePlugin "phenix-plugin-tool-pending" "phenix_plugin_tool_pending" ./crates/phenix-plugin-tool-pending;
-      toolReceipts = basicNativePlugin "phenix-plugin-tool-receipts" "phenix_plugin_tool_receipts" ./crates/phenix-plugin-tool-receipts;
+      pendingToolA = basicNativePlugin "phenix-plugin-tool-pending" "phenix_plugin_tool_pending";
+      toolReceipts = basicNativePlugin "phenix-plugin-tool-receipts" "phenix_plugin_tool_receipts";
       pendingToolB = pendingToolA.overrideAttrs {
         pname = "phenix-plugin-tool-pending-b";
         cargoBuildFlags = [ "-p" "phenix-plugin-tool-pending" "--features" "alternate" ];
@@ -2722,6 +2532,10 @@
         ];
         buildPhase = ''
           export CARGO_HOME=$TMPDIR/cargo-home
+          python ${./tests/cargo-workspace.py} --metadata ${pkgs.writeText "cargo-local-graph.json" (builtins.toJSON {
+            inventory = cargoWorkspace.packages;
+            edges = builtins.mapAttrs (_: path: builtins.sort builtins.lessThan (cargoWorkspace.localDependencies path)) cargoWorkspace.packages;
+          })}
           cargo fmt --all --check
           cargo fmt --manifest-path examples/Cargo.toml --all --check
           cargo clippy --workspace --all-targets --offline -- -D warnings
@@ -2991,6 +2805,10 @@
       };
     in
     {
+      wholeWorkspaceIsolation.${system} = {
+        members = cargoWorkspace.members;
+        source = contractSource;
+      };
       # Evaluation-only regression inputs: these are the actual product runners,
       # not their broader Python/product-check wrappers.
       runnerIsolation.${system} = {

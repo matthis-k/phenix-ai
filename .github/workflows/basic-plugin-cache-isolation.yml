@@ -1,20 +1,6 @@
 name: Basic plugin cache-isolation regression
 on:
   pull_request:
-    paths:
-      - flake.nix
-      - flake.lock
-      - Cargo.toml
-      - Cargo.lock
-      - examples/**
-      - crates/**
-      - plugins/**
-      - testing/**
-      - tests/p2-runner-isolation.py
-      - ci/flake-check-config.nix
-      - .github/scripts/test-basic-plugin-cache-isolation.sh
-      - .github/scripts/basic-plugin-cache-evidence.py
-      - .github/workflows/basic-plugin-cache-isolation.yml
   workflow_dispatch:
 
 # Credential-free CI diagnostic. Only phenix-flake-ci orchestrates remote
@@ -32,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
       - uses: cachix/install-nix-action@a49548c11d9846ad46ecc0115273879b045f001c # v31
@@ -42,8 +29,10 @@ jobs:
             accept-flake-config = true
       - name: Validate evidence collector syntax
         run: python3 -m py_compile .github/scripts/basic-plugin-cache-evidence.py
-      - name: Verify five P2 runner derivation perturbations
+      - name: Verify workspace membership, HTTP relocation and five P2 runner perturbations
         run: python3 tests/p2-runner-isolation.py
+      - name: Verify Cargo workspace membership semantics offline
+        run: nix develop --command python3 tests/cargo-workspace.py
       - name: Derive source impact and real reverse dependencies
         run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --output incremental-ci-evidence
       - name: Preserve machine-readable evidence even on failure
