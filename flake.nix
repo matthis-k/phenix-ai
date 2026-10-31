@@ -20,7 +20,8 @@
           };
         in
         if !(builtins.elem ./Cargo.toml paths)
-          || builtins.elem ./testing/products/phenix-p2-products paths then src
+          || builtins.elem ./testing/products/phenix-p2-products paths
+          || builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
           chmod u+w "$out/Cargo.toml"
@@ -1053,15 +1054,16 @@
         '';
       };
       # One test-only package; retain per-binary builds and product invocations.
-      p2ProductsSource = subset (publicPaths ++ [
+      p2ProductsSource = name: subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-compaction-replay
-        ./testing/products/phenix-p2-products
+        ./testing/products/phenix-p2-products/Cargo.toml
+        (./testing/products/phenix-p2-products/src/bin + "/${name}.rs")
       ]);
-      p2ProductRunner = name: (build "phenix-p2-products" p2ProductsSource).overrideAttrs {
+      p2ProductRunner = name: (build "phenix-p2-products" (p2ProductsSource name)).overrideAttrs {
         pname = name;
         cargoBuildFlags = [ "-p" "phenix-p2-products" "--bin" name ];
       };
