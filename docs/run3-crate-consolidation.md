@@ -1,6 +1,6 @@
 # Run 3 Crate Consolidation Inventory
 
-**Status:** five P2 acceptance runner packages consolidated in draft PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121`, with exact-head CI verified. Runner isolation followed at `50e7df808f4fb5a9b7255820b030b02fd1c35d44`, also exact-head CI verified. Environment relocation is the next independently committed, focused-test-verified increment. None is integrated.
+**Status:** five P2 acceptance runner packages consolidated in draft PR #1221 at `a014a07d1822b39cc7e35ed791c3a3e104663121`, with exact-head CI verified. Runner isolation followed at `50e7df808f4fb5a9b7255820b030b02fd1c35d44` and Environment relocation at `d7412fba7e862a8a0f470a5c566aa3bede2d0d67`, both exact-head CI verified. SQLite relocation is the next independently committed, focused-test-verified increment. None is integrated.
 
 **Baseline:** `d9c4c9f62dcb94cc2d83679475d08b34fc9d50a9`, inspected 2026-10-31.
 
@@ -20,7 +20,7 @@ At baseline, `Cargo.toml:1-3` selected only `crates/*`. The implemented workspac
 
 | Measurement | Baseline | Proposed target | Implemented increment |
 | --- | ---: | ---: | --- |
-| Root workspace package manifests | 55 | 51 | 51 (49 in crates, one in testing/products, one in plugins/shared) |
+| Root workspace package manifests | 55 | 51 | 51 (48 in crates, one in testing/products, two in plugins/shared) |
 | Foundational packages | 5 | 5 | 5 |
 | Shared domain contract-set packages | 5 | 5 | 5 |
 | `phenix-plugin-*` package manifests | 31 | 31 | 31 |
@@ -108,6 +108,57 @@ git diff --check
 ```
 
 The selected product retains wrong-resource, traversal and missing-grant rejection, XDG/workspace resolution and no-filesystem-effects assertions. Workspace tests/Clippy and public SDK isolation passed. `git show HEAD:crates/phenix-plugin-environment/src/lib.rs | cmp - plugins/shared/phenix-plugin-environment/src/lib.rs` confirmed byte identity, including plugin identity and contract declarations. `devenv test` could not start because `devenv` is absent. Remote exact-head verification is required after this increment's push; earlier CI must not be attributed to it. Next candidate: independently packaged SQLite Storage, subject to auditing its native dependency closure and restart/CAS/authority product gates before moving it.
+
+Environment subsequently passed [generated exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41167975166)
+at `d7412fba7e862a8a0f470a5c566aa3bede2d0d67`, including all builders,
+both runnable packages and independent final shipping-evidence verification.
+
+### SQLite Relocation Follow-Up
+
+Only Basic Storage moves from `crates/phenix-plugin-storage-sqlite` to
+`plugins/shared/phenix-plugin-storage-sqlite`. The implementation source is
+byte-identical to the preceding commit (`git show HEAD:<old>/src/lib.rs | cmp -
+<new>/src/lib.rs`). This preserves `phenix.basic.storage-sqlite`, its Storage
+export, `phenix.basic.storage@1`, no runtime imports, schema versions, transactions,
+CAS and recovery logic. The independent native artifact and `rusqlite = "0.37.0"`
+plus Nix SQLite/pkg-config dependency boundary remain unchanged. No contract or
+SDK gains an implementation/native dependency. Project SQLite is not moved.
+Cargo membership, the two relative paths, Nix closure and isolated-manifest
+pruning change together; the lockfile remains unchanged.
+
+On Linux x86_64 the relocated worktree passed:
+
+```sh
+nix build --no-link --max-jobs 2 \
+  path:.#checks.x86_64-linux.b2-sqlite \
+  path:.#checks.x86_64-linux.basic-host-smoke \
+  path:.#checks.x86_64-linux.b5-agent \
+  path:.#checks.x86_64-linux.m1-public-sdk \
+  path:.#checks.x86_64-linux.m1-contract
+git diff --check
+```
+
+The first combined attempt timed out; its retry completed successfully. The
+SQLite gate covers independent-process restart/recovery, schema migration and
+rejection, failed transaction atomicity, durable persistence, cross-process CAS,
+wrong-resource and missing grants. Basic selected behavior and public SDK
+isolation passed without editing any runtime, ACP or graph execution code.
+
+Derivation-hash measurements around both physical relocations found broad
+one-time invalidation, not isolation: all five runner product derivations and
+kernel, Environment product and public SDK controls changed. The copied root
+manifest and pruning derivations change even where the final isolated manifest
+normalizes away the relocated member. These moves are organizational, not cache
+optimizations; runner-source perturbation isolation remains a separate result.
+Counts remain 51 workspace packages, 133 internal dependency declarations and
+31 plugin packages. `devenv test` remains blocked by the missing executable;
+`maintenance.nix` and `.stitch.json` remain absent. Remote exact-head verification
+must follow this increment's push. Next candidate: independent HTTP Model,
+after auditing provider-protocol/native curl closures and private install/CAS,
+denial and selected HTTP product gates; no production crate merge is implied.
+
+`nix flake check --no-build path:.` passed evaluation of every exported check and
+package for this increment. This is evaluation only, not a local full build gate.
 
 ## Before And Target Trees
 

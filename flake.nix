@@ -32,6 +32,10 @@
             substituteInPlace "$out/Cargo.toml" \
               --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
           ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
+          ''}
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
@@ -60,6 +64,7 @@
         ./Cargo.lock
         ./crates
         ./plugins/shared/phenix-plugin-environment
+        ./plugins/shared/phenix-plugin-storage-sqlite
         ./testing/products/phenix-p2-products
         ./examples
         ./include
@@ -1375,7 +1380,7 @@
       storageSqlite = (basicNativePlugin
         "phenix-plugin-storage-sqlite"
         "phenix_plugin_storage_sqlite"
-        ./crates/phenix-plugin-storage-sqlite).overrideAttrs (old: {
+        ./plugins/shared/phenix-plugin-storage-sqlite).overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
         });
