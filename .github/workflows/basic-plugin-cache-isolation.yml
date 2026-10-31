@@ -8,6 +8,9 @@ on:
       - Cargo.lock
       - examples/**
       - crates/**
+      - plugins/**
+      - testing/**
+      - tests/p2-runner-isolation.py
       - ci/flake-check-config.nix
       - .github/scripts/test-basic-plugin-cache-isolation.sh
       - .github/scripts/basic-plugin-cache-evidence.py
@@ -39,6 +42,8 @@ jobs:
             accept-flake-config = true
       - name: Validate evidence collector syntax
         run: python3 -m py_compile .github/scripts/basic-plugin-cache-evidence.py
+      - name: Verify five P2 runner derivation perturbations
+        run: python3 tests/p2-runner-isolation.py
       - name: Derive source impact and real reverse dependencies
         run: bash .github/scripts/test-basic-plugin-cache-isolation.sh --output incremental-ci-evidence
       - name: Preserve machine-readable evidence even on failure

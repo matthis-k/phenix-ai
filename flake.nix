@@ -13,10 +13,34 @@
       source = pkgs.lib.cleanSource ./.;
       subset =
         paths:
-        pkgs.lib.fileset.toSource {
-          root = ./.;
-          fileset = pkgs.lib.fileset.unions paths;
-        };
+        let
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions paths;
+          };
+        in
+        if !(builtins.elem ./Cargo.toml paths) then src
+        else pkgs.runCommand "source" { } ''
+          cp -r ${src} "$out"
+          chmod u+w "$out/Cargo.toml"
+          # Prune explicit members absent from source-isolated builds and the SDK.
+          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "testing/products/*"' ""
+          ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
+          ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
+          ''}
+          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
+            substituteInPlace "$out/Cargo.toml" \
+              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
+          ''}
+        '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
       publicPaths = [
@@ -43,6 +67,10 @@
         ./Cargo.toml
         ./Cargo.lock
         ./crates
+        ./plugins/shared/phenix-plugin-environment
+        ./plugins/shared/phenix-plugin-storage-sqlite
+        ./plugins/shared/phenix-plugin-model-http
+        ./testing/products/phenix-p2-products
         ./examples
         ./include
         ./tests/abi.c
@@ -319,7 +347,7 @@
         "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
       environmentPluginSource = subset (publicPaths ++ [
         ./crates/phenix-environment-contracts
-        ./crates/phenix-plugin-environment
+        ./plugins/shared/phenix-plugin-environment
       ]);
       environmentPlugin = rust.buildRustPackage {
         pname = "phenix-plugin-environment";
@@ -1040,13 +1068,21 @@
           ${pkgs.python3}/bin/python ${recordWriter} "$out"
         '';
       };
-      p2ModelMeterProductRunner = build "phenix-p2-model-meter-product" (subset (publicPaths ++ [
+      # One test-only package; retain per-binary builds and product invocations.
+      p2ProductsSource = name: subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-model-meter-product
-      ]));
+        ./crates/phenix-p2-compaction-replay
+        ./testing/products/phenix-p2-products/Cargo.toml
+        (./testing/products/phenix-p2-products/src/bin + "/${name}.rs")
+      ]);
+      p2ProductRunner = name: (build "phenix-p2-products" (p2ProductsSource name)).overrideAttrs {
+        pname = name;
+        cargoBuildFlags = [ "-p" "phenix-p2-products" "--bin" name ];
+      };
+      p2ModelMeterProductRunner = p2ProductRunner "phenix-p2-model-meter-product";
       p2ModelMeterProductCheck = pkgs.runCommand "phenix-p2-model-meter-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1268,12 +1304,12 @@
       httpModel = (basicNativePlugin
         "phenix-plugin-model-http"
         "phenix_plugin_model_http"
-        ./crates/phenix-plugin-model-http).overrideAttrs (old: {
+        ./plugins/shared/phenix-plugin-model-http).overrideAttrs (old: {
           src = subset (publicPaths ++ [
             ./crates/phenix-basic-contracts
             ./crates/phenix-provider-contracts
             ./crates/phenix-provider-protocols
-            ./crates/phenix-plugin-model-http
+            ./plugins/shared/phenix-plugin-model-http
           ]);
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.curl pkgs.zlib ];
@@ -1349,7 +1385,7 @@
       storageSqlite = (basicNativePlugin
         "phenix-plugin-storage-sqlite"
         "phenix_plugin_storage_sqlite"
-        ./crates/phenix-plugin-storage-sqlite).overrideAttrs (old: {
+        ./plugins/shared/phenix-plugin-storage-sqlite).overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
           buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite ];
         });
@@ -2284,13 +2320,7 @@
       kernelBinaryClosure = pkgs.closureInfo {
         rootPaths = [ kernel ];
       };
-      p2SourceEvidenceRunner = build "phenix-p2-source-evidence" (subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-source-evidence
-      ]));
+      p2SourceEvidenceRunner = p2ProductRunner "phenix-p2-source-evidence";
       p2SourceEvidenceProductCheck = pkgs.runCommand "phenix-p2-source-evidence-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2302,14 +2332,7 @@
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-source-evidence-product.json"
       '';
-      p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-compaction-replay
-        ./crates/phenix-p2-compaction-product
-      ]));
+      p2CompactionProductRunner = p2ProductRunner "phenix-p2-compaction-product";
       p2CompactionProductCheck = pkgs.runCommand "phenix-p2-compaction-checkpoints-product" {
         nativeBuildInputs = [ pkgs.python3 pkgs.sqlite ];
       } ''
@@ -2321,13 +2344,7 @@
           ${basicDefinitions} ${advancedDefinitions} "$out"
         test -s "$out/p2-compaction-checkpoints-product.json"
       '';
-      p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-evidence-store
-      ]));
+      p2EvidenceStoreRunner = p2ProductRunner "phenix-p2-evidence-store";
       p2EvidenceStoreProductCheck = pkgs.runCommand "phenix-p2-evidence-store-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2339,13 +2356,7 @@
           ${basicDefinitions} ${advancedDefinitions} ${projectStorageSqlite} "$out"
         test -s "$out/p2-evidence-store-product.json"
       '';
-      p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
-        ./crates/phenix-artifact
-        ./crates/phenix-kernel
-        ./crates/phenix-basic-contracts
-        ./crates/phenix-advanced-contracts
-        ./crates/phenix-p2-project-storage
-      ]));
+      p2ProjectStorageRunner = p2ProductRunner "phenix-p2-project-storage";
       p2ProjectStorageProductCheck = pkgs.runCommand "phenix-p2-project-storage-product" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2980,6 +2991,22 @@
       };
     in
     {
+      # Evaluation-only regression inputs: these are the actual product runners,
+      # not their broader Python/product-check wrappers.
+      runnerIsolation.${system} = {
+        runners = {
+          phenix-p2-model-meter-product = p2ModelMeterProductRunner;
+          phenix-p2-compaction-product = p2CompactionProductRunner;
+          phenix-p2-source-evidence = p2SourceEvidenceRunner;
+          phenix-p2-evidence-store = p2EvidenceStoreRunner;
+          phenix-p2-project-storage = p2ProjectStorageRunner;
+        };
+        controls = {
+          inherit kernel;
+          environment = environmentProductCheck;
+          sdk = sdk;
+        };
+      };
       packages.${system} = {
         # Runnable test.* packages are discovered by generic CI automatically.
         # They are thin executable wrappers over already-built artifacts:

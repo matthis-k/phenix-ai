@@ -8,6 +8,6 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-phenix-sdk = { path = "../phenix-sdk" }
-phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-sdk = { path = "../../../crates/phenix-sdk" }
+phenix-basic-contracts = { path = "../../../crates/phenix-basic-contracts" }
 rusqlite = "0.37.0"

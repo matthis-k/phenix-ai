@@ -1,0 +1,18 @@
+[package]
+name = "phenix-plugin-model-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+zeroize = "=1.9.1"
+phenix-sdk = { path = "../../../crates/phenix-sdk" }
+phenix-basic-contracts = { path = "../../../crates/phenix-basic-contracts" }
+phenix-provider-contracts = { path = "../../../crates/phenix-provider-contracts" }
+serde_json.workspace = true
+curl = { version = "0.4", default-features = false }
+
+phenix-provider-protocols = { path = "../../../crates/phenix-provider-protocols", features = ["model-codecs"] }
