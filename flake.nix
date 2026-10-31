@@ -44,9 +44,11 @@
           # Re-render only the selected member list. An unrelated package
           # move must not change this manifest or a consumer's derivation.
           selectedWorkspace = rootWorkspaceManifest.workspace // {
-            members = builtins.filter
-              (workspaceMemberIncluded sourcePaths)
-              rootWorkspaceManifest.workspace.members;
+            # Workspace member ordering does not affect Cargo semantics.
+            members = builtins.sort builtins.lessThan (
+              builtins.filter (workspaceMemberIncluded sourcePaths)
+                rootWorkspaceManifest.workspace.members
+            );
           };
           selectedManifest = (pkgs.formats.toml { }).generate "Cargo.toml" (
             rootWorkspaceManifest // { workspace = selectedWorkspace; }
@@ -3009,6 +3011,18 @@
       };
     in
     {
+      # Minimal concrete outputs for content-stable source identity checks.
+      # These are build derivations, not wrappers or cloned implementations.
+      sourceIsolation.${system} = {
+        inherit kernel sdk;
+        environment = environmentPlugin;
+        sqlite = storageSqlite;
+        http = httpModel;
+        scripted = scriptedModel;
+        basic-runtime = basicRuntime;
+        contract = contractCheck;
+        p2-runner = p2SourceEvidenceRunner;
+      };
       # Evaluation-only regression inputs: these are the actual product runners,
       # not their broader Python/product-check wrappers.
       runnerIsolation.${system} = {
