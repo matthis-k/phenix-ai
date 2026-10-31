@@ -12,6 +12,40 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ### Bounded V2 ACP Product Entry (31 October 2026)
 
+Follow-up acceptance on #1229 adds `graph-v2-packaged-acp-tools.py` to the
+existing packaged-host gate. Two ACP sessions share the controller: one owns
+two independently pending physical tools while the other queues. Cancel-first,
+partial-receipt cancellation, completion-first, EOF and partial-receipt process
+kill/restart are checked through ACP and SQLite. Duplicate cancel notifications
+produce one terminal reply/journal event, late success is discarded, and queued
+work cannot run before physical drain. Restart preserves known receipts and
+rejects unresolved effects without retry. `session/load` replays history;
+crash recovery runs under the next prompt's existing session lock.
+
+The only production change removes the pending-empty restriction from existing
+finalized-run cleanup in Basic Agent. Durable terminal status authorizes clearing
+stale in-memory state; normal preparation still rejects Indeterminate effects.
+No second scheduler, recovery mechanism or frontend-specific agent path is added.
+The existing ACP and JSONL fixtures also consume stdout through EOF to check
+exactly-once terminals. This is queued multi-session acceptance, not simultaneous
+graph execution or full scoped-state concurrency.
+
+Local verification passed: `nix develop -c cargo test -p phenix-basic-runtime
+-p phenix-plugin-basic-agent --features graph-v2 --locked` (48 tests), equivalent
+`cargo clippy` with `--all-targets -- -D warnings`, workspace Rustfmt, and
+`nix build -L .#checks.x86_64-linux.basic-v2-packaged-host
+.#checks.x86_64-linux.f2-acp --no-link --print-out-paths`.
+Product output: `/nix/store/w4sy69ww7wwnx44n4f6pxzrmpw8qgl0g-phenix-basic-v2-product`,
+including `packaged-acp-tools.json`. `devenv test` remains unavailable.
+Provider #1227 was independently checked at
+`31484f84b3008c42dfec39931190e9dc4b0aa75a`: run
+[41244752046](https://github.com/matthis-k/phenix-ai/actions/runs/41244752046)
+passed all 89 checks, four builders and both runnable packages; downloaded plan,
+shipping and executable artifacts supplement the final acceptance logs.
+Consumer restack and new exact-head remote acceptance are tracked in the PR;
+the older exact-head evidence below is historical, not evidence for this follow-up.
+Provider implementation, live HTTP/auth, Neovim and draft ACP v2 remain separate.
+
 Status: implemented and product-verified at
 `7e3f7f62d3fc6ea31b450c3392d91d261be2804f` in
 [#1229](https://github.com/matthis-k/phenix-ai/pull/1229), based on

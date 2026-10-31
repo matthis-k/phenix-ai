@@ -138,6 +138,15 @@ for case in ("launcher", "resume", "cancel-initial", "cancel-continuation", "dis
             assert counts()["ToolStarted"] == counts()["ToolFinished"] == (tools if cancelled else 1)
             proc.stdin.close()
         assert proc.wait(timeout=25) == 0, proc.stderr.read()
+        reader.join(timeout=5)
+        assert not reader.is_alive(), case
+        while True:
+            frame = observed.get(timeout=5)
+            if frame is None:
+                break
+            events.append(frame)
+        expected_ids = [1, 2] if case == "disconnect" else [1, 2, 3, 4]
+        assert [frame["id"] for frame in events if "id" in frame] == expected_ids, events
         assert not pending.exists(), case
         assert not cancelled_witness.exists(), case
         if case == "disconnect":

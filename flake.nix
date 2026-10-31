@@ -1581,6 +1581,8 @@
           timeout 120 python ${./tests/acp-stdio-product.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2Composition} "$out/acp"
         python ${./tests/graph-v2-packaged-acp.py} ${basicV2Acp}/bin/phenix-basic-v2-acp \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2ControlledComposition} "$out"
+        python ${./tests/graph-v2-packaged-acp-tools.py} \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \

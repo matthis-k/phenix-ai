@@ -261,6 +261,14 @@ for case in ("reverse", "mixed", "cancel", "partial-cancel", "partial-infrastruc
         assert proc.wait(timeout=25) == 0, proc.stderr.read()
         reader.join(timeout=5)
         assert not reader.is_alive()
+        while True:
+            event = observed.get(timeout=5)
+            if event is None:
+                break
+            events.append(event)
+        cancelled = case in ("cancel", "partial-cancel")
+        assert sum(event["kind"] == "Cancelled" for event in events) == int(cancelled), events
+        assert sum(event["kind"] == "Answer" for event in events) == (0 if cancelled else 2), events
         assert "forbidden late success" not in json.dumps(events)
         assert all(not path.with_suffix(".pending").exists() for path in controls)
         if case in ("cancel", "partial-cancel"):
