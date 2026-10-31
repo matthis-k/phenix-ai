@@ -11,35 +11,33 @@
       a = testLib.testAssert;
       rust = pkgs.rustPlatform;
       source = pkgs.lib.cleanSource ./.;
-      subset =
+      cargoWorkspace = import ./ci/cargo-workspace.nix { lib = pkgs.lib; root = ./.; };
+      subset = subsetWith false;
+      wholeWorkspace = subsetWith true;
+      subsetWith = whole:
         paths:
         let
+          lib = pkgs.lib;
+          fileset = lib.fileset.unions paths;
+          candidates = map (path:
+            lib.removeSuffix "/Cargo.toml" (lib.removePrefix "${toString ./.}/" (toString path))
+          ) (lib.fileset.toList (lib.fileset.intersection fileset
+            (lib.fileset.fileFilter (file: file.name == "Cargo.toml") ./.)));
+          normalizedManifest = (pkgs.formats.toml {}).generate "Cargo.toml"
+            (cargoWorkspace.normalize candidates);
           src = pkgs.lib.fileset.toSource {
             root = ./.;
-            fileset = pkgs.lib.fileset.unions paths;
+            fileset = if builtins.elem ./Cargo.toml paths then
+              lib.fileset.difference fileset ./Cargo.toml
+            else fileset;
           };
         in
+        assert !whole || cargoWorkspace.requireWhole candidates;
         if !(builtins.elem ./Cargo.toml paths) then src
         else pkgs.runCommand "source" { } ''
           cp -r ${src} "$out"
-          chmod u+w "$out/Cargo.toml"
-          # Prune explicit members absent from source-isolated builds and the SDK.
-          ${pkgs.lib.optionalString (!(builtins.elem ./testing/products/phenix-p2-products paths) && !(builtins.elem ./testing/products/phenix-p2-products/Cargo.toml paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "testing/products/*"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-environment paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-environment"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-storage-sqlite paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-storage-sqlite"' ""
-          ''}
-          ${pkgs.lib.optionalString (!(builtins.elem ./plugins/shared/phenix-plugin-model-http paths)) ''
-            substituteInPlace "$out/Cargo.toml" \
-              --replace-fail ', "plugins/shared/phenix-plugin-model-http"' ""
-          ''}
+          chmod u+w "$out"
+          cp ${normalizedManifest} "$out/Cargo.toml"
         '';
       # Production Rust SDK sources exclude the experimental Python frontend.
       # The Python proof of concept has an explicit test-only source package.
@@ -63,20 +61,15 @@
         chmod u+w $out
         cp -r ${exampleSource}/examples $out/examples
       '';
-      contractSource = subset [
+      contractSource = wholeWorkspace ((map (member: ./. + "/${member}") cargoWorkspace.members) ++ [
         ./Cargo.toml
         ./Cargo.lock
-        ./crates
-        ./plugins/shared/phenix-plugin-environment
-        ./plugins/shared/phenix-plugin-storage-sqlite
-        ./plugins/shared/phenix-plugin-model-http
-        ./testing/products/phenix-p2-products
         ./examples
         ./include
         ./tests/abi.c
         ./tests/m1-architecture.py
         ./tests/generation-identity-v2.json
-      ];
+      ]);
       artifactSource = subset [
         ./Cargo.toml
         ./Cargo.lock
@@ -2991,6 +2984,10 @@
       };
     in
     {
+      wholeWorkspaceIsolation.${system} = {
+        members = cargoWorkspace.members;
+        source = contractSource;
+      };
       # Evaluation-only regression inputs: these are the actual product runners,
       # not their broader Python/product-check wrappers.
       runnerIsolation.${system} = {
