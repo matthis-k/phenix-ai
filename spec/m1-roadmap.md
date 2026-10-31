@@ -45,6 +45,11 @@ on this selected-provider V2 composition, OAuth/other-provider V2 parity,
 Neovim user acceptance, simultaneous scoped-state concurrency and default
 product migration. This increment is not full P1 parity or ACP v2 wire support.
 Exact-head remote acceptance belongs to the dependent PR; no merge is claimed.
+The first remote run 41252042710 rejected the older native acceptance assertion
+that repeated the same run but expected fresh-turn denial. The native fixture
+now uses a different run identity for that denial; local `b4-http` and its
+warnings-denied runner Clippy passed. Same-run continuation remains covered by
+the focused configuration test and actual provider-backed tool round trip.
 
 ### Bounded V2 ACP Product Entry (31 October 2026)
 

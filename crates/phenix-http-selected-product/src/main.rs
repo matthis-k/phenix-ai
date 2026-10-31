@@ -229,7 +229,7 @@ fn main() {
         root.invoke_selected(&control, &chosen.to_value()).unwrap(),
         Outcome::Success(_)
     ));
-    let request = ModelRequest {
+    let mut request = ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
         history: vec![Message::user("selected")],
@@ -291,8 +291,9 @@ fn main() {
             .collect::<String>(),
         reply.text
     );
-    // This grant is spent. An unrelated PHENIX_MODEL_HTTP_* environment
-    // preset must never take over the next selected Model turn.
+    // Continuations share this run's install, but a new run requires fresh
+    // authorization and must never fall back to the environment preset.
+    request.run.push_str("-next");
     let second = root.begin(&request.to_value()).unwrap();
     let rejected = match second {
         Call::Ready(value) => value,
@@ -318,7 +319,7 @@ fn main() {
                 ErrorCode::InvalidInput
             );
         }
-        Outcome::Success(_) => panic!("consumed native choice unexpectedly executed again"),
+        Outcome::Success(_) => panic!("new run executed without a fresh native install"),
     }
     assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
     drop(root);
