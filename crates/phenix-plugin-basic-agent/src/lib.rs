@@ -690,10 +690,7 @@ mod plugin {
                 )?;
                 // Deferred-wave cancellation has no Model ticket to cancel.
                 // Only the host's durable finalization authorizes forgetting it.
-                if session.run == running.run
-                    && session.status != RunStatus::Running
-                    && session.pending.is_empty()
-                {
+                if session.run == running.run && session.status != RunStatus::Running {
                     state.active = None;
                     state.pending_model_request = None;
                     state.graph_reply = None;

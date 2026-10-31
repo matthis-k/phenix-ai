@@ -59,6 +59,8 @@ The HTTP resolved-address caveat recorded at relocation was addressed separately
 
 The credential-files relocation keeps the backend and authorized plugin as two packages under `plugins/shared/phenix-provider-credential-files` and `plugins/shared/phenix-plugin-provider-credential-files`. Current counts are 51 packages (45 in `crates`, one in `testing/products`, five in `plugins/shared`). Rust sources, package and runtime identities, native dependencies, contracts, authority, persistence and `Cargo.lock` are unchanged; only workspace membership and the plugin's relative SDK/contracts paths change. The dated HTTP evidence above remains historical.
 
+Relocation acceptance: [#1228](https://github.com/matthis-k/phenix-ai/pull/1228), exact `419271c9e94c3df1676d3b1f0e91f548db44b7b6`, passed all 89 checks, four builders, both executable test packages and final acceptance in [run 41234747056](https://github.com/matthis-k/phenix-ai/actions/runs/41234747056). Versus verified security baseline `88371239c`, 78 check derivations stayed identical and 11 necessary credential/whole-workspace/release checks changed; no unrelated check identity changed. Actual remote dispatches were 562 in both runs: 29 changed identities and 533 unchanged identities dispatched in the relocation run. Scheduler times were 1258.91s versus 1239.15s; workflow times were 1407s versus 1434s. Automatic discovery preserved unrelated source identities, but this run demonstrated no reduction in actual build count. The historical HTTP move's 297 builds is not a controlled benchmark. No source-coupling defect was demonstrated by this relocation, so no Nix abstraction change was warranted.
+
 ## Concrete migration mapping
 
 | Current `crates/*` group | Destination / boundary |

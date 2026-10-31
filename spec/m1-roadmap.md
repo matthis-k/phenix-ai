@@ -10,6 +10,100 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Bounded V2 ACP Product Entry (31 October 2026)
+
+Follow-up acceptance on #1229 adds `graph-v2-packaged-acp-tools.py` to the
+existing packaged-host gate. Two ACP sessions share the controller: one owns
+two independently pending physical tools while the other queues. Cancel-first,
+partial-receipt cancellation, completion-first, EOF and partial-receipt process
+kill/restart are checked through ACP and SQLite. Duplicate cancel notifications
+produce one terminal reply/journal event, late success is discarded, and queued
+work cannot run before physical drain. Restart preserves known receipts and
+rejects unresolved effects without retry. `session/load` replays history;
+crash recovery runs under the next prompt's existing session lock.
+
+The only production change removes the pending-empty restriction from existing
+finalized-run cleanup in Basic Agent. Durable terminal status authorizes clearing
+stale in-memory state; normal preparation still rejects Indeterminate effects.
+No second scheduler, recovery mechanism or frontend-specific agent path is added.
+The existing ACP and JSONL fixtures also consume stdout through EOF to check
+exactly-once terminals. This is queued multi-session acceptance, not simultaneous
+graph execution or full scoped-state concurrency.
+
+Local verification passed: `nix develop -c cargo test -p phenix-basic-runtime
+-p phenix-plugin-basic-agent --features graph-v2 --locked` (48 tests), equivalent
+`cargo clippy` with `--all-targets -- -D warnings`, workspace Rustfmt, and
+`nix build -L .#checks.x86_64-linux.basic-v2-packaged-host
+.#checks.x86_64-linux.f2-acp --no-link --print-out-paths`.
+Product output: `/nix/store/w4sy69ww7wwnx44n4f6pxzrmpw8qgl0g-phenix-basic-v2-product`,
+including `packaged-acp-tools.json`. `devenv test` remains unavailable.
+Provider #1227 was independently checked at
+`31484f84b3008c42dfec39931190e9dc4b0aa75a`: run
+[41244752046](https://github.com/matthis-k/phenix-ai/actions/runs/41244752046)
+passed all 89 checks, four builders and both runnable packages; downloaded plan,
+shipping and executable artifacts supplement the final acceptance logs.
+Consumer restack and new exact-head remote acceptance are tracked in the PR;
+the older exact-head evidence below is historical, not evidence for this follow-up.
+Provider implementation, live HTTP/auth, Neovim and draft ACP v2 remain separate.
+
+Status: implemented and product-verified at
+`7e3f7f62d3fc6ea31b450c3392d91d261be2804f` in
+[#1229](https://github.com/matthis-k/phenix-ai/pull/1229), based on
+`419271c9e94c3df1676d3b1f0e91f548db44b7b6`; unmerged.
+[Exact-head CI](https://github.com/matthis-k/phenix-ai/actions/runs/41238723642)
+passed all 89 checks, four builders, both executable test packages and final
+acceptance. The table below describes product behavior, not just compilation.
+At that base, `scoped_kernel` already used `prepare_agent` and the official SDK
+ACP controller already completed V2 turns. Running `tests/acp-stdio-product.py`
+against the packaged base V2 runtime/composition passed. There was no V2 ACP
+launcher or ACP acceptance in `basic-v2-packaged-host`, not a demonstrated
+controller incompatibility. This increment adds `phenix-basic-v2-acp`, reusing
+the unchanged V2 runtime, composition, typed ingress and journal observer.
+Normal Basic remains unchanged; no new executor, scheduler or domain state.
+
+| Capability | Product evidence | Remaining scope |
+| --- | --- | --- |
+| Packaged ACP -> session -> scripted Model -> tools -> answer | New launcher exercised by `graph-v2-packaged-acp.py`; existing `acp-stdio-product.py` also runs against V2 in the existing product gate | HTTP/provider execution and Neovim not established here |
+| Model choice and denial | Existing ACP suite accepts exact installed scripted choice, rejects foreign choices, malformed prompts and forged/unknown sessions | Static installed slot only, not provider catalog switching/auth |
+| Tool identity/order and durable observer restoration | Existing ACP suite checks two-tool start/result ordering, final text, same-process replay and two-process SQLite load/continue; newly emitted restart frames must equal the complete original session updates | No new observer implementation or token-streaming claim |
+| Pending/resumption | Controlled physical worker witness; release completes tool continuation and answer | Deterministic fixture, not live network streaming |
+| Cancellation/disconnect | Initial and continuation cancel notifications plus initial pending EOF wait for a private controlled Model cancellation-callback witness, then retain the bounded 300 ms no-completion/unchanged-journal observation before permitting drain; late success discarded; one Cancelled journal event; same-session next prompt without tool replay | Not arbitrary process kill, concurrent sessions or pending-tool ACP recovery |
+
+Changed implementation/test files: `flake.nix`, `tests/acp-stdio-product.py`,
+`tests/graph-v2-packaged-acp.py` and
+`crates/phenix-plugin-model-scripted/src/controlled.rs`. The callback witness
+uses the existing private control-file path, publishes the pending phase
+atomically, and is removed on physical drain and harness cleanup. It is only
+in the `controlled-pending` fixture feature; ordinary Basic runtime and public
+Model contracts are unchanged. Documentation changes are `README.md`, this
+roadmap and `spec/graph-architecture-v2.4.md`.
+
+Local commands: `nix build .#phenix-basic-v2-product .#phenix-basic-v2-acp
+--no-link --print-out-paths -L` passed, including the pre-existing native,
+JSONL, fanout, denial and recovery gates. `nix develop -c cargo test -p
+phenix-basic-runtime --features graph-v2 --locked` passed 40 tests.
+Warnings-denied `cargo clippy -p phenix-basic-runtime --features graph-v2
+--all-targets --locked -- -D warnings` and `cargo fmt --all -- --check`
+also passed under `nix develop -c`. Final local verification built
+`checks.x86_64-linux.basic-v2-packaged-host` and the unchanged Basic
+`checks.x86_64-linux.f2-acp` successfully. V2 product evidence is
+`/nix/store/rqljb4mw79bvmgacp8a0kscs3y787qay-phenix-basic-v2-product`
+(`acp/acp-product.json` and `packaged-acp.json` plus existing host evidence).
+After review hardening, both named Nix checks passed again. The strengthened
+`tests/acp-stdio-product.py` also passed directly against packaged V1 runtime
+`/nix/store/r9vj2smkp32y796cmbkk22kq905w9hmx-phenix-basic-runtime-0.1.0`
+and composition `/nix/store/fqzymyvnab5f0jyj7drbmkz62365kqm7-phenix-basic-composition.json`
+with a fresh SQLite file and a 120-second outer timeout under `nix develop`.
+`nix develop -c cargo clippy -p phenix-plugin-model-scripted --features
+controlled-pending --all-targets --locked -- -D warnings` and workspace
+Rustfmt passed after the fixture change.
+`devenv` is unavailable; the complete local read-only gate could not run.
+The full remote Nix gate passed at the implementation commit above.
+The check inventory remains 89 (`nix eval .#checks.x86_64-linux --apply
+'checks: builtins.length (builtins.attrNames checks)'`). This is bounded
+scripted ACP v1 product acceptance on Graph V2, not full V2 P1 parity or
+draft ACP v2 wire support. No merge or default-product migration is claimed.
+
 ### Graph-v2 implementation-gap matrix (27 October 2026)
 
 Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.
@@ -779,6 +873,21 @@ ChatGPT Plus/Pro subscription access is **not interchangeable with OpenAI API-ke
 **Accepted provider UX and runtime behavior (2026-10-17, Q1–Q6):** A user may create an authorized generic provider connection from Neovim using a URL and an installed protocol, without writing a plugin. One connection supports multiple named OAuth/API-key profiles, each with separate billing and credential identity. Use a supported OS secret service first; an explicit opt-in, protected `0600` file fallback keeps headless setups possible with a security warning. Basic and Advanced register the six selected providers before authentication and perform model discovery on demand. The model picker may visually group duplicate names but must preserve visible provider, connection and account choices. A failed catalog refresh retains stale entries for inspection only; selection/inference must revalidate authorization and availability. **Accepted follow-up (Q7–Q9):** A runtime-managed connection binds a validated explicit protocol ID and remote HTTPS URL. Local HTTP is allowed only for approved loopback endpoints; Unix sockets require an authenticated local transport. Credential-bearing redirects and URL origin changes are rejected, including DNS-rebinding paths. A selected credential profile has independent persistence, revision-checked scope and revocation. No silent substitution on expiry/revocation. Provider-supported OAuth refresh rotates tokens atomically and offers reauthentication on failure. Use provider-declared model refresh rules or a bounded default of **15 minutes**. A stale/offline catalog is inspection-only and cannot authorize new selection or inference. Static no-auth local catalogs do not require network access.
 
 **Grill tracking and build order:** All **17 decisions are resolved; 0 open and 0 deferred**. [#891](https://github.com/matthis-k/phenix-ai/issues/891#provider-grill-decision-tree-and-first-frontier-2026-10-17) owns the accepted decision ledger, and this roadmap owns the behavior and functional acceptance. Provider contracts and reusable libraries are now integrated on `main`: [#948](https://github.com/matthis-k/phenix-ai/pull/948) (provider/auth/catalog definitions), [#949](https://github.com/matthis-k/phenix-ai/pull/949) (bounded model-list decoders), [#950](https://github.com/matthis-k/phenix-ai/pull/950) (secure endpoint and credential-origin validation), [#953](https://github.com/matthis-k/phenix-ai/pull/953) (opt-in `0600` credential-file backend, merge `de3f26f4`), [#954](https://github.com/matthis-k/phenix-ai/pull/954) (six provider registrations, merge `f0c89630`), [#964](https://github.com/matthis-k/phenix-ai/pull/964) (independently packaged base provider catalog/auth plugin, merge `86eb50cd`; re-lands the #955 work after its stale stacked base) and [#962](https://github.com/matthis-k/phenix-ai/pull/962) (fresh account-bound selection admission, merge `152f7a42`). This completes PV1 and the reusable metadata/credential-storage pieces. Subsequent merges #1006/#1009/#1010/#1011 now expose installed read-only catalog/model/auth queries and tightly authorized credential import/revoke. They do **not** establish provider-verified readiness, actual selected-provider HTTP binding, persisted revision-CAS model mutation or a completed Neovim journey. The endpoint library validates configuration; network resolution, redirect behavior and credential grants remain runtime/transport obligations. Keep all later features in #891 rather than adding competing owners.
+
+**Resolved-address transport enforcement (unmerged acceptance, 2026-10-31):**
+[#1227](https://github.com/matthis-k/phenix-ai/pull/1227), exact
+`88371239c3ad825df63c153c1d5e5bb91217f182`, passed all 89 Nix checks,
+four builders, both executable test packages and final acceptance in
+[run 41231192349](https://github.com/matthis-k/phenix-ai/actions/runs/41231192349).
+The shared provider boundary authorizes the complete resolved IPv4/IPv6
+snapshot; existing curl model, catalog and SIWC transports pin it before
+credential presentation, disable proxies/redirects and retain hostname TLS
+verification and SNI. Product tests cover loopback SSE, unsafe destination
+denial, proxy bypass prevention, pinned hostname/alternate-address fallback,
+wrong-hostname/untrusted-CA credential withholding and existing cancellation.
+Live IPv6 loopback conditionally skips where unavailable; synchronous system
+DNS remains outside curl's timeout/cancellation handling. This is not full
+Graph V2 provider integration or an implicit private-network/proxy grant.
 
 **PV2 credential-store slice (implementation, not acceptance):**
 `phenix.provider.credentials@1` supplies separately granted import, resolve and

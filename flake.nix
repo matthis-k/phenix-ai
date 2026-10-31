@@ -1441,6 +1441,9 @@
         cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--features" "graph-v2" ];
         cargoTestFlags = [ "-p" "phenix-basic-runtime" "--features" "graph-v2" ];
       };
+      basicV2Acp = pkgs.writeShellScriptBin "phenix-basic-v2-acp" ''
+        exec ${basicV2Runtime}/bin/phenix-basic-runtime acp ${basicV2Composition} "$@"
+      '';
       basicV2Agent = basicStagedAgent.overrideAttrs {
         pname = "phenix-plugin-basic-agent-v2";
         cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "graph-v2" ];
@@ -1574,6 +1577,12 @@
         mkdir -p "$out"
         ln -s ${basicV2ControlledCheck} "$out/controlled-turns"
         python ${./tests/graph-v2-packaged-host.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2Composition} "$out"
+        PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-acp.sqlite" \
+          timeout 120 python ${./tests/acp-stdio-product.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2Composition} "$out/acp"
+        python ${./tests/graph-v2-packaged-acp.py} ${basicV2Acp}/bin/phenix-basic-v2-acp \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2ControlledComposition} "$out"
+        python ${./tests/graph-v2-packaged-acp-tools.py} \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \
@@ -2890,6 +2899,7 @@
         phenix-plugin-frontend-acp = frontendAcp;
         phenix-basic-runtime = basicRuntime;
         phenix-basic-v2-runtime = basicV2Runtime;
+        phenix-basic-v2-acp = basicV2Acp;
         phenix-basic-v2-composition = basicV2Composition;
         phenix-basic-v2-product = basicV2Product;
         phenix-basic-v2-terminal = pkgs.writeShellScriptBin "phenix-basic-v2-terminal" ''

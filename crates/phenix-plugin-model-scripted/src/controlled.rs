@@ -23,6 +23,10 @@ mod plugin {
         stop.send(()).unwrap();
         worker.join().unwrap();
         if let Some(path) = state.pending.take() {
+            if state.cancelled {
+                std::fs::remove_file(path.with_extension("cancelled"))
+                    .expect("scripted Model cancellation witness");
+            }
             std::fs::remove_file(path).expect("scripted Model pending witness");
         }
     }
@@ -134,6 +138,18 @@ mod plugin {
     #[cancel(Model::complete)]
     fn cancel(state: &mut State) -> Result<bool, Failure> {
         state.cancelled = true;
+        if let Some(path) = &state.pending {
+            let cancelled = path.with_extension("cancelled");
+            let temporary = path.with_extension("cancelled.tmp");
+            // Witness callback delivery independently of host intent, while
+            // retaining the worker until the harness explicitly permits drain.
+            std::fs::write(
+                &temporary,
+                std::fs::read(path).expect("scripted Model pending witness"),
+            )
+            .expect("scripted Model cancellation witness");
+            std::fs::rename(temporary, cancelled).expect("scripted Model cancellation witness");
+        }
         Ok(false)
     }
 }
