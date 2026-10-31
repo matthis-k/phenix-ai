@@ -85,7 +85,7 @@ pub struct ResolvedDestination {
 }
 
 /// Resolve once, reject the entire answer if any address is prohibited, and pin
-/// one authorized address. A fresh curl handle must disable proxies/redirects.
+/// the authorized addresses. A fresh curl handle must disable proxies/redirects.
 pub fn resolve_destination(
     endpoint: &str,
     mode: EndpointMode,
@@ -127,10 +127,14 @@ fn resolve_destination_with(
     }) {
         return Err(EndpointProblem::UnsafeAddress);
     }
-    let address = match addresses[0] {
-        IpAddr::V4(ip) => ip.to_string(),
-        IpAddr::V6(ip) => format!("[{ip}]"),
-    };
+    let address = addresses
+        .into_iter()
+        .map(|ip| match ip {
+            IpAddr::V4(ip) => ip.to_string(),
+            IpAddr::V6(ip) => format!("[{ip}]"),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     Ok(ResolvedDestination {
         url: checked.url,
         resolve_entry: format!("{host}:{port}:{address}"),
@@ -312,6 +316,18 @@ mod tests {
         for address in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
             assert!(public_address(address.parse().unwrap()));
         }
+        let destination =
+            resolve_destination_with("https://provider.invalid", EndpointMode::Remote, |_, _| {
+                Ok(vec![
+                    "2606:4700:4700::1111".parse().unwrap(),
+                    "1.1.1.1".parse().unwrap(),
+                ])
+            })
+            .unwrap();
+        assert_eq!(
+            destination.resolve_entry,
+            "provider.invalid:443:[2606:4700:4700::1111],1.1.1.1"
+        );
     }
 
     #[test]

@@ -201,7 +201,9 @@ with tempfile.TemporaryDirectory() as directory:
                 let address = dns_answer.replace(std::net::Ipv4Addr::new(192, 0, 2, 1));
                 Ok(ResolvedDestination {
                     url: endpoint.into(),
-                    resolve_entry: format!("{host}:{port}:{address}"),
+                    // The first authorized fixture address refuses connections;
+                    // curl must retain fallback within the pinned snapshot.
+                    resolve_entry: format!("{host}:{port}:127.0.0.2,{address}"),
                 })
             },
         );
