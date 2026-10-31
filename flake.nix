@@ -2531,6 +2531,7 @@
           pkgs.rustfmt
           pkgs.python3
           pkgs.clippy
+          pkgs.openssl
         ];
         buildPhase = ''
           export CARGO_HOME=$TMPDIR/cargo-home
