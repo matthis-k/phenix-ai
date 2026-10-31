@@ -298,16 +298,16 @@ exit_cleanly(null_id_probe)
 # A new provider process reopens the same SQLite file through Storage.
 second = start()
 initialize(second)
+before_restore = len(updates)
 result = request(second, 4, "session/load", {
     "sessionId": session,
     "cwd": "/tmp",
     "mcpServers": [],
 })
 assert_model_options(result)
-assert any(
-    entry["params"]["sessionId"] == session
-    and entry["params"]["update"].get("content", {}).get("text") == "mock:first"
-    for entry in updates
+assert updates[before_restore:] == original_updates, (
+    "new process did not replay the complete persisted session",
+    updates[before_restore:], original_updates,
 )
 continued = request(second, 5, "session/prompt", {
     "sessionId": session,

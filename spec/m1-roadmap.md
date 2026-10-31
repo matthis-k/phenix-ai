@@ -10,6 +10,62 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Bounded V2 ACP Product Entry (31 October 2026)
+
+Status: implemented and locally verified on
+`feat/graph-v2-acp-product-parity` based on
+`419271c9e94c3df1676d3b1f0e91f548db44b7b6`; exact-head CI and integration pending.
+At that base, `scoped_kernel` already used `prepare_agent` and the official SDK
+ACP controller already completed V2 turns. Running `tests/acp-stdio-product.py`
+against the packaged base V2 runtime/composition passed. There was no V2 ACP
+launcher or ACP acceptance in `basic-v2-packaged-host`, not a demonstrated
+controller incompatibility. This increment adds `phenix-basic-v2-acp`, reusing
+the unchanged V2 runtime, composition, typed ingress and journal observer.
+Normal Basic remains unchanged; no new executor, scheduler or domain state.
+
+| Capability | Local evidence | Remaining scope |
+| --- | --- | --- |
+| Packaged ACP -> session -> scripted Model -> tools -> answer | New launcher exercised by `graph-v2-packaged-acp.py`; existing `acp-stdio-product.py` also runs against V2 in the existing product gate | HTTP/provider execution and Neovim not established here |
+| Model choice and denial | Existing ACP suite accepts exact installed scripted choice, rejects foreign choices, malformed prompts and forged/unknown sessions | Static installed slot only, not provider catalog switching/auth |
+| Tool identity/order and durable observer restoration | Existing ACP suite checks two-tool start/result ordering, final text, same-process replay and two-process SQLite load/continue; newly emitted restart frames must equal the complete original session updates | No new observer implementation or token-streaming claim |
+| Pending/resumption | Controlled physical worker witness; release completes tool continuation and answer | Deterministic fixture, not live network streaming |
+| Cancellation/disconnect | Initial and continuation cancel notifications plus initial pending EOF wait for a private controlled Model cancellation-callback witness, then retain the bounded 300 ms no-completion/unchanged-journal observation before permitting drain; late success discarded; one Cancelled journal event; same-session next prompt without tool replay | Not arbitrary process kill, concurrent sessions or pending-tool ACP recovery |
+
+Changed implementation/test files: `flake.nix`, `tests/acp-stdio-product.py`,
+`tests/graph-v2-packaged-acp.py` and
+`crates/phenix-plugin-model-scripted/src/controlled.rs`. The callback witness
+uses the existing private control-file path, publishes the pending phase
+atomically, and is removed on physical drain and harness cleanup. It is only
+in the `controlled-pending` fixture feature; ordinary Basic runtime and public
+Model contracts are unchanged. Documentation changes are `README.md`, this
+roadmap and `spec/graph-architecture-v2.4.md`.
+
+Local commands: `nix build .#phenix-basic-v2-product .#phenix-basic-v2-acp
+--no-link --print-out-paths -L` passed, including the pre-existing native,
+JSONL, fanout, denial and recovery gates. `nix develop -c cargo test -p
+phenix-basic-runtime --features graph-v2 --locked` passed 40 tests.
+Warnings-denied `cargo clippy -p phenix-basic-runtime --features graph-v2
+--all-targets --locked -- -D warnings` and `cargo fmt --all -- --check`
+also passed under `nix develop -c`. Final local verification built
+`checks.x86_64-linux.basic-v2-packaged-host` and the unchanged Basic
+`checks.x86_64-linux.f2-acp` successfully. V2 product evidence is
+`/nix/store/rqljb4mw79bvmgacp8a0kscs3y787qay-phenix-basic-v2-product`
+(`acp/acp-product.json` and `packaged-acp.json` plus existing host evidence).
+After review hardening, both named Nix checks passed again. The strengthened
+`tests/acp-stdio-product.py` also passed directly against packaged V1 runtime
+`/nix/store/r9vj2smkp32y796cmbkk22kq905w9hmx-phenix-basic-runtime-0.1.0`
+and composition `/nix/store/fqzymyvnab5f0jyj7drbmkz62365kqm7-phenix-basic-composition.json`
+with a fresh SQLite file and a 120-second outer timeout under `nix develop`.
+`nix develop -c cargo clippy -p phenix-plugin-model-scripted --features
+controlled-pending --all-targets --locked -- -D warnings` and workspace
+Rustfmt passed after the fixture change.
+`devenv` is unavailable; the full read-only gate and full flake/remote CI
+were not run.
+The check inventory remains 89 (`nix eval .#checks.x86_64-linux --apply
+'checks: builtins.length (builtins.attrNames checks)'`). This is bounded
+scripted ACP v1 product acceptance on Graph V2, not full V2 P1 parity or
+draft ACP v2 wire support. No merge or remote CI result is claimed here.
+
 ### Graph-v2 implementation-gap matrix (27 October 2026)
 
 Inspected baseline: `31f86f454fd4cd3316379b5802b02ba19ecae69c`.

@@ -45,6 +45,18 @@ session on its first prompt; no preliminary session or authentication call is
 required for this scripted-model preset. Use `--session NAME` to resume a
 different session. The ordinary P1 launchers remain Graph V1 and unchanged.
 
+`nix run .#phenix-basic-v2-acp` exposes the same opt-in composition over
+stable ACP v1 stdio through the existing official SDK controller. It selects
+the installed scripted Model, needs no credentials, and supports session
+creation, tool updates, answers and durable `session/load` replay. Graph V2
+is the execution architecture here, not the separate draft ACP v2 protocol.
+The V2 product gate runs the existing ACP stdio acceptance against this
+composition and tests the launcher plus controlled pending/resumption,
+initial/continuation cancellation and disconnect physical drain.
+Restart acceptance compares only newly restored frames with the complete
+original session. Cancellation acceptance waits for the private controlled
+Model's callback witness before checking that completion remains blocked.
+
 `nix build .#phenix-basic-v2-product` runs the packaged executable against a
 fresh SQLite database without a supplied session identity, reports the actual
 host-established session, and checks first-prompt rendering, restart/observer

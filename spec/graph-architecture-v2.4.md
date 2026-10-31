@@ -1349,6 +1349,21 @@ Keep all domain-specific operations as normal selected contracts in their existi
 
 ### 9.1 Determinism/property-based test examples
 
+Bounded product evidence (2026-10-31): the ACP product increment
+based on `419271c9e94c3df1676d3b1f0e91f548db44b7b6` exposes the existing
+Graph V2 scripted Basic composition through `phenix-basic-v2-acp` and the
+unchanged official SDK stable-ACP-v1 controller. The existing V2 product gate
+adds real stdio session/model-option/tool/answer/restart acceptance plus
+controlled pending/resumption, cancellation and disconnect/drain. Local Nix
+acceptance passed with complete restart-local replay equality and an actual
+controlled Model cancellation-callback witness (including EOF) before the
+bounded no-completion observation. The witness is private fixture state,
+removed on physical drain, not a public Model option or runtime mechanism.
+Exact-head CI is pending. This does not close V5 or full
+P1 parity: provider/auth/HTTP, Neovim, concurrent state and draft ACP-v2
+protocol acceptance are outside this slice. See the bounded ACP parity table
+in [the owning roadmap](m1-roadmap.md#bounded-v2-acp-product-entry-31-october-2026).
+
 1. Permuting node/edge declarations never alters compiled graph identity.
 2. Permuting independent patches never alters effective topology, provenance decision order or diagnostics semantics.
 3. Splice at 1/5 and 1/2 yields `A→D→C→B` regardless of package order.
