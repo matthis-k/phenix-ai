@@ -8,6 +8,6 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-phenix-sdk = { path = "../phenix-sdk" }
-phenix-provider-contracts = { path = "../phenix-provider-contracts" }
+phenix-sdk = { path = "../../../crates/phenix-sdk" }
+phenix-provider-contracts = { path = "../../../crates/phenix-provider-contracts" }
 phenix-provider-credential-files = { path = "../phenix-provider-credential-files" }

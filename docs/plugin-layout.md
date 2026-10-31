@@ -55,7 +55,9 @@ The generated run on 2026-10-31 UTC spanned `11:57:38Z` to `12:22:17Z` (**24m39s
 
 Downloaded CI artifacts show all 89 check derivation paths changed versus the parent; all 15 local samples also changed. Expected HTTP own-path invalidation is distinct from undesirable broad unrelated manifest/pruning invalidation. A local HTTP-only perturbation subsequently changed HTTP alone, with 14 unchanged; future isolated-source work should address the broad coupling. No performance improvement is claimed.
 
-Existing HTTP review caveats remain: missing explicit resolved-address policy validation despite the shared protocol responsibility assignment, and a literal `anthropic-version` transport header versus codec responsibilities. These predate the move and need the smallest separately reviewed behavior fixes. Next relocation candidate is provider credential-files backend/plugin after restricted native-boundary audit, not a protocols merge. Other destinations remain proposed. Do not add empty crates or fake compatibility shims for a diagram.
+The HTTP resolved-address caveat recorded at relocation was addressed separately in [#1227](https://github.com/matthis-k/phenix-ai/pull/1227), verified at `88371239c`; it was not a relocation behavior change. The literal `anthropic-version` transport header versus codec responsibilities remains a separate review concern. Other destinations remain proposed. Do not add empty crates or fake compatibility shims for a diagram.
+
+The credential-files relocation keeps the backend and authorized plugin as two packages under `plugins/shared/phenix-provider-credential-files` and `plugins/shared/phenix-plugin-provider-credential-files`. Current counts are 51 packages (45 in `crates`, one in `testing/products`, five in `plugins/shared`). Rust sources, package and runtime identities, native dependencies, contracts, authority, persistence and `Cargo.lock` are unchanged; only workspace membership and the plugin's relative SDK/contracts paths change. The dated HTTP evidence above remains historical.
 
 ## Concrete migration mapping
 
