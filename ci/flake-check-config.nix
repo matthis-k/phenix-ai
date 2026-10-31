@@ -55,6 +55,11 @@ ci.mkFlakeCheckConfig {
   };
   cache = {
     keyPrefix = "phenix-m1";
-    keyFiles = [ "flake.lock" "Cargo.lock" "examples/Cargo.lock" ];
+    # GitHub's cache scope controls which trusted branch snapshot is visible.
+    # Do not shard its coarse lookup by lockfile contents: in a content-addressed
+    # Nix store, exact derivation and output hashes determine actual reuse.
+    # This lets a PR restore unchanged paths even across Cargo/flake lock bumps.
+    # New schema/toolchain incompatibilities still need a keyPrefix revision.
+    keyFiles = [ ];
   };
 }
