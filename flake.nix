@@ -1583,6 +1583,11 @@
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2ControlledComposition} "$out"
         python ${./tests/graph-v2-packaged-acp-tools.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-openai-api-key-product.py} \
+          ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2HttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/provider" \
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \
@@ -1735,19 +1740,19 @@
         }));
       # Opt-in real-provider Basic preset. Change only the selected Model and
       # its journal grant; retain the P1 agent graph, tools and storage.
-      basicHttpCompositionSpec = basicCompositionSpec // {
-        definitions = basicCompositionSpec.definitions ++ [ "${providerDefinitions}" ];
+      basicHttpCompositionFor = base: base // {
+        definitions = base.definitions ++ [ "${providerDefinitions}" ];
         artifacts =
-          builtins.filter (item: item != "${scriptedModel}") basicCompositionSpec.artifacts
+          builtins.filter (item: item != "${scriptedModel}") base.artifacts
           ++ [ "${httpModel}" ];
         slots = map (binding:
           if binding.caller == "phenix.basic.agent" && binding.slot == "Model"
           then binding // { provider = "phenix.model.http"; }
           else binding
-        ) basicCompositionSpec.slots ++ [
+        ) base.slots ++ [
           (basicBinding "phenix.model.http" "Journal" "phenix.basic.event-journal" "Journal")
         ];
-        grants = basicCompositionSpec.grants ++ [
+        grants = base.grants ++ [
           { caller = "phenix.model.http";
             interface = "phenix.basic.journal@1";
             operation = "append";
@@ -1773,12 +1778,15 @@
             resources = [ "phenix.session.s1" ];
           }
         ];
-        authority = basicCompositionSpec.authority // {
-          operations = basicCompositionSpec.authority.operations ++ [
+        authority = base.authority // {
+          operations = base.authority.operations ++ [
             "phenix.provider.http-model-session@1/install"
           ];
         };
       };
+      basicHttpCompositionSpec = basicHttpCompositionFor basicCompositionSpec;
+      basicV2HttpComposition = pkgs.writeText "phenix-basic-v2-http-composition.json"
+        (builtins.toJSON (basicHttpCompositionFor basicV2CompositionSpec));
       basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
         (builtins.toJSON basicHttpCompositionSpec);
       # The original Basic composition stays byte-for-byte equivalent. The
@@ -2900,6 +2908,7 @@
         phenix-basic-runtime = basicRuntime;
         phenix-basic-v2-runtime = basicV2Runtime;
         phenix-basic-v2-acp = basicV2Acp;
+        phenix-basic-v2-http-composition = basicV2HttpComposition;
         phenix-basic-v2-composition = basicV2Composition;
         phenix-basic-v2-product = basicV2Product;
         phenix-basic-v2-terminal = pkgs.writeShellScriptBin "phenix-basic-v2-terminal" ''

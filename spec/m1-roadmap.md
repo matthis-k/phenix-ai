@@ -10,6 +10,42 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Selected Provider V2 HTTP Increment (1 November 2026)
+
+Dependent on the accepted, still-unmerged #1229 head
+`aeca52b4e22e2f8aaf9400c6a963f04c7913ab0b` (full 89-check run
+41249310216). The isolated follow-up reuses the HTTP composition builder with
+the existing V2 agent/tools/receipts selection and exposes
+`phenix-basic-v2-http-composition`. The existing packaged V2 gate now executes
+the actual OpenAI API provider's loopback feature variant, installed bundle
+authority, API-key auth, credential-files backend, selected HTTP Model, tools,
+journal and ACP observer. Only the provider endpoint artifact is substituted;
+curl and the existing protocol codecs remain unchanged.
+
+The new tool round trip exposed a real bug: the selected HTTP install was
+consumed by the first Model request, rejecting tool continuation. The install
+now binds to the first nonempty run identity within its authorized session.
+Continuation workers share the clearing configuration without cloning the
+credential. Different runs require a fresh install; foreign sessions and empty
+runs reject without environment fallback. No new controller or domain plugin.
+
+Acceptance checks the uppercase tool's exact ID/result in HTTP history, ACP
+tool start/result and text updates before the controlled server releases HTTP
+completion, exact history replay in a fresh process,
+selected HTTP continuation after restart, invalid credential zero inference
+and revoked prompt/load zero inference. The same fixture passes against V1.
+Local verification: 48 runtime/agent tests, 23 HTTP Model tests, warnings-denied
+Clippy for all three packages, workspace Rustfmt, and packaged
+`basic-v2-packaged-host` / `provider-openai-api-launcher` checks passed.
+V2 output: `/nix/store/dfr7410r7m4pqlj8pah9kj7wyb8mm0sf-phenix-basic-v2-product`.
+`devenv test` could not run because devenv is not installed.
+
+Remaining: controlled selected-provider cancellation acceptance
+on this selected-provider V2 composition, OAuth/other-provider V2 parity,
+Neovim user acceptance, simultaneous scoped-state concurrency and default
+product migration. This increment is not full P1 parity or ACP v2 wire support.
+Exact-head remote acceptance belongs to the dependent PR; no merge is claimed.
+
 ### Bounded V2 ACP Product Entry (31 October 2026)
 
 Follow-up acceptance on #1229 adds `graph-v2-packaged-acp-tools.py` to the

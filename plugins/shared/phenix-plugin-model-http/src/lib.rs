@@ -20,33 +20,49 @@ fn failed(message: &str) -> BasicError {
 pub(crate) enum ModelConfiguration {
     #[default]
     Preset,
-    // Each checked configuration is scoped to its Basic session and consumed
-    // exactly once. Selected mode is permanent: missing/consumed sessions
-    // cannot fall back to an unrelated legacy environment preset.
-    Selected(std::collections::BTreeMap<String, request::Config>),
+    // The first Model call binds an install to one run, including its tool
+    // continuations. A different run requires fresh controller authorization.
+    Selected(std::collections::BTreeMap<String, (std::sync::Arc<request::Config>, Option<String>)>),
 }
 
 impl ModelConfiguration {
     pub(crate) fn install(&mut self, session: String, config: request::Config) {
+        let config = std::sync::Arc::new(config);
         match self {
             Self::Preset => {
-                *self = Self::Selected(std::collections::BTreeMap::from([(session, config)]));
+                *self = Self::Selected(std::collections::BTreeMap::from([(
+                    session,
+                    (config, None),
+                )]));
             }
             Self::Selected(pending) => {
-                pending.insert(session, config);
+                pending.insert(session, (config, None));
             }
         }
     }
 
-    pub(crate) fn take_for_turn(&mut self, session: &str) -> Result<request::Config, BasicError> {
+    pub(crate) fn take_for_turn(
+        &mut self,
+        session: &str,
+        run: &str,
+    ) -> Result<std::sync::Arc<request::Config>, BasicError> {
         match self {
-            Self::Preset => request::Config::load(),
-            Self::Selected(pending) => pending.remove(session).ok_or_else(|| {
-                error(
-                    ErrorCode::InvalidInput,
-                    "selected HTTP model is not installed for session",
-                )
-            }),
+            Self::Preset => request::Config::load().map(std::sync::Arc::new),
+            Self::Selected(pending) => {
+                let (config, admitted_run) = pending
+                    .get_mut(session)
+                    .filter(|(_, admitted)| {
+                        !run.is_empty() && admitted.as_deref().is_none_or(|value| value == run)
+                    })
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::InvalidInput,
+                            "selected HTTP model is not installed for session",
+                        )
+                    })?;
+                *admitted_run = Some(run.into());
+                Ok(config.clone())
+            }
         }
     }
 }
@@ -106,7 +122,7 @@ mod plugin {
         }
         let config = state
             .configuration
-            .take_for_turn(&request.session)
+            .take_for_turn(&request.session, &request.run)
             .map_err(CallError::Domain)?;
         let body = phenix_provider_protocols::request::encode_protocol_with_max_tokens(
             &request,

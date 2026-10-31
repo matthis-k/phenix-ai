@@ -6,7 +6,7 @@ URLs only for the test fixture, not the distributed production provider.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from model_protocol_fixture import ResponsesWire
+from model_protocol_fixture import ResponsesWire, chat_view
 import json
 import os
 import queue
@@ -27,6 +27,7 @@ output.mkdir(parents=True, exist_ok=True)
 key = secrets.token_hex(32)
 received = []
 state = {"get": 0, "post": 0, "redirected": 0}
+live_delta = threading.Event()
 account = {"provider_id": "openai", "connection_id": "api", "profile_id": "personal"}
 resource = "phenix.credentials." + ".".join(
     account[name].encode().hex()
@@ -83,8 +84,21 @@ class HTTP(BaseHTTPRequestHandler):
         state["post"] += 1
         parts = []
         writer = ResponsesWire(parts.append)
-        writer.chunk({"choices": [{"index": 0, "delta": {
-            "content": "verified-openai-api"}, "finish_reason": "stop"}]})
+        messages = chat_view(packet)["messages"]
+        if state["post"] == 1:
+            assert messages[-1] == {"role": "user", "content": "hello"}, messages
+            assert "uppercase" in [tool["name"] for tool in packet["tools"]]
+            writer.chunk({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "id": "selected-tool", "type": "function",
+                 "function": {"name": "uppercase", "arguments": '{"value":"provider"}'}},
+            ]}, "finish_reason": "tool_calls"}]})
+        else:
+            if state["post"] in (2, 3):
+                results = [m for m in messages if m["role"] == "tool"]
+                assert results == [{"role": "tool", "tool_call_id": "selected-tool",
+                                    "content": "PROVIDER"}], results
+            writer.chunk({"choices": [{"index": 0, "delta": {
+                "content": "verified-openai-api"}, "finish_reason": "stop"}]})
         writer.chunk({"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 4}})
         writer.done()
         payload = b"".join(parts)
@@ -92,7 +106,14 @@ class HTTP(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        if state["post"] == 2:
+            boundary = payload.index(b"event: response.completed")
+            self.wfile.write(payload[:boundary])
+            self.wfile.flush()
+            assert live_delta.wait(timeout=20), "ACP did not observe text before HTTP completion"
+            self.wfile.write(payload[boundary:])
+        else:
+            self.wfile.write(payload)
         self.wfile.flush()
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), HTTP)
@@ -243,6 +264,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
             text=True, bufsize=1, env=launch_env,
         )
         children.append(p)
+        p.updates = []
         p.responses = queue.Queue()
         def reader():
             for line in p.stdout: p.responses.put(line)
@@ -263,7 +285,13 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                 raise AssertionError((method, p.poll(), stderr))
             assert key not in raw, "secret leaked in ACP response"
             data = json.loads(raw)
-            if data.get("method") == "session/update": continue
+            if data.get("method") == "session/update":
+                p.updates.append(data["params"])
+                update = data["params"]["update"]
+                if (update.get("sessionUpdate") == "agent_message_chunk" and
+                        update.get("content", {}).get("text") == "verified-openai-api"):
+                    live_delta.set()
+                continue
             assert data.get("id") == request_id, (method, data)
             return data
         raise AssertionError("excessive ACP notifications")
@@ -354,7 +382,13 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                     {"sessionId": session, "prompt": [
                         {"type": "text", "text": "hello"}]})
     assert prompted.get("result", {}).get("stopReason") == "end_turn", prompted
-    assert received == ["gpt-5"], received
+    assert received == ["gpt-5"] * 2, received
+    history = [u for u in p.updates if u["sessionId"] == session]
+    updates = [u["update"] for u in history]
+    assert [u["toolCallId"] for u in updates if u["sessionUpdate"] == "tool_call"] == ["selected-tool"], updates
+    assert [u["toolCallId"] for u in updates if u["sessionUpdate"] == "tool_call_update"] == ["selected-tool"], updates
+    assert any(u["sessionUpdate"] == "agent_message_chunk" and
+               u["content"].get("text") == "verified-openai-api" for u in updates), updates
     # The authorized root, not a process-global profile default, must
     # select this account. Omitting the optional restriction still works,
     # while a conflicting deployment restriction fails before network I/O.
@@ -379,7 +413,14 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     loaded = call(restarted, 21, "session/load",
                   {"sessionId": session, "cwd": "/tmp", "mcpServers": []})
     assert "result" in loaded, loaded
+    assert restarted.updates == history, (restarted.updates, history)
+    continued = call(restarted, 23, "session/prompt", {
+        "sessionId": session, "prompt": [{"type": "text", "text": "after restart"}],
+    })
+    assert continued.get("result", {}).get("stopReason") == "end_turn", continued
+    assert state["post"] == 3
     close(restarted)
+    before_revoke = state["post"]
     revoked = call(p, 15, "_phenix/credentials/revoke", account)
     assert revoked["result"]["ok"] is True
     unavailable = call(p, 16, "_phenix/providers/auth/status", user)
@@ -395,6 +436,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
                        {"sessionId": session, "cwd": "/tmp", "mcpServers": []})
     assert "error" in denied_load, denied_load
     close(after_revoke)
+    assert state["post"] == before_revoke, "revoked credential reached inference"
 
     assert not list(vault.iterdir()), "key not revoked from vault"
 
@@ -493,7 +535,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     assert not list(vault.iterdir()), "revoked env name persisted"
 
     assert state["redirected"] == 0, state
-    assert state["get"] >= 12 and state["post"] == 3, state
+    assert state["get"] >= 12 and state["post"] == 5, state
 
 server.shutdown()
 (output / "openai-api-auth-product.json").write_text(json.dumps({
@@ -514,4 +556,10 @@ server.shutdown()
     "shipping_launcher_authority_exercised": bool(packaged_paths),
     "generic_provider_bundle_e2e": bundle_file is not None,
     "named_environment_key_streamed": True,
+    "selected_provider_tool_round_trip": True,
+    "acp_tool_and_text_observed": True,
+    "acp_text_before_http_completion": live_delta.is_set(),
+    "restart_replays_exact_observer_history": True,
+    "restart_continues_selected_http_history": True,
+    "revoked_credentials_zero_inference": True,
 }, sort_keys=True, indent=2))

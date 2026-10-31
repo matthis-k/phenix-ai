@@ -10,6 +10,14 @@ from explicit `PHENIX_MODEL_HTTP_*` provider settings. Missing endpoint/model
 fails closed. Requests follow the Chat Completions streaming protocol. The
 provider follows no redirects and supports only HTTP/HTTPS endpoints.
 
+Selected-provider installs are session-scoped and bind to the first nonempty
+Basic run identity. All Model calls for that run, including tool continuations,
+share the checked clearing configuration. Another run requires a fresh checked
+install; a missing session, empty run or different run fails closed without
+consulting preset environment credentials. The controller revalidates provider
+auth and resolves the exact credential before installing each new turn. This
+does not promise mid-run external credential revocation detection.
+
 The authenticated begin callback checks the session resource and validates the
 complete transcript, tool schemas, skills, context and caller limits before
 starting network work. It rejects empty run identities and zero token/timeout
