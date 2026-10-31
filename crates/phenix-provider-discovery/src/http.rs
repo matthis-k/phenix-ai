@@ -69,6 +69,9 @@ pub fn fetch_bearer_catalog(endpoint: &str, bearer: &str) -> Result<Vec<u8>, Cat
     if !approved_endpoint(endpoint) {
         return Err(CatalogFetchError::UnsafeEndpoint);
     }
+    let destination =
+        phenix_provider_protocols::resolve_destination(endpoint, EndpointMode::LocalLoopback)
+            .map_err(|_| CatalogFetchError::UnsafeEndpoint)?;
     if bearer.is_empty()
         || bearer.len() > 4096
         || !bearer
@@ -82,13 +85,21 @@ pub fn fetch_bearer_catalog(endpoint: &str, bearer: &str) -> Result<Vec<u8>, Cat
         too_large: false,
     });
     let mut headers = List::new();
+    let mut resolution = List::new();
+    resolution
+        .append(&destination.resolve_entry)
+        .map_err(|_| CatalogFetchError::Unavailable)?;
+    easy.resolve(resolution)
+        .and_then(|_| easy.proxy(""))
+        .and_then(|_| easy.noproxy("*"))
+        .map_err(|_| CatalogFetchError::Unavailable)?;
     headers
         .append("Accept: application/json")
         .map_err(|_| CatalogFetchError::Unavailable)?;
     headers
         .append(&format!("Authorization: Bearer {bearer}"))
         .map_err(|_| CatalogFetchError::Unavailable)?;
-    easy.url(endpoint)
+    easy.url(&destination.url)
         .and_then(|_| easy.get(true))
         .and_then(|_| easy.follow_location(false))
         .and_then(|_| easy.connect_timeout(Duration::from_secs(4)))
@@ -197,9 +208,72 @@ mod tests {
         }
         for token in ["", "bad\nheader", "bad token", "bad:header"] {
             assert_eq!(
-                fetch_bearer_catalog("https://example.com/models", token),
+                fetch_bearer_catalog("http://127.0.0.1:1/models", token),
                 Err(CatalogFetchError::InvalidBearer)
             );
         }
+    }
+
+    #[test]
+    fn unsafe_destination_never_connects_or_builds_credential_headers() {
+        // 0.0.0.0 is reachable locally on many systems, but never authorized.
+        let server = TcpListener::bind("0.0.0.0:0").unwrap();
+        server.set_nonblocking(true).unwrap();
+        let endpoint = format!(
+            "https://0.0.0.0:{}/models",
+            server.local_addr().unwrap().port()
+        );
+        assert_eq!(
+            fetch_bearer_catalog(&endpoint, "secret-not-for-local"),
+            Err(CatalogFetchError::UnsafeEndpoint)
+        );
+        // Destination denial takes precedence over credential validation.
+        assert_eq!(
+            fetch_bearer_catalog(&endpoint, "bad\nheader"),
+            Err(CatalogFetchError::UnsafeEndpoint)
+        );
+        assert_eq!(
+            server.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        for host in [
+            "10.0.0.1",
+            "169.254.169.254",
+            "[::ffff:127.0.0.1]",
+            "[fc00::1]",
+        ] {
+            assert_eq!(
+                fetch_bearer_catalog(&format!("https://{host}/models"), "secret"),
+                Err(CatalogFetchError::UnsafeEndpoint)
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_environment_is_ignored_in_child_process() {
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let address = format!("http://{}", proxy.local_addr().unwrap());
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "http::tests::standard_bearer_catalog_is_bounded_and_does_not_follow_redirects",
+        ]);
+        for key in [
+            "http_proxy",
+            "HTTP_PROXY",
+            "https_proxy",
+            "HTTPS_PROXY",
+            "all_proxy",
+            "ALL_PROXY",
+        ] {
+            child.env(key, &address);
+        }
+        child.env("no_proxy", "").env("NO_PROXY", "");
+        assert!(child.status().unwrap().success());
+        assert_eq!(
+            proxy.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 }

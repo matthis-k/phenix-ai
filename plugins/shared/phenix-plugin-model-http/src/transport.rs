@@ -103,9 +103,40 @@ pub(crate) fn run_with_notify(
     cancelled: Arc<AtomicBool>,
     wake: impl Fn() + Send + Sync + 'static,
 ) -> Result<ModelReply, BasicError> {
+    run_with_resolver(
+        config,
+        body,
+        request,
+        progress,
+        cancelled,
+        wake,
+        |endpoint| {
+            phenix_provider_protocols::resolve_destination(
+                endpoint,
+                phenix_provider_protocols::EndpointMode::LocalLoopback,
+            )
+        },
+    )
+}
+
+fn run_with_resolver(
+    config: Config,
+    body: Vec<u8>,
+    request: ModelRequest,
+    progress: Arc<Mutex<String>>,
+    cancelled: Arc<AtomicBool>,
+    wake: impl Fn() + Send + Sync + 'static,
+    resolve: impl FnOnce(
+        &str,
+    ) -> Result<
+        phenix_provider_protocols::ResolvedDestination,
+        phenix_provider_protocols::EndpointProblem,
+    >,
+) -> Result<ModelReply, BasicError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(failed("HTTP model cancelled"));
     }
+    let destination = resolve(&config.endpoint).map_err(|_| failed("HTTP destination rejected"))?;
     let mut handle = Easy2::new(Transfer {
         stream: Stream::new(config.protocol),
         progress,
@@ -126,7 +157,12 @@ pub(crate) fn run_with_notify(
         })
         .transpose()?;
     let configured = (|| -> Result<(), curl::Error> {
-        handle.url(&config.endpoint)?;
+        handle.url(&destination.url)?;
+        let mut resolution = List::new();
+        resolution.append(&destination.resolve_entry)?;
+        handle.resolve(resolution)?;
+        handle.proxy("")?;
+        handle.noproxy("*")?;
         handle.post(true)?;
         handle.post_fields_copy(&body)?;
         handle.follow_location(false)?;
@@ -192,3 +228,7 @@ pub(crate) fn run_with_notify(
     }
     std::mem::take(&mut handle.get_mut().stream).finish(&request)
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod tests;

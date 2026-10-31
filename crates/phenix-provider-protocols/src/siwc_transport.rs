@@ -87,12 +87,39 @@ fn request_with_auth(
     bearer: Option<&str>,
     allow_empty: bool,
 ) -> Result<Vec<u8>, TransportError> {
+    request_with_mode(
+        url,
+        post,
+        limit,
+        bearer,
+        allow_empty,
+        crate::EndpointMode::Remote,
+    )
+}
+
+fn request_with_mode(
+    url: &str,
+    post: Option<&str>,
+    limit: usize,
+    bearer: Option<&str>,
+    allow_empty: bool,
+    mode: crate::EndpointMode,
+) -> Result<Vec<u8>, TransportError> {
+    let destination = crate::resolve_destination(url, mode).map_err(|_| TransportError::Network)?;
     let mut easy = Easy2::new(BoundedBody {
         bytes: Vec::new(),
         bound: limit,
         too_large: false,
     });
     let mut headers = List::new();
+    let mut resolution = List::new();
+    resolution
+        .append(&destination.resolve_entry)
+        .map_err(|_| TransportError::Unavailable)?;
+    easy.resolve(resolution)
+        .and_then(|_| easy.proxy(""))
+        .and_then(|_| easy.noproxy("*"))
+        .map_err(|_| TransportError::Unavailable)?;
     headers
         .append("Accept: application/json")
         .map_err(|_| TransportError::Unavailable)?;
@@ -114,7 +141,8 @@ fn request_with_auth(
             .append(&format!("Authorization: Bearer {token}"))
             .map_err(|_| TransportError::Unavailable)?;
     }
-    easy.url(url).map_err(|_| TransportError::Unavailable)?;
+    easy.url(&destination.url)
+        .map_err(|_| TransportError::Unavailable)?;
     easy.http_headers(headers)
         .map_err(|_| TransportError::Unavailable)?;
     easy.follow_location(false)
@@ -282,6 +310,24 @@ mod tests {
         thread,
     };
 
+    #[test]
+    fn unsafe_destination_precedes_bearer_access_and_never_connects() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!(
+            "https://127.0.0.1:{}",
+            listener.local_addr().unwrap().port()
+        );
+        assert_eq!(
+            request_with_auth(&url, None, 4096, Some("bad\nheader"), false),
+            Err(TransportError::Network)
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
     fn local(
         response: &'static str,
         post: Option<&str>,
@@ -327,7 +373,14 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
             String::from_utf8(bytes).unwrap()
         });
-        let outcome = request_with_auth(&address, post, limit, None, allow_empty);
+        let outcome = request_with_mode(
+            &address,
+            post,
+            limit,
+            None,
+            allow_empty,
+            crate::EndpointMode::LocalLoopback,
+        );
         (outcome, server.join().unwrap())
     }
 
@@ -430,7 +483,17 @@ mod tests {
     #[test]
     fn bearer_catalog_rejects_control_characters_before_network() {
         for token in ["", "bad\nheader", "bad:extra", "x\r", "a b"] {
-            assert_eq!(chatgpt_models(token), Err(TransportError::InvalidForm),);
+            assert_eq!(
+                request_with_mode(
+                    "http://127.0.0.1:1",
+                    None,
+                    4096,
+                    Some(token),
+                    false,
+                    crate::EndpointMode::LocalLoopback
+                ),
+                Err(TransportError::InvalidForm)
+            );
         }
     }
 
