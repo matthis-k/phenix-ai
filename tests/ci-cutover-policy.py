@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = "cd2403a45333a5211775bdf01b3ce45f28e02e5f"
+PIN = "5ac9c10ab144a20f32d542f663779b7d642cab49"
 
 def require(ok, message):
     if not ok:
@@ -62,7 +62,7 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
     )
     require(concurrency in trusted and concurrency in pr,
             "missing PR-scoped workflow cancellation or push run isolation")
-    require("permissions:\n  contents: read\n  id-token: write\n" in trusted,
+    require("permissions:\n  contents: read\n  id-token: write\n  packages: write\n" in trusted,
             "OIDC permission unexpectedly altered")
     owner = ("github.repository == 'matthis-k/phenix-ai' && "
              "github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && "
@@ -79,6 +79,9 @@ def verify(trusted, pr, renderer, config, flake, fallback, acp, verifier):
             "trusted Nix reusable workflow and library are not pinned together")
     require('config: "ci/flake-check-config.nix"' in trusted,
             "trusted workflow changed check inventory")
+    require("ghcrCache = true;" in config and "      ghcr_cache: true" in trusted
+            and "  packages: write" not in pr and "      ghcr_cache: true" not in pr,
+            "GHCR cache authority not restricted to trusted workflow")
     require("worker_count: 4\n      slots_per_worker: 2" in trusted,
             "trusted runner pool changed")
     require("TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}" in trusted,

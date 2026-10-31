@@ -12,16 +12,18 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 jobs:
   flake-checks:
     if: ${{ github.repository == 'matthis-k/phenix-ai' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && (github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')))) }}
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@cd2403a45333a5211775bdf01b3ce45f28e02e5f
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-nix-builders.yml@5ac9c10ab144a20f32d542f663779b7d642cab49
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "cd2403a45333a5211775bdf01b3ce45f28e02e5f"
+      library_ref: "5ac9c10ab144a20f32d542f663779b7d642cab49"
       worker_count: 4
       slots_per_worker: 2
+      ghcr_cache: true
     secrets:
       TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID }}
       TS_AUDIENCE: ${{ format('api.tailscale.com/{0}', secrets.TS_OAUTH_CLIENT_ID || vars.TS_OAUTH_CLIENT_ID) }}
