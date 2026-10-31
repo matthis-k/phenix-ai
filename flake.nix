@@ -37,7 +37,6 @@
         ./Cargo.toml
         ./Cargo.lock
         ./crates
-        ./examples
         ./include
         ./tests/abi.c
         ./tests/m1-architecture.py
@@ -2486,6 +2485,17 @@
             python ${./tests/descriptor.py} ${describe}/bin/phenix-describe ${provider} ${p0Fat} ${p0Off} ${p0Lld} ${p0Repeat} > $out/evidence.json
             python -m json.tool $out/evidence.json > /dev/null
           '';
+      # Formatting the independent examples workspace must not invalidate the
+      # expensive root Cargo/Clippy/test corpus when only example code changes.
+      # The SDK source and every example member remain present for cargo fmt.
+      exampleFormatCheck = pkgs.runCommand "phenix-examples-format" {
+        nativeBuildInputs = [ pkgs.cargo pkgs.rustfmt ];
+      } ''
+        cd ${pluginSource}/examples
+        cargo fmt --all --check
+        mkdir -p "$out"
+        touch "$out/verified"
+      '';
       contractCheck = (build "phenix-contract-check" contractSource).overrideAttrs (old: {
         cargoBuildFlags = [ ];
         buildInputs = (old.buildInputs or []) ++ [ pkgs.sqlite pkgs.curl pkgs.zlib ];
@@ -2498,7 +2508,6 @@
         buildPhase = ''
           export CARGO_HOME=$TMPDIR/cargo-home
           cargo fmt --all --check
-          cargo fmt --manifest-path examples/Cargo.toml --all --check
           cargo clippy --workspace --all-targets --offline -- -D warnings
           cargo test --workspace --offline
           $CC -std=c11 -Iinclude tests/abi.c -o abi-layout
@@ -3037,6 +3046,7 @@
         };
       };
       checks.${system} = {
+        examples-format = exampleFormatCheck;
         m1-native-authoring = authoringCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
