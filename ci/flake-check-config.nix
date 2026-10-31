@@ -55,10 +55,11 @@ ci.mkFlakeCheckConfig {
   };
   cache = {
     keyPrefix = "phenix-m1";
-    # Nix paths validate their own closure content. A flake.lock update to the
-    # CI implementation must not hide otherwise identical, reusable outputs.
-    # Keep the two Cargo dependency locks as the coarse compatibility group;
-    # exact path hashes still determine what Nix actually substitutes.
-    keyFiles = [ "Cargo.lock" "examples/Cargo.lock" ];
+    # GitHub's cache scope controls which trusted branch snapshot is visible.
+    # Do not shard its coarse lookup by lockfile contents: in a content-addressed
+    # Nix store, exact derivation and output hashes determine actual reuse.
+    # This lets a PR restore unchanged paths even across Cargo/flake lock bumps.
+    # New schema/toolchain incompatibilities still need a keyPrefix revision.
+    keyFiles = [ ];
   };
 }
