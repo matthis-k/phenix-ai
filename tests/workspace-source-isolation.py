@@ -18,14 +18,20 @@ CONTROLS = {"kernel", "sdk", "environment", "sqlite", "scripted",
 EXPECTED = CONTROLS | {"http", "contract"}
 
 
-def evaluate(snapshot):
+def evaluate(snapshot, *, exclude_contract=False):
+    selection = (
+        'builtins.removeAttrs outputs ["contract"]'
+        if exclude_contract else "outputs"
+    )
     completed = subprocess.run([
         "nix", "eval", "--json", "--no-write-lock-file",
         f"path:{snapshot}#sourceIsolation.x86_64-linux",
-        "--apply", "outputs: builtins.mapAttrs (_: drv: drv.drvPath) outputs",
+        "--apply",
+        f"outputs: builtins.mapAttrs (_: drv: drv.drvPath) ({selection})",
     ], capture_output=True, text=True, check=True)
     actual = json.loads(completed.stdout)
-    if set(actual) != EXPECTED or not all(p.endswith(".drv") for p in actual.values()):
+    expected = EXPECTED - ({"contract"} if exclude_contract else set())
+    if set(actual) != expected or not all(p.endswith(".drv") for p in actual.values()):
         raise AssertionError("incomplete, non-derivation source identity inventory")
     return actual
 
@@ -79,9 +85,19 @@ def main():
             match.group(0), 'members = ["' + canary + '", ' + match.group(1) + ']',
             1))
         try:
-            assert_unchanged(baseline, evaluate(snapshot), EXPECTED,
+            assert_unchanged(baseline, evaluate(snapshot, exclude_contract=True),
+                             EXPECTED - {"contract"},
                              "unselected workspace member addition")
-            print("PASS: an unrelated member changes no existing derivation", flush=True)
+            # Full-workspace checks must refuse an undeclared source closure:
+            # a missing new member is NOT permission to silently skip it.
+            try:
+                evaluate(snapshot)
+            except subprocess.CalledProcessError as exc:
+                if "full Cargo workspace check excludes a declared member" not in exc.stderr:
+                    raise AssertionError("wrong full-workspace rejection") from exc
+            else:
+                raise AssertionError("full-workspace check silently omitted a new member")
+            print("PASS: unchanged isolated derivations; incomplete full workspace denied", flush=True)
         finally:
             manifest.write_text(original_manifest)
             shutil.rmtree(canary_dir)
