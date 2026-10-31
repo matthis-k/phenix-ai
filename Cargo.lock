@@ -1813,18 +1813,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-p2-compaction-product"
-version = "0.1.0"
-dependencies = [
- "phenix-advanced-contracts",
- "phenix-basic-contracts",
- "phenix-contract",
- "phenix-kernel",
- "phenix-p2-compaction-replay",
- "serde_json",
-]
-
-[[package]]
 name = "phenix-p2-compaction-replay"
 version = "0.1.0"
 dependencies = [
@@ -1835,47 +1823,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "phenix-p2-evidence-store"
+name = "phenix-p2-products"
 version = "0.1.0"
 dependencies = [
  "phenix-advanced-contracts",
  "phenix-basic-contracts",
  "phenix-contract",
  "phenix-kernel",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "phenix-p2-model-meter-product"
-version = "0.1.0"
-dependencies = [
- "phenix-advanced-contracts",
- "phenix-basic-contracts",
- "phenix-contract",
- "phenix-kernel",
- "serde_json",
-]
-
-[[package]]
-name = "phenix-p2-project-storage"
-version = "0.1.0"
-dependencies = [
- "phenix-advanced-contracts",
- "phenix-contract",
- "phenix-kernel",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "phenix-p2-source-evidence"
-version = "0.1.0"
-dependencies = [
- "phenix-advanced-contracts",
- "phenix-basic-contracts",
- "phenix-contract",
- "phenix-kernel",
+ "phenix-p2-compaction-replay",
  "serde_json",
  "sha2 0.10.9",
 ]

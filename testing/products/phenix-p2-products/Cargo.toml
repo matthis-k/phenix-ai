@@ -1,0 +1,15 @@
+[package]
+name = "phenix-p2-products"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+phenix-contract.workspace = true
+phenix-kernel = { path = "../../../crates/phenix-kernel" }
+phenix-basic-contracts = { path = "../../../crates/phenix-basic-contracts" }
+phenix-advanced-contracts = { path = "../../../crates/phenix-advanced-contracts" }
+phenix-p2-compaction-replay = { path = "../../../crates/phenix-p2-compaction-replay" }
+serde_json.workspace = true
+sha2 = "0.10"
