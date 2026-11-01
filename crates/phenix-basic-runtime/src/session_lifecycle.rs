@@ -27,9 +27,30 @@ pub(super) struct SessionOwnership {
     file: std::fs::File,
 }
 
+#[derive(Debug)]
+pub(super) enum OwnershipError {
+    Busy,
+    Storage(String),
+}
+
+impl From<String> for OwnershipError {
+    fn from(message: String) -> Self {
+        Self::Storage(message)
+    }
+}
+
+impl From<OwnershipError> for String {
+    fn from(error: OwnershipError) -> Self {
+        match error {
+            OwnershipError::Busy => "session already owned by another host".into(),
+            OwnershipError::Storage(message) => message,
+        }
+    }
+}
+
 impl SessionOwnership {
     // Observation requires exclusion, but must not recover or execute a run.
-    pub(super) fn acquire(session: &str) -> Result<Self, String> {
+    pub(super) fn acquire(session: &str) -> Result<Self, OwnershipError> {
         session_lock(session).map(|file| Self { file })
     }
 }
@@ -43,7 +64,8 @@ impl SessionAdmission {
         // Validate before taking ownership or performing recovery writes.
         let value =
             Self::validate(session, submission).map_err(AdmissionError::InvalidSubmission)?;
-        let mut owner = SessionOwnership::acquire(session).map_err(AdmissionError::Ownership)?;
+        let mut owner = SessionOwnership::acquire(session)
+            .map_err(|error| AdmissionError::Ownership(error.into()))?;
         recover_owned_run(kernel, session, &mut owner.file).map_err(AdmissionError::Recovery)?;
         Ok(Self { owner, value })
     }
