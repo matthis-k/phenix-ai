@@ -37,6 +37,7 @@ credential_contract = "phenix.provider.credentials@1"
 provider_contract = "phenix.provider.catalog@1"
 auth_contract = "phenix.provider.auth@1"
 scope = "phenix.providers.user"
+controlled_post = None
 
 class HTTP(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -80,6 +81,9 @@ class HTTP(BaseHTTPRequestHandler):
         packet = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         assert packet["model"] == "gpt-5", packet["model"]
         assert packet["stream"] is True
+        if controlled_post is not None:
+            controlled_post(self, packet)
+            return
         received.append(packet["model"])
         state["post"] += 1
         parts = []
@@ -420,6 +424,10 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
     assert continued.get("result", {}).get("stopReason") == "end_turn", continued
     assert state["post"] == 3
     close(restarted)
+    if os.environ.get("PHENIX_SELECTED_PROVIDER_CANCEL_ACCEPTANCE") == "1":
+        from selected_provider_cancellation import exercise
+        exercise(p, call, root / "selected.sqlite", output,
+                 lambda handler: globals().__setitem__("controlled_post", handler))
     before_revoke = state["post"]
     revoked = call(p, 15, "_phenix/credentials/revoke", account)
     assert revoked["result"]["ok"] is True

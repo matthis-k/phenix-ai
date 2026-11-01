@@ -22,21 +22,45 @@ pub(crate) enum ModelConfiguration {
     Preset,
     // The first Model call binds an install to one run, including its tool
     // continuations. A different run requires fresh controller authorization.
-    Selected(std::collections::BTreeMap<String, (std::sync::Arc<request::Config>, Option<String>)>),
+    Selected(
+        std::collections::BTreeMap<String, (std::sync::Arc<request::Config>, Option<String>, u64)>,
+    ),
 }
 
 impl ModelConfiguration {
-    pub(crate) fn install(&mut self, session: String, config: request::Config) {
+    pub(crate) fn install(&mut self, session: String, config: request::Config, installation: u64) {
         let config = std::sync::Arc::new(config);
         match self {
             Self::Preset => {
                 *self = Self::Selected(std::collections::BTreeMap::from([(
                     session,
-                    (config, None),
+                    (config, None, installation),
                 )]));
             }
             Self::Selected(pending) => {
-                pending.insert(session, (config, None));
+                pending.insert(session, (config, None, installation));
+            }
+        }
+    }
+
+    fn release(&mut self, session: &str, installation: u64) {
+        if let Self::Selected(entries) = self {
+            if entries
+                .get(session)
+                .is_some_and(|entry| entry.2 == installation)
+            {
+                entries.remove(session);
+            }
+        }
+    }
+
+    fn release_run(&mut self, session: &str, run: &str) {
+        if let Self::Selected(entries) = self {
+            if entries
+                .get(session)
+                .is_some_and(|entry| entry.1.as_deref() == Some(run))
+            {
+                entries.remove(session);
             }
         }
     }
@@ -49,9 +73,9 @@ impl ModelConfiguration {
         match self {
             Self::Preset => request::Config::load().map(std::sync::Arc::new),
             Self::Selected(pending) => {
-                let (config, admitted_run) = pending
+                let (config, admitted_run, _) = pending
                     .get_mut(session)
-                    .filter(|(_, admitted)| {
+                    .filter(|(_, admitted, _)| {
                         !run.is_empty() && admitted.as_deref().is_none_or(|value| value == run)
                     })
                     .ok_or_else(|| {
@@ -82,7 +106,7 @@ mod plugin {
         Usage,
     };
     use phenix_provider_contracts::{
-        HttpModelInstall, HttpModelSession, ProviderError, ProviderErrorCode,
+        HttpModelInstall, HttpModelRelease, HttpModelSession, ProviderError, ProviderErrorCode,
     };
     use phenix_sdk::{Blob, CallError, CallResult, Code, Failure, Host, PendingResult};
     use std::{
@@ -106,6 +130,7 @@ mod plugin {
     pub struct State {
         worker: Option<Worker>,
         configuration: super::ModelConfiguration,
+        installation: u64,
     }
 
     fn start(
@@ -130,7 +155,12 @@ mod plugin {
             config.protocol,
             config.provider_max_tokens,
         )
-        .map_err(CallError::Domain)?;
+        .map_err(|failure| {
+            state
+                .configuration
+                .release_run(&request.session, &request.run);
+            CallError::Domain(failure)
+        })?;
         let session = request.session.clone();
         let run = request.run.clone();
         let progress = Arc::new(Mutex::new(String::new()));
@@ -153,7 +183,10 @@ mod plugin {
                 let _ = sender.send(result);
                 wake.wake();
             })
-            .map_err(|_| CallError::Domain(super::failed("HTTP worker could not start")))?;
+            .map_err(|_| {
+                state.configuration.release_run(&session, &run);
+                CallError::Domain(super::failed("HTTP worker could not start"))
+            })?;
         state.worker = Some(Worker {
             session,
             run,
@@ -170,7 +203,7 @@ mod plugin {
         state: &mut State,
         host: &Host<'_>,
         input: HttpModelInstall,
-    ) -> CallResult<(), ProviderError> {
+    ) -> CallResult<u64, ProviderError> {
         let fail = |code, message: &str| {
             CallError::Domain(ProviderError {
                 code,
@@ -198,7 +231,38 @@ mod plugin {
                 "invalid HTTP model install",
             )
         })?;
-        state.configuration.install(session, config);
+        let installation = state.installation.checked_add(1).ok_or_else(|| {
+            fail(
+                ProviderErrorCode::Conflict,
+                "HTTP installation identity exhausted",
+            )
+        })?;
+        state.installation = installation;
+        state.configuration.install(session, config, installation);
+        Ok(installation)
+    }
+
+    #[provide(HttpModelSession::release)]
+    fn release(
+        state: &mut State,
+        host: &Host<'_>,
+        input: HttpModelRelease,
+    ) -> CallResult<(), ProviderError> {
+        let resource = phenix_basic_contracts::session_resource(&input.session).map_err(|_| {
+            CallError::Domain(ProviderError {
+                code: ProviderErrorCode::InvalidInput,
+                message: "invalid selected session".into(),
+            })
+        })?;
+        if host.resource()?.as_deref() != Some(resource.as_str()) {
+            return Err(CallError::Domain(ProviderError {
+                code: ProviderErrorCode::Denied,
+                message: "model session resource denied".into(),
+            }));
+        }
+        state
+            .configuration
+            .release(&input.session, input.installation);
         Ok(())
     }
 
@@ -269,6 +333,9 @@ mod plugin {
                 .map(|_| ())
             });
             if let Err(failure) = result {
+                state
+                    .configuration
+                    .release_run(&worker.session, &worker.run);
                 worker.failure = Some(failure);
                 worker.cancelled.store(true, Ordering::Release);
             }
@@ -277,7 +344,10 @@ mod plugin {
             return PendingResult::Pending;
         }
         let worker = state.worker.take().unwrap();
+        let session = worker.session.clone();
+        let run = worker.run.clone();
         if cancelled && worker.failure.is_none() {
+            state.configuration.release_run(&session, &run);
             let _ = worker.thread.join();
             return PendingResult::Ready(Ok(ModelReply {
                 text: String::new(),
@@ -285,7 +355,11 @@ mod plugin {
                 usage: Usage::default(),
             }));
         }
-        match joined(worker) {
+        let result = joined(worker);
+        if result.is_err() {
+            state.configuration.release_run(&session, &run);
+        }
+        match result {
             Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
             result => PendingResult::Ready(result),
         }
@@ -295,11 +369,67 @@ mod plugin {
         let Some(worker) = state.worker.as_ref() else {
             return Ok(true);
         };
+        state
+            .configuration
+            .release_run(&worker.session, &worker.run);
         worker.cancelled.store(true, Ordering::Release);
         if !worker.thread.is_finished() {
             return Ok(false);
         }
         let _ = state.worker.take().unwrap().thread.join();
         Ok(true)
+    }
+
+    #[test]
+    fn cancellation_revokes_configuration_before_physical_worker_drain() {
+        let mut state = State::default();
+        state.configuration.install(
+            "s1".into(),
+            super::request::Config {
+                endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+                model: "selected".into(),
+                protocol: phenix_provider_protocols::Protocol::OpenaiChat,
+                provider_max_tokens: None,
+                credential: Some(
+                    phenix_provider_contracts::CredentialSecret::new(b"test-secret".to_vec())
+                        .unwrap(),
+                ),
+                presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+                ca_file: None,
+            },
+            1,
+        );
+        let config = state.configuration.take_for_turn("s1", "r1").unwrap();
+        let weak = Arc::downgrade(&config);
+        let (drain, wait) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _config = config;
+            wait.recv().unwrap();
+            drop(sender);
+        });
+        state.worker = Some(Worker {
+            session: "s1".into(),
+            run: "r1".into(),
+            progress: Arc::new(Mutex::new(String::new())),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            receiver,
+            thread,
+            failure: None,
+        });
+        assert!(!cancel(&mut state).unwrap());
+        assert!(state.configuration.take_for_turn("s1", "r1").is_err());
+        assert!(state.configuration.take_for_turn("s1", "r2").is_err());
+        assert!(state
+            .worker
+            .as_ref()
+            .unwrap()
+            .cancelled
+            .load(Ordering::Acquire));
+        assert!(weak.upgrade().is_some());
+        drain.send(()).unwrap();
+        state.worker.take().unwrap().thread.join().unwrap();
+        assert!(weak.upgrade().is_none());
+        assert!(cancel(&mut state).unwrap());
     }
 }

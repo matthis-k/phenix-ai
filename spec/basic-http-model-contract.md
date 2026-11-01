@@ -18,6 +18,41 @@ consulting preset environment credentials. The controller revalidates provider
 auth and resolves the exact credential before installing each new turn. This
 does not promise mid-run external credential revocation detection.
 
+### Selected installation lifecycle (1 November 2026)
+
+Dependent implementation on #1231, based on `298108cf1c1ff0d494d81e68a5e9cb7869420c4c`;
+not merged or default-product migration. Selection persists nonsecret intent
+only. Each prompt revalidates authority/auth and resolves credentials immediately
+before install. The typed install returns a monotonically increasing instance-local
+`u64` token; session-scoped release removes only that exact installation, so stale
+cleanup cannot remove a replacement. Both install and release grants are required
+before credential resolution. The controller releases after success, failure and
+cancellation, including pre-Model admission failures. Model cancellation and worker
+errors revoke same-run reuse; selected mode never falls back to preset settings.
+
+Release revokes reuse, not physical ownership: an active worker's `Arc<Config>`
+retains clearing credential storage until the worker drops it. A channel-controlled
+unit test proves revocation before worker drain and final configuration drop after
+drain. `selected_provider_cancellation.py` exercises actual V2 selected-provider
+ACP cancellation before headers, after observed text, during partial tool assembly,
+on tool continuation and racing completion. Duplicate cancel, exactly one durable
+terminal, peer socket closure, no late output and a fresh same-session prompt are
+checked using server/observer handshakes. Completion racing cancellation may yield
+either one Answer or one Cancelled, never both. Numeric loopback socket closure
+does not measure internal native-image lease counts or stalled NSS resolution.
+
+Concurrency remains a requirement, not established by these sequential cases.
+The HTTP instance currently owns one `Option<Worker>`; session-keyed configuration
+is not proof of concurrent worker support. Follow-up deterministic tests must hold
+one worker while admitting another session/activation, verify explicit same-instance
+serialization or typed busy rejection without configuration replacement/leakage,
+and prove unrelated instances overlap. State scope must distinguish per-instance
+installation counters/configuration from per-session selections and per-run binding;
+test stale release, cross-session denial, cancellation of A without revoking B,
+queued admission only after drain, and generation lifetime through final worker
+drop. Concurrent roots need the separate kernel lifecycle/ABI work, not a map or
+another scheduler. Bounded resolver cancellation remains exclusively #1230 below.
+
 The authenticated begin callback checks the session resource and validates the
 complete transcript, tool schemas, skills, context and caller limits before
 starting network work. It rejects empty run identities and zero token/timeout

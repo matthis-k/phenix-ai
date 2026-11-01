@@ -1584,7 +1584,7 @@
         python ${./tests/graph-v2-packaged-acp-tools.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
         export PYTHONPATH=${./tests}
-        python ${./tests/acp-openai-api-key-product.py} \
+        PHENIX_SELECTED_PROVIDER_CANCEL_ACCEPTANCE=1 python ${./tests/acp-openai-api-key-product.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2HttpComposition} \
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/provider" \
           ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
@@ -1777,10 +1777,16 @@
             operation = "install";
             resources = [ "phenix.session.s1" ];
           }
+          { caller = "root";
+            interface = "phenix.provider.http-model-session@1";
+            operation = "release";
+            resources = [ "phenix.session.s1" ];
+          }
         ];
         authority = base.authority // {
           operations = base.authority.operations ++ [
             "phenix.provider.http-model-session@1/install"
+            "phenix.provider.http-model-session@1/release"
           ];
         };
       };
