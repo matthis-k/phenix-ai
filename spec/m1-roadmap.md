@@ -12,6 +12,53 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ### Selected Provider V2 HTTP Increment (1 November 2026)
 
+#### Dependent cancellation and installation cleanup
+
+Based on #1231 head `298108cf1c1ff0d494d81e68a5e9cb7869420c4c`.
+This narrow typed API extension returns an installation token and adds exact-token
+release; all in-tree install consumers and composition grants change together.
+Idle model selection retains nonsecret intent, not a resolved credential. Prompt
+cleanup revokes reuse on terminal/error/cancel, including before Model admission;
+active workers retain their own clearing configuration until physical drain.
+See the [HTTP lifecycle contract](basic-http-model-contract.md#selected-installation-lifecycle-1-november-2026).
+
+The packaged V2 gate adds five controlled actual-provider ACP cases: before
+headers, first text, partial tool assembly, continuation and completion race.
+It verifies duplicate cancel/exactly-one terminal, journal counts, peer closure,
+late-output suppression and subsequent same-session recovery. These are sequential
+numeric-loopback transport tests, not internal lease or bounded-DNS evidence.
+The existing queued multi-session tool acceptance remains distinct from simultaneous
+scoped-state concurrency. Deterministic follow-up requirements: hold singleton
+workers across competing sessions/activations, prove serialization/busy behavior,
+isolate per-instance/per-session/per-run state, stale cleanup and A/B cancellation,
+and verify independent instances overlap without releasing generations prematurely.
+Resolver/NSS lifecycle and stalled-resolution testing remain #1230, not this PR.
+
+Local rerun: `nix develop -c cargo test -p phenix-basic-runtime -p
+phenix-plugin-basic-agent -p phenix-plugin-model-http -p phenix-provider-contracts
+--features graph-v2 --locked` passed **111** tests (40 runtime + 8 agent including
+integration + 24 HTTP + 39 provider contracts). The earlier 103 count omitted the
+8 agent tests; default runtime alone remains 40. Workspace Rustfmt passes under
+`nix develop`; direct cargo is absent. `devenv test` was attempted and cannot run:
+`devenv: command not found`. Prior working-tree packaged output is
+`/nix/store/9g7gnyxgyj6vx4s9v5qpp7q7bsh5y2lp-phenix-basic-v2-product`;
+exact committed-head remote acceptance must be recorded in the dependent PR.
+Warnings-denied Clippy passed for runtime, agent, HTTP, provider contracts and the
+native selected-product runner. Packaged `basic-v2-packaged-host`,
+`provider-openai-api-launcher`, `b4-http` and `f2-acp` all passed on rerun.
+Check inventory is **89**, derived by `nix eval .#checks.x86_64-linux --apply
+'checks: builtins.length (builtins.attrNames checks)'`, not increased for five fixture cases.
+
+Decision ledger remains **17 resolved, 0 open, 0 deferred**, as recorded in #891
+below; remaining implementation/acceptance gaps are not invented new decisions.
+Still open: OAuth/other-provider V2 parity, Neovim acceptance, simultaneous scoped
+state/concurrency, default migration and #1230. Next interactive command:
+`nix run .#phenix-basic-v2-acp` with a fresh writable `PHENIX_BASIC_SQLITE_PATH`,
+then connect the ACP client, select an authorized model, submit a tool prompt,
+cancel streamed output and submit another prompt. The default scripted launcher
+does not establish real-provider onboarding; selected HTTP requires its explicit
+composition/provider bundle and credentials. No merge or full P1 parity claimed.
+
 Dependent on the accepted, still-unmerged #1229 head
 `aeca52b4e22e2f8aaf9400c6a963f04c7913ab0b` (full 89-check run
 41249310216). The isolated follow-up reuses the HTTP composition builder with

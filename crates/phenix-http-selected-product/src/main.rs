@@ -152,6 +152,7 @@ fn main() {
     let resource = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let specs = [
         ("root", "phenix.provider.http-model-session@1/install"),
+        ("root", "phenix.provider.http-model-session@1/release"),
         ("root", "phenix.basic.model@1/complete"),
         ("root", "phenix.basic.journal@1/read"),
         ("phenix.model.http", "phenix.basic.journal@1/append"),
@@ -225,10 +226,10 @@ fn main() {
     }
 
     let chosen = checked_install(&endpoint, "s1", authenticated);
-    assert!(matches!(
-        root.invoke_selected(&control, &chosen.to_value()).unwrap(),
-        Outcome::Success(_)
-    ));
+    let installation = match root.invoke_selected(&control, &chosen.to_value()).unwrap() {
+        Outcome::Success(value) => u64::from_value(value).unwrap(),
+        Outcome::Domain(_) => panic!("selected installation failed"),
+    };
     let mut request = ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
@@ -269,6 +270,22 @@ fn main() {
         (27, 7)
     );
     assert!(reply.calls.is_empty());
+    let release = selection(
+        "phenix.provider.http-model-session@1/release",
+        "phenix.model.http",
+    );
+    assert!(matches!(
+        root.invoke_selected(
+            &release,
+            &phenix_provider_contracts::HttpModelRelease {
+                session: "s1".into(),
+                installation,
+            }
+            .to_value()
+        )
+        .unwrap(),
+        Outcome::Success(_)
+    ));
     let journal = root
         .invoke_selected(
             &selection("phenix.basic.journal@1/read", "phenix.basic.event-journal"),

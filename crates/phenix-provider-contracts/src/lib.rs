@@ -18,7 +18,9 @@ pub use credentials::{
 };
 
 pub mod model_session;
-pub use model_session::{HttpModelAuthorization, HttpModelInstall, HttpModelSession};
+pub use model_session::{
+    HttpModelAuthorization, HttpModelInstall, HttpModelRelease, HttpModelSession,
+};
 
 pub mod selection;
 pub use selection::{
