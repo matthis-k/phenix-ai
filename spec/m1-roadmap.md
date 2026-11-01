@@ -25,8 +25,12 @@ and no compatibility shim. Six controlled HTTP cases replace the ambiguous
 completion race with independently required completion-winning and
 cancellation-winning terminal barriers. The native curl cancellation fixture
 also asserts an outstanding physical lease blocks shutdown and same-instance
-admission. These checks do not prove independent-instance overlap or selected
-HTTP generation retirement; those remain required follow-up evidence.
+admission. A follow-up native curl fixture holds one instance while a second
+loaded kernel completes a real HTTP request, observes both physical leases,
+shuts down the second independently and verifies the first lease remains.
+This passes for chat, responses and Anthropic codecs. This proves independent
+native-instance overlap, not simultaneous selected-installation A/B isolation.
+Selected HTTP generation retirement remains required follow-up evidence.
 
 ACP lifecycle review: selection revalidation, installation and exact-token
 release are domain lifecycle responsibilities currently hosted in the ACP
@@ -44,6 +48,11 @@ including the native conformance runner passed. Packaged `basic-v2-packaged-host
 `/nix/store/8rqp7lk0d0qg0zn13wdjpccixf6bsivx-phenix-basic-v2-product`.
 `devenv test` remains unavailable (`devenv: command not found`). Exact-head
 remote results are recorded in the dependent PR, not inferred from local builds.
+The native overlap rerun passed at
+`/nix/store/i8447c7jx29s6gklpqv0aahvriblyzqi-phenix-b4-http`.
+The actual `m1-generations` gate also passed, including abandoned physical lease
+retirement blockers and real resource release; this is generic kernel generation
+evidence, not selected HTTP credential lifetime evidence.
 
 Based on #1231 head `298108cf1c1ff0d494d81e68a5e9cb7869420c4c`.
 This narrow typed API extension returns an installation token and adds exact-token

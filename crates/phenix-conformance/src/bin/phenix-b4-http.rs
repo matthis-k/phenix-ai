@@ -129,7 +129,7 @@ fn main() {
             "phenix.basic.storage@1/transact",
         ),
     ];
-    let kernel = Prepared::prepare(Composition {
+    let composition = Composition {
         format: "phenix.composition.v3".into(),
         artifacts: args[2..5].to_vec(),
         definitions: vec![args[5].clone(), args[6].clone()],
@@ -169,10 +169,11 @@ fn main() {
             resources: resource,
         },
         resource: Some("phenix.session.s1".into()),
-    })
-    .unwrap()
-    .load()
-    .unwrap();
+    };
+    let kernel = Prepared::prepare(composition.clone())
+        .unwrap()
+        .load()
+        .unwrap();
     let root = kernel.admit_default_root().unwrap();
     let call = root.begin(&request(mode).to_value()).unwrap();
     let mut live = false;
@@ -198,6 +199,40 @@ fn main() {
                     if mode == "stream" {
                         fs::write(output.join("live-progress"), b"observed").unwrap();
                     } else {
+                        // The server holds this worker until cancel-requested.
+                        // A separate loaded instance must finish independently.
+                        let independent = Prepared::prepare(composition.clone())
+                            .unwrap()
+                            .load()
+                            .unwrap();
+                        let other = independent.admit_default_root().unwrap();
+                        let other_ticket = match other.begin(&request("multi").to_value()).unwrap()
+                        {
+                            Call::Pending(ticket) => ticket,
+                            Call::Ready(_) => panic!("independent HTTP did not start a worker"),
+                        };
+                        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+                        assert_eq!(independent.inspect()["pending"]["physical_leases"], 1);
+                        assert!(matches!(
+                            root.begin(&request(mode).to_value()),
+                            Err(failure) if failure.code == phenix_contract::Code::ReentrancyRejected
+                        ));
+                        loop {
+                            assert!(Instant::now() < deadline, "independent HTTP deadline");
+                            match other.poll(&other_ticket).unwrap() {
+                                Poll::Ready(value) => {
+                                    assert_eq!(outcome(value.unwrap()).unwrap().calls.len(), 2);
+                                    other.release(&other_ticket).unwrap();
+                                    break;
+                                }
+                                Poll::Pending => std::thread::sleep(Duration::from_millis(5)),
+                                _ => panic!("independent worker unexpectedly cancelled"),
+                            }
+                        }
+                        assert_eq!(independent.inspect()["pending"]["physical_leases"], 0);
+                        drop(other);
+                        independent.shutdown().unwrap();
+                        assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
                         before_cancel = page.next;
                         assert!(
                             !root.cancel(&ticket).unwrap(),

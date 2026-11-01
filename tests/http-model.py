@@ -147,7 +147,7 @@ def run(mode, endpoint, ca=None):
     if mode in ("denied", "zero", "bad-config", "tls-untrusted"):
         assert len(requests) == before, (mode, requests[before:])
     else:
-        assert requests[before:] == [mode], (mode, requests[before:])
+        assert requests[before:] == ([mode, "multi"] if mode == "cancel" else [mode]), (mode, requests[before:])
 
 
 endpoint = f"http://127.0.0.1:{http.server_port}/completions"
@@ -180,4 +180,6 @@ http.shutdown()
     "live_journal_before_completion": True, "cancelled_cleanup_writes": False,
     "caller_selected_limits": True, "https_verified": True,
     "basic_agent_integration": False,
+    "independent_instances_overlap": True,
+    "same_instance_busy_rejected": True,
 }, indent=2, sort_keys=True))

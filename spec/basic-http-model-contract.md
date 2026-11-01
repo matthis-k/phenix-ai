@@ -48,7 +48,12 @@ cancellation-winning withholds completion bytes until the Cancelled response.
 Numeric loopback socket closure
 does not measure internal native-image lease counts or stalled NSS resolution.
 
-Concurrency remains a requirement, not established by these sequential cases.
+Selected-installation concurrency remains a requirement, not established by these sequential cases.
+The native curl conformance fixture separately holds one worker, rejects a second
+same-instance admission, completes a request on an independent loaded kernel,
+observes both physical leases and shuts down that kernel without releasing the
+first worker. This runs for all three protocol codecs. It is actual native
+instance overlap evidence, not selected-installation A/B authority isolation.
 The HTTP instance currently owns one `Option<Worker>`; session-keyed configuration
 is not proof of concurrent worker support. Follow-up deterministic tests must hold
 one worker while admitting another session/activation, verify explicit same-instance
