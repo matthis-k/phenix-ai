@@ -1247,6 +1247,9 @@ impl Controller {
                 None => {}
             }
         }
+        // TODO(Graph V2 P1-parity): remove implementation-ID preset routing when
+        // all supported launchers use catalog selections and restart parity passes.
+        // Selected-mode failures must never use this migration-only fallback.
         Ok(installed.map(str::to_owned))
     }
 
@@ -1576,6 +1579,33 @@ impl Controller {
         let Some(kernel) = self.sessions.get(&session) else {
             return Err(invalid("unknown ACP session"));
         };
+        // The SDK decodes the envelope; the frontend validates its typed payload
+        // before ownership or selected-model effects are attempted.
+        let submission: Submission = invoke(
+            kernel,
+            "phenix.basic.frontend-acp",
+            "phenix.basic.frontend@1/decode",
+            ClientInput {
+                session: session.clone(),
+                line: serde_json::json!({"prompt": request}).to_string(),
+            },
+        )
+        .map_err(internal)?
+        .map_err(|cause| {
+            if cause.code == ErrorCode::InvalidInput {
+                invalid(&cause.message)
+            } else {
+                internal_basic(cause)
+            }
+        })?;
+        // TODO(#1234, Graph V2): move ownership,
+        // recovery, selection/install and final release into the typed domain
+        // lifecycle, leaving ACP as ingress/observation only. Remove this
+        // orchestration only after same-session exclusion, independent-session
+        // progress, recovery, cancellation/drain and release-failure parity pass
+        // through the selected product without frontend-owned lifecycle calls.
+        let mut owner = session_lock(&session).map_err(internal_storage)?;
+        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
         let installation = if has_model_selection_storage(&self.composition) {
             match super::model_selection_state::read(kernel, &self.composition, &session)
                 .map_err(internal)?
@@ -1640,28 +1670,6 @@ impl Controller {
             Ok(())
         };
         let result = (|| {
-            // The SDK has already decoded the JSON-RPC envelope into a typed
-            // PromptRequest. The native frontend maps only that schema payload
-            // into Phenix's typed Submission action.
-            let submission: Submission = invoke(
-                kernel,
-                "phenix.basic.frontend-acp",
-                "phenix.basic.frontend@1/decode",
-                ClientInput {
-                    session: session.clone(),
-                    line: serde_json::json!({"prompt": request}).to_string(),
-                },
-            )
-            .map_err(internal)?
-            .map_err(|cause| {
-                if cause.code == ErrorCode::InvalidInput {
-                    invalid(&cause.message)
-                } else {
-                    internal_basic(cause)
-                }
-            })?;
-            let mut owner = session_lock(&session).map_err(internal_storage)?;
-            recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
             let execution =
                 begin_submission(kernel, submission, basic_scope(&self.composition, &session))
                     .map_err(internal)?;

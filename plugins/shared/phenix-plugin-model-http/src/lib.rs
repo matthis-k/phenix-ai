@@ -7,6 +7,15 @@ mod control_tests;
 mod tests;
 mod transport;
 
+// Only acceptance artifacts emit lifecycle evidence; no runtime setting enables it.
+#[cfg(feature = "test-lifecycle-evidence")]
+impl Drop for request::Config {
+    fn drop(&mut self) {
+        drop(self.credential.take());
+        eprintln!("test-http-lifecycle: config-dropped {}", self.model);
+    }
+}
+
 use phenix_basic_contracts::{error, BasicError, ErrorCode};
 
 fn invalid(message: &str) -> BasicError {
@@ -28,7 +37,12 @@ pub(crate) enum ModelConfiguration {
 }
 
 impl ModelConfiguration {
-    pub(crate) fn install(&mut self, session: String, config: request::Config, installation: u64) {
+    pub(crate) fn install(
+        &mut self,
+        session: String,
+        config: request::Config,
+        installation: u64,
+    ) -> Result<(), phenix_provider_contracts::ProviderError> {
         let config = std::sync::Arc::new(config);
         match self {
             Self::Preset => {
@@ -37,10 +51,19 @@ impl ModelConfiguration {
                     (config, None, installation),
                 )]));
             }
-            Self::Selected(pending) => {
-                pending.insert(session, (config, None, installation));
-            }
+            Self::Selected(pending) => match pending.entry(session) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((config, None, installation));
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(phenix_provider_contracts::ProviderError {
+                        code: phenix_provider_contracts::ProviderErrorCode::Conflict,
+                        message: "selected HTTP model is already installed for session".into(),
+                    });
+                }
+            },
         }
+        Ok(())
     }
 
     fn release(&mut self, session: &str, installation: u64) {
@@ -131,6 +154,23 @@ mod plugin {
         worker: Option<Worker>,
         configuration: super::ModelConfiguration,
         installation: u64,
+        #[cfg(feature = "test-lifecycle-evidence")]
+        evidence_session: String,
+    }
+
+    #[cfg(feature = "test-lifecycle-evidence")]
+    impl Drop for State {
+        fn drop(&mut self) {
+            assert!(
+                self.worker.is_none(),
+                "native state destroyed with an unjoined worker"
+            );
+            self.configuration = super::ModelConfiguration::default();
+            eprintln!(
+                "test-http-lifecycle: state-dropped {}",
+                self.evidence_session
+            );
+        }
     }
 
     fn start(
@@ -237,8 +277,15 @@ mod plugin {
                 "HTTP installation identity exhausted",
             )
         })?;
+        state
+            .configuration
+            .install(session.clone(), config, installation)
+            .map_err(CallError::Domain)?;
         state.installation = installation;
-        state.configuration.install(session, config, installation);
+        #[cfg(feature = "test-lifecycle-evidence")]
+        {
+            state.evidence_session = session.clone();
+        }
         Ok(installation)
     }
 
@@ -258,6 +305,16 @@ mod plugin {
             return Err(CallError::Domain(ProviderError {
                 code: ProviderErrorCode::Denied,
                 message: "model session resource denied".into(),
+            }));
+        }
+        if cfg!(feature = "test-release-fault") {
+            eprintln!(
+                "test-release-fault: {} {}",
+                input.session, input.installation
+            );
+            return Err(CallError::Domain(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                message: "test-only selected HTTP release fault".into(),
             }));
         }
         state
@@ -280,6 +337,10 @@ mod plugin {
     }
     fn joined(worker: Worker) -> CallResult<ModelReply, BasicError> {
         let joined = worker.thread.join();
+        #[cfg(feature = "test-lifecycle-evidence")]
+        if joined.is_ok() {
+            eprintln!("test-http-lifecycle: worker-joined {}", worker.session);
+        }
         if let Some(failure) = worker.failure {
             return Err(failure);
         }
@@ -348,7 +409,12 @@ mod plugin {
         let run = worker.run.clone();
         if cancelled && worker.failure.is_none() {
             state.configuration.release_run(&session, &run);
-            let _ = worker.thread.join();
+            let joined = worker.thread.join();
+            #[cfg(feature = "test-lifecycle-evidence")]
+            if joined.is_ok() {
+                eprintln!("test-http-lifecycle: worker-joined {}", session);
+            }
+            let _ = joined;
             return PendingResult::Ready(Ok(ModelReply {
                 text: String::new(),
                 calls: vec![],
@@ -376,29 +442,38 @@ mod plugin {
         if !worker.thread.is_finished() {
             return Ok(false);
         }
-        let _ = state.worker.take().unwrap().thread.join();
+        let worker = state.worker.take().unwrap();
+        let joined = worker.thread.join();
+        #[cfg(feature = "test-lifecycle-evidence")]
+        if joined.is_ok() {
+            eprintln!("test-http-lifecycle: worker-joined {}", worker.session);
+        }
+        let _ = joined;
         Ok(true)
     }
 
     #[test]
     fn cancellation_revokes_configuration_before_physical_worker_drain() {
         let mut state = State::default();
-        state.configuration.install(
-            "s1".into(),
-            super::request::Config {
-                endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
-                model: "selected".into(),
-                protocol: phenix_provider_protocols::Protocol::OpenaiChat,
-                provider_max_tokens: None,
-                credential: Some(
-                    phenix_provider_contracts::CredentialSecret::new(b"test-secret".to_vec())
-                        .unwrap(),
-                ),
-                presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
-                ca_file: None,
-            },
-            1,
-        );
+        state
+            .configuration
+            .install(
+                "s1".into(),
+                super::request::Config {
+                    endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+                    model: "selected".into(),
+                    protocol: phenix_provider_protocols::Protocol::OpenaiChat,
+                    provider_max_tokens: None,
+                    credential: Some(
+                        phenix_provider_contracts::CredentialSecret::new(b"test-secret".to_vec())
+                            .unwrap(),
+                    ),
+                    presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+                    ca_file: None,
+                },
+                1,
+            )
+            .unwrap();
         let config = state.configuration.take_for_turn("s1", "r1").unwrap();
         let weak = Arc::downgrade(&config);
         let (drain, wait) = mpsc::channel();

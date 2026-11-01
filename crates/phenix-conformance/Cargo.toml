@@ -6,6 +6,6 @@ license.workspace = true
 [dependencies]
 phenix-contract.workspace = true
 phenix-artifact = { path = "../phenix-artifact" }
-phenix-kernel = { path = "../phenix-kernel" }
+phenix-kernel = { path = "../phenix-kernel", features = ["test-lifecycle-evidence"] }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 serde_json.workspace = true
