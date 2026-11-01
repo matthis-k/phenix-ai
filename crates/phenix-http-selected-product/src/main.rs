@@ -151,7 +151,8 @@ fn main() {
     };
     let resource = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let specs = [
-        ("root", "phenix.provider.http-model-session@1/install"),
+        ("root", "phenix.provider.http-model-session@2/install"),
+        ("root", "phenix.provider.http-model-session@2/release"),
         ("root", "phenix.basic.model@1/complete"),
         ("root", "phenix.basic.journal@1/read"),
         ("phenix.model.http", "phenix.basic.journal@1/append"),
@@ -207,7 +208,7 @@ fn main() {
     .unwrap();
     let root = kernel.admit_default_root().unwrap();
     let control = selection(
-        "phenix.provider.http-model-session@1/install",
+        "phenix.provider.http-model-session@2/install",
         "phenix.model.http",
     );
 
@@ -225,11 +226,11 @@ fn main() {
     }
 
     let chosen = checked_install(&endpoint, "s1", authenticated);
-    assert!(matches!(
-        root.invoke_selected(&control, &chosen.to_value()).unwrap(),
-        Outcome::Success(_)
-    ));
-    let request = ModelRequest {
+    let installation = match root.invoke_selected(&control, &chosen.to_value()).unwrap() {
+        Outcome::Success(value) => u64::from_value(value).unwrap(),
+        Outcome::Domain(_) => panic!("selected installation failed"),
+    };
+    let mut request = ModelRequest {
         session: "s1".into(),
         run: "r1".into(),
         history: vec![Message::user("selected")],
@@ -269,6 +270,22 @@ fn main() {
         (27, 7)
     );
     assert!(reply.calls.is_empty());
+    let release = selection(
+        "phenix.provider.http-model-session@2/release",
+        "phenix.model.http",
+    );
+    assert!(matches!(
+        root.invoke_selected(
+            &release,
+            &phenix_provider_contracts::HttpModelRelease {
+                session: "s1".into(),
+                installation,
+            }
+            .to_value()
+        )
+        .unwrap(),
+        Outcome::Success(_)
+    ));
     let journal = root
         .invoke_selected(
             &selection("phenix.basic.journal@1/read", "phenix.basic.event-journal"),
@@ -291,8 +308,9 @@ fn main() {
             .collect::<String>(),
         reply.text
     );
-    // This grant is spent. An unrelated PHENIX_MODEL_HTTP_* environment
-    // preset must never take over the next selected Model turn.
+    // Continuations share this run's install, but a new run requires fresh
+    // authorization and must never fall back to the environment preset.
+    request.run.push_str("-next");
     let second = root.begin(&request.to_value()).unwrap();
     let rejected = match second {
         Call::Ready(value) => value,
@@ -318,7 +336,7 @@ fn main() {
                 ErrorCode::InvalidInput
             );
         }
-        Outcome::Success(_) => panic!("consumed native choice unexpectedly executed again"),
+        Outcome::Success(_) => panic!("new run executed without a fresh native install"),
     }
     assert_eq!(kernel.inspect()["pending"]["physical_leases"], 0);
     drop(root);

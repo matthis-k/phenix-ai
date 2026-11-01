@@ -16,6 +16,8 @@ output = Path(output_dir)
 output.mkdir(parents=True, exist_ok=True)
 requests = []
 lock = threading.Lock()
+selected_received = set()
+selected_output = None
 protocol = os.environ.get("PHENIX_MODEL_HTTP_PROTOCOL", "openai-chat")
 responses = protocol == "openai-responses"
 anthropic = protocol == "anthropic-messages"
@@ -57,14 +59,22 @@ class Server(BaseHTTPRequestHandler):
             body = anthropic_view(body)
             self.wire = AnthropicWire(self.fragment)
         mode = body["messages"][-1]["content"]
+        selected = mode.startswith("selected-")
+        name = mode.rsplit("-", 1)[-1] if selected else None
         with lock:
             requests.append(mode)
+            if selected:
+                selected_received.add(name)
+                if selected_received == {"a", "b"}:
+                    (selected_output / "both-selected-received").write_text("received")
         if anthropic:
-            assert self.headers.get("x-api-key") == "fixture-token"
+            assert self.headers.get("x-api-key") == (f"selected-secret-{name}" if selected else "fixture-token")
             assert self.headers.get("anthropic-version") == "2023-06-01"
         else:
-            assert self.headers.get("Authorization") == "Bearer fixture-token"
-        assert body["model"] == "fixture-model" and body["stream"] is True
+            assert self.headers.get("Authorization") == (f"Bearer selected-secret-{name}" if selected else "Bearer fixture-token")
+        assert body["model"] == (f"selected-{name}" if selected else "fixture-model") and body["stream"] is True
+        if selected:
+            assert self.path == f"/completions/{name}"
         assert body["stream_options"]["include_usage"] is True
         assert body["max_completion_tokens"] == (1 if mode == "limit" else 32)
         assert "Use Rust" in body["messages"][0]["content"]
@@ -105,6 +115,13 @@ class Server(BaseHTTPRequestHandler):
                 ]}, "tool_calls"))
             else:
                 self.chunk(frame({"content": "first-"}))
+                if selected:
+                    marker = selected_output / f"release-selected-{name}"
+                    deadline = time.monotonic() + 15
+                    while not marker.exists():
+                        assert time.monotonic() < deadline, "selected release deadline"
+                        # Polling only transports the explicit caller barrier.
+                        threading.Event().wait(0.005)
                 if mode in ("stream", "cancel"):
                     marker = output / ("live-progress" if mode == "stream" else "cancel-requested")
                     deadline = time.monotonic() + 15
@@ -147,12 +164,67 @@ def run(mode, endpoint, ca=None):
     if mode in ("denied", "zero", "bad-config", "tls-untrusted"):
         assert len(requests) == before, (mode, requests[before:])
     else:
-        assert requests[before:] == [mode], (mode, requests[before:])
+        assert requests[before:] == ([mode, "multi"] if mode == "cancel" else [mode]), (mode, requests[before:])
 
 
 endpoint = f"http://127.0.0.1:{http.server_port}/completions"
 for mode in ["denied", "zero", "stream", "multi", "cancel", "status", "redirect", "provider-error", "malformed", "truncated", "no-usage", "limit", "timeout"]:
     run(mode, endpoint)
+for mode in ("selected-complete", "selected-cancel"):
+    selected_output = output / mode
+    selected_output.mkdir()
+    selected_received.clear()
+    env = dict(os.environ, PHENIX_MODEL_HTTP_ENDPOINT=endpoint,
+               PHENIX_MODEL_HTTP_MODEL="wrong-preset-model",
+               PHENIX_MODEL_HTTP_API_KEY="wrong-preset-secret",
+               PHENIX_BASIC_SQLITE_PATH=str(selected_output / "journal.db"))
+    before = len(requests)
+    completed = subprocess.run([binary, mode, model, journal, storage, definitions,
+                               provider_definitions, selected_output], env=env,
+                               capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, (mode, completed.stdout, completed.stderr)
+    assert "selected-secret-" not in completed.stdout + completed.stderr
+    retirement = json.loads((selected_output / f"{mode}.json").read_text())
+    assert retirement["all_physical_leases_released_before_retirement"] is True
+    assert retirement["all_roots_released_before_successful_retirement"] is True
+    assert retirement["final_kernel_reference_destructor_observed"] is True
+    identities = retirement["destroyed_kernel_generations"]
+    assert set(identities) == {"s-a", "s-b"}
+    assert identities["s-a"] != identities["s-b"]
+    for session, identity in identities.items():
+        assert completed.stderr.splitlines().count(
+            f"test-http-fixture: kernel-destroyed {session} {identity}") == 1
+    if os.environ.get("PHENIX_TEST_HTTP_LIFECYCLE") == "1":
+        events = [line for line in completed.stderr.splitlines()
+                  if line.startswith(("test-http-lifecycle:", "test-http-fixture:"))]
+        def position(event):
+            assert events.count(event) == 1, (mode, event, events)
+            return events.index(event)
+        held = position("test-http-fixture: both-held")
+        a_drained = position("test-http-fixture: a-drained-b-held")
+        released = position("test-http-fixture: both-released")
+        roots_dropped = position("test-http-fixture: roots-dropped")
+        retired = position("test-http-fixture: a-retired")
+        destroyed = position("test-http-fixture: generations-dropped")
+        assert held < a_drained < released < roots_dropped < retired < destroyed
+        for name, lower, upper in (("a", held, a_drained), ("b", a_drained, released)):
+            assert lower < position(f"test-http-lifecycle: worker-joined s-{name}") < upper
+            assert lower < position(f"test-http-lifecycle: config-dropped selected-{name}") < upper
+        assert roots_dropped < position("test-http-lifecycle: state-dropped s-a") < retired
+        assert retired < position("test-http-lifecycle: state-dropped s-b") < destroyed
+        a_kernel = position(f"test-http-fixture: kernel-destroyed s-a {identities['s-a']}")
+        b_kernel = position(f"test-http-fixture: kernel-destroyed s-b {identities['s-b']}")
+        assert retired < a_kernel < position("test-http-lifecycle: state-dropped s-b")
+        assert destroyed < b_kernel
+        (selected_output / "lifecycle-evidence.json").write_text(json.dumps({
+            "events": events,
+            "actual_join_return_observed": True,
+            "config_destructor_observed": True,
+            "native_state_destructor_observed": True,
+            "final_kernel_reference_destructor_observed": True,
+            "destroyed_kernel_generations": identities,
+        }, sort_keys=True))
+    assert sorted(requests[before:]) == [f"{mode}-a", f"{mode}-b"]
 run("bad-config", "file:///tmp/forbidden-model")
 # A credentialed Model must reject non-loopback plaintext before transport.
 run("bad-config", "http://192.0.2.42/completions")
@@ -180,4 +252,6 @@ http.shutdown()
     "live_journal_before_completion": True, "cancelled_cleanup_writes": False,
     "caller_selected_limits": True, "https_verified": True,
     "basic_agent_integration": False,
+    "independent_instances_overlap": True,
+    "same_instance_busy_rejected": True,
 }, indent=2, sort_keys=True))

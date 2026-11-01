@@ -26,7 +26,7 @@ pub enum HttpModelAuthorization {
     },
 }
 
-/// One-turn native install. The Rust constructor is checked; the receiving
+/// One-run native install, including same-run tool continuations. The Rust constructor is checked; the receiving
 /// plugin must validate decoded/untrusted Portable input and host resource.
 /// No serde, Clone or plain secret-bearing configuration is provided.
 #[derive(Debug, Portable)]
@@ -131,9 +131,25 @@ impl HttpModelInstall {
     }
 }
 
-/// Controller-only native install, separate from journaled Model::complete.
-/// A launcher's explicit session-specific root grant is still required.
-#[contract(id = "phenix.provider.http-model-session@1")]
+/// Controller-only native control, separate from journaled Model::complete.
+/// Both operations require explicit session-specific root grants. The controller
+/// must release the returned installation on terminal, cancelled and failed
+/// runs, including failures before Model::complete starts. Release revokes reuse;
+/// it neither cancels nor joins physical workers holding an in-flight config.
+/// Revision 2 returns an installation token; revision 1's install signature is
+/// not interchangeable. One native instance admits one physical Model worker;
+/// independent instances own independent workers and installation maps. Session
+/// identity scopes selection, while the first nonempty run binds activation
+/// reuse to that run and its continuations. New runs require fresh installation.
+#[contract(id = "phenix.provider.http-model-session@2")]
 pub trait HttpModelSession {
-    fn install(&self, request: HttpModelInstall) -> Result<(), ProviderError>;
+    fn install(&self, request: HttpModelInstall) -> Result<u64, ProviderError>;
+    fn release(&self, request: HttpModelRelease) -> Result<(), ProviderError>;
+}
+
+/// Release only the exact installation returned by `install`, never a replacement.
+#[derive(Debug, Portable)]
+pub struct HttpModelRelease {
+    pub session: String,
+    pub installation: u64,
 }

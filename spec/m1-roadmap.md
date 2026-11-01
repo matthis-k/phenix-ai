@@ -10,6 +10,134 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 ## Current integrated acceptance and next stages
 
+### Selected Provider V2 HTTP Increment (1 November 2026)
+
+#### Dependent cancellation and installation cleanup
+
+Follow-up review of #1232 at `cfabef05af5b0a9e70f2de82a5ce776678e8439b`:
+its exact-head generated run 41264288647 passed all four builders, both
+executable packages and final acceptance. The follow-up preserves primary prompt
+errors when release also fails, removes the failed-cleanup session kernel from
+admission, and attempts shutdown. Two focused cleanup tests cover precedence,
+quarantine and successful cleanup. The changed token-returning control contract
+is now `phenix.provider.http-model-session@2`, with consumers migrated together
+and no compatibility shim. Six controlled HTTP cases replace the ambiguous
+completion race with independently required completion-winning and
+cancellation-winning terminal barriers. The native curl cancellation fixture
+also asserts an outstanding physical lease blocks shutdown and same-instance
+admission. A follow-up native curl fixture holds one instance while a second
+loaded kernel completes a real HTTP request, observes both physical leases,
+shuts down the second independently and verifies the first lease remains.
+This passes for chat, responses and Anthropic codecs. This proves independent
+native-instance overlap, not simultaneous selected-installation A/B isolation.
+Selected HTTP generation retirement remains required follow-up evidence.
+
+ACP lifecycle review: selection revalidation, installation and exact-token
+release are domain lifecycle responsibilities currently hosted in the ACP
+controller. The smallest frontend-neutral extraction is that existing lifecycle
+boundary in the runtime, consuming typed session/run intent and returning typed
+outcomes; keep ACP decoding and update projection in the adapter. Reuse admitted
+graph execution, cancellation and journal observation. This is a proposal only,
+not a new controller, scheduler, registry or implementation claim. DNS/NSS #1230
+remains separate, with no bounded resolver claim.
+
+Local follow-up verification: **113** focused tests passed (42 runtime, 8 agent,
+24 HTTP, 39 provider contracts), workspace Rustfmt and warnings-denied Clippy
+including the native conformance runner passed. Packaged `basic-v2-packaged-host`,
+`provider-openai-api-launcher`, `b4-http` and `f2-acp` passed; V2 output is
+`/nix/store/8rqp7lk0d0qg0zn13wdjpccixf6bsivx-phenix-basic-v2-product`.
+`devenv test` remains unavailable (`devenv: command not found`). Exact-head
+remote results are recorded in the dependent PR, not inferred from local builds.
+The native overlap rerun passed at
+`/nix/store/i8447c7jx29s6gklpqv0aahvriblyzqi-phenix-b4-http`.
+The actual `m1-generations` gate also passed, including abandoned physical lease
+retirement blockers and real resource release; this is generic kernel generation
+evidence, not selected HTTP credential lifetime evidence.
+
+Based on #1231 head `298108cf1c1ff0d494d81e68a5e9cb7869420c4c`.
+This narrow typed API extension returns an installation token and adds exact-token
+release; all in-tree install consumers and composition grants change together.
+Idle model selection retains nonsecret intent, not a resolved credential. Prompt
+cleanup revokes reuse on terminal/error/cancel, including before Model admission;
+active workers retain their own clearing configuration until physical drain.
+See the [HTTP lifecycle contract](basic-http-model-contract.md#selected-installation-lifecycle-1-november-2026).
+
+The packaged V2 gate adds five controlled actual-provider ACP cases: before
+headers, first text, partial tool assembly, continuation and completion race.
+It verifies duplicate cancel/exactly-one terminal, journal counts, peer closure,
+late-output suppression and subsequent same-session recovery. These are sequential
+numeric-loopback transport tests, not internal lease or bounded-DNS evidence.
+The existing queued multi-session tool acceptance remains distinct from simultaneous
+scoped-state concurrency. Deterministic follow-up requirements: hold singleton
+workers across competing sessions/activations, prove serialization/busy behavior,
+isolate per-instance/per-session/per-run state, stale cleanup and A/B cancellation,
+and verify independent instances overlap without releasing generations prematurely.
+Resolver/NSS lifecycle and stalled-resolution testing remain #1230, not this PR.
+
+Local rerun: `nix develop -c cargo test -p phenix-basic-runtime -p
+phenix-plugin-basic-agent -p phenix-plugin-model-http -p phenix-provider-contracts
+--features graph-v2 --locked` passed **111** tests (40 runtime + 8 agent including
+integration + 24 HTTP + 39 provider contracts). The earlier 103 count omitted the
+8 agent tests; default runtime alone remains 40. Workspace Rustfmt passes under
+`nix develop`; direct cargo is absent. `devenv test` was attempted and cannot run:
+`devenv: command not found`. Prior working-tree packaged output is
+`/nix/store/9g7gnyxgyj6vx4s9v5qpp7q7bsh5y2lp-phenix-basic-v2-product`;
+exact committed-head remote acceptance must be recorded in the dependent PR.
+Warnings-denied Clippy passed for runtime, agent, HTTP, provider contracts and the
+native selected-product runner. Packaged `basic-v2-packaged-host`,
+`provider-openai-api-launcher`, `b4-http` and `f2-acp` all passed on rerun.
+Check inventory is **89**, derived by `nix eval .#checks.x86_64-linux --apply
+'checks: builtins.length (builtins.attrNames checks)'`, not increased for five fixture cases.
+
+Decision ledger remains **17 resolved, 0 open, 0 deferred**, as recorded in #891
+below; remaining implementation/acceptance gaps are not invented new decisions.
+Still open: OAuth/other-provider V2 parity, Neovim acceptance, simultaneous scoped
+state/concurrency, default migration and #1230. Next interactive command:
+`nix run .#phenix-basic-v2-acp` with a fresh writable `PHENIX_BASIC_SQLITE_PATH`,
+then connect the ACP client, select an authorized model, submit a tool prompt,
+cancel streamed output and submit another prompt. The default scripted launcher
+does not establish real-provider onboarding; selected HTTP requires its explicit
+composition/provider bundle and credentials. No merge or full P1 parity claimed.
+
+Dependent on the accepted, still-unmerged #1229 head
+`aeca52b4e22e2f8aaf9400c6a963f04c7913ab0b` (full 89-check run
+41249310216). The isolated follow-up reuses the HTTP composition builder with
+the existing V2 agent/tools/receipts selection and exposes
+`phenix-basic-v2-http-composition`. The existing packaged V2 gate now executes
+the actual OpenAI API provider's loopback feature variant, installed bundle
+authority, API-key auth, credential-files backend, selected HTTP Model, tools,
+journal and ACP observer. Only the provider endpoint artifact is substituted;
+curl and the existing protocol codecs remain unchanged.
+
+The new tool round trip exposed a real bug: the selected HTTP install was
+consumed by the first Model request, rejecting tool continuation. The install
+now binds to the first nonempty run identity within its authorized session.
+Continuation workers share the clearing configuration without cloning the
+credential. Different runs require a fresh install; foreign sessions and empty
+runs reject without environment fallback. No new controller or domain plugin.
+
+Acceptance checks the uppercase tool's exact ID/result in HTTP history, ACP
+tool start/result and text updates before the controlled server releases HTTP
+completion, exact history replay in a fresh process,
+selected HTTP continuation after restart, invalid credential zero inference
+and revoked prompt/load zero inference. The same fixture passes against V1.
+Local verification: 48 runtime/agent tests, 23 HTTP Model tests, warnings-denied
+Clippy for all three packages, workspace Rustfmt, and packaged
+`basic-v2-packaged-host` / `provider-openai-api-launcher` checks passed.
+V2 output: `/nix/store/dfr7410r7m4pqlj8pah9kj7wyb8mm0sf-phenix-basic-v2-product`.
+`devenv test` could not run because devenv is not installed.
+
+Remaining: controlled selected-provider cancellation acceptance
+on this selected-provider V2 composition, OAuth/other-provider V2 parity,
+Neovim user acceptance, simultaneous scoped-state concurrency and default
+product migration. This increment is not full P1 parity or ACP v2 wire support.
+Exact-head remote acceptance belongs to the dependent PR; no merge is claimed.
+The first remote run 41252042710 rejected the older native acceptance assertion
+that repeated the same run but expected fresh-turn denial. The native fixture
+now uses a different run identity for that denial; local `b4-http` and its
+warnings-denied runner Clippy passed. Same-run continuation remains covered by
+the focused configuration test and actual provider-backed tool round trip.
+
 ### Bounded V2 ACP Product Entry (31 October 2026)
 
 Follow-up acceptance on #1229 adds `graph-v2-packaged-acp-tools.py` to the

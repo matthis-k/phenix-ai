@@ -79,7 +79,7 @@ impl Handler for Transfer {
     }
 }
 pub(crate) fn run(
-    config: Config,
+    config: impl Into<Arc<Config>>,
     body: Vec<u8>,
     request: ModelRequest,
     progress: Arc<Mutex<String>>,
@@ -96,7 +96,7 @@ pub(crate) fn run(
 /// integration test can use a no-op notifier without constructing kernel
 /// authority or issuing a synthetic user/session root.
 pub(crate) fn run_with_notify(
-    config: Config,
+    config: impl Into<Arc<Config>>,
     body: Vec<u8>,
     request: ModelRequest,
     progress: Arc<Mutex<String>>,
@@ -120,7 +120,7 @@ pub(crate) fn run_with_notify(
 }
 
 fn run_with_resolver(
-    config: Config,
+    config: impl Into<Arc<Config>>,
     body: Vec<u8>,
     request: ModelRequest,
     progress: Arc<Mutex<String>>,
@@ -133,6 +133,7 @@ fn run_with_resolver(
         phenix_provider_protocols::EndpointProblem,
     >,
 ) -> Result<ModelReply, BasicError> {
+    let config = config.into();
     if cancelled.load(Ordering::Acquire) {
         return Err(failed("HTTP model cancelled"));
     }
@@ -178,7 +179,7 @@ fn run_with_resolver(
         if let Some(milliseconds) = request.limits.http_timeout_ms {
             handle.timeout(Duration::from_millis(milliseconds))?;
         }
-        if let Some(ca) = config.ca_file {
+        if let Some(ca) = &config.ca_file {
             handle.cainfo(ca)?;
         }
         let mut headers = List::new();

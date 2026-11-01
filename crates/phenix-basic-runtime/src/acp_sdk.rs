@@ -662,7 +662,7 @@ fn exact_current_model(offered: Option<&str>, requested: &str) -> bool {
 }
 
 /// Normal Basic stays on its launcher-installed static Model. The opt-in
-/// selected HTTP composition must have all three exact native root operations
+/// selected HTTP composition must have all four exact native root operations
 /// before it can present a mutable model picker.
 fn can_switch_native_model(spec: &Composition) -> bool {
     let Some(resource) = spec.resource.as_deref() else {
@@ -674,7 +674,8 @@ fn can_switch_native_model(spec: &Composition) -> bool {
     [
         ("phenix.basic.storage@1", "read"),
         ("phenix.basic.storage@1", "transact"),
-        ("phenix.provider.http-model-session@1", "install"),
+        ("phenix.provider.http-model-session@2", "install"),
+        ("phenix.provider.http-model-session@2", "release"),
     ]
     .into_iter()
     .all(|(interface, operation)| {
@@ -1246,6 +1247,9 @@ impl Controller {
                 None => {}
             }
         }
+        // TODO(Graph V2 P1-parity): remove implementation-ID preset routing when
+        // all supported launchers use catalog selections and restart parity passes.
+        // Selected-mode failures must never use this migration-only fallback.
         Ok(installed.map(str::to_owned))
     }
 
@@ -1402,10 +1406,8 @@ impl Controller {
                 "selected model CAS receipt did not become effective",
             ));
         }
-        // Only a confirmed durable choice may mutate native Model state.
-        // If installation fails, the selected intent remains fail-closed;
-        // subsequent prompts must revalidate and reinstall, never use preset.
-        self.install_current_http_model(&session, &desired)?;
+        // Persist intent only. The prompt revalidates and installs authority,
+        // so an idle selection never retains a resolved credential.
         Ok(SetSessionConfigOptionResponse::new(
             self.model_options(&session)?,
         ))
@@ -1485,7 +1487,14 @@ impl Controller {
         &self,
         session: &str,
         desired: &ModelSelection,
-    ) -> acp::Result<()> {
+    ) -> acp::Result<u64> {
+        // Check both grants and authority, including cleanup, before resolving
+        // credentials or mutating the native Model installation.
+        if !can_switch_native_model(&self.composition) {
+            return Err(invalid(
+                "selected Model install/release authority is unavailable",
+            ));
+        }
         let management = self
             .management
             .as_ref()
@@ -1534,9 +1543,16 @@ impl Controller {
             .ok_or_else(|| invalid("unknown selected model session"))?;
         let provider = installed_model_provider(&self.composition)
             .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
+        kernel
+            .admit_root(Selection {
+                interface: "phenix.provider.http-model-session@2".into(),
+                operation: "release".into(),
+                provider: provider.into(),
+            })
+            .map_err(|_| invalid("selected Model release grant is unavailable"))?;
         let root = kernel
             .admit_root(Selection {
-                interface: "phenix.provider.http-model-session@1".into(),
+                interface: "phenix.provider.http-model-session@2".into(),
                 operation: "install".into(),
                 provider: provider.into(),
             })
@@ -1545,7 +1561,7 @@ impl Controller {
         let result = root.invoke(&payload);
         scrub_portable_secret_bytes(&mut payload);
         match result.map_err(internal)? {
-            Outcome::Success(value) => <() as Portable>::from_value(value).map_err(internal),
+            Outcome::Success(value) => u64::from_value(value).map_err(internal),
             Outcome::Domain(value) => {
                 let problem = ProviderError::from_value(value).map_err(internal)?;
                 Err(provider_rejection(problem))
@@ -1563,25 +1579,8 @@ impl Controller {
         let Some(kernel) = self.sessions.get(&session) else {
             return Err(invalid("unknown ACP session"));
         };
-        if has_model_selection_storage(&self.composition) {
-            match super::model_selection_state::read(kernel, &self.composition, &session)
-                .map_err(internal)?
-            {
-                Some((stored, _revision)) => {
-                    // A once-selected native transport cannot silently return
-                    // to legacy preset routing when its record disappears.
-                    self.selected_http_seen.insert(session.clone());
-                    self.install_current_http_model(&session, &stored)?;
-                }
-                None if self.selected_http_seen.contains(&session) => {
-                    return Err(invalid("selected model record was withdrawn"));
-                }
-                None => {}
-            }
-        }
-        // The SDK has already decoded the JSON-RPC envelope into a typed
-        // PromptRequest. The native frontend maps only that schema payload
-        // into Phenix's typed Submission action.
+        // The SDK decodes the envelope; the frontend validates its typed payload
+        // before ownership or selected-model effects are attempted.
         let submission: Submission = invoke(
             kernel,
             "phenix.basic.frontend-acp",
@@ -1599,22 +1598,107 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        let mut owner = session_lock(&session).map_err(internal_storage)?;
-        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
-        let execution =
-            begin_submission(kernel, submission, basic_scope(&self.composition, &session))
+        // TODO(#1234): selected-provider installation and release still belong
+        // in a frontend-neutral domain boundary, including quarantine on failure.
+        let mut owner = SessionAdmission::acquire(kernel, &session, submission).map_err(
+            |error| match error {
+                super::session_lifecycle::AdmissionError::InvalidSubmission(message) => {
+                    invalid(&message)
+                }
+                super::session_lifecycle::AdmissionError::Ownership(message)
+                | super::session_lifecycle::AdmissionError::Recovery(message) => {
+                    internal_storage(message)
+                }
+            },
+        )?;
+        let installation = if has_model_selection_storage(&self.composition) {
+            match super::model_selection_state::read(kernel, &self.composition, &session)
+                .map_err(internal)?
+            {
+                Some((stored, _revision)) => {
+                    // A once-selected native transport cannot silently return
+                    // to legacy preset routing when its record disappears.
+                    self.selected_http_seen.insert(session.clone());
+                    Some(self.install_current_http_model(&session, &stored)?)
+                }
+                None if self.selected_http_seen.contains(&session) => {
+                    return Err(invalid("selected model record was withdrawn"));
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let release = |execution: Option<&GraphExecution<'_>>| -> acp::Result<()> {
+            if let Some(installation) = installation {
+                let provider = installed_model_provider(&self.composition)
+                    .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
+                let selection = Selection {
+                    interface: "phenix.provider.http-model-session@2".into(),
+                    operation: "release".into(),
+                    provider: provider.into(),
+                };
+                let payload = phenix_provider_contracts::HttpModelRelease {
+                    session: session.clone(),
+                    installation,
+                }
+                .to_value();
+                let outcome = if let Some(execution) = execution {
+                    match execution.invoke_selected(&selection, &payload) {
+                        // A physically pending Model instance cannot accept
+                        // control calls. Its cancel callback already revoked
+                        // reuse; explicit release is retried after drain.
+                        Err(failure)
+                            if failure.code == phenix_contract::Code::ReentrancyRejected =>
+                        {
+                            return Ok(())
+                        }
+                        outcome => outcome,
+                    }
+                } else {
+                    let root = kernel
+                        .admit_root(selection)
+                        .map_err(|_| invalid("selected Model release grant is unavailable"))?;
+                    root.invoke(&payload)
+                };
+                match outcome.map_err(internal)? {
+                    Outcome::Success(value) => {
+                        <() as Portable>::from_value(value).map_err(internal)?
+                    }
+                    Outcome::Domain(value) => {
+                        return Err(provider_rejection(
+                            ProviderError::from_value(value).map_err(internal)?,
+                        ))
+                    }
+                }
+            }
+            Ok(())
+        };
+        let result = (|| {
+            let execution = owner
+                .begin(kernel, basic_scope(&self.composition, &session))
                 .map_err(internal)?;
-        let offset = self.offsets.entry(session.clone()).or_default();
-        Self::drive(
-            kernel,
-            execution,
-            &session,
-            &mut owner,
-            offset,
-            peer,
-            cancelled,
-            &self.closed,
-        )
+            let offset = self.offsets.entry(session.clone()).or_default();
+            Self::drive(
+                kernel,
+                execution,
+                &session,
+                &mut owner,
+                offset,
+                peer,
+                cancelled,
+                &self.closed,
+                &release,
+            )
+        })();
+        let cleanup = release(None);
+        finish_prompt(result, cleanup, || {
+            // Failed revocation must not leave this kernel available to another
+            // prompt, even if shutdown itself cannot finish successfully.
+            if let Some(kernel) = self.sessions.remove(&session) {
+                let _ = kernel.shutdown();
+            }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1622,11 +1706,12 @@ impl Controller {
         kernel: &Kernel,
         mut execution: GraphExecution<'_>,
         session: &str,
-        owner: &mut std::fs::File,
+        owner: &mut SessionAdmission,
         after: &mut u64,
         peer: &Peer,
         cancel_flag: &AtomicBool,
         closed: &AtomicBool,
+        release: &impl Fn(Option<&GraphExecution<'_>>) -> acp::Result<()>,
     ) -> acp::Result<PromptResponse> {
         let mut marked = false;
         let mut stopping = false;
@@ -1635,11 +1720,14 @@ impl Controller {
                 && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
             {
                 execution.cancel().map_err(internal)?;
+                // Model cancellation revokes its active configuration. For
+                // tool-only work, release the idle Model on this same root.
+                release(Some(&execution))?;
                 stopping = true;
             }
             let status = execution.pump(|_| {}).map_err(internal)?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
+                marked = owner.mark(kernel, &execution, session).map_err(internal)?;
             }
             if !closed.load(Ordering::Acquire) {
                 send_updates(kernel, Some(&execution), session, after, peer, closed)?;
@@ -1653,7 +1741,7 @@ impl Controller {
                         send_updates(kernel, None, session, after, peer, closed)?;
                     }
                 }
-                set_owner_marker(owner, None).map_err(internal)?;
+                owner.complete().map_err(internal)?;
                 return Ok(PromptResponse::new(if cancelled {
                     StopReason::Cancelled
                 } else {
@@ -1992,8 +2080,50 @@ pub(super) fn run(
     Ok(())
 }
 
+fn finish_prompt<T>(
+    result: acp::Result<T>,
+    cleanup: acp::Result<()>,
+    quarantine: impl FnOnce(),
+) -> acp::Result<T> {
+    if cleanup.is_err() {
+        quarantine();
+    }
+    match result {
+        Err(primary) => Err(primary),
+        Ok(response) => cleanup.map(|()| response),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_prompt_cleanup_quarantines_and_preserves_primary_error() {
+        let mut reusable = true;
+        let result = super::finish_prompt::<()>(
+            Err(super::invalid("primary execution failure")),
+            Err(super::invalid("release failure")),
+            || reusable = false,
+        );
+        assert!(!reusable);
+        assert_eq!(
+            result.unwrap_err(),
+            super::invalid("primary execution failure")
+        );
+    }
+
+    #[test]
+    fn failed_cleanup_rejects_success_and_successful_cleanup_preserves_session() {
+        let mut reusable = true;
+        let result = super::finish_prompt(Ok(()), Err(super::invalid("release failure")), || {
+            reusable = false;
+        });
+        assert!(!reusable);
+        assert_eq!(result.unwrap_err(), super::invalid("release failure"));
+        assert_eq!(
+            super::finish_prompt(Ok(7), Ok(()), || panic!("unexpected quarantine")).unwrap(),
+            7
+        );
+    }
     use super::*;
 
     #[test]
@@ -2150,7 +2280,8 @@ mod tests {
         for (interface, operation) in [
             ("phenix.basic.storage@1", "read"),
             ("phenix.basic.storage@1", "transact"),
-            ("phenix.provider.http-model-session@1", "install"),
+            ("phenix.provider.http-model-session@2", "install"),
+            ("phenix.provider.http-model-session@2", "release"),
         ] {
             spec.grants.push(
                 serde_json::from_value(serde_json::json!({
@@ -2165,11 +2296,19 @@ mod tests {
         for operation in [
             "phenix.basic.storage@1/read",
             "phenix.basic.storage@1/transact",
-            "phenix.provider.http-model-session@1/install",
+            "phenix.provider.http-model-session@2/install",
+            "phenix.provider.http-model-session@2/release",
         ] {
             spec.authority.operations.insert(operation.into());
         }
         assert!(can_switch_native_model(&spec));
+        spec.authority
+            .operations
+            .remove("phenix.provider.http-model-session@2/release");
+        assert!(!can_switch_native_model(&spec));
+        spec.authority
+            .operations
+            .insert("phenix.provider.http-model-session@2/release".into());
         spec.authority
             .operations
             .remove("phenix.basic.storage@1/transact");

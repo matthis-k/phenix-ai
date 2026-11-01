@@ -3,6 +3,8 @@ name = "phenix-kernel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+[features]
+test-lifecycle-evidence = []
 [dependencies]
 phenix-contract.workspace = true
 serde.workspace = true
