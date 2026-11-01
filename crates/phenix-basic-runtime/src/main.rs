@@ -238,22 +238,8 @@ fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
 }
 
 /// Start an admitted graph without blocking the frontend's input controller.
-fn begin_submission<'a>(
-    kernel: &'a Kernel,
-    input: Submission,
-    scope: ScopedRequest,
-) -> Result<GraphExecution<'a>, String> {
-    let Submission::Dispatch { action, payload } = input else {
-        return Err("no active graph execution to cancel".into());
-    };
-    if action != "phenix.basic.submit" {
-        return Err("frontend selected an unknown Basic action".into());
-    }
-    let value = Value::decode(&payload.0).map_err(|e| format!("{e:?}"))?;
-    kernel
-        .begin_action_scoped(&action, &value, scope)
-        .map_err(|e| format!("{e:?}"))
-}
+mod session_lifecycle;
+use session_lifecycle::{OwnershipError, SessionAdmission, SessionOwnership};
 
 /// Recognize the selected Basic product's public terminal result rather than
 /// depending on the private ID or placement of the final graph node.
@@ -390,16 +376,18 @@ fn record_cancelled(kernel: &Kernel, session: &str) -> Result<(), String> {
 /// This is admission protection, not a recovery authorization. A fresh
 /// process must still not rewrite a durable Running snapshot solely because
 /// it acquired a lock; older or noncooperating hosts may lack this protocol.
-fn session_lock(session: &str) -> Result<std::fs::File, String> {
+fn session_lock(session: &str) -> Result<std::fs::File, OwnershipError> {
     let path = env::var("PHENIX_BASIC_SQLITE_PATH")
-        .map_err(|_| "PHENIX_BASIC_SQLITE_PATH is required for session ownership")?;
+        .map_err(|_| "PHENIX_BASIC_SQLITE_PATH is required for session ownership".to_string())?;
     if path.is_empty() || path == ":memory:" || path.starts_with("file:") {
-        return Err("session ownership requires a file-backed SQLite path".into());
+        return Err(OwnershipError::Storage(
+            "session ownership requires a file-backed SQLite path".into(),
+        ));
     }
     lock_session_file(Path::new(&path), session)
 }
 
-fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, String> {
+fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, OwnershipError> {
     phenix_basic_contracts::session_resource(session)
         .map_err(|e| format!("{:?}: {}", e.code, e.message))?;
     let full = match std::fs::canonicalize(database) {
@@ -409,12 +397,14 @@ fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, St
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
-            let name = database.file_name().ok_or("SQLite path has no file name")?;
+            let name = database
+                .file_name()
+                .ok_or_else(|| "SQLite path has no file name".to_string())?;
             std::fs::canonicalize(parent)
                 .map_err(|e| e.to_string())?
                 .join(name)
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(OwnershipError::Storage(error.to_string())),
     };
     let mut suffix = String::with_capacity(session.len() * 2);
     for byte in session.bytes() {
@@ -432,8 +422,10 @@ fn lock_session_file(database: &Path, session: &str) -> Result<std::fs::File, St
         .truncate(false)
         .open(std::path::PathBuf::from(lock_path))
         .map_err(|e| e.to_string())?;
-    file.try_lock()
-        .map_err(|e| format!("session already owned by another host or lock failed: {e}"))?;
+    file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => OwnershipError::Busy,
+        std::fs::TryLockError::Error(error) => OwnershipError::Storage(error.to_string()),
+    })?;
     Ok(file)
 }
 
@@ -732,7 +724,7 @@ fn run_console(
     let receiver = input_channel();
     let mut queue = VecDeque::<Submission>::new();
     let mut active: Option<GraphExecution<'_>> = None;
-    let mut active_lock: Option<std::fs::File> = None;
+    let mut active_lock: Option<SessionAdmission> = None;
     let mut active_marked = false;
     let mut eof = false;
     loop {
@@ -782,9 +774,8 @@ fn run_console(
 
         if active.is_none() {
             if let Some(next) = queue.pop_front() {
-                let mut owner = session_lock(session)?;
-                recover_owned_run(&kernel, session, &mut owner)?;
-                let execution = begin_submission(&kernel, next, basic_scope(composition, session))?;
+                let owner = SessionAdmission::acquire(&kernel, session, next)?;
+                let execution = owner.begin(&kernel, basic_scope(composition, session))?;
                 active_marked = false;
                 active_lock = Some(owner);
                 active = Some(execution);
@@ -796,7 +787,7 @@ fn run_console(
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             if !active_marked {
                 if let Some(owner) = active_lock.as_mut() {
-                    active_marked = mark_admitted_run(&kernel, execution, session, owner)?;
+                    active_marked = owner.mark(&kernel, execution, session)?;
                 }
             }
             render_new(
@@ -826,7 +817,7 @@ fn run_console(
                 // Clear the durable marker before releasing the OS lock.
                 // A crashed process instead leaves the marker for recovery.
                 if let Some(ref mut owner) = active_lock {
-                    set_owner_marker(owner, None)?;
+                    owner.complete()?;
                 }
                 drop(active_lock.take());
             } else {
@@ -862,7 +853,12 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
 
     // Retain the existing no-input behavior: replay undelivered events from
     // the default session when a JSONL host starts solely as an observer.
-    {
+    if let Some(_ownership) = match SessionOwnership::acquire("s1") {
+        Ok(owner) => Some(owner),
+        // Startup observation is optional; explicit requests still require ownership.
+        Err(OwnershipError::Busy) => None,
+        Err(error) => return Err(error.into()),
+    } {
         let kernel = sessions.get("s1").expect("default session initialized");
         let mut observer: ObserverCheckpoint = completed(invoke(
             kernel,
@@ -902,6 +898,26 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             sessions.insert(session.clone(), scoped_kernel(composition, &session)?);
         }
         let kernel = sessions.get(&session).expect("session initialized");
+        let input: Submission = completed(invoke(
+            kernel,
+            FRONTEND,
+            "phenix.basic.frontend@1/decode",
+            ClientInput {
+                session: session.clone(),
+                line,
+            },
+        ))?;
+        let idle_cancel = input.is_cancel();
+        let observation_owner = if idle_cancel {
+            Some(SessionOwnership::acquire(&session)?)
+        } else {
+            None
+        };
+        let mut admission = if idle_cancel {
+            None
+        } else {
+            Some(SessionAdmission::acquire(kernel, &session, input)?)
+        };
         let mut observer: ObserverCheckpoint = completed(invoke(
             kernel,
             "phenix.basic.event-journal",
@@ -921,24 +937,13 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             Some(&mut observer),
             &mut output,
         )?;
-        let input: Submission = completed(invoke(
-            kernel,
-            FRONTEND,
-            "phenix.basic.frontend@1/decode",
-            ClientInput {
-                session: session.clone(),
-                line,
-            },
-        ))?;
-        if input.is_cancel() {
-            // Cancelling a session without an active run cannot affect another
-            // session's graph or mutate its durable checkpoint.
+        if idle_cancel {
+            // Replay is authorized observation, not recovery or agent execution.
+            drop(observation_owner);
             continue;
         }
-
-        let mut owner = session_lock(&session)?;
-        recover_owned_run(kernel, &session, &mut owner)?;
-        let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
+        let owner = admission.as_mut().expect("prompt admission acquired");
+        let mut execution = owner.begin(kernel, basic_scope(composition, &session))?;
         let mut marked = false;
         loop {
             // Leave unprocessed requests in the bounded channel when the
@@ -983,7 +988,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, &session, &mut owner)?;
+                marked = owner.mark(kernel, &execution, &session)?;
             }
             render_new(
                 kernel,
@@ -1009,7 +1014,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                         &mut output,
                     )?;
                 }
-                set_owner_marker(&mut owner, None)?;
+                owner.complete()?;
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -1436,7 +1441,14 @@ mod session_lock_tests {
         let database = root.join("basic.db");
 
         let mut first = lock_session_file(&database, "s1").unwrap();
-        assert!(lock_session_file(&database, "s1").is_err());
+        assert!(matches!(
+            lock_session_file(&database, "s1"),
+            Err(super::OwnershipError::Busy)
+        ));
+        assert!(matches!(
+            lock_session_file(&root.join("missing/basic.db"), "s1"),
+            Err(super::OwnershipError::Storage(_))
+        ));
         let second = lock_session_file(&database, "s2").unwrap();
 
         assert_eq!(owner_marker(&mut first).unwrap(), "");
