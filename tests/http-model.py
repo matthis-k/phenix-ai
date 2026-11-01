@@ -187,7 +187,13 @@ for mode in ("selected-complete", "selected-cancel"):
     retirement = json.loads((selected_output / f"{mode}.json").read_text())
     assert retirement["all_physical_leases_released_before_retirement"] is True
     assert retirement["all_roots_released_before_successful_retirement"] is True
-    assert retirement["final_kernel_reference_destructor_observed"] is False
+    assert retirement["final_kernel_reference_destructor_observed"] is True
+    identities = retirement["destroyed_kernel_generations"]
+    assert set(identities) == {"s-a", "s-b"}
+    assert identities["s-a"] != identities["s-b"]
+    for session, identity in identities.items():
+        assert completed.stderr.splitlines().count(
+            f"test-http-fixture: kernel-destroyed {session} {identity}") == 1
     if os.environ.get("PHENIX_TEST_HTTP_LIFECYCLE") == "1":
         events = [line for line in completed.stderr.splitlines()
                   if line.startswith(("test-http-lifecycle:", "test-http-fixture:"))]
@@ -206,12 +212,17 @@ for mode in ("selected-complete", "selected-cancel"):
             assert lower < position(f"test-http-lifecycle: config-dropped selected-{name}") < upper
         assert roots_dropped < position("test-http-lifecycle: state-dropped s-a") < retired
         assert retired < position("test-http-lifecycle: state-dropped s-b") < destroyed
+        a_kernel = position(f"test-http-fixture: kernel-destroyed s-a {identities['s-a']}")
+        b_kernel = position(f"test-http-fixture: kernel-destroyed s-b {identities['s-b']}")
+        assert retired < a_kernel < position("test-http-lifecycle: state-dropped s-b")
+        assert destroyed < b_kernel
         (selected_output / "lifecycle-evidence.json").write_text(json.dumps({
             "events": events,
             "actual_join_return_observed": True,
             "config_destructor_observed": True,
             "native_state_destructor_observed": True,
-            "final_kernel_reference_destructor_observed": False,
+            "final_kernel_reference_destructor_observed": True,
+            "destroyed_kernel_generations": identities,
         }, sort_keys=True))
     assert sorted(requests[before:]) == [f"{mode}-a", f"{mode}-b"]
 run("bad-config", "file:///tmp/forbidden-model")

@@ -128,9 +128,13 @@ overlapping worker leases, A cancellation or completion while B stays pending,
 zero leases and released roots before retirement. A default-off instrumentation
 artifact independently records successful thread joining, configuration credential
 drop and native state destruction. These events are not socket/lease proxies.
-The kernel generation unit test separately uses `Weak::upgrade` to observe final
-resident-reference destruction; the selected HTTP fixture does not observe that
-final kernel allocation destructor and explicitly reports this limitation.
+The selected HTTP fixture also uses a test-feature-only weak kernel probe for each
+actual A/B generation. Both kernels remain alive after roots drop; A's final
+strong reference disappears after retirement while B remains alive as the selected
+default, and B's disappears after the generation manager drops. Session and
+generation identities correlate these observations with the independent worker,
+configuration and native-state events; native-state destruction is not treated as
+kernel destruction. Weak probes retain only allocation metadata, not live kernels.
 The HTTP instance still owns one `Option<Worker>`: independent instances overlap,
 not concurrent roots in one instance. Concurrent roots remain separate kernel
 lifecycle/ABI work, not another scheduler. Resolver bounds remain solely #1230.

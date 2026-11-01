@@ -37,7 +37,12 @@ pub(crate) enum ModelConfiguration {
 }
 
 impl ModelConfiguration {
-    pub(crate) fn install(&mut self, session: String, config: request::Config, installation: u64) {
+    pub(crate) fn install(
+        &mut self,
+        session: String,
+        config: request::Config,
+        installation: u64,
+    ) -> Result<(), phenix_provider_contracts::ProviderError> {
         let config = std::sync::Arc::new(config);
         match self {
             Self::Preset => {
@@ -46,10 +51,19 @@ impl ModelConfiguration {
                     (config, None, installation),
                 )]));
             }
-            Self::Selected(pending) => {
-                pending.insert(session, (config, None, installation));
-            }
+            Self::Selected(pending) => match pending.entry(session) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((config, None, installation));
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(phenix_provider_contracts::ProviderError {
+                        code: phenix_provider_contracts::ProviderErrorCode::Conflict,
+                        message: "selected HTTP model is already installed for session".into(),
+                    });
+                }
+            },
         }
+        Ok(())
     }
 
     fn release(&mut self, session: &str, installation: u64) {
@@ -263,12 +277,15 @@ mod plugin {
                 "HTTP installation identity exhausted",
             )
         })?;
+        state
+            .configuration
+            .install(session.clone(), config, installation)
+            .map_err(CallError::Domain)?;
         state.installation = installation;
         #[cfg(feature = "test-lifecycle-evidence")]
         {
             state.evidence_session = session.clone();
         }
-        state.configuration.install(session, config, installation);
         Ok(installation)
     }
 
@@ -438,22 +455,25 @@ mod plugin {
     #[test]
     fn cancellation_revokes_configuration_before_physical_worker_drain() {
         let mut state = State::default();
-        state.configuration.install(
-            "s1".into(),
-            super::request::Config {
-                endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
-                model: "selected".into(),
-                protocol: phenix_provider_protocols::Protocol::OpenaiChat,
-                provider_max_tokens: None,
-                credential: Some(
-                    phenix_provider_contracts::CredentialSecret::new(b"test-secret".to_vec())
-                        .unwrap(),
-                ),
-                presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
-                ca_file: None,
-            },
-            1,
-        );
+        state
+            .configuration
+            .install(
+                "s1".into(),
+                super::request::Config {
+                    endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+                    model: "selected".into(),
+                    protocol: phenix_provider_protocols::Protocol::OpenaiChat,
+                    provider_max_tokens: None,
+                    credential: Some(
+                        phenix_provider_contracts::CredentialSecret::new(b"test-secret".to_vec())
+                            .unwrap(),
+                    ),
+                    presentation: phenix_provider_contracts::ApiKeyPresentation::Bearer,
+                    ca_file: None,
+                },
+                1,
+            )
+            .unwrap();
         let config = state.configuration.take_for_turn("s1", "r1").unwrap();
         let weak = Arc::downgrade(&config);
         let (drain, wait) = mpsc::channel();

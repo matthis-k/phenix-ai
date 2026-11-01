@@ -157,6 +157,17 @@ pub enum Retirement {
     },
 }
 impl Generations {
+    /// Test-only observation of the resident Kernel's final strong-reference drop.
+    /// The probe neither retains the kernel nor exposes execution authority.
+    #[cfg(feature = "test-lifecycle-evidence")]
+    pub fn test_kernel_destroyed_probe(
+        &self,
+        id: &GenerationId,
+    ) -> Result<impl Fn() -> bool + use<>, Failure> {
+        let weak = Rc::downgrade(&self.resident(id)?);
+        Ok(move || weak.upgrade().is_none())
+    }
+
     pub fn install_candidate(
         &mut self,
         prepared: Prepared,

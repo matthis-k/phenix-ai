@@ -114,6 +114,7 @@ fn selected_overlap(mut composition: Composition, mode: &str, output: &Path) {
     let mut roots = Vec::new();
     let mut tickets = Vec::new();
     let mut tokens = Vec::new();
+    let mut destroyed = Vec::new();
     let control = selection(
         "phenix.provider.http-model-session@2/install",
         "phenix.model.http",
@@ -147,6 +148,7 @@ fn selected_overlap(mut composition: Composition, mode: &str, output: &Path) {
             .install_candidate(Prepared::prepare(composition.clone()).unwrap(), name)
             .unwrap();
         generations.promote(&id).unwrap();
+        destroyed.push(generations.test_kernel_destroyed_probe(&id).unwrap());
         let root = generations.admit_default_root().unwrap();
         // Exercise the public native wire schema without adding a conformance dependency.
         let install = Value::map([
@@ -252,6 +254,7 @@ fn selected_overlap(mut composition: Composition, mode: &str, output: &Path) {
         ));
     }
     eprintln!("test-http-fixture: both-held");
+    assert!(destroyed.iter().all(|probe| !probe()));
     let revoke = |index: usize| {
         assert!(matches!(
             roots[index]
@@ -324,24 +327,37 @@ fn selected_overlap(mut composition: Composition, mode: &str, output: &Path) {
         assert_eq!(inspection["pins"]["roots"], 0);
     }
     eprintln!("test-http-fixture: roots-dropped");
+    assert!(destroyed.iter().all(|probe| !probe()));
     assert!(matches!(
         generations.retire(&ids[0]).unwrap(),
         Retirement::Retired
     ));
     eprintln!("test-http-fixture: a-retired");
+    assert!(destroyed[0]());
+    assert!(!destroyed[1]());
+    eprintln!(
+        "test-http-fixture: kernel-destroyed s-a {}",
+        ids[0].as_str()
+    );
     match generations.retire(&ids[1]).unwrap() {
         Retirement::Blocked { reasons, .. } => assert_eq!(reasons, ["selected default"]),
         _ => panic!("default generation retired"),
     }
     drop(generations);
     eprintln!("test-http-fixture: generations-dropped");
+    assert!(destroyed.iter().all(|probe| probe()));
+    eprintln!(
+        "test-http-fixture: kernel-destroyed s-b {}",
+        ids[1].as_str()
+    );
     fs::write(
         output.join(format!("{mode}.json")),
         serde_json::to_vec(&serde_json::json!({
             "selected_generation_overlap": true,
             "all_physical_leases_released_before_retirement": true,
             "all_roots_released_before_successful_retirement": true,
-            "final_kernel_reference_destructor_observed": false,
+            "final_kernel_reference_destructor_observed": true,
+            "destroyed_kernel_generations": {"s-a": ids[0].as_str(), "s-b": ids[1].as_str()},
             "passed": true,
         }))
         .unwrap(),
