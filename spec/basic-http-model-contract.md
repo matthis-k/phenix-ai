@@ -50,10 +50,28 @@ does not measure internal native-image lease counts or stalled NSS resolution.
 
 ### Transitional lifecycle audit (1 November 2026)
 
-**Status: partially implemented, not integrated.** Inspected HEAD is
+The lifecycle stack #1232, #1233 and #1235 is now merged into the selected-provider
+integration branch at `f5c6532f15322db443e7523bb76758b75b9b1ab7`, not the default
+product. Exact-head generated CI verifies 89 derivations and two runnable packages.
+The selected A/B fixture now directly observes final kernel allocation destruction
+with weak-reference probes, separately from native state destruction and joining.
+Existing-session installation replacement fails with a typed Conflict even when
+the caller bypasses controller ordering.
+
+The first #1234 increment shares `session_lifecycle::SessionAdmission` across ACP,
+terminal and JSONL: typed validation, ownership, recovery, graph admission and
+durable markers. `SessionOwnership` fences observer replay without authorizing
+recovery or execution. Real ACP/JSONL contention and replay tests exercise this
+boundary; existing cancellation and recovery products remain acceptance gates.
+This is partial extraction: provider management, exact credential resolution,
+installation, terminal release and quarantine remain ACP-owned. In particular,
+non-ACP selected-provider release-fault parity is not established by shared session
+admission. #1234 remains open until both callers use those same domain behaviors.
+
+**Historical pre-merge audit.** At the time of inspection HEAD was
 `361eef337b3de2cecd6c3e9bbb878ebf925e2e28`; [#1233](https://github.com/matthis-k/phenix-ai/pull/1233)
-reports exact-head acceptance on top of parent
-[#1232](https://github.com/matthis-k/phenix-ai/pull/1232). Both remain open.
+reported exact-head acceptance on top of parent
+[#1232](https://github.com/matthis-k/phenix-ai/pull/1232). Both were then open.
 The dependent acceptance increment moves typed prompt decoding before session
 ownership/recovery and selected installation, retaining ownership through final
 release. Local packaged `basic-host-smoke`, `b4-http` and `m1-generations` pass;

@@ -1,8 +1,10 @@
 """Verify independent JSONL sessions and durable continuation across restarts."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 
 binary, composition, destination = sys.argv[1:]
@@ -132,6 +134,45 @@ assert run([]) == [], "limit-recovery restart duplicated JSONL output"
 
 assert (output / "jsonl-multisession.db").is_file()
 
+# Seed history using another authorized observer so JSONL has pending replay.
+env["PHENIX_BASIC_SQLITE_PATH"] = str(output / "jsonl-observation-lock.db")
+for session in ("s1", "s2"):
+    seeded = subprocess.run(
+        [binary, "terminal", composition, "--session", session],
+        input=f"pending-{session}\n", text=True, capture_output=True,
+        env=env, timeout=45,
+    )
+    assert seeded.returncode == 0, seeded.stderr
+
+
+def records(session):
+    with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+        return dict((name, (revision, data)) for name, revision, data in db.execute(
+            "SELECT name, revision, data FROM basic_records WHERE session=?", (session,)))
+
+
+before = records("s1")
+lock_path = env["PHENIX_BASIC_SQLITE_PATH"] + ".phenix-session-7331.lock"
+with open(lock_path, "r+b") as owner:
+    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    rejected = subprocess.run(
+        [binary, "jsonl", composition], input="", text=True,
+        capture_output=True, env=env, timeout=45,
+    )
+    assert rejected.returncode != 0, rejected
+    assert "session already owned" in rejected.stderr, rejected.stderr
+    assert rejected.stdout == "", rejected.stdout
+    assert records("s1") == before, "startup replay mutated a locked session"
+assert answers(run([])) == [("s1", "mock:pending-s1")]
+
+before = records("s2")
+replayed = run([{"type": "cancel", "session": "s2"}])
+assert answers(replayed) == [("s2", "mock:pending-s2")], replayed
+after = records("s2")
+changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+assert changed and all("observer" in name for name in changed), changed
+assert run([{"type": "cancel", "session": "s2"}]) == []
+
 (output / "jsonl-multisession.json").write_text(json.dumps({
     "format": "phenix.basic.jsonl-multisession.v1",
     "cases": [
@@ -140,6 +181,8 @@ assert (output / "jsonl-multisession.db").is_file()
         "independent-observer-checkpoints",
         "process-restart-continuation",
         "idle-cancel-isolation",
+        "startup-pending-replay-lock-exclusion",
+        "nondefault-idle-cancel-observation-only",
         "failed-tool-model-continuation",
         "model-failure-process-restart",
         "same-process-model-failure-continuation",

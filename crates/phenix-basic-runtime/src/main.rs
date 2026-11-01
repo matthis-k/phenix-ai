@@ -238,22 +238,8 @@ fn basic_scope(composition: &Composition, session: &str) -> ScopedRequest {
 }
 
 /// Start an admitted graph without blocking the frontend's input controller.
-fn begin_submission<'a>(
-    kernel: &'a Kernel,
-    input: Submission,
-    scope: ScopedRequest,
-) -> Result<GraphExecution<'a>, String> {
-    let Submission::Dispatch { action, payload } = input else {
-        return Err("no active graph execution to cancel".into());
-    };
-    if action != "phenix.basic.submit" {
-        return Err("frontend selected an unknown Basic action".into());
-    }
-    let value = Value::decode(&payload.0).map_err(|e| format!("{e:?}"))?;
-    kernel
-        .begin_action_scoped(&action, &value, scope)
-        .map_err(|e| format!("{e:?}"))
-}
+mod session_lifecycle;
+use session_lifecycle::{SessionAdmission, SessionOwnership};
 
 /// Recognize the selected Basic product's public terminal result rather than
 /// depending on the private ID or placement of the final graph node.
@@ -732,7 +718,7 @@ fn run_console(
     let receiver = input_channel();
     let mut queue = VecDeque::<Submission>::new();
     let mut active: Option<GraphExecution<'_>> = None;
-    let mut active_lock: Option<std::fs::File> = None;
+    let mut active_lock: Option<SessionAdmission> = None;
     let mut active_marked = false;
     let mut eof = false;
     loop {
@@ -782,9 +768,8 @@ fn run_console(
 
         if active.is_none() {
             if let Some(next) = queue.pop_front() {
-                let mut owner = session_lock(session)?;
-                recover_owned_run(&kernel, session, &mut owner)?;
-                let execution = begin_submission(&kernel, next, basic_scope(composition, session))?;
+                let owner = SessionAdmission::acquire(&kernel, session, next)?;
+                let execution = owner.begin(&kernel, basic_scope(composition, session))?;
                 active_marked = false;
                 active_lock = Some(owner);
                 active = Some(execution);
@@ -796,7 +781,7 @@ fn run_console(
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             if !active_marked {
                 if let Some(owner) = active_lock.as_mut() {
-                    active_marked = mark_admitted_run(&kernel, execution, session, owner)?;
+                    active_marked = owner.mark(&kernel, execution, session)?;
                 }
             }
             render_new(
@@ -826,7 +811,7 @@ fn run_console(
                 // Clear the durable marker before releasing the OS lock.
                 // A crashed process instead leaves the marker for recovery.
                 if let Some(ref mut owner) = active_lock {
-                    set_owner_marker(owner, None)?;
+                    owner.complete()?;
                 }
                 drop(active_lock.take());
             } else {
@@ -864,6 +849,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
     // the default session when a JSONL host starts solely as an observer.
     {
         let kernel = sessions.get("s1").expect("default session initialized");
+        let _ownership = SessionOwnership::acquire("s1")?;
         let mut observer: ObserverCheckpoint = completed(invoke(
             kernel,
             "phenix.basic.event-journal",
@@ -902,6 +888,26 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             sessions.insert(session.clone(), scoped_kernel(composition, &session)?);
         }
         let kernel = sessions.get(&session).expect("session initialized");
+        let input: Submission = completed(invoke(
+            kernel,
+            FRONTEND,
+            "phenix.basic.frontend@1/decode",
+            ClientInput {
+                session: session.clone(),
+                line,
+            },
+        ))?;
+        let idle_cancel = input.is_cancel();
+        let observation_owner = if idle_cancel {
+            Some(SessionOwnership::acquire(&session)?)
+        } else {
+            None
+        };
+        let mut admission = if idle_cancel {
+            None
+        } else {
+            Some(SessionAdmission::acquire(kernel, &session, input)?)
+        };
         let mut observer: ObserverCheckpoint = completed(invoke(
             kernel,
             "phenix.basic.event-journal",
@@ -921,24 +927,13 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             Some(&mut observer),
             &mut output,
         )?;
-        let input: Submission = completed(invoke(
-            kernel,
-            FRONTEND,
-            "phenix.basic.frontend@1/decode",
-            ClientInput {
-                session: session.clone(),
-                line,
-            },
-        ))?;
-        if input.is_cancel() {
-            // Cancelling a session without an active run cannot affect another
-            // session's graph or mutate its durable checkpoint.
+        if idle_cancel {
+            // Replay is authorized observation, not recovery or agent execution.
+            drop(observation_owner);
             continue;
         }
-
-        let mut owner = session_lock(&session)?;
-        recover_owned_run(kernel, &session, &mut owner)?;
-        let mut execution = begin_submission(kernel, input, basic_scope(composition, &session))?;
+        let owner = admission.as_mut().expect("prompt admission acquired");
+        let mut execution = owner.begin(kernel, basic_scope(composition, &session))?;
         let mut marked = false;
         loop {
             // Leave unprocessed requests in the bounded channel when the
@@ -983,7 +978,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
             let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, &session, &mut owner)?;
+                marked = owner.mark(kernel, &execution, &session)?;
             }
             render_new(
                 kernel,
@@ -1009,7 +1004,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                         &mut output,
                     )?;
                 }
-                set_owner_marker(&mut owner, None)?;
+                owner.complete()?;
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));

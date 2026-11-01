@@ -157,6 +157,19 @@ try:
     assert denied["error"]["data"]["code"] == "StorageFailed", denied
     assert "session already owned" in denied["error"]["data"]["message"], denied
     assert entered.empty(), "rejected contender reached HTTP"
+    # A non-ACP caller must enter the very same ownership boundary. Its legacy
+    # transport is deliberately unusable: rejection must happen before Model IO.
+    jsonl = subprocess.run(
+        [runtime, "jsonl", composition],
+        input=json.dumps({"type": "prompt", "session": session,
+                          "text": "jsonl-contender"}) + "\n",
+        env=dict(os.environ, PHENIX_BASIC_SQLITE_PATH=str(database),
+                 PHENIX_MODEL_HTTP_ENDPOINT="http://127.0.0.1:1/must-not-run"),
+        text=True, capture_output=True, timeout=TIMEOUT,
+    )
+    assert jsonl.returncode != 0, jsonl
+    assert "session already owned" in jsonl.stderr, jsonl.stderr
+    assert entered.empty(), "rejected JSONL contender reached HTTP"
     with sqlite3.connect(database) as db:
         after = db.execute(
             "SELECT name, revision, data FROM basic_records WHERE session=? ORDER BY name",
@@ -187,6 +200,7 @@ try:
     assert entered.empty()
     (output / "ownership.json").write_text(json.dumps({
         "same_session_rejected_before_selection_read": True,
+        "jsonl_rejected_while_acp_owns_session": True,
         "frontend_decode_precedes_ownership": True,
         "contender_did_not_recover_or_mutate_live_owner": True,
         "independent_session_entered_before_owner_unblocked": True,

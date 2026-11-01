@@ -1598,14 +1598,19 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        // TODO(#1234, Graph V2): move ownership,
-        // recovery, selection/install and final release into the typed domain
-        // lifecycle, leaving ACP as ingress/observation only. Remove this
-        // orchestration only after same-session exclusion, independent-session
-        // progress, recovery, cancellation/drain and release-failure parity pass
-        // through the selected product without frontend-owned lifecycle calls.
-        let mut owner = session_lock(&session).map_err(internal_storage)?;
-        recover_owned_run(kernel, &session, &mut owner).map_err(internal_storage)?;
+        // TODO(#1234): selected-provider installation and release still belong
+        // in a frontend-neutral domain boundary, including quarantine on failure.
+        let mut owner = SessionAdmission::acquire(kernel, &session, submission).map_err(
+            |error| match error {
+                super::session_lifecycle::AdmissionError::InvalidSubmission(message) => {
+                    invalid(&message)
+                }
+                super::session_lifecycle::AdmissionError::Ownership(message)
+                | super::session_lifecycle::AdmissionError::Recovery(message) => {
+                    internal_storage(message)
+                }
+            },
+        )?;
         let installation = if has_model_selection_storage(&self.composition) {
             match super::model_selection_state::read(kernel, &self.composition, &session)
                 .map_err(internal)?
@@ -1670,9 +1675,9 @@ impl Controller {
             Ok(())
         };
         let result = (|| {
-            let execution =
-                begin_submission(kernel, submission, basic_scope(&self.composition, &session))
-                    .map_err(internal)?;
+            let execution = owner
+                .begin(kernel, basic_scope(&self.composition, &session))
+                .map_err(internal)?;
             let offset = self.offsets.entry(session.clone()).or_default();
             Self::drive(
                 kernel,
@@ -1701,7 +1706,7 @@ impl Controller {
         kernel: &Kernel,
         mut execution: GraphExecution<'_>,
         session: &str,
-        owner: &mut std::fs::File,
+        owner: &mut SessionAdmission,
         after: &mut u64,
         peer: &Peer,
         cancel_flag: &AtomicBool,
@@ -1722,7 +1727,7 @@ impl Controller {
             }
             let status = execution.pump(|_| {}).map_err(internal)?;
             if !marked {
-                marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
+                marked = owner.mark(kernel, &execution, session).map_err(internal)?;
             }
             if !closed.load(Ordering::Acquire) {
                 send_updates(kernel, Some(&execution), session, after, peer, closed)?;
@@ -1736,7 +1741,7 @@ impl Controller {
                         send_updates(kernel, None, session, after, peer, closed)?;
                     }
                 }
-                set_owner_marker(owner, None).map_err(internal)?;
+                owner.complete().map_err(internal)?;
                 return Ok(PromptResponse::new(if cancelled {
                     StopReason::Cancelled
                 } else {
