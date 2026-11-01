@@ -940,7 +940,7 @@
         assert "phenix.provider.runtime@1" in report["definitions"], report
         assert "phenix.provider.registrations@1" in report["definitions"], report
         assert "phenix.provider.credentials@1" in report["definitions"]
-        assert "phenix.provider.http-model-session@1" in report["definitions"]
+        assert "phenix.provider.http-model-session@2" in report["definitions"]
         assert report["plugin"] == "phenix.provider-contracts"
         (Path(sys.argv[2]) / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True))
         PY
@@ -1773,20 +1773,20 @@
           # The controller uses this root only on its existing session kernel,
           # after provider-owned catalog/auth and exact credential checks.
           { caller = "root";
-            interface = "phenix.provider.http-model-session@1";
+            interface = "phenix.provider.http-model-session@2";
             operation = "install";
             resources = [ "phenix.session.s1" ];
           }
           { caller = "root";
-            interface = "phenix.provider.http-model-session@1";
+            interface = "phenix.provider.http-model-session@2";
             operation = "release";
             resources = [ "phenix.session.s1" ];
           }
         ];
         authority = base.authority // {
           operations = base.authority.operations ++ [
-            "phenix.provider.http-model-session@1/install"
-            "phenix.provider.http-model-session@1/release"
+            "phenix.provider.http-model-session@2/install"
+            "phenix.provider.http-model-session@2/release"
           ];
         };
       };

@@ -674,8 +674,8 @@ fn can_switch_native_model(spec: &Composition) -> bool {
     [
         ("phenix.basic.storage@1", "read"),
         ("phenix.basic.storage@1", "transact"),
-        ("phenix.provider.http-model-session@1", "install"),
-        ("phenix.provider.http-model-session@1", "release"),
+        ("phenix.provider.http-model-session@2", "install"),
+        ("phenix.provider.http-model-session@2", "release"),
     ]
     .into_iter()
     .all(|(interface, operation)| {
@@ -1542,14 +1542,14 @@ impl Controller {
             .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
         kernel
             .admit_root(Selection {
-                interface: "phenix.provider.http-model-session@1".into(),
+                interface: "phenix.provider.http-model-session@2".into(),
                 operation: "release".into(),
                 provider: provider.into(),
             })
             .map_err(|_| invalid("selected Model release grant is unavailable"))?;
         let root = kernel
             .admit_root(Selection {
-                interface: "phenix.provider.http-model-session@1".into(),
+                interface: "phenix.provider.http-model-session@2".into(),
                 operation: "install".into(),
                 provider: provider.into(),
             })
@@ -1599,7 +1599,7 @@ impl Controller {
                 let provider = installed_model_provider(&self.composition)
                     .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
                 let selection = Selection {
-                    interface: "phenix.provider.http-model-session@1".into(),
+                    interface: "phenix.provider.http-model-session@2".into(),
                     operation: "release".into(),
                     provider: provider.into(),
                 };
@@ -1678,8 +1678,14 @@ impl Controller {
                 &release,
             )
         })();
-        release(None)?;
-        result
+        let cleanup = release(None);
+        finish_prompt(result, cleanup, || {
+            // Failed revocation must not leave this kernel available to another
+            // prompt, even if shutdown itself cannot finish successfully.
+            if let Some(kernel) = self.sessions.remove(&session) {
+                let _ = kernel.shutdown();
+            }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2061,8 +2067,50 @@ pub(super) fn run(
     Ok(())
 }
 
+fn finish_prompt<T>(
+    result: acp::Result<T>,
+    cleanup: acp::Result<()>,
+    quarantine: impl FnOnce(),
+) -> acp::Result<T> {
+    if cleanup.is_err() {
+        quarantine();
+    }
+    match result {
+        Err(primary) => Err(primary),
+        Ok(response) => cleanup.map(|()| response),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_prompt_cleanup_quarantines_and_preserves_primary_error() {
+        let mut reusable = true;
+        let result = super::finish_prompt::<()>(
+            Err(super::invalid("primary execution failure")),
+            Err(super::invalid("release failure")),
+            || reusable = false,
+        );
+        assert!(!reusable);
+        assert_eq!(
+            result.unwrap_err(),
+            super::invalid("primary execution failure")
+        );
+    }
+
+    #[test]
+    fn failed_cleanup_rejects_success_and_successful_cleanup_preserves_session() {
+        let mut reusable = true;
+        let result = super::finish_prompt(Ok(()), Err(super::invalid("release failure")), || {
+            reusable = false;
+        });
+        assert!(!reusable);
+        assert_eq!(result.unwrap_err(), super::invalid("release failure"));
+        assert_eq!(
+            super::finish_prompt(Ok(7), Ok(()), || panic!("unexpected quarantine")).unwrap(),
+            7
+        );
+    }
     use super::*;
 
     #[test]
@@ -2219,8 +2267,8 @@ mod tests {
         for (interface, operation) in [
             ("phenix.basic.storage@1", "read"),
             ("phenix.basic.storage@1", "transact"),
-            ("phenix.provider.http-model-session@1", "install"),
-            ("phenix.provider.http-model-session@1", "release"),
+            ("phenix.provider.http-model-session@2", "install"),
+            ("phenix.provider.http-model-session@2", "release"),
         ] {
             spec.grants.push(
                 serde_json::from_value(serde_json::json!({
@@ -2235,19 +2283,19 @@ mod tests {
         for operation in [
             "phenix.basic.storage@1/read",
             "phenix.basic.storage@1/transact",
-            "phenix.provider.http-model-session@1/install",
-            "phenix.provider.http-model-session@1/release",
+            "phenix.provider.http-model-session@2/install",
+            "phenix.provider.http-model-session@2/release",
         ] {
             spec.authority.operations.insert(operation.into());
         }
         assert!(can_switch_native_model(&spec));
         spec.authority
             .operations
-            .remove("phenix.provider.http-model-session@1/release");
+            .remove("phenix.provider.http-model-session@2/release");
         assert!(!can_switch_native_model(&spec));
         spec.authority
             .operations
-            .insert("phenix.provider.http-model-session@1/release".into());
+            .insert("phenix.provider.http-model-session@2/release".into());
         spec.authority
             .operations
             .remove("phenix.basic.storage@1/transact");

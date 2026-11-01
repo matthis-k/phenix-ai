@@ -14,6 +14,37 @@ This file is the single task/evidence tracker for M1. Do not duplicate completio
 
 #### Dependent cancellation and installation cleanup
 
+Follow-up review of #1232 at `cfabef05af5b0a9e70f2de82a5ce776678e8439b`:
+its exact-head generated run 41264288647 passed all four builders, both
+executable packages and final acceptance. The follow-up preserves primary prompt
+errors when release also fails, removes the failed-cleanup session kernel from
+admission, and attempts shutdown. Two focused cleanup tests cover precedence,
+quarantine and successful cleanup. The changed token-returning control contract
+is now `phenix.provider.http-model-session@2`, with consumers migrated together
+and no compatibility shim. Six controlled HTTP cases replace the ambiguous
+completion race with independently required completion-winning and
+cancellation-winning terminal barriers. The native curl cancellation fixture
+also asserts an outstanding physical lease blocks shutdown and same-instance
+admission. These checks do not prove independent-instance overlap or selected
+HTTP generation retirement; those remain required follow-up evidence.
+
+ACP lifecycle review: selection revalidation, installation and exact-token
+release are domain lifecycle responsibilities currently hosted in the ACP
+controller. The smallest frontend-neutral extraction is that existing lifecycle
+boundary in the runtime, consuming typed session/run intent and returning typed
+outcomes; keep ACP decoding and update projection in the adapter. Reuse admitted
+graph execution, cancellation and journal observation. This is a proposal only,
+not a new controller, scheduler, registry or implementation claim. DNS/NSS #1230
+remains separate, with no bounded resolver claim.
+
+Local follow-up verification: **113** focused tests passed (42 runtime, 8 agent,
+24 HTTP, 39 provider contracts), workspace Rustfmt and warnings-denied Clippy
+including the native conformance runner passed. Packaged `basic-v2-packaged-host`,
+`provider-openai-api-launcher`, `b4-http` and `f2-acp` passed; V2 output is
+`/nix/store/8rqp7lk0d0qg0zn13wdjpccixf6bsivx-phenix-basic-v2-product`.
+`devenv test` remains unavailable (`devenv: command not found`). Exact-head
+remote results are recorded in the dependent PR, not inferred from local builds.
+
 Based on #1231 head `298108cf1c1ff0d494d81e68a5e9cb7869420c4c`.
 This narrow typed API extension returns an installation token and adds exact-token
 release; all in-tree install consumers and composition grants change together.

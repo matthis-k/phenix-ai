@@ -204,6 +204,14 @@ fn main() {
                             "worker was incorrectly reported quiescent"
                         );
                         assert_eq!(kernel.inspect()["pending"]["physical_leases"], 1);
+                        assert_eq!(
+                            kernel.shutdown().unwrap_err().code,
+                            phenix_contract::Code::ScopeRejected
+                        );
+                        assert!(matches!(
+                            root.begin(&request(mode).to_value()),
+                            Err(failure) if failure.code == phenix_contract::Code::ReentrancyRejected
+                        ));
                         fs::write(output.join("cancel-requested"), b"cancelled").unwrap();
                         cancelled = true;
                     }
