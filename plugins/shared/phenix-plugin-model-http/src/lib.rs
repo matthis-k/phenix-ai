@@ -7,6 +7,15 @@ mod control_tests;
 mod tests;
 mod transport;
 
+// Only acceptance artifacts emit lifecycle evidence; no runtime setting enables it.
+#[cfg(feature = "test-lifecycle-evidence")]
+impl Drop for request::Config {
+    fn drop(&mut self) {
+        drop(self.credential.take());
+        eprintln!("test-http-lifecycle: config-dropped {}", self.model);
+    }
+}
+
 use phenix_basic_contracts::{error, BasicError, ErrorCode};
 
 fn invalid(message: &str) -> BasicError {
@@ -131,6 +140,23 @@ mod plugin {
         worker: Option<Worker>,
         configuration: super::ModelConfiguration,
         installation: u64,
+        #[cfg(feature = "test-lifecycle-evidence")]
+        evidence_session: String,
+    }
+
+    #[cfg(feature = "test-lifecycle-evidence")]
+    impl Drop for State {
+        fn drop(&mut self) {
+            assert!(
+                self.worker.is_none(),
+                "native state destroyed with an unjoined worker"
+            );
+            self.configuration = super::ModelConfiguration::default();
+            eprintln!(
+                "test-http-lifecycle: state-dropped {}",
+                self.evidence_session
+            );
+        }
     }
 
     fn start(
@@ -238,6 +264,10 @@ mod plugin {
             )
         })?;
         state.installation = installation;
+        #[cfg(feature = "test-lifecycle-evidence")]
+        {
+            state.evidence_session = session.clone();
+        }
         state.configuration.install(session, config, installation);
         Ok(installation)
     }
@@ -260,6 +290,16 @@ mod plugin {
                 message: "model session resource denied".into(),
             }));
         }
+        if cfg!(feature = "test-release-fault") {
+            eprintln!(
+                "test-release-fault: {} {}",
+                input.session, input.installation
+            );
+            return Err(CallError::Domain(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                message: "test-only selected HTTP release fault".into(),
+            }));
+        }
         state
             .configuration
             .release(&input.session, input.installation);
@@ -280,6 +320,10 @@ mod plugin {
     }
     fn joined(worker: Worker) -> CallResult<ModelReply, BasicError> {
         let joined = worker.thread.join();
+        #[cfg(feature = "test-lifecycle-evidence")]
+        if joined.is_ok() {
+            eprintln!("test-http-lifecycle: worker-joined {}", worker.session);
+        }
         if let Some(failure) = worker.failure {
             return Err(failure);
         }
@@ -348,7 +392,12 @@ mod plugin {
         let run = worker.run.clone();
         if cancelled && worker.failure.is_none() {
             state.configuration.release_run(&session, &run);
-            let _ = worker.thread.join();
+            let joined = worker.thread.join();
+            #[cfg(feature = "test-lifecycle-evidence")]
+            if joined.is_ok() {
+                eprintln!("test-http-lifecycle: worker-joined {}", session);
+            }
+            let _ = joined;
             return PendingResult::Ready(Ok(ModelReply {
                 text: String::new(),
                 calls: vec![],
@@ -376,7 +425,13 @@ mod plugin {
         if !worker.thread.is_finished() {
             return Ok(false);
         }
-        let _ = state.worker.take().unwrap().thread.join();
+        let worker = state.worker.take().unwrap();
+        let joined = worker.thread.join();
+        #[cfg(feature = "test-lifecycle-evidence")]
+        if joined.is_ok() {
+            eprintln!("test-http-lifecycle: worker-joined {}", worker.session);
+        }
+        let _ = joined;
         Ok(true)
     }
 

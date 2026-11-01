@@ -1175,6 +1175,14 @@
           doCheck = true;
           cargoTestFlags = [ "-p" "phenix-plugin-model-http" ];
         });
+      httpReleaseFaultModel = httpModel.overrideAttrs (old: {
+        cargoBuildFlags = (old.cargoBuildFlags or []) ++ [ "--features" "test-release-fault" ];
+        doCheck = false;
+      });
+      httpLifecycleModel = httpModel.overrideAttrs (old: {
+        cargoBuildFlags = (old.cargoBuildFlags or []) ++ [ "--features" "test-lifecycle-evidence" ];
+        cargoTestFlags = (old.cargoTestFlags or []) ++ [ "--features" "test-lifecycle-evidence" ];
+      });
       # Isolated executable provider fixture for ACP C9 product acceptance.
       # Unlike installed registration-only builtins it deliberately publishes
       # TWO credential-free loopback models. Never included in default Basic,
@@ -1204,6 +1212,9 @@
         PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/anthropic
         python ${./tests/native-http-selected-product.py} ${selectedHttpModelRunner}/bin/phenix-http-selected-product ${httpModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/selected-native
         test -s "$out/selected-native/evidence.json"
+        PHENIX_TEST_HTTP_LIFECYCLE=1 python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpLifecycleModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/lifecycle
+        PHENIX_TEST_HTTP_LIFECYCLE=1 PHENIX_MODEL_HTTP_PROTOCOL=openai-responses python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpLifecycleModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/lifecycle-responses
+        PHENIX_TEST_HTTP_LIFECYCLE=1 PHENIX_MODEL_HTTP_PROTOCOL=anthropic-messages python ${./tests/http-model.py} ${conformanceBinary}/bin/phenix-b4-http ${httpLifecycleModel} ${eventJournal} ${storageSqlite} ${basicDefinitions} ${providerDefinitions} $out/lifecycle-anthropic
       '';
       basicTools = basicNativePlugin
         "phenix-plugin-basic-tools"
@@ -1795,6 +1806,12 @@
         (builtins.toJSON (basicHttpCompositionFor basicV2CompositionSpec));
       basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
         (builtins.toJSON basicHttpCompositionSpec);
+      basicHttpReleaseFaultComposition = pkgs.writeText "phenix-basic-http-release-fault-composition.json"
+        (builtins.toJSON (basicHttpCompositionSpec // {
+          artifacts = map (artifact:
+            if artifact == "${httpModel}" then "${httpReleaseFaultModel}" else artifact
+          ) basicHttpCompositionSpec.artifacts;
+        }));
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
       # Select a domain-specific history test mix, not an implicit Basic default.
@@ -2340,6 +2357,9 @@
         test -s "$out/acp-provider-management.json"
         python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} ${providerLoopbackManagementComposition} $out/c9-selected
         test -s "$out/c9-selected/native-model-acceptance.json"
+        python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpReleaseFaultComposition} ${providerLoopbackManagementComposition} $out/c9-release-fault release-fault
+        test -s "$out/c9-release-fault/native-release-fault-acceptance.json"
+        python ${./tests/acp-selected-session-ownership.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} ${providerLoopbackManagementComposition} $out/c9-ownership
         python ${./tests/acp-native-routing-restart-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicComposition} ${basicHttpComposition} $out
         test -s "$out/native-routing-restart.json"
         test -s "$PHENIX_BASIC_SQLITE_PATH"

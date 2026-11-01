@@ -7,6 +7,11 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Acceptance-only artifact; never enabled by shipping selections.
+test-release-fault = []
+test-lifecycle-evidence = []
+
 [dependencies]
 zeroize = "=1.9.1"
 phenix-sdk = { path = "../../../crates/phenix-sdk" }

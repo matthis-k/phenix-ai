@@ -313,6 +313,53 @@ impl Generations {
 mod tests {
     use super::*;
     #[test]
+    fn retired_kernel_is_destroyed_only_after_final_resident_reference_is_dropped() {
+        // No native package is needed to exercise the real activation and Rc lifecycle.
+        let prepared = Prepared {
+            packages: BTreeMap::new(),
+            entry: Selection {
+                interface: "test".into(),
+                operation: "run".into(),
+                provider: "test".into(),
+            },
+            bindings: BTreeMap::new(),
+            grants: BTreeMap::new(),
+            authority: phenix_contract::Authority::default(),
+            resource: None,
+            slot_counts: BTreeMap::new(),
+            state_identity: Vec::new(),
+            graph: None,
+            graph_v2: None,
+            startup_order: Vec::new(),
+            operations: BTreeMap::new(),
+            ceilings: BTreeMap::new(),
+        };
+        let mut generations = Generations::default();
+        let id = generations.install_candidate(prepared, "test").unwrap();
+        generations.trial(&id).unwrap();
+        // Use the same private reference acquisition as admission and draining,
+        // rather than inserting a synthetic runtime or exposing a test accessor.
+        let retained = generations.resident(&id).unwrap();
+        let final_reference = Rc::clone(&retained);
+        let weak = Rc::downgrade(&retained);
+        assert_eq!(weak.strong_count(), 3);
+
+        assert!(matches!(
+            generations.retire(&id).unwrap(),
+            Retirement::Retired
+        ));
+        assert!(!generations.generations.contains_key(&id));
+        assert!(generations.resident(&id).is_err());
+        assert_eq!(weak.strong_count(), 2);
+        assert!(weak.upgrade().is_some());
+
+        drop(retained);
+        assert_eq!(weak.strong_count(), 1);
+        assert!(weak.upgrade().is_some());
+        drop(final_reference);
+        assert!(weak.upgrade().is_none());
+    }
+    #[test]
     fn retained_graph_v2_policy_changes_prepared_generation_identity() {
         let mut prepared = Prepared {
             packages: BTreeMap::new(),

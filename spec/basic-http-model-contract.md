@@ -48,22 +48,92 @@ cancellation-winning withholds completion bytes until the Cancelled response.
 Numeric loopback socket closure
 does not measure internal native-image lease counts or stalled NSS resolution.
 
-Selected-installation concurrency remains a requirement, not established by these sequential cases.
-The native curl conformance fixture separately holds one worker, rejects a second
-same-instance admission, completes a request on an independent loaded kernel,
-observes both physical leases and shuts down that kernel without releasing the
-first worker. This runs for all three protocol codecs. It is actual native
-instance overlap evidence, not selected-installation A/B authority isolation.
-The HTTP instance currently owns one `Option<Worker>`; session-keyed configuration
-is not proof of concurrent worker support. Follow-up deterministic tests must hold
-one worker while admitting another session/activation, verify explicit same-instance
-serialization or typed busy rejection without configuration replacement/leakage,
-and prove unrelated instances overlap. State scope must distinguish per-instance
-installation counters/configuration from per-session selections and per-run binding;
-test stale release, cross-session denial, cancellation of A without revoking B,
-queued admission only after drain, and generation lifetime through final worker
-drop. Concurrent roots need the separate kernel lifecycle/ABI work, not a map or
-another scheduler. Bounded resolver cancellation remains exclusively #1230 below.
+### Transitional lifecycle audit (1 November 2026)
+
+**Status: partially implemented, not integrated.** Inspected HEAD is
+`361eef337b3de2cecd6c3e9bbb878ebf925e2e28`; [#1233](https://github.com/matthis-k/phenix-ai/pull/1233)
+reports exact-head acceptance on top of parent
+[#1232](https://github.com/matthis-k/phenix-ai/pull/1232). Both remain open.
+The dependent acceptance increment moves typed prompt decoding before session
+ownership/recovery and selected installation, retaining ownership through final
+release. Local packaged `basic-host-smoke`, `b4-http` and `m1-generations` pass;
+that evidence is separate from exact-head remote CI and merge status.
+
+The remaining ACP orchestration is transitional, not the target ownership:
+`Controller::{prompt,install_current_http_model,drive}` in
+`crates/phenix-basic-runtime/src/acp_sdk.rs` still coordinate selection,
+credential acquisition, installation, cancellation and release. The dependent
+extraction is [#1234](https://github.com/matthis-k/phenix-ai/issues/1234),
+after #1233 and parent #1232. It must reuse the existing typed domain contracts
+and kernel lifecycle, leaving ACP as typed ingress and authorized observation;
+it does not introduce another scheduler or change Graph-v2.4 decisions.
+
+The exact existing boundary is not a single callable domain lifecycle today.
+`model_selection_state::{read,compare_and_swap}`, provider management
+`current_http_binding`, the exact resolver's `resolve_for`,
+`HttpModelInstall::from_checked`, and `HttpModelRelease { session, installation }`
+already supply the domain pieces. `main.rs` supplies `session_lock`,
+`recover_owned_run`, `begin_submission`, `mark_admitted_run`,
+`finish_submission` and `record_cancelled`. Extracting their coordination is
+feasible without inventing execution machinery, but requires parity tests and
+a frontend-neutral boundary rather than simply relocating an ACP closure.
+
+Installation uses `Kernel::admit_root` and `Root::invoke` before graph admission;
+final release uses another root after execution drops/drains. During cancellation,
+`GraphExecution::invoke_selected` uses the existing authenticated graph root.
+A physically pending Model can reject that control call with
+`ReentrancyRejected`; cancellation revokes reuse and final release retries after
+drain. The kernel's `active_root` excludes concurrent roots, so admitting a new
+root inside a live graph callback is not a valid extraction. `begin_submission`
+returns a borrowing `GraphExecution` and does not run its first node; ownership
+marking waits for `pump` to commit Running. Preserve these lifetime and ordering
+constraints, exact-token release, primary-error precedence and failed-cleanup
+quarantine. Concurrent-root support, if needed, is separate kernel lifecycle/ABI
+work, not a frontend scheduler.
+
+Fallback routing also remains transitional. `current_model_id` and `model_options`
+can expose the launcher-installed implementation ID as a legacy option when no
+selection is recorded. `prompt` can use the preset only before the session has
+entered selected mode. `selected_http_seen` prevents a withdrawn record or failed
+selection CAS from silently restoring that preset in the controller's lifetime;
+it is not durable evidence that a deleted selection existed across restarts.
+Do not generalize this historical route into the desired catalog model identity
+or a selected-provider failure fallback. Remove it only with its owning product
+migration and parity evidence.
+
+Graph-v1 paths likewise remain supported migration paths, not extraction targets
+to delete opportunistically. `main.rs` retains feature-gated graph-v2 terminal
+validation and tool-receipt recovery alongside legacy completion/recovery
+behavior. Preserve both until the selected product proves replacement parity;
+the v2.4 design is not evidence that these paths are already replaced.
+Issue #1234 owns deterministic frontend-neutral acquisition/release parity,
+including same-session fencing/recovery, independent-session progress,
+pre-Model failures, tool-only cancellation and integrated release-fault handling.
+Neither generic native overlap nor generic generation tests close selected HTTP
+isolation/retirement gaps. Larger missing mechanisms require separate dependent
+follow-ups; bounded resolver cancellation remains #1230.
+
+`acp-native-model-select-product.py` uses a separate, default-off fault artifact
+to prove release failure after successful execution, failed execution and
+cancellation, primary-error precedence, quarantine and subsequent admission denial.
+An unrelated unselected session continues; selected A/B isolation is established
+separately by the native fixture, not by that unselected session.
+`acp-selected-session-ownership.py` holds an actual HTTP request while conflicting
+same-session ownership is rejected before selection read/install and an independent
+session progresses. HTTP receipt and explicit barriers establish ordering.
+
+The native HTTP fixture installs distinct selected A/B configurations under real
+generations for all three codecs. It checks session/credential/token isolation,
+overlapping worker leases, A cancellation or completion while B stays pending,
+zero leases and released roots before retirement. A default-off instrumentation
+artifact independently records successful thread joining, configuration credential
+drop and native state destruction. These events are not socket/lease proxies.
+The kernel generation unit test separately uses `Weak::upgrade` to observe final
+resident-reference destruction; the selected HTTP fixture does not observe that
+final kernel allocation destructor and explicitly reports this limitation.
+The HTTP instance still owns one `Option<Worker>`: independent instances overlap,
+not concurrent roots in one instance. Concurrent roots remain separate kernel
+lifecycle/ABI work, not another scheduler. Resolver bounds remain solely #1230.
 
 The authenticated begin callback checks the session resource and validates the
 complete transcript, tool schemas, skills, context and caller limits before

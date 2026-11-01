@@ -16,11 +16,15 @@ import sys
 import threading
 import time
 
-runtime, http_basic, management, destination = sys.argv[1:]
+runtime, http_basic, management, destination = sys.argv[1:5]
+release_fault = sys.argv[5:] == ["release-fault"]
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 sqlite_path = output / "selected-loopback.sqlite"
 received = []
+http_modes = queue.Queue()
+http_entered = threading.Event()
+http_unblock = threading.Event()
 children = []
 REQUEST_DEADLINE_SECONDS = 45
 
@@ -38,6 +42,15 @@ class ModelHTTP(BaseHTTPRequestHandler):
         assert request["model"] in ("fixture-a", "fixture-b"), request
         assert request["stream"] is True
         received.append(request["model"])
+        mode = http_modes.get_nowait() if not http_modes.empty() else "success"
+        http_entered.set()
+        if mode == "cancel":
+            assert http_unblock.wait(REQUEST_DEADLINE_SECONDS), "cancel HTTP not unblocked"
+        if mode == "failure":
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         stream = [
             {"choices": [{"index": 0, "delta": {"content": "selected-live"},
                            "finish_reason": "stop"}]},
@@ -50,8 +63,11 @@ class ModelHTTP(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
-        self.wfile.flush()
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            assert mode == "cancel"
 
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), ModelHTTP)
@@ -64,6 +80,11 @@ base_env.update(
     PHENIX_MODEL_HTTP_MODEL="wrong-preset",
     PHENIX_MODEL_HTTP_API_KEY="unselected-wrong-credential",
 )
+if release_fault:
+    # Unselected sessions exercise the same native transport without an install.
+    base_env["PHENIX_MODEL_HTTP_ENDPOINT"] = base_env["PHENIX_C9_TEST_HTTP_ENDPOINT"]
+    base_env["PHENIX_MODEL_HTTP_MODEL"] = "fixture-b"
+    base_env.pop("PHENIX_MODEL_HTTP_API_KEY")
 
 
 def start(revoked=False):
@@ -87,11 +108,13 @@ def start(revoked=False):
     return process
 
 
-def request(process, number, method, params):
+def request(process, number, method, params, after_send=None):
     process.stdin.write(json.dumps({
         "jsonrpc": "2.0", "id": number, "method": method, "params": params,
     }) + "\n")
     process.stdin.flush()
+    if after_send is not None:
+        after_send()
     deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
     for _ in range(256):
         remaining = deadline - time.monotonic()
@@ -134,6 +157,7 @@ def close(process):
     process.stdout.close()
     process.stderr.close()
     assert status == 0, (status, stderr[:1600])
+    return stderr
 
 
 def model_options(response):
@@ -187,7 +211,73 @@ def load(process, session, number):
     })
 
 
+def release_fault_acceptance():
+    evidence = []
+    for mode in ("success", "failure", "cancel"):
+        process = start()
+        initialize(process)
+        created = request(process, 2, "session/new", {"cwd": "/tmp", "mcpServers": []})
+        session = created["result"]["sessionId"]
+        _, offered = model_options(created)
+        confirmed(request(process, 3, "session/set_config_option", {
+            "sessionId": session, "configId": "model", "value": chosen(offered, "fixture-a"),
+        }), "fixture-a", 1)
+        before = len(received)
+        http_entered.clear()
+        http_unblock.clear()
+        http_modes.put(mode)
+
+        def cancel_after_http():
+            assert http_entered.wait(REQUEST_DEADLINE_SECONDS), "native HTTP not entered"
+            process.stdin.write(json.dumps({
+                "jsonrpc": "2.0", "method": "session/cancel",
+                "params": {"sessionId": session},
+            }) + "\n")
+            process.stdin.flush()
+            # The handler stays blocked until the prompt has acknowledged cancellation.
+
+        result = request(process, 4, "session/prompt", {
+            "sessionId": session, "prompt": [{"type": "text", "text": mode}],
+        }, cancel_after_http if mode == "cancel" else None)
+        http_unblock.set()
+        assert received[before:] == ["fixture-a"], (mode, received)
+        if mode == "success":
+            assert "error" in result, result
+            assert result["error"]["data"] == {
+                "format": "phenix.provider.error.v1", "code": "Unavailable",
+            }, result
+        elif mode == "failure":
+            assert "error" in result, result
+            assert "phenix.provider.error.v1" not in json.dumps(result), result
+        else:
+            # Cleanup failure must not turn cancellation into a successful turn.
+            assert "error" in result or result.get("result", {}).get("stopReason") == "cancelled", result
+        denied = request(process, 5, "session/prompt", {
+            "sessionId": session, "prompt": [{"type": "text", "text": "must not reuse"}],
+        })
+        assert "error" in denied, (mode, denied)
+        assert len(received) == before + 1, (mode, received)
+        unrelated = request(process, 6, "session/new", {"cwd": "/tmp", "mcpServers": []})
+        other_session = unrelated["result"]["sessionId"]
+        assert other_session != session
+        prompt(process, other_session, 7, "unrelated session still works")
+        assert received[before:] == ["fixture-a", "fixture-b"], received
+        stderr = close(process)
+        releases = [line for line in stderr.splitlines() if line.startswith("test-release-fault:")]
+        assert releases == [f"test-release-fault: {session} 1"], (mode, releases)
+        evidence.append({"outcome": mode, "failed_release": True,
+                         "quarantined_without_http_reuse": True, "unrelated_session_works": True})
+    (output / "native-release-fault-acceptance.json").write_text(json.dumps({
+        "format": "phenix.selected-http.release-fault.v1", "cases": evidence,
+        "real_native_http_requests": len(received),
+    }, sort_keys=True, indent=2))
+
+
 try:
+    if release_fault:
+        release_fault_acceptance()
+        print("Native selected HTTP release-fault acceptance verified")
+        sys.exit(0)
     original = start()
     initialize(original)
     created = request(original, 2, "session/new", {
@@ -322,6 +412,7 @@ try:
     }, sort_keys=True, indent=2))
     print("C9 test-only authoritative provider native ACP selection verified")
 finally:
+    http_unblock.set()
     # Even assertion failures and ACP request timeouts must not leave native
     # runtime processes or HTTP handler threads keeping the Nix check alive.
     for child in children:
