@@ -24,24 +24,36 @@ Dependent implementation on #1231, based on `298108cf1c1ff0d494d81e68a5e9cb78694
 not merged or default-product migration. Selection persists nonsecret intent
 only. Each prompt revalidates authority/auth and resolves credentials immediately
 before install. The typed install returns a monotonically increasing instance-local
+token under contract `phenix.provider.http-model-session@2` (not compatible with
+revision 1's older install signature). The token is an
 `u64` token; session-scoped release removes only that exact installation, so stale
 cleanup cannot remove a replacement. Both install and release grants are required
 before credential resolution. The controller releases after success, failure and
 cancellation, including pre-Model admission failures. Model cancellation and worker
 errors revoke same-run reuse; selected mode never falls back to preset settings.
+If explicit release fails, the controller removes the session kernel from future
+admission and attempts shutdown. A primary execution error takes precedence over
+the cleanup error; cleanup failure after success is returned as an error.
 
 Release revokes reuse, not physical ownership: an active worker's `Arc<Config>`
 retains clearing credential storage until the worker drops it. A channel-controlled
 unit test proves revocation before worker drain and final configuration drop after
 drain. `selected_provider_cancellation.py` exercises actual V2 selected-provider
 ACP cancellation before headers, after observed text, during partial tool assembly,
-on tool continuation and racing completion. Duplicate cancel, exactly one durable
+on tool continuation and with controlled completion-winning and cancellation-winning
+ordering. Duplicate cancel, exactly one durable
 terminal, peer socket closure, no late output and a fresh same-session prompt are
-checked using server/observer handshakes. Completion racing cancellation may yield
-either one Answer or one Cancelled, never both. Numeric loopback socket closure
+checked using server/observer handshakes. Completion-winning requires one Answer;
+cancellation-winning withholds completion bytes until the Cancelled response.
+Numeric loopback socket closure
 does not measure internal native-image lease counts or stalled NSS resolution.
 
-Concurrency remains a requirement, not established by these sequential cases.
+Selected-installation concurrency remains a requirement, not established by these sequential cases.
+The native curl conformance fixture separately holds one worker, rejects a second
+same-instance admission, completes a request on an independent loaded kernel,
+observes both physical leases and shuts down that kernel without releasing the
+first worker. This runs for all three protocol codecs. It is actual native
+instance overlap evidence, not selected-installation A/B authority isolation.
 The HTTP instance currently owns one `Option<Worker>`; session-keyed configuration
 is not proof of concurrent worker support. Follow-up deterministic tests must hold
 one worker while admitting another session/activation, verify explicit same-instance

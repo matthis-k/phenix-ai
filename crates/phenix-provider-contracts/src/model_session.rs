@@ -136,7 +136,12 @@ impl HttpModelInstall {
 /// must release the returned installation on terminal, cancelled and failed
 /// runs, including failures before Model::complete starts. Release revokes reuse;
 /// it neither cancels nor joins physical workers holding an in-flight config.
-#[contract(id = "phenix.provider.http-model-session@1")]
+/// Revision 2 returns an installation token; revision 1's install signature is
+/// not interchangeable. One native instance admits one physical Model worker;
+/// independent instances own independent workers and installation maps. Session
+/// identity scopes selection, while the first nonempty run binds activation
+/// reuse to that run and its continuations. New runs require fresh installation.
+#[contract(id = "phenix.provider.http-model-session@2")]
 pub trait HttpModelSession {
     fn install(&self, request: HttpModelInstall) -> Result<u64, ProviderError>;
     fn release(&self, request: HttpModelRelease) -> Result<(), ProviderError>;

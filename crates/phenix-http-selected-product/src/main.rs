@@ -151,8 +151,8 @@ fn main() {
     };
     let resource = BTreeSet::from(["phenix.session.s1".to_owned()]);
     let specs = [
-        ("root", "phenix.provider.http-model-session@1/install"),
-        ("root", "phenix.provider.http-model-session@1/release"),
+        ("root", "phenix.provider.http-model-session@2/install"),
+        ("root", "phenix.provider.http-model-session@2/release"),
         ("root", "phenix.basic.model@1/complete"),
         ("root", "phenix.basic.journal@1/read"),
         ("phenix.model.http", "phenix.basic.journal@1/append"),
@@ -208,7 +208,7 @@ fn main() {
     .unwrap();
     let root = kernel.admit_default_root().unwrap();
     let control = selection(
-        "phenix.provider.http-model-session@1/install",
+        "phenix.provider.http-model-session@2/install",
         "phenix.model.http",
     );
 
@@ -271,7 +271,7 @@ fn main() {
     );
     assert!(reply.calls.is_empty());
     let release = selection(
-        "phenix.provider.http-model-session@1/release",
+        "phenix.provider.http-model-session@2/release",
         "phenix.model.http",
     );
     assert!(matches!(

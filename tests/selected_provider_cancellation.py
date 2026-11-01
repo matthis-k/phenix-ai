@@ -34,7 +34,8 @@ def exercise(proc, call, database, output, install):
 
     try:
         for index, case in enumerate(("before-headers", "first-text", "tool-assembly",
-                                      "continuation", "completion-race")):
+                                      "continuation", "completion-winning",
+                                      "cancellation-winning")):
             admitted = threading.Event()
             drained = threading.Event()
             finished = threading.Event()
@@ -96,7 +97,7 @@ def exercise(proc, call, database, output, install):
                         prefix = b"".join(parts)
                         parts.clear()
                         tail = b""
-                        if case == "completion-race":
+                        if case in ("completion-winning", "cancellation-winning"):
                             wire.chunk({"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 4}})
                             wire.done()
                             tail = b"".join(parts)
@@ -104,14 +105,14 @@ def exercise(proc, call, database, output, install):
                         http.send_response(200)
                         http.send_header("Content-Type", "text/event-stream")
                         http.send_header("Content-Length", str(len(prefix) + len(tail))
-                                         if case == "completion-race" else "1000000")
+                                         if case in ("completion-winning", "cancellation-winning") else "1000000")
                         http.end_headers()
                         http.wfile.write(prefix)
                         http.wfile.flush()
                         parts.clear()
                     held = True
                     admitted.set()
-                    if case == "completion-race":
+                    if case in ("completion-winning", "cancellation-winning"):
                         assert release.wait(25), "race release missing"
                         try:
                             http.wfile.write(tail)
@@ -175,15 +176,21 @@ def exercise(proc, call, database, output, install):
             assert before == dict(PromptAccepted=1, ModelStarted=1 + tools,
                                   ToolStarted=tools, ToolFinished=tools,
                                   Answer=0, Cancelled=0, Failure=0), before
+            if case == "completion-winning":
+                release.set()
+                while not responses:
+                    receive()
             send(None, "session/cancel", sessionId=session)
             send(None, "session/cancel", sessionId=session)
-            release.set()
             while not responses:
                 receive()
+            # Cancellation-winning cannot receive the withheld completion bytes
+            # until cancellation has already produced its terminal response.
+            release.set()
             assert len(responses) == 1 and responses[0].get("id") == 202, responses
             reason = responses[0].get("result", {}).get("stopReason")
-            assert reason in (("cancelled", "end_turn") if case == "completion-race"
-                              else ("cancelled",)), responses
+            assert reason == ("end_turn" if case == "completion-winning"
+                              else "cancelled"), responses
             assert drained.wait(25), (case, "peer did not close transport")
             assert finished.wait(25), (case, "controlled handler did not finish")
             assert errors.empty(), list(errors.queue)
