@@ -98,6 +98,53 @@ fn scope() -> ScopedRequest {
 }
 
 #[test]
+fn branch_completion_and_empty_membership_still_owe_batch_publication() {
+    let (declarations, policy) = fixture();
+    let graph = compile(&declarations, &policy).unwrap();
+    for routes in [&[][..], &[0, 1][..]] {
+        let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        let node = &graph.declarations[0].nodes[1];
+        wave.admit_each(
+            &graph,
+            &scope(),
+            node,
+            &items(routes),
+            BTreeSet::from(["resource".into()]),
+        )
+        .unwrap();
+        assert!(wave.require_settled().is_err());
+        for ordinal in 0..routes.len() {
+            let key = wave.each[&node.id].branches[ordinal].key.clone();
+            wave.complete(
+                &graph,
+                &scope(),
+                &key,
+                &Outcome::Success(Value::String("result".into())),
+            )
+            .unwrap();
+            assert!(wave.require_settled().is_err());
+        }
+        // Even marking the authored node done cannot hide an unpublished batch.
+        wave.done.insert(node.id.clone());
+        assert!(wave.require_settled().is_err());
+        wave.done.remove(&node.id);
+        let value = Value::List(
+            wave.each[&node.id]
+                .branches
+                .iter()
+                .map(|branch| branch.outcome.clone().unwrap())
+                .collect(),
+        );
+        wave.deliver(&graph, &scope(), &node.id, Some(("out", &value)), false)
+            .unwrap();
+        assert!(!wave.root_settled());
+        wave.each.remove(&node.id);
+        wave.require_settled().unwrap();
+        assert!(wave.root_settled());
+    }
+}
+
+#[test]
 fn preparation_freezes_only_homogeneous_attested_selected_routes() {
     let (declarations, mut policy) = fixture();
     let graph = compile(&declarations, &policy).unwrap();

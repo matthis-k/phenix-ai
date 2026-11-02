@@ -2,6 +2,40 @@ use super::*;
 use phenix_contract::Authority;
 
 #[test]
+fn idle_scheduler_cannot_settle_an_unfinished_ordinary_occurrence() {
+    let (declarations, policy) = super::super::tests::fixture();
+    let graph = super::super::tests::run(&declarations, &policy).unwrap();
+    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    wave.started.insert("alpha/first".into());
+    assert_eq!(
+        wave.require_settled().unwrap_err().code,
+        Code::InfrastructureFailure
+    );
+    assert!(!wave.root_settled());
+    // Completing an independent occurrence cannot discharge the first one.
+    wave.started.insert("beta/second".into());
+    wave.done.insert("beta/second".into());
+    assert!(wave.require_settled().is_err());
+    wave.resources
+        .insert("alpha/first".into(), BTreeSet::from(["resource".into()]));
+    wave.deliver(
+        &graph,
+        &scope(&["resource"]),
+        "alpha/first",
+        Some(("ok", &Value::String("result".into()))),
+        false,
+    )
+    .unwrap();
+    assert!(matches!(
+        wave.arrivals["alpha/next"],
+        Resolution::Value(Some(_), _)
+    ));
+    assert!(wave.done.contains("alpha/first"));
+    wave.require_settled().unwrap();
+    assert!(wave.root_settled());
+}
+
+#[test]
 fn deferred_arrival_survives_producer_closure_and_propagates_absence_scope() {
     let (mut declarations, policy) = super::super::tests::fixture();
     let EdgeKind::Flow { from, to } = declarations[0].edges[0].kind.clone() else {
@@ -67,6 +101,8 @@ fn deferred_foreign_delivery_attenuates_and_denies_before_enqueue() {
     let graph = super::super::tests::run(&declarations, &policy).unwrap();
     let value = Value::String("next".into());
     let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+    wave.started.insert("alpha/first".into());
+    assert!(wave.require_settled().is_err());
     wave.resources.insert(
         "alpha/first".into(),
         BTreeSet::from(["resource".into(), "other".into()]),
@@ -83,8 +119,15 @@ fn deferred_foreign_delivery_attenuates_and_denies_before_enqueue() {
         wave.emitted["alpha/next"].resources,
         BTreeSet::from(["resource".into()])
     );
+    wave.require_settled().unwrap();
+    assert!(
+        !wave.root_settled(),
+        "deferred publication remains root work"
+    );
+    assert!(wave.done.contains("alpha/first"));
     for missing in [false, true] {
         let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+        wave.started.insert("alpha/first".into());
         wave.resources
             .insert("alpha/first".into(), BTreeSet::from(["other".into()]));
         let mut denied_graph = graph.clone();
@@ -105,6 +148,11 @@ fn deferred_foreign_delivery_attenuates_and_denies_before_enqueue() {
             Code::Denied
         );
         assert!(wave.emitted.is_empty());
+        assert!(
+            !wave.done.contains("alpha/first"),
+            "failed transfer cannot settle producer"
+        );
+        assert!(wave.require_settled().is_err());
     }
 }
 

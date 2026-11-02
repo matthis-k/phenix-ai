@@ -367,6 +367,8 @@ pub(super) fn run(packages: &[String], output: &Path) {
                         assert_eq!(fs::read_dir("/proc/self/fd").unwrap().count(), fds + 1);
                         if profile == "reverse" {
                             assert_eq!(run.steps().len(), 1);
+                            assert_eq!(run.steps()[0].branch, Some(1));
+                            assert_eq!(run.steps()[0].activation, Some(0));
                             assert_eq!(
                                 run.steps()[0].outcome,
                                 Outcome::Domain(Value::String("domain fixture b".into()))
@@ -420,6 +422,22 @@ pub(super) fn run(packages: &[String], output: &Path) {
                     "late cleanup output escaped cancellation"
                 );
             } else {
+                assert_eq!(
+                    run.steps()
+                        .iter()
+                        .filter(|step| step.branch.is_some())
+                        .count(),
+                    routes.len(),
+                    "collection completion must retain every admitted branch outcome"
+                );
+                assert_eq!(
+                    run.steps()
+                        .iter()
+                        .filter(|step| step.node == SECOND)
+                        .count(),
+                    1,
+                    "including empty membership, publish the collection exactly once"
+                );
                 let expected = Value::List(
                     routes
                         .iter()
