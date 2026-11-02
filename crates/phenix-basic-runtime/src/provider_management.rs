@@ -3,6 +3,16 @@
 //! This module contains provider-domain orchestration rather than ACP request
 //! structs or transport handling. Model selectors never confer kernel grants.
 use super::*;
+use crate::selected_provider::{
+    internal, invalid, provider_rejection, DomainError, ModelCredentialResolver,
+};
+use phenix_provider_contracts::{
+    bind_http_model, validate_model_selection, AuthQuery, AuthenticationKind, AuthenticationStatus,
+    HttpModelBinding, ModelPage, ModelQuery, ModelSelection, ProviderDescriptor,
+    ProviderDetailsQuery, ProviderError, ProviderErrorCode, ProviderPage, ProviderQuery,
+};
+
+type Result<T, E = DomainError> = std::result::Result<T, E>;
 
 pub(super) struct ProviderManagement {
     pub(super) kernel: Kernel,
@@ -18,7 +28,7 @@ pub(super) struct ProviderManagementGroup {
 /// Merge *descriptors*, not credentials or provider-owned mutable state.
 /// Multiple connection implementations may contribute to the same displayed
 /// provider, but claiming the same provider+connection is ambiguous and denied.
-fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
+fn merge_provider_pages(pages: &[ProviderPage]) -> Result<ProviderPage> {
     if pages.is_empty() || pages.len() > 32 {
         return Err(invalid("provider management root count is invalid"));
     }
@@ -95,7 +105,38 @@ fn merge_provider_pages(pages: &[ProviderPage]) -> acp::Result<ProviderPage> {
 }
 
 impl ProviderManagementGroup {
-    fn pages(&self) -> acp::Result<Vec<ProviderPage>> {
+    pub(crate) fn prepare(specs: &[Composition]) -> Result<Option<Self>> {
+        if specs.len() > 32 {
+            return Err(invalid(
+                "too many authorized provider management compositions",
+            ));
+        }
+        if specs.is_empty() {
+            return Ok(None);
+        }
+        let roots = specs
+            .iter()
+            .map(|spec| {
+                if spec.entry.interface != "phenix.provider.catalog@1"
+                    || spec.entry.operation != "list"
+                {
+                    return Err(invalid(
+                        "management composition must select provider catalog list",
+                    ));
+                }
+                let kernel = Prepared::prepare(spec.clone())
+                    .map_err(internal)?
+                    .load()
+                    .map_err(internal)?;
+                Ok(ProviderManagement {
+                    kernel,
+                    selected: spec.entry.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some(Self { roots }))
+    }
+    fn pages(&self) -> Result<Vec<ProviderPage>> {
         self.roots
             .iter()
             .map(|root| {
@@ -110,13 +151,13 @@ impl ProviderManagementGroup {
             .collect()
     }
 
-    pub(super) fn list(&self) -> acp::Result<ProviderPage> {
+    pub(super) fn list(&self) -> Result<ProviderPage> {
         merge_provider_pages(&self.pages()?)
     }
 
     /// Route by the complete provider+connection identity after verifying no
     /// root duplicates it. An ACP supplied name is never a kernel grant.
-    fn root_for(&self, provider_id: &str, connection_id: &str) -> acp::Result<&ProviderManagement> {
+    fn root_for(&self, provider_id: &str, connection_id: &str) -> Result<&ProviderManagement> {
         let pages = self.pages()?;
         merge_provider_pages(&pages)?;
         let mut selected = None;
@@ -147,7 +188,7 @@ impl ProviderManagementGroup {
         interface: &str,
         operation: &str,
         query: &Q,
-    ) -> acp::Result<R> {
+    ) -> Result<R> {
         self.root_for(provider_id, connection_id)?
             .read(interface, operation, query)
     }
@@ -155,7 +196,7 @@ impl ProviderManagementGroup {
     pub(super) fn current_http_binding(
         &self,
         selection: &ModelSelection,
-    ) -> acp::Result<HttpModelBinding> {
+    ) -> Result<HttpModelBinding> {
         self.root_for(&selection.provider_id, &selection.connection_id)?
             .current_http_binding(selection)
     }
@@ -163,7 +204,7 @@ impl ProviderManagementGroup {
     pub(super) fn authorized_http_offers(
         &self,
         resolvers: &[ModelCredentialResolver],
-    ) -> acp::Result<Vec<NativeModelOffer>> {
+    ) -> Result<Vec<NativeModelOffer>> {
         // Verify installation identity before allowing any provider to
         // publish an executable choice. A duplicate is always a hard error.
         self.list()?;
@@ -180,21 +221,12 @@ impl ProviderManagementGroup {
         Ok(offers)
     }
 
-    pub(super) fn shutdown(self) -> Result<(), String> {
+    pub(super) fn shutdown(self) -> Result<()> {
         for root in self.roots {
-            root.kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+            root.kernel.shutdown().map_err(internal)?;
         }
         Ok(())
     }
-}
-
-/// Preserve the native provider's typed denial code without forwarding
-/// provider prose (which may contain identity or credential fragments).
-pub(super) fn provider_rejection(problem: ProviderError) -> acp::Error {
-    acp::Error::invalid_params().data(serde_json::json!({
-        "format": "phenix.provider.error.v1",
-        "code": problem.code,
-    }))
 }
 
 // Trusted catalog reads are made through the launcher's already-admitted
@@ -215,7 +247,7 @@ impl ModelPageAccumulator {
         &mut self,
         page: ModelPage,
         profile: &Option<String>,
-    ) -> acp::Result<Option<String>> {
+    ) -> Result<Option<String>> {
         if self.pages >= 64
             || page.revision == 0
             || self.revision.is_some_and(|prev| prev != page.revision)
@@ -247,7 +279,7 @@ impl ModelPageAccumulator {
         Ok(next)
     }
 
-    pub(super) fn complete(self, profile: Option<String>) -> acp::Result<ModelPage> {
+    pub(super) fn complete(self, profile: Option<String>) -> Result<ModelPage> {
         Ok(ModelPage {
             profile_id: profile,
             models: self.models,
@@ -290,7 +322,7 @@ impl ProviderManagement {
         interface: &str,
         operation: &str,
         query: &Q,
-    ) -> acp::Result<R> {
+    ) -> Result<R> {
         match self
             .invoke_typed(interface, operation, query)
             .map_err(internal)?
@@ -307,7 +339,7 @@ impl ProviderManagement {
     pub(super) fn current_http_binding(
         &self,
         desired: &ModelSelection,
-    ) -> acp::Result<HttpModelBinding> {
+    ) -> Result<HttpModelBinding> {
         const SCOPE: &str = "user";
 
         let listed: ProviderPage = self.read(
@@ -391,18 +423,15 @@ pub(super) struct NativeModelOffer {
 /// representation; this selector is NOT an authority token. On submission,
 /// compare the whole ID with current runtime-generated offers, not decoded
 /// client claims. Distinct account choices must never alias one model name.
-pub(super) fn native_model_option_id(
-    selection: &ModelSelection,
-    revision: u64,
-) -> acp::Result<String> {
-    let mut fields = serde_json::to_value(selection).map_err(internal)?;
+pub(super) fn native_model_option_id(selection: &ModelSelection, revision: u64) -> Result<String> {
+    let mut fields = serde_json::to_value(selection).map_err(DomainError::Json)?;
     let object = fields
         .as_object_mut()
-        .ok_or_else(|| internal("invalid native selection"))?;
+        .ok_or_else(|| invalid("invalid native selection"))?;
     object.insert("session_revision".into(), serde_json::json!(revision));
     serde_json::to_string(&fields)
         .map(|value| format!("phenix.native-model@1:{value}"))
-        .map_err(internal)
+        .map_err(DomainError::Json)
 }
 
 /// Classify a stale menu without treating client JSON as authority. Only
@@ -422,21 +451,13 @@ pub(super) fn stale_native_model_choice(chosen: &str, current_revision: u64) -> 
         .is_some_and(|revision| revision < current_revision)
 }
 
-pub(super) fn stale_model_conflict() -> acp::Error {
-    acp::Error::invalid_params().data(serde_json::json!({
-        "format": "phenix.basic.error.v1",
-        "code": ErrorCode::Conflict,
-        "message": "model selection changed; refresh the ACP session model menu",
-    }))
-}
-
 /// A prior revision choice is idempotent ONLY when it selected the exact
 /// current model. A stale choice for another model is rejected on admission.
 pub(super) fn is_previous_native_selection(
     chosen: &str,
     current: &ModelSelection,
     revision: u64,
-) -> acp::Result<bool> {
+) -> Result<bool> {
     let Some(previous) = revision.checked_sub(1) else {
         return Ok(false);
     };
@@ -445,7 +466,7 @@ pub(super) fn is_previous_native_selection(
 
 /// One controller model-menu refresh must have a global bound, not one
 /// budget independently repeated for every provider and connection.
-pub(super) fn charge_model_option_budget(used: &mut usize, maximum: usize) -> acp::Result<()> {
+pub(super) fn charge_model_option_budget(used: &mut usize, maximum: usize) -> Result<()> {
     if *used >= maximum {
         return Err(invalid(
             "provider model selection exceeded discovery budget",
@@ -469,7 +490,7 @@ pub(super) fn is_missing_model_discovery(code: &ProviderErrorCode) -> bool {
 
 // Missing discovery is a permitted optional capability, not a malformed
 // success reply or a blanket suppression of provider/authority denials.
-fn classify_model_page(result: Result<ModelPage, ProviderError>) -> acp::Result<Option<ModelPage>> {
+fn classify_model_page(result: Result<ModelPage, ProviderError>) -> Result<Option<ModelPage>> {
     match result {
         Ok(page) => Ok(Some(page)),
         Err(problem) if is_missing_model_discovery(&problem.code) => Ok(None),
@@ -478,7 +499,7 @@ fn classify_model_page(result: Result<ModelPage, ProviderError>) -> acp::Result<
 }
 
 impl ProviderManagement {
-    fn optional_model_page(&self, query: &ModelQuery) -> acp::Result<Option<ModelPage>> {
+    fn optional_model_page(&self, query: &ModelQuery) -> Result<Option<ModelPage>> {
         let reply = self
             .invoke_typed("phenix.provider.catalog@1", "models", query)
             .map_err(internal)?;
@@ -491,7 +512,7 @@ impl ProviderManagement {
     pub(super) fn authorized_http_offers(
         &self,
         resolvers: &[ModelCredentialResolver],
-    ) -> acp::Result<Vec<NativeModelOffer>> {
+    ) -> Result<Vec<NativeModelOffer>> {
         let listed: ProviderPage = self.read(
             "phenix.provider.catalog@1",
             "list",

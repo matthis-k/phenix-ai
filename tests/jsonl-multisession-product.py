@@ -167,9 +167,13 @@ with open(lock_path, "r+b") as owner:
             [binary, "jsonl", composition], input=json.dumps(packet) + "\n", text=True,
             capture_output=True, env=env, timeout=45,
         )
-        assert rejected.returncode != 0, rejected
-        assert "session already owned" in rejected.stderr, rejected.stderr
-        assert rejected.stdout == "", rejected.stdout
+        assert rejected.returncode == 0, rejected
+        failures = [json.loads(line) for line in rejected.stdout.splitlines()]
+        assert len(failures) == 1, failures
+        assert failures[0]["kind"] == "Failure" and failures[0]["sequence"] == 0, failures
+        assert failures[0]["run"] == failures[0]["call_id"] == "", failures
+        assert "session already owned" in failures[0]["text"], failures
+        assert failures[0]["data"], failures
     assert records("s1") == before, "startup replay mutated a locked session"
 assert answers(run([])) == [("s1", "mock:pending-s1")]
 assert run([]) == [], "resumed startup replay duplicated events"

@@ -1,6 +1,6 @@
 # Pending HTTP model provider
 
-> **Historical B4 implementation slice, not the desired provider onboarding experience.** This document records an environment-configured transport implementation. Future provider selection, authentication, and model discovery should use the accepted current contract design and owning migration PRs; a plugin implementation ID must not appear as a selectable model. Verify what still runs in source/tests. See [spec index](README.md) and [Graph-v2.4 target](graph-architecture-v2.4.md) for the distinction between current and target architecture.
+> **Implementation status, not a replacement onboarding contract.** This document records B4 transport and selected-provider lifecycle behavior, including unmerged working-tree changes. The accepted provider/model identity and onboarding requirements remain in the [M1 roadmap](m1-roadmap.md); incomplete migration does not redefine them. A plugin implementation ID is not a target selectable model. See the [spec index](README.md) and [Graph-v2.4 target](graph-architecture-v2.4.md) for current/target precedence.
 
 B4 owns `phenix-plugin-model-http`. It implements the existing typed Model
 contract and imports the selected EventJournal. The provider uses libcurl's
@@ -48,53 +48,63 @@ cancellation-winning withholds completion bytes until the Cancelled response.
 Numeric loopback socket closure
 does not measure internal native-image lease counts or stalled NSS resolution.
 
-### Transitional lifecycle audit (1 November 2026)
+### Shared lifecycle status (2 November 2026)
 
-The lifecycle stack #1232, #1233 and #1235 is now merged into the selected-provider
+**Historical integration evidence (1 November 2026):** #1232, #1233 and #1235 were recorded merged into the selected-provider
 integration branch at `f5c6532f15322db443e7523bb76758b75b9b1ab7`, not the default
-product. Exact-head generated CI verifies 89 derivations and two runnable packages.
+product. Exact-head generated CI verified 89 derivations and two runnable packages
+on that integration head, not the later #1234 working tree.
 The selected A/B fixture now directly observes final kernel allocation destruction
 with weak-reference probes, separately from native state destruction and joining.
 Existing-session installation replacement fails with a typed Conflict even when
 the caller bypasses controller ordering.
 
-The first #1234 increment shares `session_lifecycle::SessionAdmission` across ACP,
-terminal and JSONL: typed validation, ownership, recovery, graph admission and
-durable markers. `SessionOwnership` fences observer replay without authorizing
-recovery or execution. Real ACP/JSONL contention and replay tests exercise this
-boundary; existing cancellation and recovery products remain acceptance gates.
-This is partial extraction: provider management, exact credential resolution,
-installation, terminal release and quarantine remain ACP-owned. In particular,
-non-ACP selected-provider release-fault parity is not established by shared session
-admission. #1234 remains open until both callers use those same domain behaviors.
+[#1234](https://github.com/matthis-k/phenix-ai/issues/1234) is implemented in the
+inspected working tree for ACP and JSONL. This source/test audit is not exact-head
+remote acceptance, issue closure or integration into `main`. Do not describe the
+extraction as shipped/default behavior until its owning change reaches `main`
+with acceptance evidence.
 
-**Historical pre-merge audit.** At the time of inspection HEAD was
-`361eef337b3de2cecd6c3e9bbb878ebf925e2e28`; [#1233](https://github.com/matthis-k/phenix-ai/pull/1233)
-reported exact-head acceptance on top of parent
-[#1232](https://github.com/matthis-k/phenix-ai/pull/1232). Both were then open.
-The dependent acceptance increment moves typed prompt decoding before session
-ownership/recovery and selected installation, retaining ownership through final
-release. Local packaged `basic-host-smoke`, `b4-http` and `m1-generations` pass;
-that evidence is separate from exact-head remote CI and merge status.
+`crates/phenix-basic-runtime/src/provider_management.rs` owns provider-domain
+catalog/binding orchestration. `selected_provider.rs` owns typed `DomainError`,
+exact-account credential resolution, install/release authority preflight, checked
+installation, exact-token revocation, cancellation/drain protection, selected-mode
+state and cleanup-error precedence. ACP is no longer the private owner of these
+behaviors. Both ACP and JSONL use `SelectedState::run_with`, which owns admission,
+mandatory terminal release and quarantine around their pump/observation callbacks.
+The scoped `Execution` guard drains abnormal returns. Typed failures remain internal until adapter mapping;
+native kernel failure prose is redacted at the external display boundary.
 
-The remaining ACP orchestration is transitional, not the target ownership:
-`Controller::{prompt,install_current_http_model,drive}` in
-`crates/phenix-basic-runtime/src/acp_sdk.rs` still coordinate selection,
-credential acquisition, installation, cancellation and release. The dependent
-extraction is [#1234](https://github.com/matthis-k/phenix-ai/issues/1234),
-after #1233 and parent #1232. It must reuse the existing typed domain contracts
-and kernel lifecycle, leaving ACP as typed ingress and authorized observation;
-it does not introduce another scheduler or change Graph-v2.4 decisions.
+`SessionAdmission` shares ownership/recovery, graph admission and durable markers.
+Adapters retain typed ingress, graph pump/mark/complete calls, cancellation input,
+authorized observation and protocol rendering. This is shared domain lifecycle
+ownership, not a universal frontend loop or another scheduler.
+`SessionOwnership` fences replay without authorizing recovery or execution.
+Terminal shares session admission, not proven selected-provider product parity.
 
-The exact existing boundary is not a single callable domain lifecycle today.
-`model_selection_state::{read,compare_and_swap}`, provider management
-`current_http_binding`, the exact resolver's `resolve_for`,
-`HttpModelInstall::from_checked`, and `HttpModelRelease { session, installation }`
-already supply the domain pieces. `main.rs` supplies `session_lock`,
-`recover_owned_run`, `begin_submission`, `mark_admitted_run`,
-`finish_submission` and `record_cancelled`. Extracting their coordination is
-feasible without inventing execution machinery, but requires parity tests and
-a frontend-neutral boundary rather than simply relocating an ACP closure.
+JSONL streams nonterminal events but gates terminal publication until drain and
+final release succeed. Request/cleanup failures produce a host `Failure` with
+sequence 0, empty run/call IDs and portable `BasicError` data; this is not a new
+durable semantic terminal. On failure, buffered terminals are consumed through
+the existing `jsonl` observer checkpoint so startup/idle replay cannot later
+publish suppressed success. The semantic journal is not deleted or rewritten.
+Suppression-checkpoint failure also quarantines the session while preserving the
+primary turn/release error. ACP retains its own observation/response mapping.
+
+Quarantine is sticky, session-local and process-local in `SelectedState`: cleanup
+failure removes the session kernel from admission and attempts shutdown. It is
+not a durable quarantine registry. Persisted observer suppression is distinct
+from that process-local admission fence.
+
+Current acceptance sources include `tests/acp-native-model-select-product.py`,
+`tests/acp-selected-session-ownership.py`, `tests/selected_provider_jsonl.py`,
+`tests/selected_provider_authenticated_jsonl.py` and the native admission/cleanup
+tests in `selected_provider.rs`. They cover real selected HTTP, exact credential
+resolution/rotation, same-session exclusion, independent progress, per-turn
+revalidation, pre-Model rejection, cancellation/physical tool drain, release
+faults, primary-error precedence and JSONL suppression across restart. These
+test definitions do not claim that this documentation edit ran them or that
+remote CI accepted the working tree.
 
 Installation uses `Kernel::admit_root` and `Root::invoke` before graph admission;
 final release uses another root after execution drops/drains. During cancellation,
@@ -102,7 +112,7 @@ final release uses another root after execution drops/drains. During cancellatio
 A physically pending Model can reject that control call with
 `ReentrancyRejected`; cancellation revokes reuse and final release retries after
 drain. The kernel's `active_root` excludes concurrent roots, so admitting a new
-root inside a live graph callback is not a valid extraction. `begin_submission`
+root inside a live graph callback is not a valid extraction. `SessionAdmission::begin`
 returns a borrowing `GraphExecution` and does not run its first node; ownership
 marking waits for `pump` to commit Running. Preserve these lifetime and ordering
 constraints, exact-token release, primary-error precedence and failed-cleanup
@@ -112,24 +122,29 @@ work, not a frontend scheduler.
 Fallback routing also remains transitional. `current_model_id` and `model_options`
 can expose the launcher-installed implementation ID as a legacy option when no
 selection is recorded. `prompt` can use the preset only before the session has
-entered selected mode. `selected_http_seen` prevents a withdrawn record or failed
-selection CAS from silently restoring that preset in the controller's lifetime;
+entered selected mode. `SelectedState::seen` prevents a withdrawn record or failed
+selection CAS from silently restoring that preset in the host process's lifetime;
 it is not durable evidence that a deleted selection existed across restarts.
 Do not generalize this historical route into the desired catalog model identity
 or a selected-provider failure fallback. Remove it only with its owning product
 migration and parity evidence.
+
+**TODO ownership:** remove the legacy preset/implementation-ID route and any
+remaining source-compatibility wrappers only with the existing
+[provider plugin ownership and legacy removal milestone](m1-roadmap.md#provider-plugin-ownership-and-legacy-removal)
+under [#891](https://github.com/matthis-k/phenix-ai/issues/891), after selected
+product parity. This is not unfinished #1234 domain extraction.
 
 Graph-v1 paths likewise remain supported migration paths, not extraction targets
 to delete opportunistically. `main.rs` retains feature-gated graph-v2 terminal
 validation and tool-receipt recovery alongside legacy completion/recovery
 behavior. Preserve both until the selected product proves replacement parity;
 the v2.4 design is not evidence that these paths are already replaced.
-Issue #1234 owns deterministic frontend-neutral acquisition/release parity,
-including same-session fencing/recovery, independent-session progress,
-pre-Model failures, tool-only cancellation and integrated release-fault handling.
-Neither generic native overlap nor generic generation tests close selected HTTP
-isolation/retirement gaps. Larger missing mechanisms require separate dependent
-follow-ups; bounded resolver cancellation remains #1230.
+Neither generic native overlap nor generic generation tests alone establish
+selected HTTP isolation/retirement. The shared lifecycle does not establish
+bounded NSS resolution/cancellation (#1230), approved OAuth product acceptance,
+the Neovim onboarding journey or terminal/default-product migration. Those
+existing gates remain unchanged.
 
 `acp-native-model-select-product.py` uses a separate, default-off fault artifact
 to prove release failure after successful execution, failed execution and

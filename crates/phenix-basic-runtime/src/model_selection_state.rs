@@ -1,6 +1,7 @@
 //! Session-owned, non-secret selected-model intent in the existing Basic
 //! Storage plugin. This is a checked persistence boundary, NOT an executable
 //! provider grant or an independent controller database.
+use crate::selected_provider::DomainError;
 use phenix_basic_contracts::{
     self as basic, BasicError, ErrorCode, RecordKey, StorageEdit, StorageTransaction, StoredRecord,
 };
@@ -45,10 +46,9 @@ impl Portable for RoutingWitness {
     }
 }
 
-fn checked_witness(record: &StoredRecord) -> Result<(), String> {
+fn checked_witness(record: &StoredRecord) -> Result<(), DomainError> {
     if record.revision == 0
-        || basic::decode::<RoutingWitness>(&record.data)
-            .map_err(|_| "invalid native routing witness".to_owned())?
+        || basic::decode::<RoutingWitness>(&record.data).map_err(DomainError::Kernel)?
             != RoutingWitness::NativeSelected
     {
         return Err("invalid native routing witness".into());
@@ -59,7 +59,7 @@ fn checked_witness(record: &StoredRecord) -> Result<(), String> {
 fn checked_routing_state(
     selected: Option<StoredRecord>,
     witness: Option<StoredRecord>,
-) -> Result<Option<(ModelSelection, u64)>, String> {
+) -> Result<Option<(ModelSelection, u64)>, DomainError> {
     match (selected, witness) {
         (None, None) => Ok(None),
         (Some(selected), Some(witness)) => {
@@ -73,7 +73,7 @@ fn checked_routing_state(
         (Some(_), None) => Err("selected model exists without native routing witness".into()),
     }
 }
-fn storage_provider(composition: &Composition) -> Result<&str, String> {
+fn storage_provider(composition: &Composition) -> Result<&str, DomainError> {
     let mut slots = composition.slots.iter().filter(|slot| {
         slot.caller == "phenix.basic.session" && slot.slot == "Storage" && slot.index == 0
     });
@@ -89,7 +89,7 @@ fn invoke<T: Portable, R: Portable>(
     provider: &str,
     operation: &str,
     request: &T,
-) -> Result<Result<R, BasicError>, String> {
+) -> Result<Result<R, BasicError>, DomainError> {
     // A root operation requires an exact launcher-installed grant on this
     // session's kernel. The provider name cannot come from a client request.
     let root = kernel
@@ -98,19 +98,19 @@ fn invoke<T: Portable, R: Portable>(
             operation: operation.into(),
             provider: provider.into(),
         })
-        .map_err(|_| "model selection storage operation is not authorized".to_owned())?;
+        .map_err(DomainError::Kernel)?;
     match root
         .invoke(&request.to_value())
-        .map_err(|_| "model selection storage call failed".to_owned())?
+        .map_err(DomainError::Kernel)?
     {
-        Outcome::Success(value) => Ok(Ok(R::from_value(value)
-            .map_err(|_| "invalid typed model selection storage reply".to_owned())?)),
-        Outcome::Domain(value) => Ok(Err(BasicError::from_value(value)
-            .map_err(|_| "invalid model selection storage error".to_owned())?)),
+        Outcome::Success(value) => Ok(Ok(R::from_value(value).map_err(DomainError::Kernel)?)),
+        Outcome::Domain(value) => Ok(Err(
+            BasicError::from_value(value).map_err(DomainError::Kernel)?
+        )),
     }
 }
 
-fn validate_intent(selection: &ModelSelection) -> Result<(), String> {
+fn validate_intent(selection: &ModelSelection) -> Result<(), DomainError> {
     if selection.catalog_revision == 0
         || selection.provider_id.trim().is_empty()
         || selection.connection_id.trim().is_empty()
@@ -127,12 +127,11 @@ fn validate_intent(selection: &ModelSelection) -> Result<(), String> {
     Ok(())
 }
 
-fn unpack(record: StoredRecord) -> Result<(ModelSelection, u64), String> {
+fn unpack(record: StoredRecord) -> Result<(ModelSelection, u64), DomainError> {
     if record.revision == 0 {
         return Err("stored model revision is invalid".into());
     }
-    let selected: ModelSelection = basic::decode(&record.data)
-        .map_err(|_| "selected model record failed canonical Portable decoding".to_owned())?;
+    let selected: ModelSelection = basic::decode(&record.data).map_err(DomainError::Kernel)?;
     validate_intent(&selected)?;
     Ok((selected, record.revision))
 }
@@ -142,7 +141,7 @@ fn read_record(
     provider: &str,
     session: &str,
     key: &str,
-) -> Result<Option<StoredRecord>, String> {
+) -> Result<Option<StoredRecord>, DomainError> {
     let request = RecordKey {
         session: session.into(),
         key: key.into(),
@@ -150,10 +149,7 @@ fn read_record(
     match invoke::<_, StoredRecord>(kernel, provider, "read", &request)? {
         Ok(record) => Ok(Some(record)),
         Err(problem) if problem.code == ErrorCode::NotFound => Ok(None),
-        Err(problem) => Err(format!(
-            "selected model Storage read denied: {:?}",
-            problem.code
-        )),
+        Err(problem) => Err(DomainError::Basic(problem)),
     }
 }
 
@@ -165,8 +161,8 @@ pub(crate) fn read(
     kernel: &Kernel,
     composition: &Composition,
     session: &str,
-) -> Result<Option<(ModelSelection, u64)>, String> {
-    basic::session_resource(session).map_err(|_| "invalid selected model session".to_owned())?;
+) -> Result<Option<(ModelSelection, u64)>, DomainError> {
+    basic::session_resource(session).map_err(DomainError::Basic)?;
     let provider = storage_provider(composition)?;
     let selected = read_record(kernel, provider, session, KEY)?;
     let witness = read_record(kernel, provider, session, ROUTING_WITNESS_KEY)?;
@@ -183,8 +179,8 @@ pub(crate) fn compare_and_swap(
     session: &str,
     checked: &HttpModelBinding,
     expected: u64,
-) -> Result<u64, String> {
-    basic::session_resource(session).map_err(|_| "invalid selected model session".to_owned())?;
+) -> Result<u64, DomainError> {
+    basic::session_resource(session).map_err(DomainError::Basic)?;
     let next = expected
         .checked_add(1)
         .ok_or("model selection revision overflow")?;
@@ -207,10 +203,9 @@ pub(crate) fn compare_and_swap(
     let witness_next = witness_expected
         .checked_add(1)
         .ok_or("native routing witness revision overflow")?;
-    let data = basic::encode(checked.selection())
-        .map_err(|_| "model selection canonical encoding failed".to_owned())?;
-    let witness_data = basic::encode(&RoutingWitness::NativeSelected)
-        .map_err(|_| "native routing witness canonical encoding failed".to_owned())?;
+    let data = basic::encode(checked.selection()).map_err(DomainError::Kernel)?;
+    let witness_data =
+        basic::encode(&RoutingWitness::NativeSelected).map_err(DomainError::Kernel)?;
     // Basic Storage's atomic multi-edit CAS is the only durability source.
     // Incomplete changes roll back together; no separate host database or
     // independent marker write can leave an unwitnessed selected identity.
@@ -229,8 +224,8 @@ pub(crate) fn compare_and_swap(
             },
         ],
     };
-    let result: Vec<StoredRecord> = invoke(kernel, provider, "transact", &transaction)?
-        .map_err(|problem| format!("selected model CAS denied: {:?}", problem.code))?;
+    let result: Vec<StoredRecord> =
+        invoke(kernel, provider, "transact", &transaction)?.map_err(DomainError::Basic)?;
     if result.len() != 2
         || result[0].revision != next
         || result[0].data != data

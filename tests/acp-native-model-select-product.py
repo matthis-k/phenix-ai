@@ -17,7 +17,10 @@ import threading
 import time
 
 runtime, http_basic, management, destination = sys.argv[1:5]
-release_fault = sys.argv[5:] == ["release-fault"]
+release_fault = "release-fault" in sys.argv[5:]
+jsonl_acceptance = "jsonl" in sys.argv[5:]
+pending_basic = (sys.argv[sys.argv.index("--pending-composition") + 1]
+                 if "--pending-composition" in sys.argv else None)
 output = Path(destination)
 output.mkdir(parents=True, exist_ok=True)
 sqlite_path = output / "selected-loopback.sqlite"
@@ -25,6 +28,8 @@ received = []
 http_modes = queue.Queue()
 http_entered = threading.Event()
 http_unblock = threading.Event()
+http_drained = threading.Event()
+http_errors = queue.Queue()
 children = []
 REQUEST_DEADLINE_SECONDS = 45
 
@@ -46,16 +51,44 @@ class ModelHTTP(BaseHTTPRequestHandler):
         http_entered.set()
         if mode == "cancel":
             assert http_unblock.wait(REQUEST_DEADLINE_SECONDS), "cancel HTTP not unblocked"
+            if jsonl_acceptance:
+                try:
+                    self.connection.settimeout(REQUEST_DEADLINE_SECONDS)
+                    try:
+                        assert self.connection.recv(1) == b"", "unexpected request after cancel"
+                    except ConnectionResetError:
+                        pass
+                    # Attempt late output only after witnessing peer transport close.
+                    try:
+                        self.wfile.write(b"data: forbidden-late-output\r\n\r\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                except Exception as error:
+                    http_errors.put(repr(error))
+                finally:
+                    self.close_connection = True
+                    http_drained.set()
+                return
         if mode == "failure":
             self.send_response(503)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        stream = [
-            {"choices": [{"index": 0, "delta": {"content": "selected-live"},
-                           "finish_reason": "stop"}]},
-            {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}},
-        ]
+        if mode == "pending-tool":
+            stream = [
+                {"choices": [{"index": 0, "delta": {"tool_calls": [{
+                    "index": 0, "id": "selected-pending", "type": "function",
+                    "function": {"name": "pending-a", "arguments": '{"value":"proof"}'},
+                }]}, "finish_reason": "tool_calls"}]},
+                {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}},
+            ]
+        else:
+            stream = [
+                {"choices": [{"index": 0, "delta": {"content": "selected-live"},
+                               "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 2}},
+            ]
         data = "".join(
             "data: " + json.dumps(frame) + "\r\n\r\n" for frame in stream
         ).encode() + b"data: [DONE]\r\n\r\n"
@@ -274,6 +307,10 @@ def release_fault_acceptance():
 
 
 try:
+    if jsonl_acceptance:
+        from selected_provider_jsonl import exercise
+        exercise(globals())
+        sys.exit(0)
     if release_fault:
         release_fault_acceptance()
         print("Native selected HTTP release-fault acceptance verified")

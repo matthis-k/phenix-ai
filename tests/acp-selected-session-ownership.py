@@ -167,8 +167,11 @@ try:
                  PHENIX_MODEL_HTTP_ENDPOINT="http://127.0.0.1:1/must-not-run"),
         text=True, capture_output=True, timeout=TIMEOUT,
     )
-    assert jsonl.returncode != 0, jsonl
-    assert "session already owned" in jsonl.stderr, jsonl.stderr
+    assert jsonl.returncode == 0, jsonl
+    failures = [json.loads(line) for line in jsonl.stdout.splitlines()]
+    assert len(failures) == 1, failures
+    assert failures[0]["kind"] == "Failure" and failures[0]["sequence"] == 0, failures
+    assert "session already owned" in failures[0]["text"], failures
     assert entered.empty(), "rejected JSONL contender reached HTTP"
     with sqlite3.connect(database) as db:
         after = db.execute(
