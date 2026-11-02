@@ -24,7 +24,7 @@ impl<'a> WaveScenario<'a> {
     fn trigger(&mut self, source: &str, port: &str, value: &Value) {
         assert!(matches!(
             &self.wave.nodes[source].1.kind,
-            NodeKind::Source { source: declared } if declared == source
+            NodeKind::Source { source: declared } if declared == &self.wave.source
         ));
         self.wave
             .deliver(self.graph, &self.scope, source, Some((port, value)), false)
@@ -154,13 +154,19 @@ fn bounded_terminal_failure_and_cardinality_comparison() {
                         );
                         if step == 0 {
                             // No early completion while the other producer is live.
-                            assert!(matches!(case.input("alpha/merge").unwrap(), Resolution::Unresolved));
+                            assert!(matches!(
+                                case.input("alpha/merge").unwrap(),
+                                Resolution::Unresolved
+                            ));
                             let pending_port = if join {
                                 ["right", "left"][index]
                             } else {
                                 "in"
                             };
-                            assert!(matches!(case.port("alpha/merge", pending_port).unwrap(), Resolution::Unresolved));
+                            assert!(matches!(
+                                case.port("alpha/merge", pending_port).unwrap(),
+                                Resolution::Unresolved
+                            ));
                         }
                     }
                     let expected = if join { join_expected } else { merge_expected }[left][right];
