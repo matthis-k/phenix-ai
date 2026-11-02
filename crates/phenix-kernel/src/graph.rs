@@ -1150,7 +1150,10 @@ impl GraphExecution<'_> {
             self.admit_state_wave()?;
         }
         if !self.terminal
-            && (self.stopped || (self.waiting.is_empty() && self.pending.is_empty()))
+            && (self.stopped
+                || (self.waiting.is_empty()
+                    && self.pending.is_empty()
+                    && self.v2.as_ref().is_none_or(|wave| wave.root_settled())))
             && (self.v2.is_none() || self.draining.is_empty())
         {
             self.terminal = true;

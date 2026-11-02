@@ -100,6 +100,19 @@ exact effective-ID entry/exit delivery, shared-provider serialization and physic
 drain. Normative requirements and executable source assertions are present in the
 dependent placement increment; native execution remains pending its exact-head gate.
 
+Initial occurrence-settlement foundation (sibling on #1220 at `d9c4c9f62`,
+design dependency only on the separately strengthened reference model #1238):
+derive unfinished admitted ordinary/InvokeEach occurrences and unpublished batches
+from existing Wave state. Idle scheduler containers must fail closed rather than
+discard those obligations at deferred-wave advancement or report normal root
+completion. Empty batches still owe publication; downstream/deferred delivery
+precedes producer settlement. Stopped/cancelled/failed roots retain physical-drain
+termination without requiring successful publication. No new registry/counter,
+edge/cardinality/Join changes, full capabilities/frontiers, concurrent roots or
+durable recovery are included. Focused private regressions are added; execution
+and exact-head native acceptance remain unverified (no local builds requested).
+Product branches are not restacked on the model branch.
+
 The five C1 bundles are tracked independently in v2.4 section 7.12. Typed
 boundaries, Flow/Order/Deferred semantics and public/private anchor resolution
 have frozen contracts and exact-head acceptance for this trusted-host profile.

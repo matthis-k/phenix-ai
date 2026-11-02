@@ -106,6 +106,26 @@ pub(in crate::graph) struct Wave {
 }
 
 impl Wave {
+    fn occurrences_settled(&self) -> bool {
+        self.started.iter().all(|node| self.done.contains(node))
+            // Every retained batch owes publication, regardless of branch outcomes.
+            && self.each.is_empty()
+    }
+
+    fn require_settled(&self) -> Result<(), Failure> {
+        if !self.occurrences_settled() {
+            return Err(fail(
+                Code::InfrastructureFailure,
+                "graph-v2 idle scheduler has unsettled occurrences or unpublished batch",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(in crate::graph) fn root_settled(&self) -> bool {
+        self.occurrences_settled() && self.queue.is_empty() && self.emitted.is_empty()
+    }
+
     pub(in crate::graph) fn new(graph: &CompiledGraph, source: &str) -> Result<Self, Failure> {
         let nodes: BTreeMap<_, _> = graph
             .declarations
@@ -987,6 +1007,7 @@ impl GraphExecution<'_> {
             return Ok(());
         }
         let wave = self.v2.as_mut().unwrap();
+        wave.require_settled()?;
         wave.queue
             .extend(std::mem::take(&mut wave.emitted).into_values());
         let Some(activation) = wave.queue.pop_front() else {
