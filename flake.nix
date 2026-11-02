@@ -1447,6 +1447,17 @@
       '';
       basicRuntimeSource = sourceFor "phenix-basic-runtime";
       basicRuntime = build "phenix-basic-runtime" basicRuntimeSource;
+      selectedProviderAdmissionCheck = basicRuntime.overrideAttrs {
+        doCheck = true;
+        cargoTestFlags = [ "-p" "phenix-basic-runtime" "native_install_is_released_after_pre_model_admission_failure" "--" "--ignored" ];
+        preCheck = ''
+          export PHENIX_TEST_SELECTED=${basicHttpComposition}
+          export PHENIX_TEST_SELECTED_RELEASE_FAULT=${basicHttpReleaseFaultComposition}
+          export PHENIX_TEST_MANAGEMENT=${providerLoopbackManagementComposition}
+          export PHENIX_C9_TEST_HTTP_ENDPOINT=http://127.0.0.1:1/completions
+          export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/admission.sqlite"
+        '';
+      };
       basicV2Runtime = basicRuntime.overrideAttrs {
         doCheck = true;
         cargoBuildFlags = [ "-p" "phenix-basic-runtime" "--features" "graph-v2" ];
@@ -1546,8 +1557,7 @@
         { caller = "root"; key = "phenix.basic.tool-receipts@1/recover"; }
         { caller = "root"; key = "phenix.basic.tool-receipts@1/read"; }
       ];
-      basicV2FanoutComposition = pkgs.writeText "phenix-basic-v2-fanout-composition.json"
-        (builtins.toJSON (basicV2CompositionSpec // {
+      basicV2FanoutCompositionSpec = basicV2CompositionSpec // {
           artifacts = basicV2CompositionSpec.artifacts ++ [ "${pendingToolA}" "${pendingToolB}" ];
           slots = basicV2CompositionSpec.slots ++ [
             (basicBinding "phenix.basic.tools" "GraphContributors" "phenix.tool.pending-a" "GraphExecutor")
@@ -1565,7 +1575,9 @@
           authority = basicV2CompositionSpec.authority // {
             operations = basicV2CompositionSpec.authority.operations ++ [ "phenix.basic.tool-receipts@1/resolve" ];
           };
-        }));
+        };
+      basicV2FanoutComposition = pkgs.writeText "phenix-basic-v2-fanout-composition.json"
+        (builtins.toJSON basicV2FanoutCompositionSpec);
       basicV2ControlledCheck = pkgs.runCommand "phenix-basic-v2-controlled-turns" { } ''
         mkdir -p "$out"
         for mode in pending pending-rounds cancel cancel-deferred cancel-continuation cancel-rounds-initial cancel-rounds-continuation fail-model; do
@@ -1595,10 +1607,15 @@
         python ${./tests/graph-v2-packaged-acp-tools.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2FanoutComposition} "$out"
         export PYTHONPATH=${./tests}
-        PHENIX_SELECTED_PROVIDER_CANCEL_ACCEPTANCE=1 python ${./tests/acp-openai-api-key-product.py} \
+        PHENIX_SELECTED_PROVIDER_CANCEL_ACCEPTANCE=1 PHENIX_SELECTED_PROVIDER_JSONL_ACCEPTANCE=1 python ${./tests/acp-openai-api-key-product.py} \
           ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2HttpComposition} \
           ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/provider" \
           ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
+        python ${./tests/acp-native-model-select-product.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2HttpComposition} ${providerLoopbackManagementComposition} "$out/selected-jsonl" jsonl --pending-composition ${basicV2HttpPendingComposition}
+        test -s "$out/selected-jsonl/selected-jsonl.json"
+        python ${./tests/acp-native-model-select-product.py} ${basicV2Runtime}/bin/phenix-basic-runtime ${basicV2HttpReleaseFaultComposition} ${providerLoopbackManagementComposition} "$out/selected-jsonl-release" release-fault jsonl --pending-composition ${basicV2HttpPendingComposition}
+        test -s "$out/selected-jsonl-release/selected-jsonl.json"
+        test -s "$out/provider/selected-authenticated-jsonl.json"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-turn.sqlite" \
           ${graphV2TurnBinary}/bin/phenix-graph-v2-turn ${basicV2Composition} > "$out/native-turn.txt"
         PHENIX_BASIC_SQLITE_PATH="$TMPDIR/graph-v2-denied-tool.sqlite" \
@@ -1804,6 +1821,8 @@
       basicHttpCompositionSpec = basicHttpCompositionFor basicCompositionSpec;
       basicV2HttpComposition = pkgs.writeText "phenix-basic-v2-http-composition.json"
         (builtins.toJSON (basicHttpCompositionFor basicV2CompositionSpec));
+      basicV2HttpPendingComposition = pkgs.writeText "phenix-basic-v2-http-pending-test.json"
+        (builtins.toJSON (basicHttpCompositionFor basicV2FanoutCompositionSpec));
       basicHttpComposition = pkgs.writeText "phenix-basic-http-composition.json"
         (builtins.toJSON basicHttpCompositionSpec);
       basicHttpReleaseFaultComposition = pkgs.writeText "phenix-basic-http-release-fault-composition.json"
@@ -1811,6 +1830,12 @@
           artifacts = map (artifact:
             if artifact == "${httpModel}" then "${httpReleaseFaultModel}" else artifact
           ) basicHttpCompositionSpec.artifacts;
+        }));
+      basicV2HttpReleaseFaultComposition = pkgs.writeText "phenix-basic-v2-http-release-fault-composition.json"
+        (let base = basicHttpCompositionFor basicV2CompositionSpec; in builtins.toJSON (base // {
+          artifacts = map (artifact:
+            if artifact == "${httpModel}" then "${httpReleaseFaultModel}" else artifact
+          ) base.artifacts;
         }));
       # The original Basic composition stays byte-for-byte equivalent. The
       # verification product adds one provider artifact and changes one slot.
@@ -2341,6 +2366,16 @@
       basicProductCheck = pkgs.runCommand "phenix-basic-host-smoke" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-product.db"
+        export PYTHONPATH=${./tests}
+        python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} ${providerLoopbackManagementComposition} $out/selected-jsonl jsonl
+        test -s "$out/selected-jsonl/selected-jsonl.json"
+        python ${./tests/acp-native-model-select-product.py} ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpReleaseFaultComposition} ${providerLoopbackManagementComposition} $out/selected-jsonl-release release-fault jsonl
+        test -s "$out/selected-jsonl-release/selected-jsonl.json"
+        PHENIX_SELECTED_PROVIDER_JSONL_ACCEPTANCE=1 python ${./tests/acp-openai-api-key-product.py} \
+          ${basicRuntime}/bin/phenix-basic-runtime ${basicHttpComposition} \
+          ${providerOpenAiApiFixture} ${providerCredentialStore} ${providerDefinitions} "$out/provider" \
+          ${openAiApiManagementComposition} ${openAiApiCredentialComposition} ${openAiApiResolverComposition} ${openAiApiProviderBundle}
+        test -s "$out/provider/selected-authenticated-jsonl.json"
         printf 'hello\n' | ${basicRuntime}/bin/phenix-basic-runtime terminal ${basicComposition} > $out/terminal.txt
         grep -F 'answer: mock:hello' $out/terminal.txt
         printf '%s\n' '{"type":"prompt","session":"s1","text":"tools:hello","limits":{"model_turns":2,"tool_calls":2}}' | ${basicRuntime}/bin/phenix-basic-runtime jsonl ${basicComposition} > $out/jsonl.txt
@@ -3153,6 +3188,7 @@
         };
       };
       checks.${system} = {
+        selected-provider-admission = selectedProviderAdmissionCheck;
         basic-v2-packaged-host = basicV2Product;
         m1-native-authoring = authoringCheck;
         agent-mix-boundaries = agentMixBoundaryCheck;

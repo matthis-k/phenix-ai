@@ -73,22 +73,19 @@ def run(messages, composition=path, expected_error=None, expected_failure_text=N
         input="".join(json.dumps(item) + "\n" for item in messages),
         text=True, capture_output=True, env=env, timeout=90,
     )
-    if expected_error is None:
-        assert proc.returncode == 0, (proc.stdout, proc.stderr)
-    else:
-        # Invalid replies and kernel denials exit nonzero. Some domain turn
-        # rejections instead return a successful JSONL command that contains
-        # the durable Failure event. In either case no Answer may be emitted.
-        assert proc.returncode != 0, (proc.stdout, proc.stderr)
-        assert expected_error in proc.stderr, (proc.stdout, proc.stderr)
+    # Turn failures are session-local JSONL outcomes, not process failures.
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
     events = [json.loads(line) for line in proc.stdout.splitlines()]
+    if expected_error is not None:
+        assert any(
+            event["kind"] == "Failure" and expected_error in event["text"]
+            for event in events
+        ), (events, proc.stderr)
     if expected_error is not None or expected_failure_text is not None:
         assert not [event for event in events if event["kind"] == "Answer"], events
-        # Kernel authority denial aborts the imported effect before the Basic
-        # agent can journal a Failure. Agent-level Model errors instead write
-        # the durable Failure event, including invalid replies and turn caps.
-        if expected_error != "has no effective grant":
-            assert any(event["kind"] == "Failure" for event in events), events
+        # Kernel denials produce a host Failure; agent domain failures may
+        # instead retain their durable Failure event.
+        assert any(event["kind"] == "Failure" for event in events), events
     if expected_failure_text is not None:
         assert any(
             event["kind"] == "Failure" and expected_failure_text in event["text"]

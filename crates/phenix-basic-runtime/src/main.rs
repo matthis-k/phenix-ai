@@ -4,6 +4,8 @@
 mod acp_sdk;
 mod model_selection_state;
 mod provider_deployment;
+mod provider_management;
+mod selected_provider;
 use phenix_basic_contracts::{
     BasicError, ClientInput, Event, EventKind, EventPage, JournalAppend, JournalQuery,
     ObserverCheckpoint, ObserverRequest, RenderRequest, RunResult, RunStatus, Scope,
@@ -167,7 +169,40 @@ fn render_new(
     frontend: &str,
     session: &str,
     after: &mut u64,
+    observer: Option<&mut ObserverCheckpoint>,
+    sink: impl Write,
+) -> Result<(), String> {
+    render_new_gated(
+        kernel, execution, frontend, session, after, observer, None, sink,
+    )
+}
+
+fn hold_terminals(events: Vec<Event>, held: &mut Vec<Event>) -> Vec<Event> {
+    events
+        .into_iter()
+        .filter_map(|event| {
+            if matches!(
+                event.kind,
+                EventKind::Answer | EventKind::Cancelled | EventKind::Failure
+            ) {
+                held.push(event);
+                None
+            } else {
+                Some(event)
+            }
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_new_gated(
+    kernel: &Kernel,
+    execution: Option<&GraphExecution<'_>>,
+    frontend: &str,
+    session: &str,
+    after: &mut u64,
     mut observer: Option<&mut ObserverCheckpoint>,
+    mut held: Option<&mut Vec<Event>>,
     mut sink: impl Write,
 ) -> Result<(), String> {
     loop {
@@ -188,6 +223,10 @@ fn render_new(
         if page.next <= *after {
             return Err("journal cursor did not advance".into());
         }
+        let events = match held.as_deref_mut() {
+            Some(held) => hold_terminals(page.events, held),
+            None => page.events,
+        };
         let lines: Vec<String> = completed(invoke_observed(
             kernel,
             execution,
@@ -195,14 +234,17 @@ fn render_new(
             "phenix.basic.frontend@1/render",
             RenderRequest {
                 session: session.into(),
-                events: page.events,
+                events,
             },
         ))?;
         for line in lines {
             writeln!(sink, "{line}").map_err(|e| e.to_string())?;
         }
         sink.flush().map_err(|e| e.to_string())?;
-        if let Some(checkpoint) = observer.as_deref_mut() {
+        if let Some(checkpoint) = observer
+            .as_deref_mut()
+            .filter(|_| held.as_ref().is_none_or(|events| events.is_empty()))
+        {
             *checkpoint = completed(invoke_observed(
                 kernel,
                 execution,
@@ -839,16 +881,181 @@ fn jsonl_session(line: &str) -> Result<String, String> {
     Ok(session.into())
 }
 
+fn jsonl_request_failure(
+    session: &str,
+    message: String,
+    mut sink: impl Write,
+) -> Result<(), String> {
+    let problem = BasicError {
+        code: phenix_basic_contracts::ErrorCode::ModelFailed,
+        message,
+    };
+    // Sequence zero is an unjournaled host outcome, not a durable event cursor.
+    let event = Event {
+        sequence: 0,
+        session: session.into(),
+        run: String::new(),
+        kind: EventKind::Failure,
+        call_id: String::new(),
+        text: problem.message.clone(),
+        data: phenix_basic_contracts::encode(&problem).map_err(|error| format!("{error:?}"))?,
+    };
+    serde_json::to_writer(&mut sink, &event).map_err(|error| error.to_string())?;
+    writeln!(sink).map_err(|error| error.to_string())?;
+    sink.flush().map_err(|error| error.to_string())
+}
+
+fn discard_jsonl_terminals(
+    checkpoint: Option<ObserverCheckpoint>,
+    terminals: &[Event],
+    persist: impl FnOnce(ObserverCheckpoint) -> Result<(), String>,
+) -> Result<(), String> {
+    let Some(after) = terminals.iter().map(|event| event.sequence).max() else {
+        return Ok(());
+    };
+    let mut checkpoint = checkpoint.ok_or("missing JSONL terminal observer checkpoint")?;
+    checkpoint.after = checkpoint.after.max(after);
+    persist(checkpoint)
+}
+
+#[cfg(test)]
+mod jsonl_outcome_tests {
+    use super::*;
+
+    fn event(kind: EventKind, sequence: u64) -> Event {
+        Event {
+            sequence,
+            session: "s1".into(),
+            run: "run-1".into(),
+            kind,
+            call_id: String::new(),
+            text: "streamed".into(),
+            data: phenix_contract::Blob(vec![]),
+        }
+    }
+
+    #[test]
+    fn only_terminal_events_wait_for_release() {
+        let mut held = Vec::new();
+        let streaming = hold_terminals(
+            vec![
+                event(EventKind::TextDelta, 1),
+                event(EventKind::Answer, 2),
+                event(EventKind::Cancelled, 3),
+                event(EventKind::Failure, 4),
+            ],
+            &mut held,
+        );
+        assert_eq!(streaming.len(), 1);
+        assert_eq!(streaming[0].kind, EventKind::TextDelta);
+        assert_eq!(held.len(), 3);
+        let result: Result<(), &str> =
+            selected_provider::finalize(Ok(()), || Err("release failed"), || {});
+        assert!(result.is_err());
+        // The caller discards held journal terminals and emits the host Failure.
+        let mut wire = Vec::new();
+        jsonl_request_failure("s1", "release failed".into(), &mut wire).unwrap();
+        let failure: Event = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(failure.kind, EventKind::Failure);
+        assert_eq!(failure.sequence, 0);
+        let problem: BasicError = phenix_basic_contracts::decode(&failure.data).unwrap();
+        assert_eq!(problem.code, phenix_basic_contracts::ErrorCode::ModelFailed);
+        assert!(!String::from_utf8(wire).unwrap().contains("Answer"));
+    }
+
+    #[test]
+    fn jsonl_resolver_failure_does_not_export_native_prose() {
+        let error = selected_provider::internal(phenix_contract::Failure::new(
+            phenix_contract::Code::PluginFailed,
+            "credential-wire-sentinel",
+        ));
+        let mut wire = Vec::new();
+        jsonl_request_failure("s1", error.to_string(), &mut wire).unwrap();
+        let encoded = String::from_utf8(wire).unwrap();
+        assert!(!encoded.contains("credential-wire-sentinel"));
+        assert!(encoded.contains("PluginFailed"));
+    }
+
+    #[test]
+    fn discarded_terminals_advance_the_existing_observer_before_quarantine() {
+        let terminals = vec![event(EventKind::Answer, 7), event(EventKind::Cancelled, 9)];
+        let checkpoint = ObserverCheckpoint {
+            session: "s1".into(),
+            observer: "jsonl".into(),
+            after: 6,
+            revision: 3,
+        };
+        let persisted = std::cell::Cell::new(0);
+        let suppression = discard_jsonl_terminals(Some(checkpoint), &terminals, |next| {
+            assert_eq!(next.session, "s1");
+            assert_eq!(next.observer, "jsonl");
+            assert_eq!(next.revision, 3);
+            persisted.set(next.after);
+            Ok(())
+        });
+        let cleanup: Result<(), String> = Err("release failed".into());
+        let result = selected_provider::finalize(
+            Ok(()),
+            || cleanup.and(suppression),
+            || {
+                assert_eq!(persisted.get(), 9);
+            },
+        );
+        assert_eq!(result.unwrap_err(), "release failed");
+        assert!(!terminals
+            .iter()
+            .any(|event| event.sequence > persisted.get()));
+    }
+
+    #[test]
+    fn failed_terminal_suppression_quarantines_without_replacing_primary_error() {
+        for primary in [Ok(()), Err("primary turn failure".to_owned())] {
+            let checkpoint = ObserverCheckpoint {
+                session: "s2".into(),
+                observer: "jsonl".into(),
+                after: 1,
+                revision: 1,
+            };
+            let suppression =
+                discard_jsonl_terminals(Some(checkpoint), &[event(EventKind::Answer, 2)], |_| {
+                    Err("checkpoint failed".to_owned())
+                });
+            let quarantined = std::cell::Cell::new(false);
+            let expected = primary
+                .clone()
+                .err()
+                .unwrap_or_else(|| "checkpoint failed".into());
+            let result =
+                selected_provider::finalize(primary, || suppression, || quarantined.set(true));
+            assert!(quarantined.get());
+            assert_eq!(result.unwrap_err(), expected);
+        }
+        assert!(
+            discard_jsonl_terminals(None, &[event(EventKind::Answer, 2)], |_| panic!(
+                "missing observer"
+            ))
+            .is_err()
+        );
+    }
+}
+
 /// Reuse the ACP session-scoped composition for JSONL. A single controller
 /// executes each turn to completion; other sessions' prompts remain queued.
 /// Each session has its own journal and observer checkpoint in Storage.
-fn run_jsonl(composition: &Composition) -> Result<(), String> {
+fn run_jsonl(
+    composition: &Composition,
+    management_specs: &[Composition],
+    resolver_specs: &[Composition],
+) -> Result<(), String> {
     const FRONTEND: &str = "phenix.basic.frontend-jsonl";
     const OBSERVER: &str = "jsonl";
     let receiver = input_channel();
     let mut queued = VecDeque::<String>::new();
     let mut output = io::stdout().lock();
     let mut sessions = BTreeMap::<String, Kernel>::new();
+    let management = provider_management::ProviderManagementGroup::prepare(management_specs)?;
+    let resolvers = selected_provider::prepare_resolvers(resolver_specs)?;
+    let mut selected = selected_provider::SelectedState::default();
     sessions.insert("s1".into(), scoped_kernel(composition, "s1")?);
 
     // Retain the existing no-input behavior: replay undelivered events from
@@ -891,137 +1098,235 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
             }
         };
         let session = jsonl_session(&line)?;
-        if !sessions.contains_key(&session) {
-            if sessions.len() >= 32 {
-                return Err("too many active JSONL sessions".into());
-            }
-            sessions.insert(session.clone(), scoped_kernel(composition, &session)?);
-        }
-        let kernel = sessions.get(&session).expect("session initialized");
-        let input: Submission = completed(invoke(
-            kernel,
-            FRONTEND,
-            "phenix.basic.frontend@1/decode",
-            ClientInput {
-                session: session.clone(),
-                line,
-            },
-        ))?;
-        let idle_cancel = input.is_cancel();
-        let observation_owner = if idle_cancel {
-            Some(SessionOwnership::acquire(&session)?)
-        } else {
-            None
-        };
-        let mut admission = if idle_cancel {
-            None
-        } else {
-            Some(SessionAdmission::acquire(kernel, &session, input)?)
-        };
-        let mut observer: ObserverCheckpoint = completed(invoke(
-            kernel,
-            "phenix.basic.event-journal",
-            "phenix.basic.journal@1/observer",
-            ObserverRequest {
-                session: session.clone(),
-                observer: OBSERVER.into(),
-            },
-        ))?;
-        let mut after = observer.after;
-        render_new(
-            kernel,
-            None,
-            FRONTEND,
-            &session,
-            &mut after,
-            Some(&mut observer),
-            &mut output,
-        )?;
-        if idle_cancel {
-            // Replay is authorized observation, not recovery or agent execution.
-            drop(observation_owner);
-            continue;
-        }
-        let owner = admission.as_mut().expect("prompt admission acquired");
-        let mut execution = owner.begin(kernel, basic_scope(composition, &session))?;
-        let mut marked = false;
-        loop {
-            // Leave unprocessed requests in the bounded channel when the
-            // local queue fills. Do not abandon an admitted graph.
-            for _ in 0..32 {
-                if queued.len() >= 32 {
-                    break;
+        let request_result = (|| -> Result<(), String> {
+            selected.check(&session)?;
+            if !sessions.contains_key(&session) {
+                if sessions.len() >= 32 {
+                    return Err("too many active JSONL sessions".into());
                 }
-                let pending_line = match receiver.try_recv() {
-                    Ok(line) => line?,
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-                };
-                let target = match jsonl_session(&pending_line) {
-                    Ok(target) => target,
-                    Err(_) => {
-                        // Report malformed input only after the active root
-                        // finishes; it must not abandon pending physical work.
-                        queued.push_back(pending_line);
-                        continue;
-                    }
-                };
-                let packet: serde_json::Value =
-                    serde_json::from_str(&pending_line).map_err(|e| e.to_string())?;
-                if packet.get("type").and_then(|value| value.as_str()) == Some("cancel") {
-                    if target == session {
-                        let cancellation: Submission = completed(invoke_graph(
-                            &execution,
-                            FRONTEND,
-                            "phenix.basic.frontend@1/decode",
-                            ClientInput {
-                                session: session.clone(),
-                                line: pending_line,
-                            },
-                        ))?;
-                        if cancellation.is_cancel() {
-                            execution.cancel().map_err(|e| format!("{e:?}"))?;
-                        }
-                    }
-                } else {
-                    queued.push_back(pending_line);
-                }
+                sessions.insert(session.clone(), scoped_kernel(composition, &session)?);
             }
-            let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
-            if !marked {
-                marked = owner.mark(kernel, &execution, &session)?;
-            }
-            render_new(
+            let kernel = sessions.get(&session).expect("session initialized");
+            let input: Submission = completed(invoke(
                 kernel,
-                Some(&execution),
                 FRONTEND,
+                "phenix.basic.frontend@1/decode",
+                ClientInput {
+                    session: session.clone(),
+                    line,
+                },
+            ))?;
+            let idle_cancel = input.is_cancel();
+            let mut observation: (Vec<Event>, Option<ObserverCheckpoint>) = (Vec::new(), None);
+            let result = selected.run_with(
+                kernel,
+                composition,
+                management.as_ref(),
+                &resolvers,
                 &session,
-                &mut after,
-                Some(&mut observer),
-                &mut output,
-            )?;
-            if status == GraphStatus::Finished {
-                let cancelled = finish_stream_submission(&execution)?;
-                drop(execution);
-                if cancelled {
-                    record_cancelled(kernel, &session)?;
+                input,
+                &mut observation,
+                |(terminals, terminal_checkpoint), admission, installation| -> Result<(), String> {
+                    let observer = terminal_checkpoint.insert(completed(invoke(
+                        kernel,
+                        "phenix.basic.event-journal",
+                        "phenix.basic.journal@1/observer",
+                        ObserverRequest {
+                            session: session.clone(),
+                            observer: OBSERVER.into(),
+                        },
+                    ))?);
+                    let mut after = observer.after;
                     render_new(
                         kernel,
                         None,
                         FRONTEND,
                         &session,
                         &mut after,
-                        Some(&mut observer),
+                        Some(&mut *observer),
                         &mut output,
                     )?;
+                    if idle_cancel {
+                        // Replay is authorized observation, not recovery or agent execution.
+                        return Ok(());
+                    }
+                    let owner = admission.expect("prompt admission acquired");
+                    let execution = owner.begin(kernel, basic_scope(composition, &session))?;
+                    let mut execution =
+                        selected_provider::Execution::new(execution, kernel, installation);
+                    let mut marked = false;
+                    loop {
+                        // Leave unprocessed requests in the bounded channel when the
+                        // local queue fills. Do not abandon an admitted graph.
+                        for _ in 0..32 {
+                            if queued.len() >= 32 {
+                                break;
+                            }
+                            let pending_line = match receiver.try_recv() {
+                                Ok(line) => line?,
+                                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                            };
+                            let target = match jsonl_session(&pending_line) {
+                                Ok(target) => target,
+                                Err(_) => {
+                                    // Report malformed input only after the active root
+                                    // finishes; it must not abandon pending physical work.
+                                    queued.push_back(pending_line);
+                                    continue;
+                                }
+                            };
+                            let packet: serde_json::Value =
+                                serde_json::from_str(&pending_line).map_err(|e| e.to_string())?;
+                            if packet.get("type").and_then(|value| value.as_str()) == Some("cancel")
+                            {
+                                if target == session {
+                                    let cancellation: Submission = completed(invoke_graph(
+                                        &execution,
+                                        FRONTEND,
+                                        "phenix.basic.frontend@1/decode",
+                                        ClientInput {
+                                            session: session.clone(),
+                                            line: pending_line,
+                                        },
+                                    ))?;
+                                    if cancellation.is_cancel() {
+                                        execution.cancel()?;
+                                    }
+                                }
+                            } else {
+                                queued.push_back(pending_line);
+                            }
+                        }
+                        let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+                        if !marked {
+                            marked = owner.mark(kernel, &execution, &session)?;
+                        }
+                        render_new_gated(
+                            kernel,
+                            Some(&execution),
+                            FRONTEND,
+                            &session,
+                            &mut after,
+                            Some(&mut *observer),
+                            Some(&mut *terminals),
+                            &mut output,
+                        )?;
+                        if status == GraphStatus::Finished {
+                            execution.finish();
+                            let cancelled = finish_stream_submission(&execution)?;
+                            drop(execution);
+                            if cancelled {
+                                record_cancelled(kernel, &session)?;
+                                render_new_gated(
+                                    kernel,
+                                    None,
+                                    FRONTEND,
+                                    &session,
+                                    &mut after,
+                                    Some(&mut *observer),
+                                    Some(&mut *terminals),
+                                    &mut output,
+                                )?;
+                            }
+                            owner.complete()?;
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    if !terminals.is_empty() {
+                        observer.after = after;
+                    }
+                    Ok(())
+                },
+                |(terminals, terminal_checkpoint), result, cleanup| {
+                    // Streaming Model/limit failures are journaled outcomes, not errors
+                    // from finish_stream_submission. They still outrank a release fault.
+                    if result.is_ok() && cleanup.is_err() {
+                        if let Some(failure) = terminals
+                            .iter()
+                            .find(|event| event.kind == EventKind::Failure)
+                        {
+                            *result = Err(failure.text.clone());
+                        }
+                    }
+                    // Discarded terminals must also be consumed durably by this JSONL
+                    // observer, otherwise restart/idle replay could publish false success.
+                    // Keep ownership and the kernel until the suppression write finishes.
+                    let suppression = if result.is_err() || cleanup.is_err() {
+                        discard_jsonl_terminals(
+                            terminal_checkpoint.take(),
+                            terminals,
+                            |checkpoint| {
+                                let _: ObserverCheckpoint = completed(invoke(
+                                    kernel,
+                                    "phenix.basic.event-journal",
+                                    "phenix.basic.journal@1/checkpoint_observer",
+                                    checkpoint,
+                                ))?;
+                                Ok(())
+                            },
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    if suppression.is_err() {
+                        eprintln!(
+                            "JSONL terminal suppression checkpoint failed; session quarantined"
+                        );
+                    }
+                    suppression
+                },
+            );
+            if selected.is_quarantined(&session) {
+                if let Some(kernel) = sessions.remove(&session) {
+                    let _ = kernel.shutdown();
                 }
-                owner.complete()?;
-                break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            result?;
+            let (terminals, terminal_checkpoint) = observation;
+            if !terminals.is_empty() {
+                let kernel = sessions
+                    .get(&session)
+                    .expect("successful cleanup retains session");
+                let lines: Vec<String> = completed(invoke(
+                    kernel,
+                    FRONTEND,
+                    "phenix.basic.frontend@1/render",
+                    RenderRequest {
+                        session: session.clone(),
+                        events: terminals,
+                    },
+                ))?;
+                for line in lines {
+                    writeln!(output, "{line}").map_err(|error| error.to_string())?;
+                }
+                output.flush().map_err(|error| error.to_string())?;
+                if let Some(checkpoint) = terminal_checkpoint {
+                    let _: ObserverCheckpoint = completed(invoke(
+                        kernel,
+                        "phenix.basic.event-journal",
+                        "phenix.basic.journal@1/checkpoint_observer",
+                        checkpoint,
+                    ))?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = request_result {
+            jsonl_request_failure(&session, error, &mut output)?;
         }
     }
     for (_, kernel) in sessions {
         kernel.shutdown().map_err(|e| format!("{e:?}"))?;
+    }
+    if let Some(management) = management {
+        management.shutdown()?;
+    }
+    for resolver in resolvers {
+        resolver
+            .kernel
+            .shutdown()
+            .map_err(selected_provider::internal)?;
     }
     Ok(())
 }
@@ -1196,7 +1501,7 @@ fn run() -> Result<(), String> {
     let mut management: Vec<Composition> = Vec::new();
     let mut credentials: Vec<Composition> = Vec::new();
     let mut resolvers: Vec<Composition> = Vec::new();
-    if args[1] == "acp" {
+    if args[1] == "acp" || args[1] == "jsonl" {
         if !(args.len() - 3).is_multiple_of(2) {
             return Err("ACP management flags require a composition file".into());
         }
@@ -1240,7 +1545,7 @@ fn run() -> Result<(), String> {
     }
     let terminal_session = if args[1] == "terminal" && args.len() == 5 && args[3] == "--session" {
         args[4].as_str()
-    } else if args.len() == 3 || args[1] == "acp" {
+    } else if args.len() == 3 || args[1] == "acp" || args[1] == "jsonl" {
         "s1"
     } else {
         return Err("terminal session arguments are invalid".into());
@@ -1286,7 +1591,7 @@ fn run() -> Result<(), String> {
     let composition: Composition = serde_json::from_slice(&prepared).map_err(|e| e.to_string())?;
     match args[1].as_str() {
         "acp" => acp_sdk::run(&composition, &management, &credentials, &resolvers),
-        "jsonl" => run_jsonl(&composition),
+        "jsonl" => run_jsonl(&composition, &management, &resolvers),
         "terminal" => run_console(
             &composition,
             "phenix.basic.frontend-terminal",

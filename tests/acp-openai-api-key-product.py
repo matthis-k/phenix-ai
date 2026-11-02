@@ -428,6 +428,9 @@ with tempfile.TemporaryDirectory(prefix="phenix-c11-api-key-") as temporary:
         from selected_provider_cancellation import exercise
         exercise(p, call, root / "selected.sqlite", output,
                  lambda handler: globals().__setitem__("controlled_post", handler))
+    if os.environ.get("PHENIX_SELECTED_PROVIDER_JSONL_ACCEPTANCE") == "1":
+        from selected_provider_authenticated_jsonl import exercise
+        exercise(globals(), locals())
     before_revoke = state["post"]
     revoked = call(p, 15, "_phenix/credentials/revoke", account)
     assert revoked["result"]["ok"] is True

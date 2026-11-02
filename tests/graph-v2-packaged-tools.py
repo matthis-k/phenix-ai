@@ -181,8 +181,11 @@ for case in ("reverse", "mixed", "cancel", "partial-cancel", "partial-infrastruc
             # The injected case runs the normal completion/record path, not fail control.
             control(0, "release" if receipt_write_failure else "fail")
             proc.stdin.close()
-            assert proc.wait(timeout=25) != 0
-            failure = proc.stderr.read()
+            until("Failure")
+            assert proc.wait(timeout=25) == 0
+            failure_event = events[-1]
+            assert failure_event["sequence"] == 0 and failure_event["data"], failure_event
+            failure = failure_event["text"]
             assert "PluginFailed" in failure, failure
             assert counts() == before, "failed receipt must not publish collection or advance Model"
             assert portable(records()["session.snapshot.v1"])["pending"] == [

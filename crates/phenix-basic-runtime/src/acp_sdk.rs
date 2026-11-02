@@ -20,12 +20,12 @@ use agent_client_protocol as acp;
 use futures::SinkExt;
 use phenix_basic_contracts::ErrorCode;
 use phenix_provider_contracts::{
-    bind_http_model, validate_model_selection, ApiKeyOptions, AuthAttemptQuery, AuthAttemptState,
-    AuthChallenge, AuthQuery, AuthStart, AuthenticationKind, AuthenticationStatus,
-    CredentialEnvironmentBinding, CredentialIdentity, CredentialImport, CredentialSecret,
-    HttpModelBinding, HttpModelInstall, ModelPage, ModelQuery, ModelSelection, ProviderDescriptor,
-    ProviderDetailsQuery, ProviderError, ProviderErrorCode, ProviderPage, ProviderQuery,
+    ApiKeyOptions, AuthAttemptQuery, AuthAttemptState, AuthChallenge, AuthQuery, AuthStart,
+    AuthenticationKind, AuthenticationStatus, CredentialEnvironmentBinding, CredentialIdentity,
+    CredentialImport, CredentialSecret, ModelPage, ModelQuery, ProviderError, ProviderPage,
 };
+#[cfg(test)]
+use phenix_provider_contracts::{ModelSelection, ProviderDescriptor, ProviderErrorCode};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -373,16 +373,70 @@ fn bounded_transport(
     acp::Lines::new(outgoing, incoming_receiver)
 }
 
-#[path = "acp_provider_management.rs"]
-mod provider_management;
+use crate::provider_management;
+#[cfg(test)]
+use crate::selected_provider::scrub_portable_secret_bytes;
+#[cfg(test)]
+use crate::selected_provider::validate_model_resolver_spec;
+use crate::selected_provider::{self, DomainError, ModelCredentialResolver};
+use crate::selected_provider::{
+    can_switch_native_model, has_model_selection_storage, installed_model_provider,
+};
 #[cfg(test)]
 use provider_management::{
     charge_model_option_budget, is_missing_model_discovery, ModelPageAccumulator,
 };
 use provider_management::{
-    is_previous_native_selection, native_model_option_id, provider_rejection, stale_model_conflict,
-    stale_native_model_choice, ProviderManagement, ProviderManagementGroup,
+    is_previous_native_selection, native_model_option_id, stale_native_model_choice,
+    ProviderManagementGroup,
 };
+
+impl From<DomainError> for acp::Error {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::Provider(problem) => provider_rejection(problem),
+            DomainError::Invalid(message) => invalid(&message),
+            DomainError::Storage(message) => internal_storage(message),
+            DomainError::Basic(problem) => internal_basic(problem),
+            DomainError::Admission(error) => match error {
+                super::session_lifecycle::AdmissionError::InvalidSubmission(message) => {
+                    invalid(&message)
+                }
+                super::session_lifecycle::AdmissionError::Ownership(message)
+                | super::session_lifecycle::AdmissionError::Recovery(message) => {
+                    internal_storage(message)
+                }
+            },
+            other => internal(other),
+        }
+    }
+}
+
+fn provider_rejection(problem: ProviderError) -> acp::Error {
+    acp::Error::invalid_params().data(serde_json::json!({
+        "format": "phenix.provider.error.v1", "code": problem.code,
+    }))
+}
+
+#[cfg(test)]
+#[test]
+fn selected_resolver_failure_mapping_does_not_export_native_message() {
+    let error: acp::Error = selected_provider::internal(phenix_contract::Failure::new(
+        phenix_contract::Code::PluginFailed,
+        "resolver-secret-sentinel",
+    ))
+    .into();
+    let encoded = serde_json::to_string(&error).unwrap();
+    assert!(!encoded.contains("resolver-secret-sentinel"));
+    assert!(encoded.contains("PluginFailed"));
+}
+
+fn stale_model_conflict() -> acp::Error {
+    acp::Error::invalid_params().data(serde_json::json!({
+        "format": "phenix.basic.error.v1", "code": ErrorCode::Conflict,
+        "message": "model selection changed; refresh the ACP session model menu",
+    }))
+}
 
 struct CredentialManagement {
     kernel: Kernel,
@@ -485,219 +539,11 @@ fn prepare_credentials(spec: &Composition) -> Result<CredentialManagement, Strin
     })
 }
 
-/// A separate launcher-authorized model-secret resolution root. This kernel
-/// is not selected from ACP request parameters and exposes no ACP method.
-/// The ordinary Basic session retains only its session/property resources.
-struct ModelCredentialResolver {
-    kernel: Kernel,
-    selected: Selection,
-    identity: CredentialIdentity,
-}
-
-fn validate_model_resolver_spec(spec: &Composition) -> Result<CredentialIdentity, String> {
-    const CONTRACT: &str = "phenix.provider.credentials@1";
-    const RESOLVE: &str = "phenix.provider.credentials@1/resolve";
-    const ROTATE: &str = "phenix.provider.credentials@1/compare_exchange";
-    let resource = spec
-        .resource
-        .as_deref()
-        .ok_or("model resolver requires an explicit credential resource")?;
-    let identity = CredentialIdentity::from_resource(resource)
-        .map_err(|_| "invalid model resolver credential resource")?;
-    let allowed_resource = std::collections::BTreeSet::from([resource.to_string()]);
-    let rotate = spec.slots.len() == 1
-        && spec.grants.iter().any(|grant| {
-            grant.caller == spec.entry.provider
-                && grant.interface == CONTRACT
-                && grant.operation == "compare_exchange"
-                && grant.resources == allowed_resource
-        });
-    let expected_authority = if rotate {
-        std::collections::BTreeSet::from([RESOLVE.into(), ROTATE.into()])
-    } else {
-        std::collections::BTreeSet::from([RESOLVE.into()])
-    };
-    if spec.entry.interface != CONTRACT
-        || spec.entry.operation != "resolve"
-        || spec.authority.operations != expected_authority
-        || spec.authority.resources != allowed_resource
-        || !(spec.grants.len() == 1 && spec.slots.is_empty()
-            || spec.grants.len() == 2 && spec.slots.len() == 1 && !rotate
-            || spec.grants.len() == 3 && spec.slots.len() == 1 && rotate)
-        || !spec.excluded.is_empty()
-        || !spec.substitutions.is_empty()
-    {
-        return Err(
-            "model resolver requires one selected root with exact private credential grants".into(),
-        );
-    }
-    let grant = spec
-        .grants
-        .iter()
-        .find(|grant| grant.caller == "root")
-        .ok_or("missing selected resolver grant")?;
-    if grant.interface != CONTRACT
-        || grant.operation != "resolve"
-        || grant.resources != allowed_resource
-    {
-        return Err("model resolver grant must match selected credential resource".into());
-    }
-    if let Some(binding) = spec.slots.first() {
-        // Only the already-declared provider may resolve its own protected
-        // credential record. A refresh CAS grant is restricted to the same
-        // exact account backend; it cannot become a root ACP operation.
-        if binding.caller != spec.entry.provider
-            || binding.provider == spec.entry.provider
-            || binding.slot != "Credentials"
-            || binding.export != "Credentials"
-            || binding.index != 0
-            || !spec.grants.iter().any(|g| {
-                g.caller == binding.caller
-                    && g.interface == CONTRACT
-                    && g.operation == "resolve"
-                    && g.resources == allowed_resource
-            })
-        {
-            return Err("invalid nested model credential resolver grant".into());
-        }
-        if rotate
-            && !spec.grants.iter().any(|g| {
-                g.caller == binding.caller
-                    && g.interface == CONTRACT
-                    && g.operation == "compare_exchange"
-                    && g.resources == allowed_resource
-            })
-        {
-            return Err("invalid nested model credential rotation grant".into());
-        }
-    }
-    Ok(identity)
-}
-
-fn prepare_model_resolver(spec: &Composition) -> Result<ModelCredentialResolver, String> {
-    let identity = validate_model_resolver_spec(spec)?;
-    let kernel = Prepared::prepare(spec.clone())
-        .map_err(|_| "invalid model resolver composition".to_string())?
-        .load()
-        .map_err(|_| "cannot load model resolver composition".to_string())?;
-    Ok(ModelCredentialResolver {
-        kernel,
-        selected: spec.entry.clone(),
-        identity,
-    })
-}
-
-impl ModelCredentialResolver {
-    /// Available only to the trusted controller after checking fresh model
-    /// binding and authorization. No ACP command can call this method.
-    fn resolve_for(&self, identity: &CredentialIdentity) -> Result<CredentialSecret, String> {
-        if *identity != self.identity {
-            return Err("model credential identity is not launcher-authorized".into());
-        }
-        let root = self
-            .kernel
-            .admit_root(self.selected.clone())
-            .map_err(|_| "model credential resolution is not admitted".to_string())?;
-        match root
-            .invoke(&identity.to_value())
-            .map_err(|_| "model credential resolution failed".to_string())?
-        {
-            Outcome::Success(value) => CredentialSecret::from_value(value)
-                .map_err(|_| "invalid credential resolution response".into()),
-            Outcome::Domain(_) => Err("model credential resolution denied".into()),
-        }
-    }
-}
-
-/// P1 installs exactly one authoritative Model slot. Multiple mappings
-/// (including identical duplicates) are not a selectable model catalog:
-/// client model IDs must never resolve through first-match routing.
-fn installed_model_provider(composition: &Composition) -> Option<&str> {
-    let mut bindings = composition.slots.iter().filter(|binding| {
-        binding.caller == "phenix.basic.agent" && binding.slot == "Model" && binding.index == 0
-    });
-    let selected = bindings.next()?;
-    if bindings.next().is_some() {
-        return None;
-    }
-    Some(selected.provider.as_str())
-}
-
-// HttpModelInstall's Portable encoding contains a temporary copy of the
-// resolved credential. Scrub all embedded Bytes on every success/error path.
-// CredentialSecret owns and zeroizes the original independently.
-fn scrub_portable_secret_bytes(value: &mut Value) {
-    match value {
-        Value::Bytes(bytes) => bytes.as_mut_slice().zeroize(),
-        Value::List(items) => {
-            for item in items {
-                scrub_portable_secret_bytes(item);
-            }
-        }
-        Value::Map(fields) => {
-            for item in fields.values_mut() {
-                scrub_portable_secret_bytes(item);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Only the launcher-installed exact session storage root may opt in to
-/// persisted selected-model intent. This does not infer authority from an ACP
-/// request or an unrelated model slot.
-fn has_model_selection_storage(spec: &Composition) -> bool {
-    spec.grants.iter().any(|grant| {
-        grant.caller == "root"
-            && grant.interface == "phenix.basic.storage@1"
-            && grant.operation == "read"
-    })
-}
-
 /// The ACP config-option response does not grant model routing. It may only
 /// acknowledge the runtime-advertised effective model; a forged/stale value
 /// must not be silently interpreted as a switch.
 fn exact_current_model(offered: Option<&str>, requested: &str) -> bool {
     !requested.is_empty() && offered == Some(requested)
-}
-
-/// Normal Basic stays on its launcher-installed static Model. The opt-in
-/// selected HTTP composition must have all four exact native root operations
-/// before it can present a mutable model picker.
-fn can_switch_native_model(spec: &Composition) -> bool {
-    let Some(resource) = spec.resource.as_deref() else {
-        return false;
-    };
-    if installed_model_provider(spec).is_none() || !spec.authority.resources.contains(resource) {
-        return false;
-    }
-    [
-        ("phenix.basic.storage@1", "read"),
-        ("phenix.basic.storage@1", "transact"),
-        ("phenix.provider.http-model-session@2", "install"),
-        ("phenix.provider.http-model-session@2", "release"),
-    ]
-    .into_iter()
-    .all(|(interface, operation)| {
-        if !spec
-            .authority
-            .operations
-            .contains(&format!("{interface}/{operation}"))
-        {
-            return false;
-        }
-        spec.grants
-            .iter()
-            .filter(|grant| {
-                grant.caller == "root"
-                    && grant.interface == interface
-                    && grant.operation == operation
-                    && grant.resources.len() == 1
-                    && grant.resources.contains(resource)
-            })
-            .count()
-            == 1
-    })
 }
 
 struct Controller {
@@ -707,7 +553,7 @@ struct Controller {
     resolvers: Vec<ModelCredentialResolver>,
     sessions: BTreeMap<String, Kernel>,
     offsets: BTreeMap<String, u64>,
-    selected_http_seen: std::collections::BTreeSet<String>,
+    selected: selected_provider::SelectedState,
     initialized: bool,
     issued: u64,
     queued: Arc<PendingPrompts>,
@@ -730,7 +576,7 @@ impl Controller {
             resolvers,
             sessions: BTreeMap::new(),
             offsets: BTreeMap::new(),
-            selected_http_seen: std::collections::BTreeSet::new(),
+            selected: selected_provider::SelectedState::default(),
             initialized: false,
             issued: 0,
             queued,
@@ -1241,13 +1087,13 @@ impl Controller {
                     let binding = management.current_http_binding(&selection)?;
                     return Ok(Some(binding.model_id().to_owned()));
                 }
-                None if self.selected_http_seen.contains(session) => {
+                None if self.selected.seen.contains(session) => {
                     return Err(invalid("selected model record was withdrawn"));
                 }
                 None => {}
             }
         }
-        // TODO(Graph V2 P1-parity): remove implementation-ID preset routing when
+        // TODO(#891, Graph V2 P1-parity): remove implementation-ID preset routing when
         // all supported launchers use catalog selections and restart parity passes.
         // Selected-mode failures must never use this migration-only fallback.
         Ok(installed.map(str::to_owned))
@@ -1382,7 +1228,7 @@ impl Controller {
         let checked = management.current_http_binding(&desired)?;
         // Once a switch has been admitted, the session must never fall back
         // to the legacy preset, including on CAS or installation failure.
-        self.selected_http_seen.insert(session.clone());
+        self.selected.seen.insert(session.clone());
         super::model_selection_state::compare_and_swap(
             self.sessions
                 .get(&session)
@@ -1448,6 +1294,7 @@ impl Controller {
             return Err(invalid("unsupported ACP session load configuration"));
         }
         let session = request.session_id.to_string();
+        self.selected.check(&session)?;
         phenix_basic_contracts::session_resource(&session)
             .map_err(|_| invalid("invalid ACP session ID"))?;
         let kernel = scoped_kernel(&self.composition, &session).map_err(internal)?;
@@ -1476,97 +1323,6 @@ impl Controller {
         let loaded = self.sessions.get(&session).expect("just inserted");
         send_updates(loaded, None, &session, offset, peer, &self.closed)?;
         Ok(LoadSessionResponse::new().config_options(self.model_options(&session)?))
-    }
-
-    /// Controller-only, same-session Model authorization. A persisted choice
-    /// is an intent: every new turn must revalidate it, resolve exactly its
-    /// currently granted credential and install that native HTTP transport.
-    /// A denied or stale choice prevents the turn; it never falls back to
-    /// environment Model routing.
-    fn install_current_http_model(
-        &self,
-        session: &str,
-        desired: &ModelSelection,
-    ) -> acp::Result<u64> {
-        // Check both grants and authority, including cleanup, before resolving
-        // credentials or mutating the native Model installation.
-        if !can_switch_native_model(&self.composition) {
-            return Err(invalid(
-                "selected Model install/release authority is unavailable",
-            ));
-        }
-        let management = self
-            .management
-            .as_ref()
-            .ok_or_else(|| invalid("current provider management is unavailable"))?;
-        let binding = management.current_http_binding(desired)?;
-        let credential = match (binding.credential_identity(), binding.authentication_kind()) {
-            (None, None) => None,
-            (
-                Some(identity),
-                Some(
-                    AuthenticationKind::ApiKey
-                    | AuthenticationKind::OAuthAuthorizationCode
-                    | AuthenticationKind::OAuthDeviceCode,
-                ),
-            ) => {
-                // Scope derivation is not a grant. The selected account's
-                // exact launcher-owned resolver must admit the credential,
-                // and the provider must freshly verify the selected profile.
-                binding
-                    .resolution_scope_for(identity)
-                    .map_err(provider_rejection)?;
-                let resolver = self
-                    .resolvers
-                    .iter()
-                    .find(|source| source.identity == *identity)
-                    .ok_or_else(|| invalid("selected credential resolver is not installed"))?;
-                let secret = resolver
-                    .resolve_for(identity)
-                    .map_err(|_| invalid("selected credential resolution was denied"))?;
-                Some((identity.clone(), secret))
-            }
-            _ => return Err(invalid("selected model authentication is unsupported")),
-        };
-        // Refuse changed registration/revocation while resolving the secret.
-        // Neither the original choice nor the secret-store reply are grants.
-        if management.current_http_binding(desired)? != binding {
-            return Err(invalid(
-                "selected model authentication changed before install",
-            ));
-        }
-        let install = HttpModelInstall::from_checked(&binding, session.into(), credential, None)
-            .map_err(provider_rejection)?;
-        let kernel = self
-            .sessions
-            .get(session)
-            .ok_or_else(|| invalid("unknown selected model session"))?;
-        let provider = installed_model_provider(&self.composition)
-            .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
-        kernel
-            .admit_root(Selection {
-                interface: "phenix.provider.http-model-session@2".into(),
-                operation: "release".into(),
-                provider: provider.into(),
-            })
-            .map_err(|_| invalid("selected Model release grant is unavailable"))?;
-        let root = kernel
-            .admit_root(Selection {
-                interface: "phenix.provider.http-model-session@2".into(),
-                operation: "install".into(),
-                provider: provider.into(),
-            })
-            .map_err(|_| invalid("selected Model install grant is unavailable"))?;
-        let mut payload = install.to_value();
-        let result = root.invoke(&payload);
-        scrub_portable_secret_bytes(&mut payload);
-        match result.map_err(internal)? {
-            Outcome::Success(value) => u64::from_value(value).map_err(internal),
-            Outcome::Domain(value) => {
-                let problem = ProviderError::from_value(value).map_err(internal)?;
-                Err(provider_rejection(problem))
-            }
-        }
     }
 
     fn prompt(
@@ -1598,131 +1354,62 @@ impl Controller {
                 internal_basic(cause)
             }
         })?;
-        // TODO(#1234): selected-provider installation and release still belong
-        // in a frontend-neutral domain boundary, including quarantine on failure.
-        let mut owner = SessionAdmission::acquire(kernel, &session, submission).map_err(
-            |error| match error {
-                super::session_lifecycle::AdmissionError::InvalidSubmission(message) => {
-                    invalid(&message)
-                }
-                super::session_lifecycle::AdmissionError::Ownership(message)
-                | super::session_lifecycle::AdmissionError::Recovery(message) => {
-                    internal_storage(message)
-                }
-            },
-        )?;
-        let installation = if has_model_selection_storage(&self.composition) {
-            match super::model_selection_state::read(kernel, &self.composition, &session)
-                .map_err(internal)?
-            {
-                Some((stored, _revision)) => {
-                    // A once-selected native transport cannot silently return
-                    // to legacy preset routing when its record disappears.
-                    self.selected_http_seen.insert(session.clone());
-                    Some(self.install_current_http_model(&session, &stored)?)
-                }
-                None if self.selected_http_seen.contains(&session) => {
-                    return Err(invalid("selected model record was withdrawn"));
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
-        let release = |execution: Option<&GraphExecution<'_>>| -> acp::Result<()> {
-            if let Some(installation) = installation {
-                let provider = installed_model_provider(&self.composition)
-                    .ok_or_else(|| invalid("installed Model slot is missing or ambiguous"))?;
-                let selection = Selection {
-                    interface: "phenix.provider.http-model-session@2".into(),
-                    operation: "release".into(),
-                    provider: provider.into(),
-                };
-                let payload = phenix_provider_contracts::HttpModelRelease {
-                    session: session.clone(),
+        let result = self.selected.run_with(
+            kernel,
+            &self.composition,
+            self.management.as_ref(),
+            &self.resolvers,
+            &session,
+            submission,
+            &mut (),
+            |_, owner, installation| {
+                let owner = owner.expect("prompt admission acquired");
+                let execution = owner
+                    .begin(kernel, basic_scope(&self.composition, &session))
+                    .map_err(internal)?;
+                let offset = self.offsets.entry(session.clone()).or_default();
+                Self::drive(
+                    kernel,
+                    execution,
+                    &session,
+                    owner,
+                    offset,
+                    peer,
+                    cancelled,
+                    &self.closed,
                     installation,
-                }
-                .to_value();
-                let outcome = if let Some(execution) = execution {
-                    match execution.invoke_selected(&selection, &payload) {
-                        // A physically pending Model instance cannot accept
-                        // control calls. Its cancel callback already revoked
-                        // reuse; explicit release is retried after drain.
-                        Err(failure)
-                            if failure.code == phenix_contract::Code::ReentrancyRejected =>
-                        {
-                            return Ok(())
-                        }
-                        outcome => outcome,
-                    }
-                } else {
-                    let root = kernel
-                        .admit_root(selection)
-                        .map_err(|_| invalid("selected Model release grant is unavailable"))?;
-                    root.invoke(&payload)
-                };
-                match outcome.map_err(internal)? {
-                    Outcome::Success(value) => {
-                        <() as Portable>::from_value(value).map_err(internal)?
-                    }
-                    Outcome::Domain(value) => {
-                        return Err(provider_rejection(
-                            ProviderError::from_value(value).map_err(internal)?,
-                        ))
-                    }
-                }
-            }
-            Ok(())
-        };
-        let result = (|| {
-            let execution = owner
-                .begin(kernel, basic_scope(&self.composition, &session))
-                .map_err(internal)?;
-            let offset = self.offsets.entry(session.clone()).or_default();
-            Self::drive(
-                kernel,
-                execution,
-                &session,
-                &mut owner,
-                offset,
-                peer,
-                cancelled,
-                &self.closed,
-                &release,
-            )
-        })();
-        let cleanup = release(None);
-        finish_prompt(result, cleanup, || {
-            // Failed revocation must not leave this kernel available to another
-            // prompt, even if shutdown itself cannot finish successfully.
+                )
+            },
+            |_, _, _| Ok(()),
+        );
+        if self.selected.is_quarantined(&session) {
             if let Some(kernel) = self.sessions.remove(&session) {
                 let _ = kernel.shutdown();
             }
-        })
+        }
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
     fn drive(
         kernel: &Kernel,
-        mut execution: GraphExecution<'_>,
+        execution: GraphExecution<'_>,
         session: &str,
         owner: &mut SessionAdmission,
         after: &mut u64,
         peer: &Peer,
         cancel_flag: &AtomicBool,
         closed: &AtomicBool,
-        release: &impl Fn(Option<&GraphExecution<'_>>) -> acp::Result<()>,
+        installation: Option<&selected_provider::Installation>,
     ) -> acp::Result<PromptResponse> {
+        let mut execution = selected_provider::Execution::new(execution, kernel, installation);
         let mut marked = false;
         let mut stopping = false;
         loop {
             if !stopping
                 && (closed.load(Ordering::Acquire) || cancel_flag.swap(false, Ordering::AcqRel))
             {
-                execution.cancel().map_err(internal)?;
-                // Model cancellation revokes its active configuration. For
-                // tool-only work, release the idle Model on this same root.
-                release(Some(&execution))?;
+                execution.cancel()?;
                 stopping = true;
             }
             let status = execution.pump(|_| {}).map_err(internal)?;
@@ -1733,6 +1420,7 @@ impl Controller {
                 send_updates(kernel, Some(&execution), session, after, peer, closed)?;
             }
             if status == GraphStatus::Finished {
+                execution.finish();
                 let cancelled = finish_submission(&execution).map_err(internal)?;
                 drop(execution);
                 if cancelled {
@@ -1788,32 +1476,7 @@ pub(super) fn run(
     credentials: &[Composition],
     resolvers: &[Composition],
 ) -> Result<(), String> {
-    if management.len() > 32 {
-        return Err("too many authorized provider management compositions".into());
-    }
-    let management = if management.is_empty() {
-        None
-    } else {
-        let roots = management
-            .iter()
-            .map(|spec| -> Result<ProviderManagement, String> {
-                if spec.entry.interface != "phenix.provider.catalog@1"
-                    || spec.entry.operation != "list"
-                {
-                    return Err(
-                        "ACP management composition must select provider catalog list".into(),
-                    );
-                }
-                let selected = spec.entry.clone();
-                let kernel = Prepared::prepare(spec.clone())
-                    .map_err(|e| format!("{e:?}"))?
-                    .load()
-                    .map_err(|e| format!("{e:?}"))?;
-                Ok(ProviderManagement { kernel, selected })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Some(ProviderManagementGroup { roots })
-    };
+    let management = ProviderManagementGroup::prepare(management)?;
     if credentials.len() > 32 || resolvers.len() > 32 {
         return Err("too many authorized credential compositions".into());
     }
@@ -1821,27 +1484,13 @@ pub(super) fn run(
         .iter()
         .map(prepare_credentials)
         .collect::<Result<Vec<_>, _>>()?;
-    let resolvers = resolvers
-        .iter()
-        .map(prepare_model_resolver)
-        .collect::<Result<Vec<_>, _>>()?;
+    let resolvers = selected_provider::prepare_resolvers(resolvers)?;
     let mut seen = std::collections::BTreeSet::new();
     if credentials
         .iter()
         .any(|item| !seen.insert(item.resource.clone()))
     {
         return Err("duplicate credential root".into());
-    }
-    seen.clear();
-    if resolvers.iter().any(|item| {
-        !seen.insert(
-            item.identity
-                .clone()
-                .resource()
-                .expect("validated credential root"),
-        )
-    }) {
-        return Err("duplicate model credential root".into());
     }
     let (tx, receiver) = sync_channel::<Command>(64);
     let closed = Arc::new(AtomicBool::new(false));
@@ -2080,18 +1729,13 @@ pub(super) fn run(
     Ok(())
 }
 
+#[cfg(test)]
 fn finish_prompt<T>(
     result: acp::Result<T>,
     cleanup: acp::Result<()>,
     quarantine: impl FnOnce(),
 ) -> acp::Result<T> {
-    if cleanup.is_err() {
-        quarantine();
-    }
-    match result {
-        Err(primary) => Err(primary),
-        Ok(response) => cleanup.map(|()| response),
-    }
+    selected_provider::finalize(result, || cleanup, quarantine)
 }
 
 #[cfg(test)]
