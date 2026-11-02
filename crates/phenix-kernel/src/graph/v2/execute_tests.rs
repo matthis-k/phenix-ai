@@ -1,6 +1,85 @@
 use super::*;
 use phenix_contract::Authority;
 
+/// Test-only scenario driver for real compiled V2 Flow reduction.
+///
+/// Input delivery uses an existing, selected edge and the production Wave
+/// authority/readiness path. It does not forge a resolved port, run a native
+/// operation or represent full GraphExecution/root lifecycle.
+struct WaveScenario<'a> {
+    graph: &'a CompiledGraph,
+    wave: Wave,
+    scope: ScopedRequest,
+}
+
+impl<'a> WaveScenario<'a> {
+    fn new(graph: &'a CompiledGraph, source: &str) -> Self {
+        Self {
+            graph,
+            wave: Wave::new(graph, source).unwrap(),
+            scope: scope(&["resource"]),
+        }
+    }
+
+    fn trigger(&mut self, source: &str, port: &str, value: &Value) {
+        assert!(matches!(
+            &self.wave.nodes[source].1.kind,
+            NodeKind::Source { source: declared } if declared == source
+        ));
+        self.wave
+            .deliver(self.graph, &self.scope, source, Some((port, value)), false)
+            .unwrap();
+    }
+
+    fn admit(&mut self, node: &str) {
+        let Resolution::Value(_, resources) = self.wave.input(node).unwrap() else {
+            panic!("node {node} has no admitted input");
+        };
+        self.wave.resources.insert(node.into(), resources);
+    }
+
+    /// Settle a test-owned producer after checking its exact consumer input.
+    /// Skipped outputs and failures use the normal terminal delivery path.
+    fn deliver_to_port(
+        &mut self,
+        node: &str,
+        input: &str,
+        producer: &str,
+        output: &str,
+        value: Option<&Value>,
+        failed: bool,
+    ) {
+        assert!(
+            self.wave.edges.values().any(|edge| {
+                matches!(&edge.kind, EdgeKind::Flow { from, to }
+                    if from.node == producer
+                        && from.port == output
+                        && to.node == node
+                        && to.port == input)
+            }),
+            "missing declared edge {producer}.{output} -> {node}.{input}"
+        );
+        assert!(!(failed && value.is_some()), "failure cannot emit a value");
+        self.wave
+            .deliver(
+                self.graph,
+                &self.scope,
+                producer,
+                value.map(|value| (output, value)),
+                failed,
+            )
+            .unwrap();
+    }
+
+    fn input(&self, node: &str) -> Result<Resolution, Failure> {
+        self.wave.input(node)
+    }
+
+    fn port(&self, node: &str, port: &str) -> Result<Resolution, Failure> {
+        self.wave.port_input(node, port)
+    }
+}
+
 #[test]
 fn bounded_terminal_failure_and_cardinality_comparison() {
     // C, V, F: independent terminal tables, not another production reducer.
@@ -51,50 +130,42 @@ fn bounded_terminal_failure_and_cardinality_comparison() {
         for left in 0..3 {
             for right in 0..3 {
                 for order in [[0, 1], [1, 0]] {
-                    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                    let mut case = WaveScenario::new(&graph, "alpha/submit");
                     let payload = Value::String("terminal".into());
-                    let root = scope(&["resource"]);
-                    wave.deliver(
-                        &graph,
-                        &root,
-                        "alpha/source",
-                        Some(("out", &payload)),
-                        false,
-                    )
-                    .unwrap();
+                    case.trigger("alpha/source", "out", &payload);
                     for producer in ["alpha/p", "alpha/q"] {
-                        let Resolution::Value(_, resources) = wave.input(producer).unwrap() else {
-                            panic!("producer input was not admitted");
-                        };
-                        wave.resources.insert(producer.into(), resources);
+                        case.admit(producer);
                     }
                     for (step, index) in order.into_iter().enumerate() {
                         let terminal = [left, right][index];
-                        wave.deliver(
-                            &graph,
-                            &root,
-                            ["alpha/p", "alpha/q"][index],
-                            (terminal == 1).then_some(("out", &payload)),
+                        let producer = ["alpha/p", "alpha/q"][index];
+                        let port = if join {
+                            ["left", "right"][index]
+                        } else {
+                            "in"
+                        };
+                        case.deliver_to_port(
+                            "alpha/merge",
+                            port,
+                            producer,
+                            "out",
+                            (terminal == 1).then_some(&payload),
                             terminal == 2,
-                        )
-                        .unwrap();
+                        );
                         if step == 0 {
-                            // Frontier exhaustion: even a non-runnable Join must wait
-                            // for the other producer before publishing final closure.
-                            assert!(matches!(
-                                wave.input("alpha/merge").unwrap(),
-                                Resolution::Unresolved
-                            ));
-                            let pending_port = if join { ["right", "left"][index] } else { "in" };
-                            assert!(matches!(
-                                wave.port_input("alpha/merge", pending_port).unwrap(),
-                                Resolution::Unresolved
-                            ));
+                            // No early completion while the other producer is live.
+                            assert!(matches!(case.input("alpha/merge").unwrap(), Resolution::Unresolved));
+                            let pending_port = if join {
+                                ["right", "left"][index]
+                            } else {
+                                "in"
+                            };
+                            assert!(matches!(case.port("alpha/merge", pending_port).unwrap(), Resolution::Unresolved));
                         }
                     }
                     let expected = if join { join_expected } else { merge_expected }[left][right];
                     assert_eq!(
-                        classify(wave.input("alpha/merge")),
+                        classify(case.input("alpha/merge")),
                         expected,
                         "join={join}, terminals={left}/{right}, order={order:?}"
                     );
@@ -103,7 +174,7 @@ fn bounded_terminal_failure_and_cardinality_comparison() {
                     } else {
                         vec![("in", expected)]
                     } {
-                        assert_eq!(classify(wave.port_input("alpha/merge", port)), expected);
+                        assert_eq!(classify(case.port("alpha/merge", port)), expected);
                     }
                 }
             }
