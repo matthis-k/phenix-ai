@@ -139,11 +139,7 @@ fn bounded_terminal_failure_and_cardinality_comparison() {
                     for (step, index) in order.into_iter().enumerate() {
                         let terminal = [left, right][index];
                         let producer = ["alpha/p", "alpha/q"][index];
-                        let port = if join {
-                            ["left", "right"][index]
-                        } else {
-                            "in"
-                        };
+                        let port = if join { ["left", "right"][index] } else { "in" };
                         case.deliver_to_port(
                             "alpha/merge",
                             port,
@@ -158,11 +154,7 @@ fn bounded_terminal_failure_and_cardinality_comparison() {
                                 case.input("alpha/merge").unwrap(),
                                 Resolution::Unresolved
                             ));
-                            let pending_port = if join {
-                                ["right", "left"][index]
-                            } else {
-                                "in"
-                            };
+                            let pending_port = if join { ["right", "left"][index] } else { "in" };
                             assert!(matches!(
                                 case.port("alpha/merge", pending_port).unwrap(),
                                 Resolution::Unresolved
