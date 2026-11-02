@@ -133,5 +133,7 @@
     "crates/phenix-kernel/src/graph/v2.rs": "c828d123225b92dc3559c1a32609057d007088a0d34d3b31fa02b528ca98a9df",
     "crates/phenix-kernel/src/dag.rs": "f5ab61feb99d7be9122335572bbe66b0487cf52ef5e0e5085144d286f2869cd4"
   },
-  "build_measurement_note": "Build timings sampled before remote-protocol hardening; separate from refreshed final-source payload timings. No CI wall-time comparison is inferred."
+  "build_measurement_note": "Build timings sampled before remote-protocol hardening; separate from refreshed final-source payload timings. No CI wall-time comparison is inferred.",
+  "provenance_revision": "4bba634c5f1ff27387622948a600f79d36cb18fb",
+  "provenance_note": "Historical measurements for the JSON-wrapper native control, before structural Message/Identity/ResultValue ports. Corrected native fixture is not benchmarked because local execution became unavailable. Candidate adapter sources are unchanged."
 }

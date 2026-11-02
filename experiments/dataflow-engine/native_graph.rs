@@ -8,6 +8,7 @@ fn graph() -> GraphContributionV2 {
     let schema =
         |s: phenix_contract::StaticSchema| ValueSchema::decode(s.encode().bytes()).unwrap();
     let text = schema(dataflow_native_contracts::Service::run::DEFINITION.request);
+    let result = schema(dataflow_native_contracts::Service::run::DEFINITION.response);
     let branch = schema(dataflow_native_contracts::Prepare::run::DEFINITION.response);
     let error = schema(dataflow_native_contracts::Service::run::DEFINITION.error);
     let exec = ExecutionPolicy {
@@ -65,28 +66,28 @@ fn graph() -> GraphContributionV2 {
             "Model",
             dataflow_native_contracts::Service::run::KEY,
             text.clone(),
-            text.clone(),
+            result.clone(),
         ),
         invoke(
             "Tool",
             dataflow_native_contracts::Service::run::KEY,
             text.clone(),
-            text.clone(),
+            result.clone(),
         ),
         NodeDecl {
             id: format!("{OWNER}/Aggregate"),
             kind: NodeKind::Merge {
                 policy: MergePolicy::ExactlyOne,
             },
-            inputs: input(text.clone()),
-            outputs: vec![output("out", text.clone())],
+            inputs: input(result.clone()),
+            outputs: vec![output("out", result.clone())],
             execution: exec,
         },
         invoke(
             "Complete",
             dataflow_native_contracts::Complete::run::KEY,
-            text.clone(),
-            text.clone(),
+            result.clone(),
+            result.clone(),
         ),
     ];
     let edges = [

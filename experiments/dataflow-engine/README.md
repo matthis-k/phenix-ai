@@ -61,8 +61,11 @@ independent. No frontend, agent policy or storage architecture is introduced.
   plugin with embedded canonical V2 metadata, SDK contracts and ABI-3 host.
   Trigger → Prepare → Switch → Model/Tool → ExactlyOne Aggregate → Complete runs
   through `Prepared::prepare_graph_v2`, the verified loader and `GraphExecution`.
-  The portable native envelope contains JSON fixture values; that conversion and
-  selected ABI dispatch are real additional costs absent from in-process engines.
+  Native Message, Identity and ResultValue are structural Portable records;
+  Message fields are verified by the kernel, not hidden in a string port. A malformed
+  outer Text-only payload must be rejected before admission. Explicit field
+  conversions share the engine-independent logical operations. Earlier JSON-wrapper
+  measurements below are historical and do not apply to this corrected fixture.
 * `src/timely_engine.rs`: Timely operator graph with per-admitted-future capability,
   actual activator/waker integration and probe. No ready queue or progress counter.
 * `src/dfir_engine.rs`: DFIR native graph, tee/filter branches, resolve_futures,
@@ -189,7 +192,14 @@ is a build/toolchain observation, not an established framework defect. Recheck
 with repository CI's supported toolchain and record exact build settings before
 using any timings. The repository-supported Rust 1.96.1 succeeds with the same ThinLTO release settings. Do not infer performance from debug smoke timings.
 
-## Measurements (bounded fixture, not equivalent engines)
+## Historical measurements (JSON-wrapper control, not equivalent engines)
+
+These measurements were collected before the structural-port correction, at
+`4bba634c5f1ff27387622948a600f79d36cb18fb`'s experiment sources. They are retained
+as historical evidence. The corrected structural native fixture has **not** been
+benchmarked: the local execution environment became unavailable. Candidate
+adapter code is unchanged. Source fingerprints in measurements.json identify
+what was actually measured.
 
 Rust 1.96.1 / LLVM as shipped with that toolchain, x86_64 Linux, AMD EPYC 9V74
 virtual CPU; release, ThinLTO, one codegen unit, 2,000 alternating immediate
@@ -200,7 +210,7 @@ and dispatch boundaries. They cannot establish a production speedup or rank engi
 |---|---:|---:|---:|---:|
 | Timely in-process fixture | 13.782 ms | 5.439 / 8.503 µs | 47,104 | 108,733,272 |
 | DFIR in-process fixture | 2.817 ms | 0.891 / 1.723 µs | 25,037 | 6,046,062 |
-| Native GraphExecution / ABI-3 / JSON | 81.727 ms | not instrumented | not instrumented | not instrumented |
+| Historical native GraphExecution / ABI-3 / JSON | 81.727 ms | not instrumented | not instrumented | not instrumented |
 
 Observed sequential fixture rates, calculated from those samples: approximately
 145,112 / 709,867 / 24,472 deliveries/s respectively. Driver polling, kernel
@@ -224,8 +234,10 @@ closure prevents attributing those times to either framework alone.
 | bevy_ecs (std only) | 74 | component probes total 53, shared with petgraph |
 | petgraph (std/stable_graph) | 14 | current deterministic Phenix dag.rs is only 77 lines |
 
-Native fixture adds graph declarations (132), contracts (26), plugin (96), host
-(203) and build hook (6), plus shared fixture (71). Tests/probes, benchmark, worker,
+The measured JSON-wrapper native fixture added graph declarations (132), contracts
+(26), plugin (96), host (203) and build hook (6), plus shared fixture (71). The
+structural-port correction adds explicit field conversions and larger typed
+contracts; it is not included in those historical native LOC/performance counts. Tests/probes, benchmark, worker,
 source filters and lockfiles are additional. Raw adapter LOC does not measure
 removed production machinery: the smaller adapters implement fewer guarantees.
 Dependency counts are feature-unified Linux Cargo metadata closures, not disjoint
@@ -282,6 +294,9 @@ See `measurements.json` when present for actual results and environment.
 ## Final state / scope of evidence
 
 Implemented isolated native/Timely/DFIR prototypes, component probes and subprocess
-experiments. Local: 19 candidate unit/probe tests, 6 process/worker integration tests, 3 component probes, the 72 pinned-control V2 tests, and native branch/pending/cancel/denial probes pass. Reproducer fails as expected on Rust 1.96.1 and 1.99.1. CI status must be read at the experiment's
+experiments. Local results apply to the pre-correction sources: 19 candidate unit/probe tests,
+6 process/worker integration tests, 3 component probes, the 72 pinned-control V2
+tests, and native branch/pending/cancel/denial probes passed. The structural-port
+correction requires its own exact-head CI; no new local verification is claimed. Reproducer fails as expected on Rust 1.96.1 and 1.99.1. CI status must be read at the experiment's
 exact head, separately from the verified control parent. Mandatory gaps above
 remain open. No production semantics, existing PR heads or product compositions changed.

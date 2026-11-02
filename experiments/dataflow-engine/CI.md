@@ -29,3 +29,18 @@ PR #1239 at `33d8c4bbec8d450e9352d71c7b790854fbb468a2` passed run
 https://github.com/matthis-k/phenix-ai/actions/runs/41402562438 including four
 builders, native/shipping checks and runnable tests. This is not evidence for any
 later experimental head. Local experiment results and scope limits are in README.
+
+## Structural-port correction after 4bba634c
+
+The native control now exposes structural Portable Message, Identity and ResultValue
+schemas. The old Text/JSON wrapper only let the kernel validate the outer string;
+that was weaker evidence for typed-port equivalence. The host now also asserts
+that a malformed Text-only payload fails with SchemaRejected before admission.
+Domain operations, graph scheduling, authority, pending/cancel hooks and ABI-3 are
+unchanged. All changes remain experimental.
+
+The local environment became unavailable before this correction. It is reviewed
+source, **not locally compiled/tested**. Its exact-head Nix check must build/load
+the real plugin and execute the native assertions before it can be called verified.
+Existing measurements remain explicitly attached to the older JSON-wrapper control.
+No new benchmark numbers are claimed.

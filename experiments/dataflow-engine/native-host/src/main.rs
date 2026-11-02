@@ -1,5 +1,9 @@
 include!("../../native_graph.rs");
-use phenix_contract::{Authority, ScopedRequest, Value};
+use phenix_contract::{Authority, Portable, ScopedRequest, Value};
+#[allow(dead_code)]
+mod values {
+    include!("../../native_values.rs");
+}
 use phenix_kernel::{
     graph::{
         v2::{OperationSecurity, SourceOwnerPolicy, TrustedCompositionPolicy},
@@ -96,10 +100,23 @@ fn main() {
         .ok()
         .map(|s| s.parse::<u64>().unwrap())
         .unwrap_or(32);
+    let invalid = Value::map([("text", Value::String("not a typed Message".into()))]);
+    let rejected = k.begin_action_scoped(
+        "experiment.submit",
+        &invalid,
+        ScopedRequest {
+            authority: c.authority.clone(),
+            resource: None,
+        },
+    );
+    assert_eq!(
+        rejected.err().unwrap().code,
+        phenix_contract::Code::SchemaRejected
+    );
     let start = std::time::Instant::now();
     for i in 1..=n {
         let m = dataflow_fixture::message(i, i % 2 == 0, false);
-        let payload = Value::map([("text", Value::String(serde_json::to_string(&m).unwrap()))]);
+        let payload = values::native_message(&m).to_value();
         let mut e = k
             .begin_action_scoped(
                 "experiment.submit",
@@ -119,15 +136,12 @@ fn main() {
             steps[1].node,
             format!("{OWNER}/{}", if m.tool { "Tool" } else { "Model" })
         );
-        if let Outcome::Success(Value::Map(fields)) = &steps[2].outcome {
-            let Value::String(wire) = &fields["text"] else {
-                panic!()
-            };
-            let (id, text): (dataflow_fixture::Identity, String) =
-                serde_json::from_str(wire).unwrap();
-            assert_eq!(id, m.id);
+        if let Outcome::Success(value) = &steps[2].outcome {
+            let result = dataflow_native_contracts::ResultValue::from_value(value.clone()).unwrap();
+            let result = values::common_result(result);
+            assert_eq!(result.id, m.id);
             assert_eq!(
-                text,
+                result.text,
                 format!("{}:HELLO", if m.tool { "tool" } else { "model" })
             );
         } else {
@@ -143,7 +157,7 @@ fn main() {
     std::env::set_var("PHENIX_EXPERIMENT_GATE", &gate);
     for cancel in [false, true] {
         let m = dataflow_fixture::message(n + 1 + u64::from(cancel), true, true);
-        let payload = Value::map([("text", Value::String(serde_json::to_string(&m).unwrap()))]);
+        let payload = values::native_message(&m).to_value();
         let mut e = k
             .begin_action_scoped(
                 "experiment.submit",
@@ -181,7 +195,7 @@ fn main() {
         }
     }
     let m = dataflow_fixture::message(n + 3, false, false);
-    let payload = Value::map([("text", Value::String(serde_json::to_string(&m).unwrap()))]);
+    let payload = values::native_message(&m).to_value();
     let denied = k.begin_action_scoped(
         "experiment.submit",
         &payload,
@@ -198,6 +212,6 @@ fn main() {
         "native authority check cannot be bypassed by valid payload identity"
     );
     std::fs::remove_dir_all(gate).unwrap();
-    println!("native scenarios: branching, pending, cancellation physical drain, unauthorized scope passed");
+    println!("native scenarios: structural Message rejection, branching, pending, cancellation physical drain, unauthorized scope passed");
     assert_eq!(graph().nodes.len(), 7);
 }

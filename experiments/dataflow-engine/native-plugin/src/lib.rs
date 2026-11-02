@@ -1,3 +1,8 @@
+#[allow(dead_code)]
+mod values {
+    include!("../../native_values.rs");
+}
+
 #[phenix_sdk::plugin(
     id = "experiment.fixture",
     version = "1.0.0",
@@ -9,7 +14,7 @@
     provide(dataflow_native_contracts::Complete, slot = "Complete")
 )]
 mod plugin {
-    use dataflow_native_contracts::{Branch, Complete, Error, Prepare, Service, Text};
+    use dataflow_native_contracts::{Branch, Complete, Error, Message, Prepare, ResultValue, Service};
     use phenix_sdk::{CallResult, Failure, Host, PendingResult};
     use std::sync::mpsc;
     #[derive(Default)]
@@ -17,27 +22,22 @@ mod plugin {
         worker: Option<std::thread::JoinHandle<dataflow_fixture::Message>>,
         stop: Option<mpsc::Sender<()>>,
     }
-    fn finish(m: dataflow_fixture::Message) -> Text {
-        Text {
-            text: serde_json::to_string(&(m.id, dataflow_fixture::response(&m, ""))).unwrap(),
-        }
+    fn finish(m: dataflow_fixture::Message) -> ResultValue {
+        crate::values::native_result(m)
     }
     #[provide(Prepare::run)]
-    fn prepare(_: &mut State, _: &Host<'_>, request: Text) -> CallResult<Branch, Error> {
-        let m: dataflow_fixture::Message = serde_json::from_str(&request.text).unwrap();
+    fn prepare(_: &mut State, _: &Host<'_>, request: Message) -> CallResult<Branch, Error> {
+        let m = crate::values::common_message(request);
         let p = dataflow_fixture::prepare(m, &Default::default());
-        let text = Text {
-            text: serde_json::to_string(&p.0).unwrap(),
-        };
-        Ok(if p.0.tool {
-            Branch::Tool { text: text.text }
-        } else {
-            Branch::Model { text: text.text }
-        })
+        Ok(crate::values::native_branch(p.0))
     }
     #[pending(Service::run)]
-    fn service(state: &mut State, host: &Host<'_>, request: Text) -> PendingResult<Text, Error> {
-        let m: dataflow_fixture::Message = serde_json::from_str(&request.text).unwrap();
+    fn service(
+        state: &mut State,
+        host: &Host<'_>,
+        request: Message,
+    ) -> PendingResult<ResultValue, Error> {
+        let m = crate::values::common_message(request);
         if !m.pending {
             return PendingResult::Ready(Ok(finish(m)));
         }
@@ -61,7 +61,7 @@ mod plugin {
         PendingResult::Pending
     }
     #[poll(Service::run)]
-    fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<Text, Error> {
+    fn poll(state: &mut State, _: &Host<'_>) -> PendingResult<ResultValue, Error> {
         if !state.worker.as_ref().unwrap().is_finished() {
             return PendingResult::Pending;
         }
@@ -85,7 +85,11 @@ mod plugin {
         Ok(())
     }
     #[provide(Complete::run)]
-    fn complete(_: &mut State, _: &Host<'_>, request: Text) -> CallResult<Text, Error> {
+    fn complete(
+        _: &mut State,
+        _: &Host<'_>,
+        request: ResultValue,
+    ) -> CallResult<ResultValue, Error> {
         Ok(request)
     }
 }
