@@ -40,7 +40,10 @@ impl ProgressModel {
     fn register(&mut self, scope: u64, location: &'static str) -> u64 {
         self.next += 1;
         let id = self.next;
-        assert!(self.active.insert(id, Capability { scope, location }).is_none());
+        assert!(self
+            .active
+            .insert(id, Capability { scope, location })
+            .is_none());
         id
     }
 
@@ -60,8 +63,7 @@ impl ProgressModel {
         let mut children = Vec::new();
         for edge in self.edges.clone() {
             if edge.from == producer.location && selected.contains(&edge.port) {
-                self.deliveries
-                    .push((producer.scope, edge.from, edge.to));
+                self.deliveries.push((producer.scope, edge.from, edge.to));
                 children.push(self.register(producer.scope, edge.to));
             }
         }
@@ -92,9 +94,10 @@ impl ProgressModel {
 
     fn exhausted(&self, scope: u64, target: &'static str) -> bool {
         self.sealed.contains(&scope)
-            && !self.active.values().any(|cap| {
-                cap.scope == scope && self.can_reach(cap.location, target)
-            })
+            && !self
+                .active
+                .values()
+                .any(|cap| cap.scope == scope && self.can_reach(cap.location, target))
     }
 
     // This single-wave model conservatively counts the full scope's leases;
@@ -128,8 +131,16 @@ fn one_skip_cannot_close_another_invocations_output() {
 #[test]
 fn unused_branch_exhausts_without_explicit_close_delivery() {
     let mut m = ProgressModel::new(vec![
-        Edge { from: "a", port: "retry", to: "b" },
-        Edge { from: "b", port: "next", to: "c" },
+        Edge {
+            from: "a",
+            port: "retry",
+            to: "b",
+        },
+        Edge {
+            from: "b",
+            port: "next",
+            to: "c",
+        },
     ]);
     let a = m.admit(1, "a");
     m.seal_admission(1);
@@ -143,8 +154,16 @@ fn unused_branch_exhausts_without_explicit_close_delivery() {
 #[test]
 fn alternate_producer_keeps_any_input_possible() {
     let mut m = ProgressModel::new(vec![
-        Edge { from: "a", port: "out", to: "consumer" },
-        Edge { from: "b", port: "out", to: "consumer" },
+        Edge {
+            from: "a",
+            port: "out",
+            to: "consumer",
+        },
+        Edge {
+            from: "b",
+            port: "out",
+            to: "consumer",
+        },
     ]);
     let a = m.admit(1, "a");
     let b = m.admit(1, "b");
@@ -160,8 +179,16 @@ fn alternate_producer_keeps_any_input_possible() {
 #[test]
 fn each_delivery_creates_a_separate_invocation() {
     let mut m = ProgressModel::new(vec![
-        Edge { from: "a", port: "out", to: "consumer" },
-        Edge { from: "b", port: "out", to: "consumer" },
+        Edge {
+            from: "a",
+            port: "out",
+            to: "consumer",
+        },
+        Edge {
+            from: "b",
+            port: "out",
+            to: "consumer",
+        },
     ]);
     let a = m.admit(1, "a");
     let b = m.admit(1, "b");
