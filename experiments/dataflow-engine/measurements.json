@@ -1,0 +1,139 @@
+{
+  "toolchain": "cargo 1.96.1 (356927216 2026-06-26)",
+  "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.39",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "profile": {
+    "release": true,
+    "lto": "thin",
+    "codegen_units": 1
+  },
+  "n": 2000,
+  "dependency_closures": {
+    "timely": {
+      "version": [
+        "0.31.0"
+      ],
+      "external_packages_including_self": 25,
+      "total_packages_including_self": 25
+    },
+    "dfir_rs": {
+      "version": [
+        "0.16.0"
+      ],
+      "external_packages_including_self": 149,
+      "total_packages_including_self": 149
+    },
+    "tokio-util": {
+      "version": [
+        "0.7.20"
+      ],
+      "external_packages_including_self": 23,
+      "total_packages_including_self": 23
+    },
+    "phenix-kernel": {
+      "version": [
+        "0.1.0"
+      ],
+      "external_packages_including_self": 22,
+      "total_packages_including_self": 25
+    },
+    "bevy_ecs": {
+      "version": [
+        "0.19.1"
+      ],
+      "external_packages_including_self": 74,
+      "total_packages_including_self": 74
+    },
+    "petgraph": {
+      "version": [
+        "0.8.3"
+      ],
+      "external_packages_including_self": 14,
+      "total_packages_including_self": 14
+    }
+  },
+  "rust_source_lines": {
+    "experiments/dataflow-engine/native_graph.rs": 132,
+    "experiments/dataflow-engine/tests/remote.rs": 195,
+    "experiments/dataflow-engine/src/dfir_engine.rs": 50,
+    "experiments/dataflow-engine/src/timely_engine.rs": 118,
+    "experiments/dataflow-engine/src/frontier_tests.rs": 199,
+    "experiments/dataflow-engine/src/lib.rs": 179,
+    "experiments/dataflow-engine/src/tests.rs": 275,
+    "experiments/dataflow-engine/native-plugin/build.rs": 6,
+    "experiments/dataflow-engine/native-host/src/main.rs": 203,
+    "experiments/dataflow-engine/fixture/src/lib.rs": 71,
+    "experiments/dataflow-engine/repro-dfir-016/src/main.rs": 8,
+    "experiments/dataflow-engine/native-contracts/src/lib.rs": 26,
+    "experiments/dataflow-engine/src/bin/benchmark.rs": 78,
+    "experiments/dataflow-engine/src/bin/remote-worker.rs": 23,
+    "experiments/dataflow-engine/native-plugin/src/lib.rs": 96,
+    "experiments/dataflow-components/src/lib.rs": 53,
+    "crates/phenix-kernel/src/graph/v2/execute.rs": 1186,
+    "crates/phenix-kernel/src/graph/v2.rs": 837,
+    "crates/phenix-kernel/src/dag.rs": 77
+  },
+  "measurement_limits": [
+    "Candidates: caller-issued identity, Rust in-process dispatch and eager main fixture; native: actual root admission, ABI/JSON and terminal merge. Not equivalent engine semantics.",
+    "Tracing and retained per-occurrence state enabled. Allocations are cumulative calls/bytes; not peak or per-node allocation guarantees.",
+    "Timely uses 32 worker steps/sample; DFIR run_available_sync; driver overhead included.",
+    "No independent repetitions, CPU pinning or statistical confidence interval. No performance ranking justified."
+  ],
+  "candidate_samples": [
+    {
+      "allocated_bytes": 108733272,
+      "allocations": 47104,
+      "elapsed_ns": 13782480,
+      "engine": "timely",
+      "median_ns": 5439,
+      "n": 2000,
+      "p95_ns": 8503,
+      "profile": "release",
+      "trace_enabled": true
+    },
+    {
+      "allocated_bytes": 6046062,
+      "allocations": 25037,
+      "elapsed_ns": 2817428,
+      "engine": "dfir",
+      "median_ns": 891,
+      "n": 2000,
+      "p95_ns": 1723,
+      "profile": "release",
+      "trace_enabled": true
+    }
+  ],
+  "native_smoke": [
+    "native_graph_v2 n=2000 elapsed_ns=81726740",
+    "native scenarios: branching, pending, cancellation physical drain, unauthorized scope passed"
+  ],
+  "fixture_touch_release_rebuild_seconds": 29.18757316099982,
+  "workspace_rebuild_after_changes_seconds": 26.554588234999983,
+  "noop_release_build_seconds": 0.16530637900041256,
+  "cold_compile_note": "First supported-toolchain workspace release build reported 1m01s with registry downloads already cached. Not an isolated per-engine cold build.",
+  "source_sha256": {
+    "experiments/dataflow-engine/native_graph.rs": "33dd41bebefa6c8e0fbe8a3081393d091b365238bb978a4c33bfbdcb07c6e9b6",
+    "experiments/dataflow-engine/tests/remote.rs": "c311182d35c67a999a4e69b13d4501fabfed810a8a398c971c5ac5551836cff4",
+    "experiments/dataflow-engine/src/dfir_engine.rs": "7f2c0f9c6b838e34d2fcbcb49ea4d9a99228660367e7ea86023c6808b56f637a",
+    "experiments/dataflow-engine/src/timely_engine.rs": "78e4f51e789fcac91588c3cfddc18086441c37ba93cfdcfcb1e5b03e4d7b37f4",
+    "experiments/dataflow-engine/src/frontier_tests.rs": "34342792d15d578f1368e10639f0260d8de16de491e296caf0c8ebaa0cdd76ae",
+    "experiments/dataflow-engine/src/lib.rs": "c0be370a483715b7fb96e22c6a8ce2f6d2f0135fa1407e28532cdb508834b4b2",
+    "experiments/dataflow-engine/src/tests.rs": "9f1a9a6142938fcec317e268eac44c5a87af539e0d6812bcb688ab3a58ef4e03",
+    "experiments/dataflow-engine/native-plugin/build.rs": "f24b762eea2cb1f83b1d3d18163731a1e50530cae4cfacd48053cb77232051c3",
+    "experiments/dataflow-engine/native-host/src/main.rs": "29f06fc7247d22ea799aa38da499f4ac4ec7c1ca42a803d2d31e0dea4d2014b2",
+    "experiments/dataflow-engine/fixture/src/lib.rs": "02f53813c9ce2cfbc8e1d00437508c4221f4dfce503ea23cf72e10cdbd6b853e",
+    "experiments/dataflow-engine/repro-dfir-016/src/main.rs": "70d07fedb1532e3c1f425cc800084c4b73629a4537b3d285535de534068aee72",
+    "experiments/dataflow-engine/native-contracts/src/lib.rs": "71491de2e5bc0bd536746e2aaee24d8abf21199083138de84203ebe05e6b4d80",
+    "experiments/dataflow-engine/src/bin/benchmark.rs": "ae5baf1b2cc4f0c1306e797f3abbc7968bb11e6ae01d96d9300b5d415865d466",
+    "experiments/dataflow-engine/src/bin/remote-worker.rs": "e012a2dd3654d7c1ea5f30f087eda73bd45bff62118bf926cca49a0863af8913",
+    "experiments/dataflow-engine/native-plugin/src/lib.rs": "c0b533fe88e8ece0e9b72b1b241fdb8d4f927ce49a68eca1d5934d5580fc4a43",
+    "experiments/dataflow-components/src/lib.rs": "3909fb96aba71e7cf7e918e750e857a83b89a0bf7ac02b02836158a1ca7f9d60",
+    "crates/phenix-kernel/src/graph/v2/execute.rs": "ecaba55029835dcdaa9dad79f97d998fb483bcef7966ace3424552fb7fb92814",
+    "crates/phenix-kernel/src/graph/v2.rs": "c828d123225b92dc3559c1a32609057d007088a0d34d3b31fa02b528ca98a9df",
+    "crates/phenix-kernel/src/dag.rs": "f5ab61feb99d7be9122335572bbe66b0487cf52ef5e0e5085144d286f2869cd4"
+  },
+  "build_measurement_note": "Build timings sampled before remote-protocol hardening; separate from refreshed final-source payload timings. No CI wall-time comparison is inferred.",
+  "provenance_revision": "4bba634c5f1ff27387622948a600f79d36cb18fb",
+  "provenance_note": "Historical measurements for the JSON-wrapper native control, before structural Message/Identity/ResultValue ports. Corrected native fixture is not benchmarked because local execution became unavailable. Candidate adapter sources are unchanged."
+}

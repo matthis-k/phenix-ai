@@ -1,0 +1,6 @@
+[package]
+name="dataflow-native-contracts"
+version="0.1.0"
+edition="2021"
+[dependencies]
+phenix-sdk={path="../../../crates/phenix-sdk"}

@@ -1,0 +1,19 @@
+[workspace]
+members=["fixture", "native-contracts", "native-plugin", "native-host"]
+[package]
+name = "phenix-dataflow-experiment"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+dataflow-fixture={path="fixture"}
+timely = "=0.31.0"
+dfir_rs = "=0.16.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "test-util", "process", "io-util"] }
+tokio-util = { version = "=0.7.20", features = ["rt"] }
+futures = "0.3"
+[profile.release]
+lto = "thin"
+codegen-units = 1

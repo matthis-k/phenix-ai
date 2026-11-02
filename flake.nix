@@ -2553,6 +2553,49 @@
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b2-session ${basicSession} ${storageFixture} ${basicDefinitions} $out
       '';
+      # Isolated engine experiments, never selected by a shipping composition.
+      dataflowExperiment = rust.buildRustPackage {
+        pname = "phenix-dataflow-experiment";
+        version = "0.1.0";
+        src = subset [
+          ./Cargo.toml
+          ./Cargo.lock
+          ./crates/phenix-contract
+          ./crates/phenix-sdk
+          ./crates/phenix-macros
+          ./crates/phenix-artifact
+          ./crates/phenix-kernel
+          ./experiments/dataflow-engine
+        ];
+        cargoRoot = "experiments/dataflow-engine";
+        buildAndTestSubdir = "experiments/dataflow-engine";
+        cargoLock.lockFile = ./experiments/dataflow-engine/Cargo.lock;
+        cargoBuildFlags = [ "--workspace" ];
+        cargoTestFlags = [ "--workspace" ];
+        doCheck = true;
+        postCheck = ''
+          rustc --version --verbose > benchmark-environment.txt
+          head -30 /proc/cpuinfo >> benchmark-environment.txt
+          PHENIX_BENCH_N=2000 target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/dataflow-native-host \
+            --package target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/libdataflow_native_plugin.so \
+            "$TMPDIR/dataflow-native-package" > native-fixture.txt
+          PHENIX_BENCH_N=2000 target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/benchmark \
+            > candidate-metrics.jsonl
+          cat benchmark-environment.txt native-fixture.txt candidate-metrics.jsonl
+        '';
+        installPhase = ''
+          mkdir -p "$out"
+          cp benchmark-environment.txt native-fixture.txt candidate-metrics.jsonl "$out/"
+        '';
+      };
+      dataflowComponents = rust.buildRustPackage {
+        pname = "phenix-dataflow-components";
+        version = "0.1.0";
+        src = ./experiments/dataflow-components;
+        cargoLock.lockFile = ./experiments/dataflow-components/Cargo.lock;
+        doCheck = true;
+        installPhase = ''mkdir -p "$out"; echo verified > "$out/result"'';
+      };
       graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} ${graphDefinitions} $out
@@ -3265,6 +3308,8 @@
         agent-mix-boundaries = agentMixBoundaryCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
+        experimental-dataflow-engine = dataflowExperiment;
+        experimental-dataflow-components = dataflowComponents;
         basic-contracts = basicContractsCheck;
         environment-product = environmentProductCheck;
         workspace-product = workspaceProductCheck;
