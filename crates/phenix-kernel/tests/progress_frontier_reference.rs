@@ -1,10 +1,24 @@
 //! Bounded reference model for future Graph V2 capability-derived progress.
 //!
 //! This is NOT the production scheduler. It exercises single-wave causal
-//! obligations before changing existing terminal-edge semantics.
+//! obligations per scope before changing existing terminal-edge semantics.
+//! Deferred transfer between waves is not modeled.
 //! See spec/graph-architecture-v2.4.md sections 7.7.1 and 9.4.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Scope {
+    root: u64,
+    wave: u64,
+    activation: u64,
+}
+
+const SCOPE: Scope = Scope {
+    root: 1,
+    wave: 1,
+    activation: 1,
+};
 
 #[derive(Clone, Copy)]
 struct Edge {
@@ -15,7 +29,7 @@ struct Edge {
 
 #[derive(Clone, Copy)]
 struct Capability {
-    scope: u64,
+    scope: Scope,
     location: &'static str,
 }
 
@@ -23,9 +37,9 @@ struct Capability {
 struct ProgressModel {
     edges: Vec<Edge>,
     active: BTreeMap<u64, Capability>,
-    sealed: BTreeSet<u64>,
-    leases: BTreeMap<u64, usize>,
-    deliveries: Vec<(u64, &'static str, &'static str)>,
+    sealed: BTreeSet<Scope>,
+    leases: BTreeMap<Scope, usize>,
+    deliveries: Vec<(Scope, &'static str, &'static str)>,
     next: u64,
 }
 
@@ -37,7 +51,7 @@ impl ProgressModel {
         }
     }
 
-    fn register(&mut self, scope: u64, location: &'static str) -> u64 {
+    fn register(&mut self, scope: Scope, location: &'static str) -> u64 {
         self.next += 1;
         let id = self.next;
         assert!(self
@@ -47,12 +61,12 @@ impl ProgressModel {
         id
     }
 
-    fn admit(&mut self, scope: u64, location: &'static str) -> u64 {
+    fn admit(&mut self, scope: Scope, location: &'static str) -> u64 {
         assert!(!self.sealed.contains(&scope));
         self.register(scope, location)
     }
 
-    fn seal_admission(&mut self, scope: u64) {
+    fn seal_admission(&mut self, scope: Scope) {
         self.sealed.insert(scope);
     }
 
@@ -60,11 +74,6 @@ impl ProgressModel {
     // the producer. Unselected outputs register no delivery/closure event.
     fn complete(&mut self, id: u64, selected: &[&str]) -> Vec<u64> {
         let producer = *self.active.get(&id).expect("live producer");
-        assert!(selected.iter().all(|port| {
-            self.edges
-                .iter()
-                .any(|edge| edge.from == producer.location && edge.port == *port)
-        }));
         let mut children = Vec::new();
         for edge in self.edges.clone() {
             if edge.from == producer.location && selected.contains(&edge.port) {
@@ -97,7 +106,7 @@ impl ProgressModel {
         false
     }
 
-    fn exhausted(&self, scope: u64, target: &'static str) -> bool {
+    fn exhausted(&self, scope: Scope, target: &'static str) -> bool {
         self.sealed.contains(&scope)
             && !self
                 .active
@@ -107,7 +116,7 @@ impl ProgressModel {
 
     // This single-wave model conservatively counts the full scope's leases;
     // a future region-aware runtime must attribute individual physical work.
-    fn gate_ready(&self, scope: u64, region: &[&'static str], input_admitted: bool) -> bool {
+    fn gate_ready(&self, scope: Scope, region: &[&'static str], input_admitted: bool) -> bool {
         input_admitted
             && self.sealed.contains(&scope)
             && region.iter().all(|node| self.exhausted(scope, node))
@@ -122,16 +131,16 @@ fn one_skip_cannot_close_another_invocations_output() {
         port: "retry",
         to: "retry",
     }]);
-    let first = m.admit(1, "a");
-    let second = m.admit(1, "a");
-    m.seal_admission(1);
+    let first = m.admit(SCOPE, "a");
+    let second = m.admit(SCOPE, "a");
+    m.seal_admission(SCOPE);
     assert!(m.complete(first, &[]).is_empty());
-    assert!(!m.exhausted(1, "retry"));
+    assert!(!m.exhausted(SCOPE, "retry"));
     let children = m.complete(second, &["retry"]);
     assert_eq!(children.len(), 1);
-    assert!(!m.exhausted(1, "retry"));
+    assert!(!m.exhausted(SCOPE, "retry"));
     m.complete(children[0], &[]);
-    assert!(m.exhausted(1, "retry"));
+    assert!(m.exhausted(SCOPE, "retry"));
 }
 
 #[test]
@@ -148,12 +157,12 @@ fn unused_branch_exhausts_without_explicit_close_delivery() {
             to: "c",
         },
     ]);
-    let a = m.admit(1, "a");
-    m.seal_admission(1);
-    assert!(!m.exhausted(1, "c"));
+    let a = m.admit(SCOPE, "a");
+    m.seal_admission(SCOPE);
+    assert!(!m.exhausted(SCOPE, "c"));
     m.complete(a, &[]);
-    assert!(m.exhausted(1, "b"));
-    assert!(m.exhausted(1, "c"));
+    assert!(m.exhausted(SCOPE, "b"));
+    assert!(m.exhausted(SCOPE, "c"));
     assert!(m.deliveries.is_empty());
 }
 
@@ -171,15 +180,15 @@ fn alternate_producer_keeps_any_input_possible() {
             to: "consumer",
         },
     ]);
-    let a = m.admit(1, "a");
-    let b = m.admit(1, "b");
-    m.seal_admission(1);
+    let a = m.admit(SCOPE, "a");
+    let b = m.admit(SCOPE, "b");
+    m.seal_admission(SCOPE);
     m.complete(a, &[]);
-    assert!(!m.exhausted(1, "consumer"));
+    assert!(!m.exhausted(SCOPE, "consumer"));
     let children = m.complete(b, &["out"]);
     assert_eq!(children.len(), 1);
     m.complete(children[0], &[]);
-    assert!(m.exhausted(1, "consumer"));
+    assert!(m.exhausted(SCOPE, "consumer"));
 }
 
 #[test]
@@ -196,17 +205,17 @@ fn each_delivery_creates_a_separate_invocation() {
             to: "consumer",
         },
     ]);
-    let a = m.admit(1, "a");
-    let b = m.admit(1, "b");
+    let a = m.admit(SCOPE, "a");
+    let b = m.admit(SCOPE, "b");
     let ca = m.complete(a, &["out"]);
     let cb = m.complete(b, &["out"]);
     assert_ne!(ca, cb);
     assert_eq!(m.deliveries.len(), 2);
-    m.seal_admission(1);
+    m.seal_admission(SCOPE);
     m.complete(ca[0], &[]);
-    assert!(!m.exhausted(1, "consumer"));
+    assert!(!m.exhausted(SCOPE, "consumer"));
     m.complete(cb[0], &[]);
-    assert!(m.exhausted(1, "consumer"));
+    assert!(m.exhausted(SCOPE, "consumer"));
 }
 
 #[test]
@@ -216,15 +225,15 @@ fn exhausted_frontier_does_not_imply_physical_drain() {
         port: "out",
         to: "b",
     }]);
-    let a = m.admit(1, "a");
-    m.leases.insert(1, 1);
-    m.seal_admission(1);
+    let a = m.admit(SCOPE, "a");
+    m.leases.insert(SCOPE, 1);
+    m.seal_admission(SCOPE);
     m.complete(a, &[]);
-    assert!(m.exhausted(1, "b"));
-    assert!(!m.gate_ready(1, &["b"], true));
-    m.leases.insert(1, 0);
-    assert!(m.gate_ready(1, &["b"], true));
-    assert!(!m.gate_ready(1, &["b"], false));
+    assert!(m.exhausted(SCOPE, "b"));
+    assert!(!m.gate_ready(SCOPE, &["b"], true));
+    m.leases.insert(SCOPE, 0);
+    assert!(m.gate_ready(SCOPE, &["b"], true));
+    assert!(!m.gate_ready(SCOPE, &["b"], false));
 }
 
 #[test]
@@ -234,13 +243,54 @@ fn different_roots_never_hold_each_others_frontier_open() {
         port: "out",
         to: "b",
     }]);
-    let a1 = m.admit(1, "a");
-    let _a2 = m.admit(2, "a");
-    m.seal_admission(1);
+    let other = Scope { root: 2, ..SCOPE };
+    let a1 = m.admit(SCOPE, "a");
+    let _a2 = m.admit(other, "a");
+    m.seal_admission(SCOPE);
     m.complete(a1, &[]);
-    assert!(m.exhausted(1, "b"));
-    assert!(!m.exhausted(2, "b"));
-    assert!(m.gate_ready(1, &["b"], true));
+    assert!(m.exhausted(SCOPE, "b"));
+    assert!(!m.exhausted(other, "b"));
+    assert!(m.gate_ready(SCOPE, &["b"], true));
+}
+
+#[test]
+fn waves_and_activations_isolate_frontiers_and_sealed_admission() {
+    for other in [
+        Scope { wave: 2, ..SCOPE },
+        Scope {
+            activation: 2,
+            ..SCOPE
+        },
+    ] {
+        for (first, second) in [(SCOPE, other), (other, SCOPE)] {
+            let mut m = ProgressModel::new(vec![Edge {
+                from: "a",
+                port: "out",
+                to: "b",
+            }]);
+            let producer = m.admit(first, "a");
+            m.seal_admission(first);
+            // Even an empty second scope must not inherit the first's seal.
+            assert!(!m.exhausted(second, "b"));
+            assert!(!m.gate_ready(second, &["b"], true));
+            let independent = m.admit(second, "a");
+            m.leases.insert(second, 1);
+            m.complete(producer, &[]);
+            assert!(m.exhausted(first, "b"));
+            assert!(m.gate_ready(first, &["b"], true));
+            m.seal_admission(second);
+            assert!(!m.exhausted(second, "b"));
+            let children = m.complete(independent, &["out"]);
+            assert_eq!(children.len(), 1);
+            assert!(m.exhausted(first, "b"));
+            assert!(!m.exhausted(second, "b"));
+            m.complete(children[0], &[]);
+            assert!(m.exhausted(second, "b"));
+            assert!(!m.gate_ready(second, &["b"], true));
+            m.leases.insert(second, 0);
+            assert!(m.gate_ready(second, &["b"], true));
+        }
+    }
 }
 
 #[test]
@@ -257,19 +307,34 @@ fn opposite_outputs_of_repeated_invocations_remain_independent() {
             to: "right",
         },
     ]);
-    let first = m.admit(1, "a");
-    let second = m.admit(1, "a");
-    m.seal_admission(1);
+    let first = m.admit(SCOPE, "a");
+    let second = m.admit(SCOPE, "a");
+    m.seal_admission(SCOPE);
     let left = m.complete(first, &["left"]);
     m.complete(left[0], &[]);
-    assert!(!m.exhausted(1, "left"));
-    assert!(!m.exhausted(1, "right"));
+    assert!(!m.exhausted(SCOPE, "left"));
+    assert!(!m.exhausted(SCOPE, "right"));
     let right = m.complete(second, &["right"]);
-    assert!(m.exhausted(1, "left"));
-    assert!(!m.exhausted(1, "right"));
+    assert!(m.exhausted(SCOPE, "left"));
+    assert!(!m.exhausted(SCOPE, "right"));
     m.complete(right[0], &[]);
-    assert!(m.exhausted(1, "right"));
-    assert_eq!(m.deliveries, vec![(1, "a", "left"), (1, "a", "right")]);
+    assert!(m.exhausted(SCOPE, "right"));
+    assert_eq!(
+        m.deliveries,
+        vec![(SCOPE, "a", "left"), (SCOPE, "a", "right")]
+    );
+}
+
+#[test]
+fn selected_output_without_a_consumer_still_settles_the_occurrence() {
+    // This untyped model describes connections, not declared output ports.
+    // A real declared output need not have any downstream consumer.
+    let mut m = ProgressModel::default();
+    let producer = m.admit(SCOPE, "a");
+    m.seal_admission(SCOPE);
+    assert!(m.complete(producer, &["unconnected"]).is_empty());
+    assert!(m.exhausted(SCOPE, "a"));
+    assert!(m.deliveries.is_empty());
 }
 
 #[test]
@@ -286,7 +351,7 @@ fn all_bounded_completion_orders_preserve_frontiers_and_delivery_counts() {
         consumers: Vec<u64>,
     ) -> usize {
         let expected = finished.iter().all(|done| *done) && consumers.is_empty();
-        assert_eq!(m.exhausted(1, "consumer"), expected);
+        assert_eq!(m.exhausted(SCOPE, "consumer"), expected);
         let emitted = (0..2).filter(|i| finished[*i] && choices[*i]).count();
         assert_eq!(m.deliveries.len(), emitted);
         if expected {
@@ -327,40 +392,41 @@ fn all_bounded_completion_orders_preserve_frontiers_and_delivery_counts() {
                 to: "consumer",
             },
         ]);
-        let producers = [m.admit(1, "a"), m.admit(1, "b")];
-        m.seal_admission(1);
+        let producers = [m.admit(SCOPE, "a"), m.admit(SCOPE, "b")];
+        m.seal_admission(SCOPE);
         traces += explore(m, producers, choices, [false; 2], vec![]);
     }
     assert_eq!(traces, 14);
 }
 
 #[test]
-fn pending_producer_retains_progress_until_cancellation_is_fenced() {
+fn pending_producer_settlement_assumes_external_cancellation_fencing() {
     let mut m = ProgressModel::new(vec![Edge {
         from: "a",
         port: "out",
         to: "b",
     }]);
-    let pending = m.admit(1, "a");
-    m.seal_admission(1);
-    m.leases.insert(1, 1);
+    let pending = m.admit(SCOPE, "a");
+    m.seal_admission(SCOPE);
+    m.leases.insert(SCOPE, 1);
     // A cancellation request alone does not revoke native emission rights.
-    assert!(!m.exhausted(1, "b"));
-    assert!(!m.gate_ready(1, &["b"], true));
-    // Only a fenced producer can settle without output. Physical cleanup can
-    // still lag logical settlement, as with a ready-but-not-quiescent ticket.
+    assert!(!m.exhausted(SCOPE, "b"));
+    assert!(!m.gate_ready(SCOPE, &["b"], true));
+    // External precondition: cancellation has fenced the producer before this
+    // settlement. This model does not implement or verify fencing. Physical
+    // cleanup can still lag logical settlement.
     m.complete(pending, &[]);
-    assert!(m.exhausted(1, "b"));
-    assert!(!m.gate_ready(1, &["b"], true));
-    m.leases.insert(1, 0);
-    assert!(m.gate_ready(1, &["b"], true));
+    assert!(m.exhausted(SCOPE, "b"));
+    assert!(!m.gate_ready(SCOPE, &["b"], true));
+    m.leases.insert(SCOPE, 0);
+    assert!(m.gate_ready(SCOPE, &["b"], true));
 }
 
 #[test]
 #[should_panic(expected = "live producer")]
 fn retired_occurrence_cannot_emit_again() {
     let mut m = ProgressModel::default();
-    let a = m.admit(1, "a");
+    let a = m.admit(SCOPE, "a");
     m.complete(a, &[]);
     m.complete(a, &[]);
 }
@@ -369,6 +435,6 @@ fn retired_occurrence_cannot_emit_again() {
 #[should_panic]
 fn sealed_scope_cannot_admit_a_new_external_occurrence() {
     let mut m = ProgressModel::default();
-    m.seal_admission(1);
-    m.admit(1, "a");
+    m.seal_admission(SCOPE);
+    m.admit(SCOPE, "a");
 }

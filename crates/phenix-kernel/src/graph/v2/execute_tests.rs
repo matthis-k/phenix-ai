@@ -2,6 +2,116 @@ use super::*;
 use phenix_contract::Authority;
 
 #[test]
+fn bounded_terminal_failure_and_cardinality_comparison() {
+    // C, V, F: independent terminal tables, not another production reducer.
+    let merge_expected = [[0, 1, 2], [1, 3, 2], [2, 2, 2]];
+    let join_expected = [[0, 0, 2], [0, 1, 2], [2, 2, 2]];
+    let classify = |result: Result<Resolution, Failure>| match result {
+        Ok(Resolution::Closed) => 0,
+        // Non-runnable Joins may release payloads but retain Value terminals.
+        Ok(Resolution::Value(_, _)) => 1,
+        Ok(Resolution::Failed) => 2,
+        Err(failure) if failure.code == Code::InfrastructureFailure => 3,
+        other => panic!("unexpected terminal result: {other:?}"),
+    };
+    for join in [false, true] {
+        let (mut declarations, policy) = if join {
+            super::super::tests::join_fixture()
+        } else {
+            super::super::tests::merge_fixture()
+        };
+        // Both producers share an ingress, but can complete independently.
+        let producer = declarations[0]
+            .nodes
+            .iter()
+            .find(|n| n.id == "alpha/sink")
+            .unwrap()
+            .clone();
+        for (index, id) in ["alpha/p", "alpha/q"].into_iter().enumerate() {
+            let mut node = producer.clone();
+            node.id = id.into();
+            node.inputs[0].schema = phenix_contract::ValueSchema::String;
+            node.outputs[0].schema = phenix_contract::ValueSchema::String;
+            declarations[0].nodes.push(node);
+            let mut feeder = declarations[0].edges[index].clone();
+            feeder.id = format!("alpha/feed-{index}");
+            let EdgeKind::Flow { from, to } = &mut feeder.kind else {
+                unreachable!()
+            };
+            from.node = "alpha/source".into();
+            to.node = id.into();
+            to.port = "in".into();
+            declarations[0].edges.push(feeder);
+            let EdgeKind::Flow { from, .. } = &mut declarations[0].edges[index].kind else {
+                unreachable!()
+            };
+            from.node = id.into();
+        }
+        let graph = super::super::tests::run(&declarations, &policy).unwrap();
+        for left in 0..3 {
+            for right in 0..3 {
+                for order in [[0, 1], [1, 0]] {
+                    let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
+                    let payload = Value::String("terminal".into());
+                    let root = scope(&["resource"]);
+                    wave.deliver(
+                        &graph,
+                        &root,
+                        "alpha/source",
+                        Some(("out", &payload)),
+                        false,
+                    )
+                    .unwrap();
+                    for producer in ["alpha/p", "alpha/q"] {
+                        let Resolution::Value(_, resources) = wave.input(producer).unwrap() else {
+                            panic!("producer input was not admitted");
+                        };
+                        wave.resources.insert(producer.into(), resources);
+                    }
+                    for (step, index) in order.into_iter().enumerate() {
+                        let terminal = [left, right][index];
+                        wave.deliver(
+                            &graph,
+                            &root,
+                            ["alpha/p", "alpha/q"][index],
+                            (terminal == 1).then_some(("out", &payload)),
+                            terminal == 2,
+                        )
+                        .unwrap();
+                        if step == 0 {
+                            // Frontier exhaustion: even a non-runnable Join must wait
+                            // for the other producer before publishing final closure.
+                            assert!(matches!(
+                                wave.input("alpha/merge").unwrap(),
+                                Resolution::Unresolved
+                            ));
+                            let pending_port = if join { ["right", "left"][index] } else { "in" };
+                            assert!(matches!(
+                                wave.port_input("alpha/merge", pending_port).unwrap(),
+                                Resolution::Unresolved
+                            ));
+                        }
+                    }
+                    let expected = if join { join_expected } else { merge_expected }[left][right];
+                    assert_eq!(
+                        classify(wave.input("alpha/merge")),
+                        expected,
+                        "join={join}, terminals={left}/{right}, order={order:?}"
+                    );
+                    for (port, expected) in if join {
+                        vec![("left", left), ("right", right)]
+                    } else {
+                        vec![("in", expected)]
+                    } {
+                        assert_eq!(classify(wave.port_input("alpha/merge", port)), expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn deferred_arrival_survives_producer_closure_and_propagates_absence_scope() {
     let (mut declarations, policy) = super::super::tests::fixture();
     let EdgeKind::Flow { from, to } = declarations[0].edges[0].kind.clone() else {
