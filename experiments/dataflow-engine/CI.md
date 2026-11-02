@@ -44,3 +44,8 @@ source, **not locally compiled/tested**. Its exact-head Nix check must build/loa
 the real plugin and execute the native assertions before it can be called verified.
 Existing measurements remain explicitly attached to the older JSON-wrapper control.
 No new benchmark numbers are claimed.
+
+The experimental Nix check also records fresh 2,000-delivery structural-native
+and candidate samples, with compiler and CPU details, on one builder. The check
+output retains those files and prints them in the coordinator logs. Existing local
+measurements remain historical; CI results are unverified until the run succeeds.

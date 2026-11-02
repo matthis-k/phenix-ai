@@ -196,8 +196,11 @@ using any timings. The repository-supported Rust 1.96.1 succeeds with the same T
 
 These measurements were collected before the structural-port correction, at
 `4bba634c5f1ff27387622948a600f79d36cb18fb`'s experiment sources. They are retained
-as historical evidence. The corrected structural native fixture has **not** been
-benchmarked: the local execution environment became unavailable. Candidate
+as historical evidence. The corrected structural native fixture has **not** been locally
+benchmarked: the local execution environment became unavailable. The isolated
+Nix check now emits 2,000-delivery native and candidate samples on the same builder,
+plus compiler/CPU details. Inspect its exact-head logs and output before claiming
+CI performance results. Candidate
 adapter code is unchanged. Source fingerprints in measurements.json identify
 what was actually measured.
 

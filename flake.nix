@@ -2574,13 +2574,18 @@
         cargoTestFlags = [ "--workspace" ];
         doCheck = true;
         postCheck = ''
-          target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/dataflow-native-host \
+          rustc --version --verbose > benchmark-environment.txt
+          head -30 /proc/cpuinfo >> benchmark-environment.txt
+          PHENIX_BENCH_N=2000 target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/dataflow-native-host \
             --package target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/libdataflow_native_plugin.so \
             "$TMPDIR/dataflow-native-package" > native-fixture.txt
+          PHENIX_BENCH_N=2000 target/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/release/benchmark \
+            > candidate-metrics.jsonl
+          cat benchmark-environment.txt native-fixture.txt candidate-metrics.jsonl
         '';
         installPhase = ''
           mkdir -p "$out"
-          cp native-fixture.txt "$out/"
+          cp benchmark-environment.txt native-fixture.txt candidate-metrics.jsonl "$out/"
         '';
       };
       dataflowComponents = rust.buildRustPackage {
