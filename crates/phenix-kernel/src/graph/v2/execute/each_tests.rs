@@ -103,7 +103,11 @@ fn branch_completion_and_empty_membership_still_owe_batch_publication() {
     let graph = compile(&declarations, &policy).unwrap();
     for routes in [&[][..], &[0, 1][..]] {
         let mut wave = Wave::new(&graph, "alpha/submit").unwrap();
-        let node = &graph.declarations[0].nodes[1];
+        let node = graph.declarations[0]
+            .nodes
+            .iter()
+            .find(|node| node.id == "alpha/first")
+            .unwrap();
         wave.admit_each(
             &graph,
             &scope(),
