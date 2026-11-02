@@ -1219,6 +1219,44 @@ These are **future gates**, not evidence that a current PR implements generalize
 11. The finite-wave reference model and implementation agree on every bounded trace of conditional branch, empty source, failure, cancellation and output settlement; permutations of independent event order do not change terminal-failure precedence.
 12. Unauthenticated/forged output-capability or cross-scope emission attempts fail without delivering data; classifications of route/closure/progress observations obey the input-derived security bounds.
 
+### 9.5 Test-only node/port and graph-trigger scenarios (2 November migration decision)
+
+Test authoring must expose **two levels over the one canonical runtime**, without
+a testing scheduler or production test-mode branches:
+
+1. **Node/port scenario:** select a compiled node and supply typed input
+   occurrences through authorized synthetic producers on named public/test
+   ports. Assert one node's success/failure/skipped outputs, readiness, state
+   observations, invocation identities and effects. Missing/closed/failed
+   candidates, repeat deliveries, late completion and independently pending
+   candidates must be controllable. Input cannot force execution before real
+   readiness, bypass schema/provenance/grants, or mutate private scheduler
+   state in the general author API. Internal kernel unit tests may still
+   intentionally inspect private state.
+2. **Graph-trigger scenario:** compile the selected graph/composition, submit
+   an **ordered sequence** of authenticated external triggers or committed
+   state-change events, control test-owned pending native operations and
+   assert public ordered events, relevant port observations, root/wave/
+   activation identity, failure precedence, cancellation, durability,
+   quiescence and physical drain. Distinct external roots cannot coalesce
+   into one wave simply because the test submits both.
+
+A shared vocabulary covers trigger/input, complete/fail/cancel,
+expect_output/expect_event/expect_invocations, and distinct quiesce versus
+drain boundaries. Traces are correlated by identities and say whether a
+check is internal reduction, direct native conformance or an external
+packaged product. Timer-based silence is not evidence of branch exhaustion;
+negative checks need deterministic admission/progress witnesses.
+
+**Migration order:** after #1220, #1238 introduces a bounded private
+Wave/port scenario (not yet a public testkit). Make the scenario adapter
+reusable and migrate #1239 settlement tests; next migrate graph-trigger
+tests in #1229 packaged ACP/JSONL and #1237 selected provider lifecycle.
+Preserve old substantive assertions until equivalent exact-head checks
+pass, including ABI-3, worker drain, crash/restart and security denial.
+No added production crates or plugin ABI solely for testing; do not
+restack unrelated product heads before acceptance.
+
 ## 10. Agent-harness fit and ownership (no agent concepts in the kernel)
 
 **Design boundary:** The default agent is a plugin-authored graph plus domain contracts, not a kernel-owned ReAct state machine. Phenix supports generic scheduling, typed contracts, authority, lifecycle and cancellation. It is not responsible for ChatGPT/OAuth semantics, model tokens, human approval decisions, tool schemas, cost billing or persistent session state. Where the generic substrate lacks a guarantee necessary for *all* domains, extend it only after a concrete vertical test demonstrates the gap.
