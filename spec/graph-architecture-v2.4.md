@@ -3,6 +3,7 @@
 **Status:** Latest graph-v2 design proposal for review; not implemented on `main`. This file defines intended future semantics, not an as-built API. Current behavior is determined by source and tests at the inspected commit. Earlier graph RFCs are historical when they disagree with this proposal. Incorporates the v2.1/v2.2 counterexample review, agent-harness ownership review, and the ten-point v2.3 contract review (25 October 2026).  
 **Scope:** M1 Phenix kernel, graph metadata, contract SDK, resolver and native plugin authoring.
 
+**2 November 2026 target refinement:** §7.7.1 and §9.4 specify capability-derived progress, repeated output settlement, derived dead-path closure and scoped quiescence gates. Existing finite-wave terminal reduction and actual runtime behavior remain unchanged until separate implementation and acceptance.  
 **28 October 2026 design amendment (proposed, not implemented):** §7.4–§7.8 and §9.3 formalize recursive open-graph authoring, explicitly named boundaries, graph-relative state scopes, overlapping views and activation completion. These constrain forthcoming V3/V4/V5 work; they do not claim current runtime or SDK support.  
 **Baseline inspected:** `matthis-k/phenix-ai` current `main` graph declarations/compiler, `phenix-contract` portable values and `Operation`, `phenix-kernel` `Prepared`/`GraphExecution`, ABI 3, and the event-driven draft implementation stack through #1153 (25 October 2026).
 
@@ -48,6 +49,9 @@
 | D36 | Typed outputs settle independently; completion is an activation-scoped, drain-safe terminal signal, not an ordinary output's availability | No premature completion or pending-work release |
 | D37 | Overlapping views are permitted; partial overlap is diagnosable, not a compilation failure by itself | Allow deliberate reuse without hidden re-execution |
 | D38 | Blocking/serialization uses explicit scoped-state access and bounded keyed admission queues; queued external input does not keep a root alive | Prevent state races while preserving root and lifecycle semantics |
+| D39 | Repeated invocations produce zero or more correlated typed deliveries; invocation output settlement is distinct from wave/activation frontier exhaustion | Closing an unused output of one invocation cannot kill a future valid branch |
+| D40 | Kernel-owned causal progress obligations derive inactive-edge closure and upstream quiescence; no plugin manually seals all unused edges | Dynamic branch elimination without predicting plugin routing decisions |
+| D41 | Named-region gates delay **already-admitted** execution until causal frontier exhaustion and physical drain; they do not synthesize input or replace Order semantics | Safe wait-for-upstream without a second scheduler or hidden activation |
 
 ### 0.1 Historical implementation snapshot (25 October 2026; verify against current code)
 
@@ -1017,6 +1021,52 @@ The completion projection is a **kernel-derived lifecycle fact**, not an arbitra
 
 A completion view includes only work **causally attributable to that activation inside the declared region**, including outstanding descendant operations relevant to it, not arbitrary downstream work outside its boundary. It cannot complete merely because no currently-running node is visible if a relevant node may still become runnable or a deferred continuation is scheduled. Overlapping views may observe the same real ticket; the ticket is physically owned exactly once. Membership alone does not create an activation, and completion accounting requires actual root/wave/node/ticket correlations. Define and verify ownership/causal attribution before implementing composite completion; do not infer it from `NodeId` membership alone.
 
+
+### 7.7.1 Capability-derived progress, dynamic dead paths and barriers (2 November refinement; target only)
+
+**Scope and compatibility.** This is a *future repeatable-execution/V4 progress contract*, not a claim that the current initial-wave V2 executor implements it. D14, §3.3 and the terminal \`Switch\`/\`Merge::ExactlyOne\`/\`Join::All\` behavior remain normative **for the existing finite single-resolution profile**. Extend that profile only behind a separately tested metadata/runtime change; do not reinterpret existing \`GraphContributionV2\` bytes, silently convert a terminal \`ExactlyOne\` into eager \`Any\`, or alter ABI-3. The implementation must prove equivalence for the supported old profile before removing intrinsic operators.
+
+**Separation.** An immutable \`Flow<T>\` edge is one typed output-to-input *connection*, not necessarily a one-message lifetime. A repeated node may emit zero or more separately correlated \`T\` deliveries over that connection. A node placement is not an execution occurrence. Output choice, input delivery, invocation admission, causal progress and physical cleanup are distinct:
+- An annotated plugin method may select named typed output ports, including zero, one, several or all; graph wiring determines their recipients. Do not let plugins choose private downstream edge IDs. Every finite invocation settles each output as emitted, skipped or failed; a retained asynchronous emitter must settle explicitly before the invocation's emission rights are released.
+- \`Any<T>\` accepts an arriving \`T\` from any declared compatible input connection without waiting for other candidates. The default repeatable admission is **once per qualifying delivery**; \`once(group)\` is an explicit competing-input gate. A verified terminal \`ExactlyOne\` remains distinct: it waits to know whether a second value will arrive. Aggregating N values into one new \`T\` is an explicit typed domain/aggregation operation, not implicit \`Any\`.
+- An invocation's \`Skip\` means **no value from this invocation on that output**. It does not close the same output for another invocation in the wave. A delivered \`Option<T>::None\` is a real value, not a skip. Output \`broadcast\` remains the default; selective named-port or bounded-subset routing is explicit.
+- Queues/backpressure manage admission and capacity, not source-selection semantics. Plugin-owned state remains private; generated \`Node::execute\` adapters dispatch ordinary selected operations and injected typed public-resource accesses, without putting domain state into the graph or introducing a second scheduler.
+
+**Causal progress model.** The kernel creates an unforgeable, generational progress obligation for every admitted source/delivery/invocation, retained pending ticket and legally retained emitter. The obligation carries \`(RootId, WaveId, ActivationId, OccurrenceId, ProgressLocation)\` (the concrete representation is internal). A capability at location \`l\` conservatively represents all outputs still permitted by the *effective compiled graph*, not the route the plugin might later choose. A delivery transfers or registers downstream work **atomically before** releasing the producing obligation. Deferred work transfers into a **new wave** with an explicitly recorded causal parent; it never reopens a sealed old-wave frontier. Root/wave/activation identities must not be guessed from \`NodeId\` or graph-view membership. Selected graph patches/exports and scope boundaries contribute to reachability only after final compilation.
+
+For scope \`k\`, let \`C_k\` denote outstanding producing obligations **and in-flight delivery/admission work**. Let \`Reach_k(c,p)\` conservatively mean that obligation \`c\` could still cause a delivery at port \`p\` via currently permitted topology, admission and causal continuations. Then:
+
+\`\`\`text
+Exhausted(p,k) := AdmissionBoundarySealed(p,k)
+                  AND NOT EXISTS c IN C_k : Reach_k(c,p)
+\`\`\`
+
+This predicate is a **derived frontier**, not a user/plugin-issued \`close(edge)\` command. An unselected output of an already settled invocation merely emits nothing; after no later invocation/emitter can reach the port, its edge may be projected as terminal \`Closed\` for existing input/diagnostic compatibility. A source not admitted in this wave contributes no producing obligation, once the wave's external admission boundary is sealed. All closure/progress transitions must be monotonic. Any valid delivery after exhaustion/seal is a kernel invariant violation.
+
+Progress exhaustion and **physical drain are not equivalent**. Define \`Pending(R,k)\` as all queued, runnable, executing, pending, in-flight and retained-emitter work attributable to a region \`R\`; define \`Drained(R,k)\` as physical native/ABI work safely quiescent. A region gate is ready only if:
+
+\`\`\`text
+GateReady(i,R,k) := InputAdmitted(i)
+                    AND BoundariesSealed(R,k)
+                    AND NOT EXISTS c IN C_k : CouldEnterOrAffect(c,R,k)
+                    AND Pending(R,k) == 0
+                    AND Drained(R,k)
+                    AND GatePolicyAllowsOutcome(R,k)
+\`\`\`
+
+A gate **never activates** an unadmitted node or synthesizes \`T\`, and cannot depend on itself or on work causally downstream of its own release. Define \`R\` through named/compiled graph regions and a complete external ingress cut; \`upstream\` may be an SDK shorthand only when it resolves to an exact, inspectable, finite dependency region. Overlapping views cannot double-count a physical ticket. Waiting for \`wave\` does not implicitly await deferred future waves; waiting for a larger activation requires explicit attribution of deferred and child work. \`Order\` continues to impose ordering only and is never an admission trigger.
+
+**Failure and cancellation.** \`Closed\` (no value can arrive), \`Failed(Domain/Kernel)\`, successful value delivery and \`Cancelled\` remain distinct. An eager \`Any\` may already have invoked its consumer before a separate later producer fails; a terminal reduction such as old \`Merge::ExactlyOne\` must retain its existing deterministic failure precedence and non-runnable Join closure. Failure/cancellation may prohibit new admission but cannot retroactively erase emitted effects or release physical leases early. Cancellation revokes future emission capability only after the associated pending/native work is fenced or drained. No detached or untracked plugin background work can contribute to the same scope after it is declared exhausted.
+
+**Implementation sequence.** (1) Build a small independent transition-system/reference model with exhaustive bounded traces; (2) compare legacy \`Closed/Value/Failed\` behavior against derived-frontier projections for one-emission finite waves; (3) add kernel-owned per-occurrence capabilities and transfer accounting on top of the existing GraphExecution/ticket lifecycle; (4) add \`Any<T>\` repeated admissions and typed output-settlement adapters; (5) add named-region gates and cross-wave activation progress only after exact-head cancellation, nested-composition and physical-drain acceptance. The graph compiler still resolves typing, selected grants, security and reachability offline; it does **not** solve arbitrary plugin routing predicates.
+
+**Research grounding (design references, not library dependencies):**
+- [Timely Dataflow, Progress Tracking](https://timelydataflow.github.io/timely-dataflow/chapter_5/chapter_5_2.html): capabilities/frontiers for potential future messages.
+- [Dijkstra–Scholten, Termination Detection](https://www.cs.utexas.edu/~EWD/transcriptions/EWD06xx/EWD687a.html): causal work/acknowledgment accounting for dynamically growing computations.
+- [WS-BPEL 2.0](https://docs.oasis-open.org/wsbpel/2.0/OS/wsbpel-v2.0-OS.html): dead-path elimination and negative-link propagation.
+- [Tokio TaskTracker](https://docs.rs/tokio-util/latest/tokio_util/task/struct.TaskTracker.html): closed-to-new-work versus empty-of-running-work distinction.
+- [YAWL OR-join research](https://research.tue.nl/en/publications/synchronization-and-cancelation-in-workflows-based-on-reset-nets/): why unstructured active-branch join decisions require more than counting currently running tasks.
+
 ### 7.8 Rollout and compatibility with V2 execution
 
 **Do not interrupt V1/V2 stabilization or rewrite passing native tests.** This amendment is a design constraint for forthcoming compiler/SDK features, not permission to change ABI 3 or reinterpret existing flat graph bytes. Existing explicit flat V2 `GraphContributionV2` authors and independently compiled foreign-language contributors remain valid. A macro-free builder and external metadata generator must lower to the **same** canonical graph as proc-macro-authored definitions.
@@ -1150,6 +1200,24 @@ These are **new future acceptance tests**, not assertions about merged/runtime s
 10. Completion never waits for future unrelated external triggers or outside-region work. Already admitted same-root internal deferred continuations prevent premature completion, and a completed activation cannot be reopened by another wave.
 11. An overlapping view reports the same physical ticket without creating a second lease; completion of two distinct activations follows their actual causal attribution rather than mere node membership.
 12. A native panic, cancel race, and late pending response cannot produce a successful premature aggregate completion; direct ABI-3 cleanup behavior is verified against the existing regression suite (including #1183 until its failure is fixed).
+
+
+### 9.4 Capability/progress reference-model and native acceptance (2 November refinement)
+
+These are **future gates**, not evidence that a current PR implements generalized progress:
+
+1. A synchronous node emits A and skips B; unused B closes **only when** no later invocation can still emit B. No manual plugin-side unused-edge notifications.
+2. Two invocations of the same node in one wave select opposite outputs. The first skip does not permanently close the second invocation's selected edge.
+3. An \`Any<T>\` input with two independent producers admits each arriving \`T\` under \`each\` admission; \`once(group)\` admits at most one and logs the winner. Unrelated roots and activations never coalesce.
+4. Terminal \`Merge::ExactlyOne\` preserves multiple-value rejection, late-failure precedence and backward-compatible fixed-wave semantics. It is not silently replaced with eager \`Any\`.
+5. A producing invocation transfers a delivery capability to a downstream queued invocation before releasing its own. A transient zero active-worker count cannot open a gate.
+6. A dynamically chosen dead branch causes no downstream invocation, while an alternate producer of the same input remains live and may still execute it.
+7. A pending native operation, retained emitter or queued admission keeps the appropriate frontier open, even when no worker is currently executing. Cancellation fences/drains these before terminal completion.
+8. An upstream region gate opens after all relevant legal future paths exhaust and physical leases drain, without waiting for unrelated outside-region work. A self/downstream-dependent gate is rejected offline.
+9. Overlapping views share the one real pending ticket; they neither duplicate obligations nor grant authority. Different graph activations maintain separate causal progress.
+10. A \`Deferred::Next\` continuation cannot reopen a sealed prior wave; a broader activation gate includes admitted deferred descendants when explicitly requested.
+11. The finite-wave reference model and implementation agree on every bounded trace of conditional branch, empty source, failure, cancellation and output settlement; permutations of independent event order do not change terminal-failure precedence.
+12. Unauthenticated/forged output-capability or cross-scope emission attempts fail without delivering data; classifications of route/closure/progress observations obey the input-derived security bounds.
 
 ## 10. Agent-harness fit and ownership (no agent concepts in the kernel)
 
