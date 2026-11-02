@@ -1,6 +1,185 @@
 use super::*;
 use phenix_contract::Authority;
 
+/// Test-only scenario driver for real compiled V2 Flow reduction.
+///
+/// Input delivery uses an existing, selected edge and the production Wave
+/// authority/readiness path. It does not forge a resolved port, run a native
+/// operation or represent full GraphExecution/root lifecycle.
+struct WaveScenario<'a> {
+    graph: &'a CompiledGraph,
+    wave: Wave,
+    scope: ScopedRequest,
+}
+
+impl<'a> WaveScenario<'a> {
+    fn new(graph: &'a CompiledGraph, source: &str) -> Self {
+        Self {
+            graph,
+            wave: Wave::new(graph, source).unwrap(),
+            scope: scope(&["resource"]),
+        }
+    }
+
+    fn trigger(&mut self, source: &str, port: &str, value: &Value) {
+        assert!(matches!(
+            &self.wave.nodes[source].1.kind,
+            NodeKind::Source { source: declared } if declared == &self.wave.source
+        ));
+        self.wave
+            .deliver(self.graph, &self.scope, source, Some((port, value)), false)
+            .unwrap();
+    }
+
+    fn admit(&mut self, node: &str) {
+        let Resolution::Value(_, resources) = self.wave.input(node).unwrap() else {
+            panic!("node {node} has no admitted input");
+        };
+        self.wave.resources.insert(node.into(), resources);
+    }
+
+    /// Settle a test-owned producer after checking its exact consumer input.
+    /// Skipped outputs and failures use the normal terminal delivery path.
+    fn deliver_to_port(
+        &mut self,
+        node: &str,
+        input: &str,
+        producer: &str,
+        output: &str,
+        value: Option<&Value>,
+        failed: bool,
+    ) {
+        assert!(
+            self.wave.edges.values().any(|edge| {
+                matches!(&edge.kind, EdgeKind::Flow { from, to }
+                    if from.node == producer
+                        && from.port == output
+                        && to.node == node
+                        && to.port == input)
+            }),
+            "missing declared edge {producer}.{output} -> {node}.{input}"
+        );
+        assert!(!(failed && value.is_some()), "failure cannot emit a value");
+        self.wave
+            .deliver(
+                self.graph,
+                &self.scope,
+                producer,
+                value.map(|value| (output, value)),
+                failed,
+            )
+            .unwrap();
+    }
+
+    fn input(&self, node: &str) -> Result<Resolution, Failure> {
+        self.wave.input(node)
+    }
+
+    fn port(&self, node: &str, port: &str) -> Result<Resolution, Failure> {
+        self.wave.port_input(node, port)
+    }
+}
+
+#[test]
+fn bounded_terminal_failure_and_cardinality_comparison() {
+    // C, V, F: independent terminal tables, not another production reducer.
+    let merge_expected = [[0, 1, 2], [1, 3, 2], [2, 2, 2]];
+    let join_expected = [[0, 0, 2], [0, 1, 2], [2, 2, 2]];
+    let classify = |result: Result<Resolution, Failure>| match result {
+        Ok(Resolution::Closed) => 0,
+        // Non-runnable Joins may release payloads but retain Value terminals.
+        Ok(Resolution::Value(_, _)) => 1,
+        Ok(Resolution::Failed) => 2,
+        Err(failure) if failure.code == Code::InfrastructureFailure => 3,
+        other => panic!("unexpected terminal result: {other:?}"),
+    };
+    for join in [false, true] {
+        let (mut declarations, policy) = if join {
+            super::super::tests::join_fixture()
+        } else {
+            super::super::tests::merge_fixture()
+        };
+        // Both producers share an ingress, but can complete independently.
+        let producer = declarations[0]
+            .nodes
+            .iter()
+            .find(|n| n.id == "alpha/sink")
+            .unwrap()
+            .clone();
+        for (index, id) in ["alpha/p", "alpha/q"].into_iter().enumerate() {
+            let mut node = producer.clone();
+            node.id = id.into();
+            node.inputs[0].schema = phenix_contract::ValueSchema::String;
+            node.outputs[0].schema = phenix_contract::ValueSchema::String;
+            declarations[0].nodes.push(node);
+            let mut feeder = declarations[0].edges[index].clone();
+            feeder.id = format!("alpha/feed-{index}");
+            let EdgeKind::Flow { from, to } = &mut feeder.kind else {
+                unreachable!()
+            };
+            from.node = "alpha/source".into();
+            to.node = id.into();
+            to.port = "in".into();
+            declarations[0].edges.push(feeder);
+            let EdgeKind::Flow { from, .. } = &mut declarations[0].edges[index].kind else {
+                unreachable!()
+            };
+            from.node = id.into();
+        }
+        let graph = super::super::tests::run(&declarations, &policy).unwrap();
+        for left in 0..3 {
+            for right in 0..3 {
+                for order in [[0, 1], [1, 0]] {
+                    let mut case = WaveScenario::new(&graph, "alpha/submit");
+                    let payload = Value::String("terminal".into());
+                    case.trigger("alpha/source", "out", &payload);
+                    for producer in ["alpha/p", "alpha/q"] {
+                        case.admit(producer);
+                    }
+                    for (step, index) in order.into_iter().enumerate() {
+                        let terminal = [left, right][index];
+                        let producer = ["alpha/p", "alpha/q"][index];
+                        let port = if join { ["left", "right"][index] } else { "in" };
+                        case.deliver_to_port(
+                            "alpha/merge",
+                            port,
+                            producer,
+                            "out",
+                            (terminal == 1).then_some(&payload),
+                            terminal == 2,
+                        );
+                        if step == 0 {
+                            // No early completion while the other producer is live.
+                            assert!(matches!(
+                                case.input("alpha/merge").unwrap(),
+                                Resolution::Unresolved
+                            ));
+                            let pending_port = if join { ["right", "left"][index] } else { "in" };
+                            assert!(matches!(
+                                case.port("alpha/merge", pending_port).unwrap(),
+                                Resolution::Unresolved
+                            ));
+                        }
+                    }
+                    let expected = if join { join_expected } else { merge_expected }[left][right];
+                    assert_eq!(
+                        classify(case.input("alpha/merge")),
+                        expected,
+                        "join={join}, terminals={left}/{right}, order={order:?}"
+                    );
+                    for (port, expected) in if join {
+                        vec![("left", left), ("right", right)]
+                    } else {
+                        vec![("in", expected)]
+                    } {
+                        assert_eq!(classify(case.port("alpha/merge", port)), expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn deferred_arrival_survives_producer_closure_and_propagates_absence_scope() {
     let (mut declarations, policy) = super::super::tests::fixture();
