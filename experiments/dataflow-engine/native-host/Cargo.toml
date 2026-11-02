@@ -1,0 +1,11 @@
+[package]
+name="dataflow-native-host"
+version="0.1.0"
+edition="2021"
+[dependencies]
+phenix-kernel={path="../../../crates/phenix-kernel"}
+phenix-contract={path="../../../crates/phenix-contract"}
+phenix-artifact={path="../../../crates/phenix-artifact"}
+dataflow-native-contracts={path="../native-contracts"}
+dataflow-fixture={path="../fixture"}
+serde_json="1"

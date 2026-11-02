@@ -1,0 +1,15 @@
+[package]
+name="dataflow-native-plugin"
+version="0.1.0"
+edition="2021"
+build="build.rs"
+[lib]
+crate-type=["cdylib"]
+[dependencies]
+phenix-sdk={path="../../../crates/phenix-sdk"}
+dataflow-native-contracts={path="../native-contracts"}
+dataflow-fixture={path="../fixture"}
+serde_json="1"
+[build-dependencies]
+phenix-contract={path="../../../crates/phenix-contract"}
+dataflow-native-contracts={path="../native-contracts"}
