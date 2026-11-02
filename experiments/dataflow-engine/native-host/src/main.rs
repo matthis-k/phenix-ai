@@ -138,5 +138,66 @@ fn main() {
         "native_graph_v2 n={n} elapsed_ns={}",
         start.elapsed().as_nanos()
     );
+    let gate = std::env::temp_dir().join(format!("phenix-native-pending-{}", std::process::id()));
+    std::fs::create_dir_all(&gate).unwrap();
+    std::env::set_var("PHENIX_EXPERIMENT_GATE", &gate);
+    for cancel in [false, true] {
+        let m = dataflow_fixture::message(n + 1 + u64::from(cancel), true, true);
+        let payload = Value::map([("text", Value::String(serde_json::to_string(&m).unwrap()))]);
+        let mut e = k
+            .begin_action_scoped(
+                "experiment.submit",
+                &payload,
+                ScopedRequest {
+                    authority: c.authority.clone(),
+                    resource: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(e.pump(|_| {}).unwrap(), GraphStatus::Pending);
+        assert!(e.completion().is_none());
+        assert_eq!(e.steps().len(), 1, "no downstream before pending finishes");
+        if cancel {
+            e.cancel().unwrap();
+        } else {
+            std::fs::write(gate.join(format!("{}-0", m.id.root)), b"release").unwrap();
+        }
+        let mut finished = false;
+        for _ in 0..2000 {
+            if e.pump(|_| {}).unwrap() == GraphStatus::Finished {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(finished);
+        assert!(gate.join(format!("{}-0.drained", m.id.root)).exists());
+        if cancel {
+            assert_eq!(e.completion(), Some(GraphCompletion::Cancelled));
+            assert_eq!(e.steps().len(), 1);
+        } else {
+            assert_eq!(e.completion(), Some(GraphCompletion::Success));
+            assert_eq!(e.steps().len(), 3);
+        }
+    }
+    let m = dataflow_fixture::message(n + 3, false, false);
+    let payload = Value::map([("text", Value::String(serde_json::to_string(&m).unwrap()))]);
+    let denied = k.begin_action_scoped(
+        "experiment.submit",
+        &payload,
+        ScopedRequest {
+            authority: Authority {
+                operations: BTreeSet::new(),
+                resources: BTreeSet::new(),
+            },
+            resource: None,
+        },
+    );
+    assert!(
+        denied.is_err(),
+        "native authority check cannot be bypassed by valid payload identity"
+    );
+    std::fs::remove_dir_all(gate).unwrap();
+    println!("native scenarios: branching, pending, cancellation physical drain, unauthorized scope passed");
     assert_eq!(graph().nodes.len(), 7);
 }

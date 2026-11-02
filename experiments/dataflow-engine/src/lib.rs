@@ -115,7 +115,10 @@ pub fn service(
                 .read_to_end(&mut out)
                 .await
                 .unwrap();
-            let (id, text): (Identity, String) = serde_json::from_slice(&out).unwrap();
+            let Ok((id, text)) = serde_json::from_slice::<(Identity, String)>(&out) else {
+                trace(&t, m.id, "MalformedRemote");
+                return None;
+            };
             if id != m.id {
                 trace(&t, m.id, "IdentityMismatch");
                 return None;

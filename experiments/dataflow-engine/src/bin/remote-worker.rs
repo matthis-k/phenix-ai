@@ -3,9 +3,16 @@ use std::io::{Read, Write};
 fn main() {
     let mut wire = String::new();
     std::io::stdin().read_to_string(&mut wire).unwrap();
-    let m: Message = serde_json::from_str(&wire).unwrap();
+    let mut m: Message = serde_json::from_str(&wire).unwrap();
     match m.text.as_str() {
         "EXIT" => std::process::exit(23),
+        "WRONGID" => {
+            m.id.root += 1;
+        }
+        "MALFORMED" => {
+            std::io::stdout().write_all(b"not-json").unwrap();
+            return;
+        }
         "HANG" => {
             std::thread::park();
         }

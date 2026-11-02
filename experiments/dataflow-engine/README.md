@@ -111,19 +111,18 @@ Green counterexample tests establish a mismatch; they do not pass the requiremen
 | Conditional branch | P native Switch/ExactlyOne | P filter path | P tee/filter path |
 | Multiple producers/readiness | E canonical Join/ExactlyOne | P frontier-backed terminal probe; generic repeated input readiness M | P keyed join; terminal ExactlyOne M (eager counterexample) |
 | Repeated delivery occurrences | E deferred/InvokeEach; same-wave repeatable Any M | P distinct IDs, A duplicate rejection | Same |
-| Pending/no premature execution | E native pending; M same fixture pending | P retained future/capability | P resolve_futures |
-| Cancellation/physical drain | E native cancel/panic drain | P controlled work, A token fence; native ABI/process-tree parity M | P controlled work; root completion M |
+| Pending/no premature execution | P controlled ABI-3 pending in same fixture + E acceptance | P retained future/capability | P resolve_futures |
+| Cancellation/physical drain | P controlled same-fixture thread exit + E native panic drain | P controlled work, A token fence; native ABI/process-tree parity M | P controlled work; root completion M |
 | Deferred root identity | E V2 Deferred | P native feedback and envelope identity | P defer_tick and envelope identity |
 | Concurrent activations | E canonical native identity | P reverse completion, state snapshot; scalar timestamp isolates completion poorly | P reverse completion; causal completion oracle M |
 | Inactive branches terminate | P native smoke + E acceptance | P probe exhausted, no fake deliveries | P selected result; quiescence ≠ completion |
 | Remote identity/order | M native remote execution | P subprocess identity + native worker exchange; order/replay protocol M | P subprocess identity; order/replay protocol M |
 | Failure/retry effects | E durable product tests, not shared fixture | A in-memory occurrence idempotency; crash/restart M | Same |
 | Worker disappearance | Native pending transport not this fixture | P exit/deadline classification and capability release after reap | P exit classification; no root failure/completion API |
-| Unauthorized/duplicate IDs | E real selected authority; fixture missing negative native scope | A reject atomically before framework admission | Same |
+| Unauthorized/duplicate IDs | P native denied scope; E selected authority; duplicate native occurrence ingress M | A reject atomically before framework admission | Same |
 
 Do not promote these prototypes to replacements: the shared scenario driver covers
-both candidate adapters, while the native fixture currently covers synchronous
-branch behavior. Existing native acceptance has broader guarantees but is **not**
+both candidate adapters, while the native fixture covers synchronous branches and controlled ABI pending/cancel/denial probes. Existing native acceptance has broader guarantees but is **not**
 claimed to be trace-equivalent to the shared synthetic suite.
 
 ## Native / adapter / missing capability matrix
@@ -188,7 +187,51 @@ were adapter mistakes, corrected rather than attributed to DFIR.
 Local Rust 1.99.1 ThinLTO linking failed with undefined Timely/alloc symbols. This
 is a build/toolchain observation, not an established framework defect. Recheck
 with repository CI's supported toolchain and record exact build settings before
-using any timings. Do not infer performance from debug smoke timings.
+using any timings. The repository-supported Rust 1.96.1 succeeds with the same ThinLTO release settings. Do not infer performance from debug smoke timings.
+
+## Measurements (bounded fixture, not equivalent engines)
+
+Rust 1.96.1 / LLVM as shipped with that toolchain, x86_64 Linux, AMD EPYC 9V74
+virtual CPU; release, ThinLTO, one codegen unit, 2,000 alternating immediate
+Model/Tool deliveries, traces retained. These numbers describe different admission
+and dispatch boundaries. They cannot establish a production speedup or rank engines.
+
+| Sample | Actual elapsed | Median / p95 delivery | Cumulative allocations | Cumulative allocated bytes |
+|---|---:|---:|---:|---:|
+| Timely in-process fixture | 13.782 ms | 5.439 / 8.503 µs | 47,104 | 108,733,272 |
+| DFIR in-process fixture | 2.817 ms | 0.891 / 1.723 µs | 25,037 | 6,046,062 |
+| Native GraphExecution / ABI-3 / JSON | 81.727 ms | not instrumented | not instrumented | not instrumented |
+
+Observed sequential fixture rates, calculated from those samples: approximately
+145,112 / 709,867 / 24,472 deliveries/s respectively. Driver polling, kernel
+admission, ABI crossing, serialization and terminal semantics differ; this is not
+an equal-throughput comparison. One recorded final sample (earlier exploratory runs varied substantially), shared virtual hardware, no CPU
+pinning or confidence interval. The allocation counters include retained trace,
+state and framework work; bytes are cumulative, not resident memory.
+
+Supported-toolchain initial workspace release build: Cargo reported 1m01s with
+registry downloads already cached. Source-change rebuild: 26.555s; fixture mtime
+rebuild: 29.188s; subsequent true no-op build: 0.165s. These are whole-experiment
+builds, not isolated per-engine incremental times. The large shared dependency
+closure prevents attributing those times to either framework alone.
+
+| Component | Resolved external package closure, including crate | Formatted Rust LOC (scope) |
+|---|---:|---|
+| Phenix kernel | 22 external, 25 including local crates | 1,186 V2 execution + 837 V2 compiler; excludes recursive compiler, shared graph/runtime/tickets |
+| Timely | 25 | 118 adapter + shared plugin/boundary code and terminal probe |
+| DFIR | 149 | 50 adapter + shared plugin/boundary code; no root completion implementation |
+| tokio-util | 23 | shared controlled service/transport/boundary module: 179 (not all cancellation) |
+| bevy_ecs (std only) | 74 | component probes total 53, shared with petgraph |
+| petgraph (std/stable_graph) | 14 | current deterministic Phenix dag.rs is only 77 lines |
+
+Native fixture adds graph declarations (132), contracts (26), plugin (96), host
+(203) and build hook (6), plus shared fixture (71). Tests/probes, benchmark, worker,
+source filters and lockfiles are additional. Raw adapter LOC does not measure
+removed production machinery: the smaller adapters implement fewer guarantees.
+Dependency counts are feature-unified Linux Cargo metadata closures, not disjoint
+new dependencies; do not sum overlapping closures. Full counts/settings and source
+paths are in [measurements.json](measurements.json); [measure.py](measure.py)
+reproduces them and the benchmark/build samples.
 
 ## Reproduction
 
@@ -239,6 +282,6 @@ See `measurements.json` when present for actual results and environment.
 ## Final state / scope of evidence
 
 Implemented isolated native/Timely/DFIR prototypes, component probes and subprocess
-experiments. Local bounded tests pass; CI status must be read at the experiment's
+experiments. Local: 19 candidate unit/probe tests, 6 process/worker integration tests, 3 component probes, the 72 pinned-control V2 tests, and native branch/pending/cancel/denial probes pass. Reproducer fails as expected on Rust 1.96.1 and 1.99.1. CI status must be read at the experiment's
 exact head, separately from the verified control parent. Mandatory gaps above
-remain open. No production semantics, PR heads or product compositions changed.
+remain open. No production semantics, existing PR heads or product compositions changed.

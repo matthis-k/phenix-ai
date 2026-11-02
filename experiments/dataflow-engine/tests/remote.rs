@@ -131,3 +131,65 @@ fn timely_native_exchange_crosses_worker_with_serialized_port_delivery() {
     assert_eq!(out[0].0, 1);
     assert_eq!((out[0].1).0.root, 8);
 }
+#[tokio::test(flavor = "current_thread")]
+async fn dfir_remote_protocol_faults_are_not_transport_success() {
+    let mut e = dfir_engine::Engine::new();
+    e.state.borrow_mut().remote = Some(env!("CARGO_BIN_EXE_remote-worker").into());
+    for (root, mode, expected) in [
+        (50, "WRONGID", "IdentityMismatch"),
+        (51, "MALFORMED", "MalformedRemote"),
+    ] {
+        let mut m = message(root, false, false);
+        m.text = mode.into();
+        e.submit(&[m], true).unwrap();
+        for _ in 0..400 {
+            e.step();
+            if e.trace
+                .borrow()
+                .iter()
+                .any(|v| v.id.root == root && v.node == expected)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert!(e
+            .trace
+            .borrow()
+            .iter()
+            .any(|v| v.id.root == root && v.node == expected));
+    }
+    assert!(e.output.borrow().is_empty());
+    assert!(e.state.borrow().effects.is_empty());
+}
+#[test]
+fn timely_remote_protocol_faults_settle_without_committed_effects() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    timely_engine::run(|e| {
+        rt.block_on(async {
+            e.state.borrow_mut().remote = Some(env!("CARGO_BIN_EXE_remote-worker").into());
+            for (root, mode) in [(50, "WRONGID"), (51, "MALFORMED")] {
+                let mut m = message(root, false, false);
+                m.text = mode.into();
+                e.submit(&[m], true).unwrap();
+            }
+            e.seal();
+            for _ in 0..400 {
+                e.step();
+                if e.drained() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+            assert!(e.drained());
+            assert!(e.output.borrow().is_empty());
+            assert!(e.state.borrow().effects.is_empty());
+            let trace = e.trace.borrow();
+            assert!(trace.iter().any(|v| v.node == "IdentityMismatch"));
+            assert!(trace.iter().any(|v| v.node == "MalformedRemote"));
+        })
+    });
+}
