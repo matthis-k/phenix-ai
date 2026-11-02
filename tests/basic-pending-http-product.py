@@ -170,6 +170,30 @@ http = ThreadingHTTPServer(("127.0.0.1", 0), Server)
 server = threading.Thread(target=http.serve_forever, daemon=True)
 server.start()
 
+
+def records():
+    # Startup replay may acknowledge observer cursors, never semantic state.
+    with sqlite3.connect(env["PHENIX_BASIC_SQLITE_PATH"]) as db:
+        return db.execute(
+            "SELECT session, name, revision, data FROM basic_records "
+            "WHERE name NOT LIKE '%observer%' ORDER BY session, name"
+        ).fetchall()
+
+
+def request_failure(result, category):
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    failures = [event for event in events if event["kind"] == "Failure"
+                and event["sequence"] == 0]
+    assert len(failures) == 1, events
+    failure = failures[0]
+    assert failure["session"] == "s1", failure
+    assert failure["run"] == failure["call_id"] == "", failure
+    assert failure["data"] and category in failure["text"], failure
+    assert not any(event["kind"] in ("Answer", "ModelStarted", "ToolStarted")
+                   for event in events), events
+
+
 try:
     env = dict(os.environ)
     env.update(
@@ -244,6 +268,7 @@ try:
         # A separate host has no authority to infer that the original
         # process died. It must refuse a conflicting session prompt without
         # changing the active run or issuing another Model request.
+        before = records()
         concurrent = subprocess.run(
             [binary, "jsonl", str(composition_file)],
             input=json.dumps({
@@ -251,10 +276,8 @@ try:
             }) + "\n",
             text=True, capture_output=True, env=env, timeout=12,
         )
-        assert concurrent.returncode != 0, (
-            concurrent.stdout, concurrent.stderr
-        )
-        assert "session already owned by another host" in concurrent.stderr, concurrent.stderr
+        request_failure(concurrent, "session already owned by another host")
+        assert records() == before, "concurrent denial mutated durable records"
         assert len(calls) == 3, "concurrent host dispatched a second Model"
         # The next turn is submitted before cancelling the current run.
         # The controller must preserve it across cancellation and draining.
@@ -310,7 +333,10 @@ try:
         crashed.stdin.flush()
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
-            event = crash_events.get(timeout=3)
+            try:
+                event = crash_events.get(timeout=min(3, max(0.01, deadline - time.monotonic())))
+            except queue.Empty:
+                continue
             assert event is not None, "model host exited before crash-start"
             if event["kind"] == "TextDelta" and event["text"] == "crash-start":
                 break
@@ -338,6 +364,7 @@ try:
     # durable Running snapshot unchanged and dispatch no Model request.
     original_marker = marker.read_text()
     marker.write_text("phenix.basic.owner.v1\nwrong-run")
+    before = records()
     denied = subprocess.run(
         [binary, "jsonl", str(composition_file)],
         input=json.dumps({
@@ -345,8 +372,9 @@ try:
         }) + "\n",
         text=True, capture_output=True, env=env, timeout=15,
     )
-    assert denied.returncode != 0, (denied.stdout, denied.stderr)
-    assert "no matching fenced owner marker" in denied.stderr, denied.stderr
+    request_failure(denied, "no matching fenced owner marker")
+    assert records() == before, "unverified recovery mutated durable records"
+    assert marker.read_text() == "phenix.basic.owner.v1\nwrong-run"
     assert len(calls) == 6, "unverified recovery dispatched a new model"
     # Force a failure *between* two durable writes. The Session checkpoint
     # must persist while SQLite rejects only the recovery Failure journal
@@ -369,7 +397,7 @@ try:
             }) + "\n",
             text=True, capture_output=True, env=env, timeout=20,
         )
-        assert incomplete.returncode != 0, (incomplete.stdout, incomplete.stderr)
+        request_failure(incomplete, "StorageFailed")
         assert len(calls) == 6, "failed recovery issued the interrupted Model"
         assert marker.read_text() == original_marker.replace(
             "phenix.basic.owner.v1\n", "phenix.basic.recovery.v1\n", 1,
@@ -398,9 +426,7 @@ try:
             }) + "\n",
             text=True, capture_output=True, env=env, timeout=20,
         )
-        assert journal_only.returncode != 0, (
-            journal_only.stdout, journal_only.stderr
-        )
+        request_failure(journal_only, "StorageFailed")
         assert len(calls) == 6, "failed followup dispatched a Model"
         assert marker.read_text() == "", (
             "recovery did not clear the marker after committing Failure"
@@ -441,6 +467,21 @@ try:
                for e in resumed_events), resumed_events
     assert len(calls) == 7, "recovery retried the interrupted model call"
     assert marker.read_text() == "", "completed run left stale ownership"
+
+    # Invalid framing/session identity cannot be routed to a session-local
+    # Failure. These remain fatal, unlike the request failures above.
+    before = records()
+    for payload in ("{\n", json.dumps({
+        "type": "prompt", "session": "../escape", "text": "must not dispatch"
+    }) + "\n"):
+        malformed = subprocess.run(
+            [binary, "jsonl", str(composition_file)], input=payload,
+            text=True, capture_output=True, env=env, timeout=15,
+        )
+        assert malformed.returncode != 0, (malformed.stdout, malformed.stderr)
+        assert malformed.stdout == "" and malformed.stderr, malformed
+        assert records() == before, "malformed frame mutated semantic records"
+        assert len(calls) == 7, "malformed frame dispatched a Model"
 
     (output / "pending-basic-http.json").write_text(json.dumps({
         "format": "phenix.basic.pending-http-product.v1",
