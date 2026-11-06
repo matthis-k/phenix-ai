@@ -31,7 +31,7 @@ struct PendingActivation {
 pub struct NativeGraphRun<'graph, 'kernel> {
     root: Root<'kernel>,
     session: GraphSession<'graph>,
-    actions: &'graph BTreeMap<String, BoundAction>,
+    actions: BTreeMap<String, BoundAction>,
     pending: BTreeMap<u64, PendingActivation>,
     cancelled: bool,
     domain: Option<Value>,
@@ -42,7 +42,7 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     pub fn start(
         graph: &'graph CompiledGraph,
         root: Root<'kernel>,
-        actions: &'graph BTreeMap<String, BoundAction>,
+        actions: BTreeMap<String, BoundAction>,
         trigger: &str,
         payload: Value,
     ) -> Result<Self, Failure> {
