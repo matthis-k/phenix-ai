@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 [dependencies]
 phenix-contract.workspace = true
+phenix-graph = { path = "../phenix-graph" }
 serde.workspace = true
 serde_json.workspace = true
 phenix-artifact = { path = "../phenix-artifact" }
