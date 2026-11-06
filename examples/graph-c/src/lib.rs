@@ -4,72 +4,6 @@ use example_graph_contracts::{
 };
 use phenix_sdk::{live, *};
 
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "example.graph-c",
-    events: &[],
-    actions: &[],
-    nodes: &[
-        StaticGraphNode {
-            id: "c",
-            triggers: &[
-                "example.graph.partial",
-                "example.graph.slow",
-                "example.graph.start",
-            ],
-            after: &[
-                "example.graph-a/a",
-                "example.graph-a/slow",
-                "example.graph-b/b",
-            ],
-            selector: "",
-            operation: "example.graph.task@1/run",
-            writes: &[],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "d",
-            triggers: &["example.graph.slow", "example.graph.start"],
-            after: &["example.graph-c/c"],
-            selector: "",
-            operation: "example.graph.task@1/run",
-            writes: &[],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "pending",
-            triggers: &["state:example.graph-a/pending_signal"],
-            after: &[],
-            selector: "",
-            operation: "example.graph.pending-change@1/run",
-            writes: &["example.graph-c/cancel_probe"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "receipt",
-            triggers: &["state:example.graph-c/receipt"],
-            after: &["example.graph-c/watch"],
-            selector: "",
-            operation: "example.graph.changed@1/run",
-            writes: &[],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "watch",
-            triggers: &["state:example.graph-a/signal"],
-            after: &[],
-            selector: "",
-            operation: "example.graph.changed@1/run",
-            writes: &["example.graph-c/receipt"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-    ],
-};
-
 #[plugin(
     id = "example.graph-c",
     define(Task),
@@ -81,8 +15,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     require(ResultA, slot = "a"),
     require(ResultB, slot = "b"),
     require(SignalA, slot = "signal"),
-    require(PendingSignalA, slot = "pending_signal"),
-    graph(GRAPH)
+    require(PendingSignalA, slot = "pending_signal")
 )]
 mod provider {
     use super::*;
