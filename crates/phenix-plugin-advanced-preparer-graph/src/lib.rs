@@ -6,9 +6,7 @@ use phenix_advanced_contracts::{
     ModelPreparationProposal, PreparationReceipt,
 };
 use phenix_basic_contracts::{BasicPendingModelRequest, GraphStateChange, ModelRequest};
-use phenix_sdk::{
-    CallError, CallResult, Code, Failure, Host,
-};
+use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
 
 /// One contribution, applied to the empty graph together with other patches.
 #[path = "graph_patch.rs"]
@@ -33,8 +31,7 @@ fn host_failure(error: impl std::fmt::Display) -> CallError<ModelPreparationErro
     require(phenix_basic_contracts::BasicPendingModelRequest, slot = "Source"),
     require(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     require(phenix_advanced_contracts::ModelPreparation, slot = "Preparer"),
-
-    patch(super::GRAPH_BYTES),
+    patch(super::GRAPH_BYTES)
 )]
 mod provider {
     use super::*;
@@ -140,7 +137,6 @@ mod ownership_tests {
         assert_eq!(metadata.plugin, "phenix.advanced.graph-preparer");
     }
 }
-
 
 #[cfg(test)]
 mod patch_embedding_tests {
