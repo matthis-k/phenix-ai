@@ -4,7 +4,7 @@
 //! not yet ported from the separate prototype.
 use phenix_contract::{Code, Failure, Value};
 pub use phenix_contract::graph::{
-    Edge, Edit, InputPort, InputRef, Node, OutputRef, Patch, Readiness, Schema, Trigger,
+    Edge, Edit, InputPort, InputRef, Node, OutputPolicy, OutputRef, Patch, Readiness, Schema, Trigger,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use sha2::{Digest, Sha256};
@@ -16,16 +16,18 @@ pub struct CompiledGraph {
     nodes: BTreeMap<String, Node>,
     owners: BTreeMap<String, String>,
     edges: BTreeSet<Edge>,
+    output_policies: BTreeMap<OutputRef, OutputPolicy>,
     triggers: BTreeMap<String, InputRef>,
     applied: Vec<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Target { Node(String), Edge(Edge), Trigger(String) }
+enum Target { Node(String), Edge(Edge), OutputPort(OutputRef), Trigger(String) }
 fn target(edit: &Edit) -> Target {
     match edit {
         Edit::AddNode(n) | Edit::ReplaceNode(n) => Target::Node(n.path.clone()),
         Edit::RemoveNode(n) => Target::Node(n.clone()),
         Edit::Connect(e) | Edit::Disconnect(e) => Target::Edge(e.clone()),
+        Edit::SetOutputPolicy { from, .. } => Target::OutputPort(from.clone()),
         Edit::AddTrigger(t) => Target::Trigger(t.name.clone()),
         Edit::RemoveTrigger(n) => Target::Trigger(n.clone()),
     }
@@ -86,6 +88,9 @@ impl CompiledGraph {
                 return Err(fail(format!("edge type mismatch {edge:?}")));
             }
         }
+        for source in graph.output_policies.keys() {
+            graph.output_schema(source)?;
+        }
         for endpoint in graph.triggers.values() {
             graph.input_schema(endpoint)?;
         }
@@ -118,6 +123,9 @@ impl CompiledGraph {
             Edit::Disconnect(edge) => {
                 if !self.edges.remove(edge) { return Err(fail("edge absent")); }
             }
+            Edit::SetOutputPolicy { from, policy } => {
+                self.output_policies.insert(from.clone(), policy.clone());
+            }
             Edit::AddTrigger(t) => {
                 if self.triggers.contains_key(&t.name) { return Err(fail("duplicate trigger")); }
                 self.triggers.insert(t.name.clone(), t.to.clone());
@@ -135,6 +143,10 @@ impl CompiledGraph {
         self.owners.get(path).map(String::as_str)
     }
     pub fn edges(&self) -> &BTreeSet<Edge> { &self.edges }
+    /// Default is broadcast; explicit policies can select fewer edges.
+    pub fn output_policy(&self, from: &OutputRef) -> OutputPolicy {
+        self.output_policies.get(from).cloned().unwrap_or(OutputPolicy::Broadcast)
+    }
     pub fn triggers(&self) -> &BTreeMap<String, InputRef> { &self.triggers }
     fn input_schema(&self, e: &InputRef) -> Result<&Schema, Failure> {
         self.nodes.get(&e.node)
@@ -195,7 +207,9 @@ impl CompiledGraph {
         let mut session = self.start(trigger, payload)?;
         while let Some(activation) = session.next_ready(activation_limit)? {
             let outputs = host.invoke(&activation.action, activation.args)?;
-            session.complete(activation.id, outputs)?;
+            session.complete_with(activation.id, outputs, |from, selector, value, candidates| {
+                host.route(selector, from, value, candidates)
+            })?;
         }
         session.finish()
     }
@@ -207,6 +221,16 @@ pub trait ActionHost {
     fn invoke(
         &mut self, action: &str, args: BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, Failure>;
+
+    /// Run an output policy after the node has emitted its value.
+    /// A policy may inspect store state in its host implementation but may
+    /// select only existing outgoing edges; GraphSession checks that invariant.
+    fn route(
+        &mut self, _selector: &str, _from: &OutputRef, _value: &Value,
+        _candidates: &[InputRef],
+    ) -> Result<Vec<InputRef>, Failure> {
+        Err(fail("selective output policy has no host implementation"))
+    }
 }
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionReport {
