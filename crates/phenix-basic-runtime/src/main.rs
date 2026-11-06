@@ -11,7 +11,7 @@ use phenix_basic_contracts::{
 };
 use phenix_contract::{Portable, ScopedRequest, Value};
 use phenix_kernel::{
-    graph::{GraphCompletion, GraphExecution, GraphStatus},
+    graph::{NativeGraphRun, NativeRunStatus},
     resolve::{Composition, Prepared, Selection},
     Kernel, Outcome,
 };
@@ -124,7 +124,7 @@ fn completed<T>(result: Result<Result<T, BasicError>, String>) -> Result<T, Stri
 /// root while its tickets are live. The kernel still checks the selected
 /// operation, exact scope and ordinary root grants.
 fn invoke_graph<T: Portable>(
-    execution: &GraphExecution<'_>,
+    execution: &NativeGraphRun<'_, '_>,
     provider: &str,
     operation: &str,
     request: impl Portable,
@@ -138,7 +138,7 @@ fn invoke_graph<T: Portable>(
         provider: provider.into(),
     };
     match execution
-        .invoke_selected(&selected, &request.to_value())
+        .root().invoke_selected(&selected, &request.to_value())
         .map_err(|e| format!("{e:?}"))?
     {
         Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
@@ -150,7 +150,7 @@ fn invoke_graph<T: Portable>(
 
 fn invoke_observed<T: Portable>(
     kernel: &Kernel,
-    execution: Option<&GraphExecution<'_>>,
+    execution: Option<&NativeGraphRun<'_, '_>>,
     provider: &str,
     operation: &str,
     request: impl Portable,
@@ -163,7 +163,7 @@ fn invoke_observed<T: Portable>(
 
 fn render_new(
     kernel: &Kernel,
-    execution: Option<&GraphExecution<'_>>,
+    execution: Option<&NativeGraphRun<'_, '_>>,
     frontend: &str,
     session: &str,
     after: &mut u64,
@@ -242,7 +242,7 @@ fn begin_submission<'a>(
     kernel: &'a Kernel,
     input: Submission,
     scope: ScopedRequest,
-) -> Result<GraphExecution<'a>, String> {
+) -> Result<NativeGraphRun<'a, 'a>, String> {
     let Submission::Dispatch { action, payload } = input else {
         return Err("no active graph execution to cancel".into());
     };
@@ -251,25 +251,26 @@ fn begin_submission<'a>(
     }
     let value = Value::decode(&payload.0).map_err(|e| format!("{e:?}"))?;
     kernel
-        .begin_action_scoped(&action, &value, scope)
+        .begin_graph("phenix.basic.prompt", value, scope)
         .map_err(|e| format!("{e:?}"))
 }
 
-fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
-    let cancelled = match execution.completion() {
-        Some(GraphCompletion::Success | GraphCompletion::Domain) => false,
-        Some(GraphCompletion::Cancelled) => true,
-        Some(GraphCompletion::Failure(failure)) => return Err(format!("{failure:?}")),
-        None => return Err("graph is not finished".into()),
+fn finish_submission(execution: &NativeGraphRun<'_, '_>) -> Result<bool, String> {
+    let cancelled = match execution.status() {
+        NativeRunStatus::Succeeded | NativeRunStatus::Domain => false,
+        NativeRunStatus::Cancelled => true,
+        NativeRunStatus::Failed => return Err(format!(
+            "{:?}", execution.failure().ok_or("graph failed without a failure")?
+        )),
+        NativeRunStatus::Running | NativeRunStatus::Draining =>
+            return Err("graph is not finished".into()),
     };
-    if execution.steps().is_empty() && !cancelled {
+    if execution.activations() == 0 && !cancelled {
         return Err("prompt action did not activate a graph node".into());
     }
-    for step in execution.steps() {
-        if let Outcome::Domain(value) = &step.outcome {
-            let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-            return Err(format!("{:?}: {}", cause.code, cause.message));
-        }
+    if let Some(value) = execution.domain() {
+        let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
+        return Err(format!("{:?}: {}", cause.code, cause.message));
     }
     Ok(cancelled)
 }
@@ -278,20 +279,17 @@ fn finish_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
 /// session and journals a Failure event. Keep Terminal/JSONL alive for
 /// later queued prompts; Storage, admission and other domain failures
 /// remain fatal. ACP retains its SDK request-error path.
-fn finish_stream_submission(execution: &GraphExecution<'_>) -> Result<bool, String> {
-    if matches!(execution.completion(), Some(GraphCompletion::Domain)) {
-        for step in execution.steps() {
-            if let Outcome::Domain(value) = &step.outcome {
-                let cause = BasicError::from_value(value.clone()).map_err(|e| format!("{e:?}"))?;
-                if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
-                    || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
-                {
-                    return Ok(false);
-                }
-                return Err(format!("{:?}: {}", cause.code, cause.message));
-            }
+fn finish_stream_submission(execution: &NativeGraphRun<'_, '_>) -> Result<bool, String> {
+    if execution.status() == NativeRunStatus::Domain {
+        let cause = BasicError::from_value(
+            execution.domain().ok_or("domain graph finished without a domain outcome")?.clone()
+        ).map_err(|e| format!("{e:?}"))?;
+        if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
+            || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
+        {
+            return Ok(false);
         }
-        return Err("domain graph finished without a domain outcome".into());
+        return Err(format!("{:?}: {}", cause.code, cause.message));
     }
     finish_submission(execution)
 }
@@ -545,7 +543,7 @@ fn recover_owned_run(
 // committed Running before recording its durable owner.
 fn mark_admitted_run(
     kernel: &Kernel,
-    graph: &GraphExecution<'_>,
+    graph: &NativeGraphRun<'_, '_>,
     session: &str,
     owner: &mut std::fs::File,
 ) -> Result<bool, String> {
@@ -614,7 +612,7 @@ fn bounded_input_line(reader: &mut impl BufRead) -> io::Result<Option<String>> {
 }
 
 /// A reader owns stdin. Only the controller thread touches Kernel, Root, or
-/// GraphExecution. This keeps root admission and cancellation on one thread.
+/// NativeGraphRun. This keeps root admission and cancellation on one thread.
 fn input_channel() -> Receiver<Result<String, String>> {
     let (sender, receiver) = mpsc::sync_channel(64);
     std::thread::spawn(move || {
@@ -669,7 +667,7 @@ fn run_console(
 
     let receiver = input_channel();
     let mut queue = VecDeque::<Submission>::new();
-    let mut active: Option<GraphExecution<'_>> = None;
+    let mut active: Option<NativeGraphRun<'_, '_>> = None;
     let mut active_lock: Option<std::fs::File> = None;
     let mut active_marked = false;
     let mut eof = false;
@@ -731,7 +729,7 @@ fn run_console(
             }
         }
         if let Some(execution) = active.as_mut() {
-            let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            let status = execution.pump(None).map_err(|e| format!("{e:?}"))?;
             if !active_marked {
                 if let Some(owner) = active_lock.as_mut() {
                     active_marked = mark_admitted_run(&kernel, execution, session, owner)?;
@@ -746,7 +744,7 @@ fn run_console(
                 Some(&mut observer),
                 &mut stdout,
             )?;
-            if status == GraphStatus::Finished {
+            if status.is_finished() {
                 let outcome = finish_stream_submission(execution);
                 active = None;
                 if outcome? {
@@ -919,7 +917,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                     queued.push_back(pending_line);
                 }
             }
-            let status = execution.pump(|_| {}).map_err(|e| format!("{e:?}"))?;
+            let status = execution.pump(None).map_err(|e| format!("{e:?}"))?;
             if !marked {
                 marked = mark_admitted_run(kernel, &execution, &session, &mut owner)?;
             }
@@ -932,7 +930,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                 Some(&mut observer),
                 &mut output,
             )?;
-            if status == GraphStatus::Finished {
+            if status.is_finished() {
                 let cancelled = finish_stream_submission(&execution)?;
                 drop(execution);
                 if cancelled {
