@@ -157,10 +157,17 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                         self.cancel()?;
                         self.session.complete(id, BTreeMap::new())?;
                     }
-                    Poll::Draining => return Err(Failure::new(
-                        Code::InfrastructureFailure,
-                        "graph ticket entered draining without a delivered outcome",
-                    )),
+                    Poll::Draining => {
+                        // An already delivered result must not cause an early
+                        // Root drop while its native lease is still alive.
+                        // Fail the logical activation, then keep this ticket
+                        // until physical release succeeds.
+                        pending.logical_done = true;
+                        self.native_failure(id, Failure::new(
+                            Code::InfrastructureFailure,
+                            "graph ticket lost a previously delivered outcome",
+                        ))?;
+                    }
                 }
             }
             if pending.logical_done {
