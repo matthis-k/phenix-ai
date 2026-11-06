@@ -18,6 +18,7 @@ pub struct GraphSession<'g> {
     next_id: u64,
     report: ExecutionReport,
     cancelled: bool,
+    failed: Option<Failure>,
 }
 impl CompiledGraph {
     /// Admit a trigger occurrence as a separate wave.
@@ -28,7 +29,7 @@ impl CompiledGraph {
         self.deliver(&mut queues, target, payload)?;
         Ok(GraphSession {
             graph: self, queues, inflight: BTreeMap::new(), next_id: 0,
-            report: ExecutionReport::default(), cancelled: false,
+            report: ExecutionReport::default(), cancelled: false, failed: None,
         })
     }
 }
@@ -37,6 +38,7 @@ impl GraphSession<'_> {
     /// their completions can arrive in any order.
     pub fn next_ready(&mut self, activation_limit: Option<usize>) -> Result<Option<Activation>, Failure> {
         if self.cancelled { return Ok(None); }
+        if let Some(failure) = &self.failed { return Err(failure.clone()); }
         let Some(node) = self.graph.nodes.values()
             .find(|node| CompiledGraph::ready(node, &self.queues)).cloned()
         else { return Ok(None) };
@@ -59,12 +61,13 @@ impl GraphSession<'_> {
     ) -> Result<(), Failure> {
         let node = self.inflight.remove(&id)
             .ok_or_else(|| fail("unknown or already completed activation"))?;
-        if self.cancelled {
+        if self.cancelled || self.failed.is_some() {
             self.report.activations += 1;
             return Ok(()); // late native results are drained but not propagated
         }
-        let mut checked = Vec::new();
-        for (port, value) in outputs {
+        let validation = (|| {
+            let mut checked = Vec::new();
+            for (port, value) in outputs {
             let source = OutputRef { node: node.clone(), port };
             if !self.graph.output_schema(&source)?.accepts(&value)? {
                 return Err(fail("output value rejected by schema"));
@@ -78,7 +81,17 @@ impl GraphSession<'_> {
                 }
             }
             checked.push((source, value, destinations));
-        }
+            }
+            Ok::<_, Failure>(checked)
+        })();
+        let checked = match validation {
+            Ok(checked) => checked,
+            Err(error) => {
+                self.failed = Some(error.clone());
+                self.queues.clear();
+                return Err(error);
+            }
+        };
         for (source, value, destinations) in checked {
             self.report.outputs.entry(source).or_default().push(value.clone());
             for destination in destinations {
@@ -100,7 +113,7 @@ impl GraphSession<'_> {
     /// Pending incomplete input groups can remain as unconsumed values.
     pub fn settled(&self) -> bool {
         self.inflight.is_empty() && (
-            self.cancelled || !self.graph.nodes.values()
+            self.cancelled || self.failed.is_some() || !self.graph.nodes.values()
                 .any(|node| CompiledGraph::ready(node, &self.queues))
         )
     }
@@ -111,6 +124,7 @@ impl GraphSession<'_> {
         if !self.cancelled && !self.settled() {
             return Err(fail("wave has runnable nodes"));
         }
+        if let Some(failure) = self.failed { return Err(failure); }
         self.report.unconsumed = self.queues.values().map(VecDeque::len).sum();
         Ok(self.report)
     }
@@ -173,4 +187,73 @@ mod tests {
         assert!(session.settled());
         assert_eq!(session.finish().unwrap().activations, 1);
     }
+    #[test]
+    fn invalid_output_aborts_wave_and_is_not_silently_finished() {
+        let graph = source_graph();
+        let mut session = graph.start("run", Value::I64(5)).unwrap();
+        let activation = session.next_ready(Some(5)).unwrap().unwrap();
+        assert!(session.complete(activation.id,
+            [("value".into(), Value::String("invalid".into()))].into()).is_err());
+        assert!(session.settled());
+        assert!(session.next_ready(None).is_err());
+        assert!(session.finish().is_err());
+    }
+
+    #[test]
+    fn one_wave_reserves_both_diamond_branches_and_joins_out_of_order() {
+        let single = |path: &str, action: &str| Node {
+            path: path.into(), action: action.into(),
+            inputs: [("run".into(), InputPort {
+                slots: [("value".into(), schema())].into(),
+                readiness: Readiness::All,
+            })].into(),
+            outputs: [("value".into(), schema())].into(),
+        };
+        let join = Node {
+            path: "d".into(), action: "join".into(),
+            inputs: [("run".into(), InputPort {
+                slots: [("left".into(), schema()), ("right".into(), schema())].into(),
+                readiness: Readiness::All,
+            })].into(),
+            outputs: [("value".into(), schema())].into(),
+        };
+        let edge = |from: &str, to: &str, slot: &str| Edit::Connect(Edge {
+            from: OutputRef { node: from.into(), port: "value".into() },
+            to: InputRef { node: to.into(), port: "run".into(), slot: slot.into() },
+        });
+        let mut base = Patch::new("base");
+        base.push(Edit::AddNode(single("a", "source")));
+        base.push(Edit::AddNode(join));
+        base.push(Edit::AddTrigger(Trigger { name: "run".into(),
+            to: InputRef { node: "a".into(), port: "run".into(), slot: "value".into() } }));
+        let mut b = Patch::new("branch.b").after("base");
+        b.push(Edit::AddNode(single("b", "double")));
+        b.push(edge("a", "b", "value"));
+        b.push(edge("b", "d", "left"));
+        let mut c = Patch::new("branch.c").after("base");
+        c.push(Edit::AddNode(single("c", "triple")));
+        c.push(edge("a", "c", "value"));
+        c.push(edge("c", "d", "right"));
+        let graph = CompiledGraph::compile(&[c, base, b]).unwrap();
+        let mut session = graph.start("run", Value::I64(5)).unwrap();
+        let source = session.next_ready(Some(10)).unwrap().unwrap();
+        session.complete(source.id, [("value".into(), Value::I64(5))].into()).unwrap();
+        let branch1 = session.next_ready(Some(10)).unwrap().unwrap();
+        let branch2 = session.next_ready(Some(10)).unwrap().unwrap();
+        assert_eq!((&*branch1.node, &*branch2.node), ("b", "c"));
+        assert_eq!(session.in_flight(), 2);
+        assert!(session.next_ready(Some(10)).unwrap().is_none());
+        // Results may arrive in reverse order without exposing a partial join.
+        session.complete(branch2.id, [("value".into(), Value::I64(15))].into()).unwrap();
+        assert!(session.next_ready(Some(10)).unwrap().is_none());
+        session.complete(branch1.id, [("value".into(), Value::I64(10))].into()).unwrap();
+        let joined = session.next_ready(Some(10)).unwrap().unwrap();
+        assert_eq!(joined.node, "d");
+        assert_eq!(joined.args["run.left"], Value::I64(10));
+        assert_eq!(joined.args["run.right"], Value::I64(15));
+        session.complete(joined.id, [("value".into(), Value::I64(25))].into()).unwrap();
+        assert!(session.settled());
+        assert_eq!(session.finish().unwrap().activations, 4);
+    }
+
 }
