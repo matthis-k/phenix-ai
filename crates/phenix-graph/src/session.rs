@@ -71,7 +71,7 @@ impl GraphSession<'_> {
     /// emission. Its host implementation may read authorized store state.
     /// It cannot create edges or activate nodes outside the compiled graph.
     ///
-    /// Every selected endpoint must be a distinct member of candidates.
+    /// Every selected edge must be a distinct member of candidates.
     /// Routing and schema validation finish for every output before delivering
     /// any value; rejected routing never produces a partial fan-out.
     pub fn complete_with<F>(
@@ -81,7 +81,7 @@ impl GraphSession<'_> {
         mut select: F,
     ) -> Result<(), Failure>
     where
-        F: FnMut(&OutputRef, &str, &Value, &[InputRef]) -> Result<Vec<InputRef>, Failure>,
+        F: FnMut(&OutputRef, &str, &Value, &[Edge]) -> Result<Vec<Edge>, Failure>,
     {
         let node = self.inflight.remove(&id)
             .ok_or_else(|| fail("unknown or already completed activation"))?;
@@ -96,34 +96,26 @@ impl GraphSession<'_> {
                 if !self.graph.output_schema(&source)?.accepts(&value)? {
                     return Err(fail("output value rejected by schema"));
                 }
-                let candidates: Vec<_> = self.graph.edges.iter()
+                let candidates: Vec<Edge> = self.graph.edges.iter()
                     .filter(|edge| edge.from == source)
-                    .map(|edge| edge.to.clone()).collect();
+                    .cloned()
+                    .collect();
                 let destinations = match self.graph.output_policy(&source) {
                     OutputPolicy::Broadcast => candidates.clone(),
                     OutputPolicy::Select { selector } => {
                         select(&source, &selector, &value, &candidates)?
                     }
-                    OutputPolicy::SelectOne { selector } => {
-                        let selected = select(&source, &selector, &value, &candidates)?;
-                        if selected.len() != 1 {
-                            return Err(fail(
-                                "exactly-one output policy must select one connected edge",
-                            ));
-                        }
-                        selected
-                    }
                 };
                 let available: BTreeSet<_> = candidates.into_iter().collect();
                 let mut selected = BTreeSet::new();
-                for destination in &destinations {
-                    if !available.contains(destination) {
+                for edge in &destinations {
+                    if !available.contains(edge) {
                         return Err(fail("output policy selected an undeclared edge"));
                     }
-                    if !selected.insert(destination.clone()) {
+                    if !selected.insert(edge.clone()) {
                         return Err(fail("output policy selected the same edge twice"));
                     }
-                    if !self.graph.input_schema(destination)?.accepts(&value)? {
+                    if !self.graph.input_schema(&edge.to)?.accepts(&value)? {
                         return Err(fail("input value rejected by schema"));
                     }
                 }
@@ -141,8 +133,8 @@ impl GraphSession<'_> {
         };
         for (source, value, destinations) in checked {
             self.report.outputs.entry(source).or_default().push(value.clone());
-            for destination in destinations {
-                self.graph.deliver(&mut self.queues, &destination, value.clone())?;
+            for edge in destinations {
+                self.graph.deliver(&mut self.queues, &edge.to, value.clone())?;
             }
         }
         self.report.activations += 1;
