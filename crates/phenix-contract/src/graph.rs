@@ -141,12 +141,8 @@ impl Patch {
         for edit in &self.edits {
             match edit {
                 Edit::AddNode(n) | Edit::ReplaceNode(n) => {
-                    if n.path.is_empty()
-                        || n.action.is_empty()
-                        || n.inputs.is_empty()
-                        || n.outputs.is_empty()
-                    {
-                        return Err(bad("node must declare path, action, inputs and outputs"));
+                    if n.path.is_empty() || n.action.is_empty() || n.inputs.is_empty() {
+                        return Err(bad("node must declare path, action and input ports"));
                     }
                     for port in n.inputs.values() {
                         if port.slots.is_empty() {
@@ -268,6 +264,27 @@ mod tests {
         );
         assert!(patch.validate().is_err());
     }
+    #[test]
+    fn terminal_nodes_need_an_input_but_no_output() {
+        let schema = Schema::of(&ValueSchema::I64).unwrap();
+        let mut sink = Node {
+            path: "finish".into(),
+            action: "test/finish".into(),
+            inputs: [("run".into(), InputPort {
+                slots: [("value".into(), schema)].into(),
+                readiness: Readiness::All,
+            })].into(),
+            outputs: BTreeMap::new(),
+        };
+        let mut patch = Patch::new("sink");
+        patch.push(Edit::AddNode(sink.clone()));
+        patch.validate().unwrap();
+        sink.inputs.clear();
+        let mut invalid = Patch::new("no-trigger-input");
+        invalid.push(Edit::AddNode(sink));
+        assert!(invalid.validate().is_err());
+    }
+
     #[test]
     fn reject_self_dependency() {
         let p = Patch::new("base").after("base");
