@@ -88,16 +88,8 @@ impl CompiledGraph {
                 return Err(fail(format!("edge type mismatch {edge:?}")));
             }
         }
-        for (source, policy) in &graph.output_policies {
+        for source in graph.output_policies.keys() {
             graph.output_schema(source)?;
-            if matches!(policy, OutputPolicy::SelectOne { .. })
-                && !graph.edges.iter().any(|edge| &edge.from == source)
-            {
-                return Err(fail(format!(
-                    "exactly-one output policy on {}.{} has no outgoing edges",
-                    source.node, source.port,
-                )));
-            }
         }
         for endpoint in graph.triggers.values() {
             graph.input_schema(endpoint)?;
@@ -235,8 +227,8 @@ pub trait ActionHost {
     /// select only existing outgoing edges; GraphSession checks that invariant.
     fn route(
         &mut self, _selector: &str, _from: &OutputRef, _value: &Value,
-        _candidates: &[InputRef],
-    ) -> Result<Vec<InputRef>, Failure> {
+        _candidates: &[Edge],
+    ) -> Result<Vec<Edge>, Failure> {
         Err(fail("selective output policy has no host implementation"))
     }
 }
@@ -266,11 +258,14 @@ mod tests {
     fn input(name: &str, slot: &str) -> InputRef {
         InputRef { node: name.into(), port: "run".into(), slot: slot.into() }
     }
-    fn edge(from: &str, to: &str, slot: &str) -> Edit {
-        Edit::Connect(Edge {
+    fn route_edge(from: &str, to: &str, slot: &str) -> Edge {
+        Edge {
             from: OutputRef { node: from.into(), port: "value".into() },
             to: input(to, slot),
-        })
+        }
+    }
+    fn edge(from: &str, to: &str, slot: &str) -> Edit {
+        Edit::Connect(route_edge(from, to, slot))
     }
     struct Host;
     impl ActionHost for Host {
@@ -377,8 +372,8 @@ mod tests {
             selector: &str,
             _from: &OutputRef,
             value: &Value,
-            candidates: &[InputRef],
-        ) -> Result<Vec<InputRef>, Failure> {
+            candidates: &[Edge],
+        ) -> Result<Vec<Edge>, Failure> {
             assert_eq!(selector, "choose.branch");
             let chosen = match value {
                 Value::I64(n) if *n > 0 => Some("b"),
@@ -387,7 +382,7 @@ mod tests {
                 _ => return Err(fail("invalid selector input")),
             };
             Ok(candidates.iter()
-                .filter(|dest| Some(dest.node.as_str()) == chosen)
+                .filter(|edge| Some(edge.to.node.as_str()) == chosen)
                 .cloned().collect())
         }
     }
@@ -422,8 +417,9 @@ mod tests {
         let graph = selective_fanout();
         let source = OutputRef { node: "a".into(), port: "value".into() };
         for invalid in [
-            vec![input("not-connected", "value")],
-            vec![input("b", "value"), input("b", "value")],
+            vec![route_edge("a", "not-connected", "value")],
+            vec![route_edge("a", "b", "value"), route_edge("a", "b", "value")],
+            vec![route_edge("wrong-source", "b", "value")],
         ] {
             let mut session = graph.start("run", Value::I64(5)).unwrap();
             let activation = session.next_ready(None).unwrap().unwrap();
@@ -471,7 +467,7 @@ mod tests {
         }
         patch.output_policy(
             OutputRef { node: "router".into(), port: "value".into() },
-            OutputPolicy::SelectOne { selector: "choose.provider".into() },
+            OutputPolicy::Select { selector: "choose.provider".into() },
         );
         CompiledGraph::compile(&[patch]).unwrap()
     }
@@ -491,8 +487,8 @@ mod tests {
             selector: &str,
             from: &OutputRef,
             value: &Value,
-            candidates: &[InputRef],
-        ) -> Result<Vec<InputRef>, Failure> {
+            candidates: &[Edge],
+        ) -> Result<Vec<Edge>, Failure> {
             assert_eq!(selector, "choose.provider");
             assert_eq!(from.node, "router");
             assert_eq!(candidates.len(), 5);
@@ -500,7 +496,7 @@ mod tests {
                 return Err(fail("provider selector requires an integer"));
             };
             let path = format!("provider.{}", number.rem_euclid(5));
-            Ok(candidates.iter().filter(|endpoint| endpoint.node == path)
+            Ok(candidates.iter().filter(|edge| edge.to.node == path)
                 .cloned().collect())
         }
     }
@@ -523,35 +519,57 @@ mod tests {
     }
 
     #[test]
-    fn exactly_one_rejects_zero_and_multiple_destinations() {
+    fn same_policy_function_may_choose_zero_one_or_all_five_edges() {
         let graph = five_providers();
-        for destinations in [
-            vec![],
-            vec![input("provider.0", "value"), input("provider.1", "value")],
-        ] {
-            let mut session = graph.start("choose", Value::I64(1)).unwrap();
+        for count in [0, 1, 3, 5] {
+            let mut session = graph.start("choose", Value::I64(7)).unwrap();
             let activation = session.next_ready(None).unwrap().unwrap();
             assert_eq!(activation.node, "router");
-            let outcome = session.complete_with(
+            session.complete_with(
                 activation.id,
-                [("value".into(), Value::I64(1))].into(),
-                |_from, _selector, _value, _candidates| Ok(destinations.clone()),
-            );
-            assert!(outcome.is_err());
-            assert!(session.settled());
-            assert!(session.finish().is_err());
+                [("value".into(), Value::I64(7))].into(),
+                |_from, _selector, _value, candidates| {
+                    assert_eq!(candidates.len(), 5);
+                    Ok(candidates.iter().take(count).cloned().collect())
+                },
+            ).unwrap();
+            let mut ran = 1;
+            while let Some(provider) = session.next_ready(None).unwrap() {
+                ran += 1;
+                session.complete(
+                    provider.id,
+                    [("value".into(), Value::I64(14))].into(),
+                ).unwrap();
+            }
+            assert_eq!(ran, count + 1);
+            assert_eq!(session.finish().unwrap().activations, count + 1);
         }
     }
 
     #[test]
-    fn exactly_one_rejects_unconnected_provider_at_compile_time() {
+    fn selection_on_an_unconnected_port_can_return_nothing() {
         let mut patch = Patch::new("empty.selector");
         patch.push(Edit::AddNode(node("router", "source")));
+        patch.push(Edit::AddTrigger(Trigger {
+            name: "choose".into(), to: input("router", "value"),
+        }));
         patch.output_policy(
             OutputRef { node: "router".into(), port: "value".into() },
-            OutputPolicy::SelectOne { selector: "choose.provider".into() },
+            OutputPolicy::Select { selector: "choose.provider".into() },
         );
-        assert!(CompiledGraph::compile(&[patch]).is_err());
+        let graph = CompiledGraph::compile(&[patch]).unwrap();
+        let mut session = graph.start("choose", Value::I64(2)).unwrap();
+        let activation = session.next_ready(None).unwrap().unwrap();
+        session.complete_with(
+            activation.id,
+            [("value".into(), Value::I64(2))].into(),
+            |_from, _selector, _value, edges| {
+                assert!(edges.is_empty());
+                Ok(Vec::new())
+            },
+        ).unwrap();
+        assert!(session.settled());
+        assert_eq!(session.finish().unwrap().activations, 1);
     }
 
 }
