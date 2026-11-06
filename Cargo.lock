@@ -1792,12 +1792,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-graph"
+version = "0.1.0"
+dependencies = [
+ "phenix-contract",
+ "sha2",
+]
+
+[[package]]
 name = "phenix-kernel"
 version = "0.1.0"
 dependencies = [
  "libloading",
  "phenix-artifact",
  "phenix-contract",
+ "phenix-graph",
  "serde",
  "serde_json",
 ]
