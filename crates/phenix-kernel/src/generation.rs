@@ -89,15 +89,6 @@ fn tuple(prepared: &Prepared, environment: &str) -> Result<Value, Failure> {
             Value::String(graph.identity.clone()),
         );
     }
-    if let Some(graph) = prepared.compiled_graph_v2() {
-        let Value::Map(fields) = &mut canonical else {
-            unreachable!()
-        };
-        fields.insert(
-            "graph_v2_identity".into(),
-            Value::String(graph.identity().into()),
-        );
-    }
     if !prepared.state_identity.is_empty() {
         let Value::Map(fields) = &mut canonical else {
             unreachable!()
@@ -313,7 +304,7 @@ impl Generations {
 mod tests {
     use super::*;
     #[test]
-    fn retained_graph_v2_policy_changes_prepared_generation_identity() {
+    fn canonical_patch_graph_changes_generation_identity() {
         let mut prepared = Prepared {
             packages: BTreeMap::new(),
             entry: Selection {
@@ -328,39 +319,23 @@ mod tests {
             slot_counts: BTreeMap::new(),
             state_identity: Vec::new(),
             graph: None,
-            graph_v2: None,
             startup_order: Vec::new(),
             operations: BTreeMap::new(),
             ceilings: BTreeMap::new(),
         };
         let baseline = tuple(&prepared, "test").unwrap();
-        let Value::Map(fields) = &baseline else {
-            unreachable!()
-        };
-        assert!(!fields.contains_key("graph_v2_identity"));
+        let Value::Map(fields) = &baseline else { unreachable!() };
+        assert!(!fields.contains_key("graph_identity"));
 
-        // Empty declarations exercise real plan hashing without native packages.
-        let mut policy = crate::graph::v2::TrustedCompositionPolicy::default();
-        prepared.graph_v2 = Some(prepared.compile_graph_v2(&[], &policy).unwrap());
-        let first = tuple(&prepared, "test").unwrap();
-        let Value::Map(mut fields) = first.clone() else {
-            unreachable!()
-        };
-        assert_eq!(
-            fields.remove("graph_v2_identity"),
-            Some(Value::String(
-                prepared.compiled_graph_v2().unwrap().identity().into()
-            ))
-        );
-        assert_eq!(Value::Map(fields), baseline);
-        assert_ne!(identity(&first).unwrap(), identity(&baseline).unwrap());
+        prepared.graph = Some(crate::graph::CompiledGraph::compile(&[]).unwrap());
+        let empty_graph = tuple(&prepared, "test").unwrap();
+        assert_ne!(identity(&baseline).unwrap(), identity(&empty_graph).unwrap());
 
-        policy.topology.insert(("test".into(), "test.node".into()));
-        prepared.graph_v2 = Some(prepared.compile_graph_v2(&[], &policy).unwrap());
-        assert_ne!(
-            prepared.generation_identity("test").unwrap(),
-            identity(&first).unwrap()
-        );
+        prepared.graph = Some(crate::graph::CompiledGraph::compile(
+            &[phenix_contract::Patch::new("test.contribution")]
+        ).unwrap());
+        let contributed = tuple(&prepared, "test").unwrap();
+        assert_ne!(identity(&empty_graph).unwrap(), identity(&contributed).unwrap());
     }
     fn value(v: &serde_json::Value) -> Value {
         match v {
