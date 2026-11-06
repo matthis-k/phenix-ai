@@ -247,26 +247,24 @@
         doCheck = false;
         installPhase = "mkdir -p $out/bin; cp target/*/release/example-graph-contracts $out/bin/";
       };
-      definitionPackage = name: emitter: hasGraph:
+      definitionPackage = name: emitter:
         pkgs.runCommand name { nativeBuildInputs = [ pkgs.python3 ]; } ''
           mkdir -p $out
-          ${emitter} $out/descriptor.bin ${pkgs.lib.optionalString hasGraph "$out/graph.bin"}
+          ${emitter} $out/descriptor.bin
           python - "$out" <<'PY'
           import hashlib, json, sys
           from pathlib import Path
           out = Path(sys.argv[1])
           digest = lambda name: hashlib.sha256((out / name).read_bytes()).hexdigest()
           record = dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest("descriptor.bin"))
-          if (out / "graph.bin").exists():
-              record["graph"] = dict(file="graph.bin", sha256=digest("graph.bin"))
           (out / "package.json").write_text(json.dumps(record))
           PY
           ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
         '';
-      graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts" true;
+      graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts";
       basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
       basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
-      basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" true;
+      basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts";
       basicContractsCheck = pkgs.runCommand "phenix-basic-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         python - "${basicDefinitions}/inspection.json" "$out" <<'PY'
@@ -293,7 +291,7 @@
         doCheck = true;
       };
       environmentDefinitions = definitionPackage "phenix-environment-contracts"
-        "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
+        "${environmentContractsBinary}/bin/phenix-environment-contracts";
       environmentPluginSource = subset (publicPaths ++ [
         ./crates/phenix-environment-contracts
         ./crates/phenix-plugin-environment
@@ -335,7 +333,7 @@
         doCheck = true;
       };
       workspaceDefinitions = definitionPackage "phenix-workspace-contracts"
-        "${workspaceContractsBinary}/bin/phenix-workspace-contracts" false;
+        "${workspaceContractsBinary}/bin/phenix-workspace-contracts";
       workspacePluginSource = subset (publicPaths ++ [
         ./crates/phenix-workspace-contracts
         ./crates/phenix-plugin-workspace-selection
@@ -963,7 +961,7 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
-      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts" false;
+      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts";
       providerContractsCheck = pkgs.runCommand "phenix-provider-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         python - "${providerDefinitions}/inspection.json" "$out" <<'PY'
@@ -1100,7 +1098,7 @@
         '';
       };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
-        "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
+        "${advancedContractsBinary}/bin/phenix-advanced-contracts";
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -2372,7 +2370,7 @@
           cp target/*/release/example-authoring-api $out/bin/
         '';
       };
-      authoredDefinitions = definitionPackage "phenix-authored-definitions" "${authoredApi}/bin/example-authoring-api" false;
+      authoredDefinitions = definitionPackage "phenix-authored-definitions" "${authoredApi}/bin/example-authoring-api";
       authoringCheck = pkgs.runCommand "phenix-m1-native-authoring" { } ''
         ${conformanceBinary}/bin/phenix-m1-authoring ${authoredProvider} ${authoredClient} ${authoredField} ${authoredDefinitions} $out
       '';
