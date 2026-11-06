@@ -104,6 +104,15 @@ impl GraphSession<'_> {
                     OutputPolicy::Select { selector } => {
                         select(&source, &selector, &value, &candidates)?
                     }
+                    OutputPolicy::SelectOne { selector } => {
+                        let selected = select(&source, &selector, &value, &candidates)?;
+                        if selected.len() != 1 {
+                            return Err(fail(
+                                "exactly-one output policy must select one connected edge",
+                            ));
+                        }
+                        selected
+                    }
                 };
                 let available: BTreeSet<_> = candidates.into_iter().collect();
                 let mut selected = BTreeSet::new();
