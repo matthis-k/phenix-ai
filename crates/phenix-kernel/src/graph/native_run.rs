@@ -135,7 +135,8 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     /// Advance existing tickets before admitting additional ready graph nodes.
     /// A physically live lease is never discarded merely because the graph
     /// has cancelled or logically finished its activation.
-    pub fn pump(&mut self, activation_limit: Option<usize>) -> Result<NativeRunStatus, Failure> {
+    /// A quota limits this pump call only; it is not a wave execution budget.
+    pub fn pump(&mut self, dispatch_quota: Option<usize>) -> Result<NativeRunStatus, Failure> {
         let ticket_ids: Vec<u64> = self.pending.keys().copied().collect();
         for id in ticket_ids {
             let mut pending = self.pending.remove(&id)
@@ -179,7 +180,10 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         }
 
         if !self.cancelled && self.failure.is_none() && self.domain.is_none() {
-            while let Some(activation) = self.session.next_ready(activation_limit)? {
+            let mut dispatched = 0usize;
+            while dispatch_quota.is_none_or(|max| dispatched < max) {
+                let Some(activation) = self.session.next_ready(None)? else { break };
+                dispatched += 1;
                 let binding = self.actions.get(&activation.node).ok_or_else(|| {
                     Failure::new(Code::MissingBinding, "graph node has no verified native binding")
                 });
