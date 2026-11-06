@@ -699,4 +699,31 @@ mod tests {
         assert!(session.settled());
         assert_eq!(session.finish().unwrap().activations, 1);
     }
+    #[test]
+    fn outputless_sink_is_triggered_once_and_settles() {
+        let mut patch = Patch::new("sink");
+        patch.push(Edit::AddNode(node("source", "source")));
+        let mut sink = node("finish", "finish");
+        sink.outputs.clear();
+        patch.push(Edit::AddNode(sink));
+        patch.push(edge("source", "finish", "value"));
+        patch.push(Edit::AddTrigger(Trigger {
+            name: "run".into(),
+            to: input("source", "value"),
+        }));
+        let graph = CompiledGraph::compile(&[patch]).unwrap();
+        let mut session = graph.start("run", Value::I64(3)).unwrap();
+        let source = session.next_ready(None).unwrap().unwrap();
+        session.complete(
+            source.id,
+            [("value".into(), Value::I64(3))].into(),
+        ).unwrap();
+        let finish = session.next_ready(None).unwrap().unwrap();
+        assert_eq!(finish.node, "finish");
+        assert!(session.next_ready(None).unwrap().is_none());
+        session.complete(finish.id, BTreeMap::new()).unwrap();
+        assert!(session.settled());
+        assert_eq!(session.finish().unwrap().activations, 2);
+    }
+
 }
