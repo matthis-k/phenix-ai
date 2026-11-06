@@ -37,12 +37,9 @@ pub struct Edge { pub from: OutputRef, pub to: InputRef }
 pub enum OutputPolicy {
     /// Default: send each emission to every connected destination.
     Broadcast,
-    /// Invoke the registered policy to choose a subset of connected destinations.
-    /// Runtime implementations may inspect the emitted value or authorized store.
+    /// Invoke a host-bound function that returns zero or more existing edges.
+    /// The function may inspect the emitted value or authorized store.
     Select { selector: String },
-    /// Require the policy to choose exactly one connected destination.
-    /// Intended for mutually exclusive providers exposing compatible inputs.
-    SelectOne { selector: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,8 +130,7 @@ impl Patch {
                     }
                     let selector = match policy {
                         OutputPolicy::Broadcast => None,
-                        OutputPolicy::Select { selector }
-                        | OutputPolicy::SelectOne { selector } => Some(selector),
+                        OutputPolicy::Select { selector } => Some(selector),
                     };
                     if selector.is_some_and(|name| name.is_empty() || name.len() > 512) {
                         return Err(bad("invalid output policy selector"));
@@ -198,18 +194,6 @@ mod tests {
         patch.output_policy(port, OutputPolicy::Select { selector: "".into() });
         assert!(patch.validate().is_err());
     }
-    #[test]
-    fn exactly_one_policy_roundtrips_and_requires_a_selector() {
-        let port = OutputRef { node: "router".into(), port: "value".into() };
-        let mut patch = Patch::new("five.providers");
-        patch.output_policy(port.clone(), OutputPolicy::SelectOne {
-            selector: "select.provider".into(),
-        });
-        assert_eq!(Patch::decode(&patch.encode().unwrap()).unwrap(), patch);
-        patch.output_policy(port, OutputPolicy::SelectOne { selector: String::new() });
-        assert!(patch.validate().is_err());
-    }
-
     #[test]
     fn reject_self_dependency() {
         let p = Patch::new("base").after("base");
