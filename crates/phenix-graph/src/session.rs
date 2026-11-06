@@ -122,6 +122,9 @@ impl GraphSession<'_> {
     }
     pub fn cancelled(&self) -> bool { self.cancelled }
     pub fn in_flight(&self) -> usize { self.inflight.len() }
+    pub fn activations(&self) -> usize {
+        self.report.activations.saturating_add(self.inflight.len())
+    }
     /// No runnable work and no outstanding native activations.
     /// Pending incomplete input groups can remain as unconsumed values.
     pub fn settled(&self) -> bool {
