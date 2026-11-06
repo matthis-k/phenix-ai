@@ -198,9 +198,6 @@ impl Prepared {
                 return Err(invalid("duplicate definition package owner"));
             }
             state_identity.insert(format!("{}:{}", metadata.plugin, package.package_sha256()));
-            if let Some(graph) = package.graph() {
-                graph_inputs.push(graph.clone());
-            }
             for d in &metadata.definitions {
                 add_definition(&mut definitions, d.clone())?;
             }
