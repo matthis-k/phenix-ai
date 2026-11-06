@@ -20,4 +20,3 @@ impl WakePermit {
         unsafe { (self.wake)(self.permit, self.ticket) == 0 }
     }
 }
-
