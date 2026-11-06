@@ -524,9 +524,61 @@ impl Prepared {
         }
         if !graph_inputs.is_empty() {
             prepared.graph = Some(crate::graph::CompiledGraph::compile(&graph_inputs)?);
+            // Bind at preparation, before native library initialization.
+            prepared.graph_action_bindings()?;
         }
         Ok(prepared)
     }
+    /// Resolve every compiled node to exactly one verified selected operation.
+    /// Symbolic graph action strings and patch ownership never become authority.
+    pub(crate) fn graph_action_bindings(
+        &self,
+    ) -> Result<BTreeMap<String, crate::graph::BoundAction>, Failure> {
+        let graph = self.graph.as_ref().ok_or_else(|| {
+            error(Code::MissingBinding, "no graph compiled for this composition")
+        })?;
+        let mut actions = BTreeMap::new();
+        for (path, node) in graph.nodes() {
+            let owner = graph.owner(path).ok_or_else(|| {
+                error(Code::InfrastructureFailure, "compiled node lacks patch provenance")
+            })?;
+            if !operation_key(&node.action) {
+                return Err(error(Code::SchemaRejected, "invalid graph operation reference"));
+            }
+            let mut providers = BTreeSet::new();
+            if self.operations.contains_key(&(owner.into(), node.action.clone())) {
+                providers.insert(owner.to_owned());
+            }
+            for ((caller, imported), provider) in &self.bindings {
+                if caller == owner && (imported == &node.action
+                    || imported.strip_suffix(&format!(":{}", node.action)).is_some())
+                {
+                    providers.insert(provider.clone());
+                }
+            }
+            let provider = match providers.len() {
+                1 => providers.into_iter().next().expect("one provider"),
+                0 => return Err(error(Code::MissingBinding,
+                    format!("graph node {path} has no selected operation"))),
+                _ => return Err(error(Code::AmbiguousBinding,
+                    format!("graph node {path} resolves to multiple providers"))),
+            };
+            let (interface, operation) = node.action.split_once('/')
+                .expect("operation_key accepted this operation");
+            let selected = Selection {
+                provider,
+                interface: interface.into(),
+                operation: operation.into(),
+            };
+            self.operation(&selected)?;
+            actions.insert(path.clone(), crate::graph::BoundAction {
+                declaring_owner: owner.into(),
+                selected,
+            });
+        }
+        Ok(actions)
+    }
+
     pub fn compiled_graph(&self) -> Option<&crate::graph::CompiledGraph> {
         self.graph.as_ref()
     }
