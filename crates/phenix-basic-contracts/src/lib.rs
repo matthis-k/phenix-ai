@@ -107,20 +107,12 @@ pub struct Limits {
     pub model_tokens: Option<u64>,
     pub http_timeout_ms: Option<u64>,
 }
-#[event(id = "phenix.basic.prompt")]
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub struct PromptSubmitted {
     pub session: String,
     pub text: String,
     pub limits: Limits,
 }
-#[action(
-    id = "phenix.basic.submit",
-    event = "phenix.basic.prompt",
-    description = "Submit or continue a Basic agent session",
-    requires = "phenix.basic.input@1/submit"
-)]
-pub struct SubmitPrompt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Portable, Serialize, Deserialize)]
 pub enum Role {
@@ -661,12 +653,6 @@ pub trait Frontend {
     fn cancel(&self, request: Scope) -> Result<(), BasicError>;
 }
 
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.basic-contracts",
-    events: &[PromptSubmitted::EVENT],
-    actions: &[SubmitPrompt::ACTION],
-    nodes: &[],
-};
 #[plugin(
     id = "phenix.basic-contracts",
     version = "1.0.0",
@@ -688,7 +674,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(AdvancedPreparedModelRequest),
     define(BasicOutput),
     define(Frontend),
-    graph(super::GRAPH)
+
 )]
 pub mod definitions {
     use super::*;
@@ -1004,12 +990,6 @@ mod tests {
             .definitions
             .iter()
             .any(|definition| definition.contract == "phenix.basic.turn-prepare@1"));
-        let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
-        assert_eq!(graph.actions[0].id, "phenix.basic.submit");
-        assert_eq!(
-            graph.events[0].payload,
-            PromptSubmitted::SCHEMA.owned().unwrap()
-        );
         assert!(Blob::from_value(Value::List(vec![])).is_err());
     }
 

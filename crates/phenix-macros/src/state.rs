@@ -87,14 +87,14 @@ pub fn expand(
     let mut provided = Vec::new();
     let mut imports = Vec::new();
     let mut slots = std::collections::BTreeSet::new();
-    let mut graph: Option<syn::Path> = None;
+    let mut patch: Option<syn::Path> = None;
     for meta in declarations(tokens)? {
         if let Meta::List(list) = &meta {
-            if list.path.is_ident("graph") {
-                if graph.is_some() {
-                    return Err(syn::Error::new(list.span(), "duplicate graph contribution"));
+            if list.path.is_ident("patch") {
+                if patch.is_some() {
+                    return Err(syn::Error::new(list.span(), "duplicate patch contribution"));
                 }
-                graph = Some(syn::parse2(list.tokens.clone())?);
+                patch = Some(syn::parse2(list.tokens.clone())?);
                 continue;
             }
             if list.path.is_ident("define") {
@@ -610,10 +610,10 @@ pub fn expand(
     let stop = stop
         .map(|(name, arguments)| quote!({ let state = &mut instance.state; ::phenix_sdk::lifecycle(|| #name(#arguments)) }))
         .unwrap_or_else(|| quote!(Ok::<(), ::phenix_sdk::Failure>(())));
-    let graph_descriptor = graph.map(|path| quote! {
+    let patch_descriptor = patch.map(|path| quote! {
         #[allow(clippy::large_const_arrays)]
         pub const GRAPH_METADATA: ::phenix_sdk::MetadataBytes =
-            ::phenix_sdk::descriptor::static_metadata::graph(#path);
+            ::phenix_sdk::descriptor::static_metadata::patch(#path);
         #[used] #[no_mangle] #[link_section = ".phenix.graph"]
         pub static PHENIX_GRAPH: [u8; ::phenix_sdk::NATIVE_SECTION_BYTES] = GRAPH_METADATA.native_section();
     });
@@ -621,7 +621,7 @@ pub fn expand(
         impl State {
             #(#owned_fields)*
         }
-        #graph_descriptor
+        #patch_descriptor
         #[allow(clippy::large_const_arrays)]
         pub const METADATA: ::phenix_sdk::MetadataBytes = ::phenix_sdk::descriptor::static_metadata::metadata(#id, #version, ::phenix_sdk::MetadataExecution::StatePending, [#(#definitions),*], [#(#requirements),*], [#(#exports),*], [#(#properties),*]);
         const _: () = ::phenix_sdk::descriptor::static_metadata::validate_handlers([#(#provided),*], [#(#handlers),*]);

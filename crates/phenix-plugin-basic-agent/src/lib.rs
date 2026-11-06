@@ -1,7 +1,6 @@
 //! Basic agent orchestration as a regular, graph-triggered native plugin.
 //! The kernel owns action admission, authority, scheduling and cancellation.
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
-use phenix_sdk::{FailurePolicy, JoinPolicy, StaticGraphContribution, StaticGraphNode};
 
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
 ///
@@ -236,41 +235,13 @@ mod journal_page_tests {
     }
 }
 
-#[cfg(not(feature = "staged-graph"))]
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.basic.agent",
-    events: &[],
-    actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "submit",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.input@1/submit",
-        writes: &[],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
-};
+/// Basic contributes ordinary graph nodes; no special agent scheduler.
+#[path = "graph_patch.rs"]
+mod graph_patch;
+pub use graph_patch::graph_patch;
+const GRAPH_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/graph_patch.bin"));
 
-#[cfg(feature = "staged-graph")]
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.basic.agent",
-    events: &[],
-    actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "prepare",
-        triggers: &["phenix.basic.prompt"],
-        after: &[],
-        selector: "",
-        operation: "phenix.basic.turn-prepare@1/prepare",
-        writes: &["phenix.basic.agent/pending_model_request"],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
-};
-
-#[cfg(all(test, feature = "staged-graph"))]
+#[cfg(test)]
 #[path = "staged_graph_tests.rs"]
 mod staged_graph_tests;
 
@@ -293,7 +264,8 @@ mod staged_graph_tests;
     require(phenix_basic_contracts::Storage, slot = "Storage", optional),
     // Bound only by the opt-in Advanced graph composition.
     require(phenix_basic_contracts::AdvancedPreparedModelRequest, slot = "Prepared", optional),
-    graph(super::GRAPH)
+
+    patch(super::GRAPH_BYTES),
 )]
 mod plugin {
     use phenix_basic_contracts::{
@@ -1047,32 +1019,19 @@ mod plugin {
         Ok(true)
     }
 
+    // The legacy direct BasicInput admission is no longer a second agent
+    // executor. It remains an explicit denial until root admission is moved
+    // from selected-operation identity to graph trigger identity.
     #[pending(BasicInput::submit)]
     fn begin(
-        state: &mut State,
-        host: &Host<'_>,
-        request: PromptSubmitted,
+        _state: &mut State,
+        _host: &Host<'_>,
+        _request: PromptSubmitted,
     ) -> PendingResult<RunResult, BasicError> {
-        if cfg!(feature = "staged-graph") {
-            return PendingResult::Ready(Err(CallError::Domain(error(
-                ErrorCode::Denied,
-                "staged Basic requires the graph preparation admission path",
-            ))));
-        }
-        if state.active.is_some() {
-            return PendingResult::Ready(Err(CallError::Domain(error(
-                ErrorCode::Conflict,
-                "a Basic run is already active",
-            ))));
-        }
-        match prepare(host, request) {
-            Ok(mut running) => {
-                let value = advance(host, &mut running, None);
-                finish(state, host, running, value)
-            }
-            Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
-            Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
-        }
+        PendingResult::Ready(Err(CallError::Domain(error(
+            ErrorCode::Denied,
+            "direct BasicInput execution is retired; use the graph trigger",
+        ))))
     }
 
     #[poll(BasicInput::submit)]
@@ -1151,5 +1110,17 @@ mod plugin {
     ) -> CallResult<ObserverCheckpoint, BasicError> {
         phenix_basic_contracts::check_session(host, &request.session)?;
         host.invoke::<EventJournal::checkpoint_observer>("Journal", &request)
+    }
+}
+
+#[cfg(test)]
+mod patch_embedding_tests {
+    use super::*;
+    #[test]
+    fn embedded_native_patch_exactly_matches_authored_graph() {
+        let expected = graph_patch().expect("plugin graph patch");
+        let embedded = plugin::GRAPH_METADATA.bytes();
+        assert_eq!(embedded, expected.encode().unwrap().as_slice());
+        assert_eq!(phenix_sdk::Patch::decode(embedded).unwrap(), expected);
     }
 }

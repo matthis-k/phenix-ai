@@ -11,3 +11,8 @@ crate-type = ["cdylib", "rlib"]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
 phenix-advanced-contracts = { path = "../phenix-advanced-contracts" }
+
+[build-dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+phenix-advanced-contracts = { path = "../phenix-advanced-contracts" }

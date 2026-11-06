@@ -1,22 +1,6 @@
 use example_graph_contracts::{Consume, JoinConsumer, JoinRequest, ReferenceConsumer, Start, Task};
 use phenix_sdk::{live, *};
 
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "example.graph-b",
-    events: &[],
-    actions: &[],
-    nodes: &[StaticGraphNode {
-        id: "b",
-        triggers: &["example.graph.slow", "example.graph.start"],
-        after: &[],
-        selector: "",
-        operation: "example.graph.task@1/run",
-        writes: &["example.graph-b/result"],
-        join: JoinPolicy::AllActive,
-        failure: FailurePolicy::FailRoot,
-    }],
-};
-
 #[plugin(
     id = "example.graph-b",
     define(Task),
@@ -27,8 +11,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     provide(Consume, slot = "consume"),
     provide(JoinConsumer, slot = "join_consumer"),
     provide(ReferenceConsumer, slot = "reference_consumer"),
-    profile = "state",
-    graph(GRAPH)
+    profile = "state"
 )]
 mod provider {
     use super::*;

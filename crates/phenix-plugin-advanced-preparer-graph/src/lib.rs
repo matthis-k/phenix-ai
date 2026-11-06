@@ -6,41 +6,13 @@ use phenix_advanced_contracts::{
     ModelPreparationProposal, PreparationReceipt,
 };
 use phenix_basic_contracts::{BasicPendingModelRequest, GraphStateChange, ModelRequest};
-use phenix_sdk::{
-    CallError, CallResult, Code, Failure, FailurePolicy, Host, JoinPolicy, StaticGraphContribution,
-    StaticGraphNode,
-};
+use phenix_sdk::{CallError, CallResult, Code, Failure, Host};
 
-pub const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.advanced.graph-preparer",
-    events: &[],
-    actions: &[],
-    nodes: &[
-        StaticGraphNode {
-            id: "advance",
-            triggers: &["state:phenix.advanced.graph-preparer/prepared_model_request"],
-            after: &[
-                "phenix.advanced.graph-preparer/prepare",
-                "phenix.basic.agent/prepare",
-            ],
-            selector: "Advance",
-            operation: "phenix.basic.turn-advance@1/advance",
-            writes: &["phenix.basic.agent/pending_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-        StaticGraphNode {
-            id: "prepare",
-            triggers: &["state:phenix.basic.agent/pending_model_request"],
-            after: &[],
-            selector: "",
-            operation: "phenix.advanced.model-preparation-change@1/run",
-            writes: &["phenix.advanced.graph-preparer/prepared_model_request"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-    ],
-};
+/// One contribution, applied to the empty graph together with other patches.
+#[path = "graph_patch.rs"]
+mod graph_patch;
+pub use graph_patch::graph_patch;
+const GRAPH_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/graph_patch.bin"));
 
 fn invalid(problem: ModelPreparationProblem, message: &str) -> CallError<ModelPreparationError> {
     CallError::Domain(ModelPreparationError {
@@ -59,7 +31,7 @@ fn host_failure(error: impl std::fmt::Display) -> CallError<ModelPreparationErro
     require(phenix_basic_contracts::BasicPendingModelRequest, slot = "Source"),
     require(phenix_basic_contracts::BasicTurnAdvance, slot = "Advance"),
     require(phenix_advanced_contracts::ModelPreparation, slot = "Preparer"),
-    graph(super::GRAPH)
+    patch(super::GRAPH_BYTES)
 )]
 mod provider {
     use super::*;
@@ -163,5 +135,17 @@ mod ownership_tests {
         assert!(field.get && field.watch);
         assert!(!field.set, "Advanced alone publishes this owned value");
         assert_eq!(metadata.plugin, "phenix.advanced.graph-preparer");
+    }
+}
+
+#[cfg(test)]
+mod patch_embedding_tests {
+    use super::*;
+    #[test]
+    fn embedded_native_patch_exactly_matches_authored_graph() {
+        let expected = graph_patch().expect("plugin graph patch");
+        let embedded = provider::GRAPH_METADATA.bytes();
+        assert_eq!(embedded, expected.encode().unwrap().as_slice());
+        assert_eq!(phenix_sdk::Patch::decode(embedded).unwrap(), expected);
     }
 }

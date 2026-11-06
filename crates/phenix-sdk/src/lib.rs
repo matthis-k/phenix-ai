@@ -2,7 +2,7 @@ extern crate self as phenix_sdk;
 pub mod live;
 pub use live::{Host, ImportCall, ImportPoll, PendingImport, PendingResult};
 pub use phenix_contract::*;
-pub use phenix_macros::{action, contract, event, plugin, property, Portable};
+pub use phenix_macros::{contract, plugin, property, Portable};
 #[doc(hidden)]
 pub fn lifecycle(hook: impl FnOnce() -> Result<(), Failure>) -> Result<(), Failure> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(hook))
@@ -18,50 +18,5 @@ pub struct WakePermit {
 impl WakePermit {
     pub fn wake(&self) -> bool {
         unsafe { (self.wake)(self.permit, self.ticket) == 0 }
-    }
-}
-
-#[cfg(test)]
-mod graph_declaration_tests {
-    use super::*;
-
-    #[event(id = "example.prompt")]
-    #[derive(Portable)]
-    pub struct Prompt {
-        pub text: String,
-    }
-
-    #[action(
-        id = "example.submit",
-        event = "example.prompt",
-        description = "Submit a prompt",
-        requires = "example.input@1/submit"
-    )]
-    pub struct Submit;
-
-    #[test]
-    fn macros_emit_const_sdk_declarations() {
-        const GRAPH: StaticGraphContribution = StaticGraphContribution {
-            plugin: "example",
-            events: &[Prompt::EVENT],
-            actions: &[Submit::ACTION],
-            nodes: &[],
-        };
-        const GRAPH_BYTES: MetadataBytes = descriptor::static_metadata::graph(GRAPH);
-        let metadata = GRAPH.owned().unwrap();
-        assert_eq!(GRAPH_BYTES.bytes(), metadata.encode().unwrap());
-        assert_eq!(metadata.events[0].id, "example.prompt");
-        assert_eq!(
-            metadata.events[0].payload,
-            ValueSchema::Struct(std::collections::BTreeMap::from([(
-                "text".into(),
-                ValueSchema::String
-            )]))
-        );
-        assert_eq!(metadata.actions[0].requires, vec!["example.input@1/submit"]);
-        assert_eq!(
-            GraphContribution::decode(&metadata.encode().unwrap()).unwrap(),
-            metadata
-        );
     }
 }

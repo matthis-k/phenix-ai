@@ -54,6 +54,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./tests/generation-identity-v2.json
       ];
@@ -76,6 +77,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-conformance
         ./crates/phenix-sdk
@@ -130,9 +132,6 @@
         "example-authoring-client"
         "example-authoring-field"
         "example-authoring-provider"
-        "example-graph-a"
-        "example-graph-b"
-        "example-graph-c"
         "example-pending-consumer"
         "example-pending-immediate"
         "example-pending-security"
@@ -225,46 +224,23 @@
       resources = plugin "example-resource-provider";
       valueProvider = plugin "example-value-provider";
       valueClient = plugin "example-value-client";
-      graphA = plugin "example-graph-a";
-      graphB = plugin "example-graph-b";
-      graphC = plugin "example-graph-c";
-      graphDefinitionsBinary = rust.buildRustPackage {
-        pname = "example-graph-contracts";
-        version = "0.1.0";
-        src = pluginSource;
-        buildAndTestSubdir = "examples";
-        cargoRoot = "examples";
-        cargoLock.lockFile = ./examples/Cargo.lock;
-        cargoBuildFlags = [
-          "-p"
-          "example-graph-contracts"
-          "--bin"
-          "example-graph-contracts"
-        ];
-        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-        doCheck = false;
-        installPhase = "mkdir -p $out/bin; cp target/*/release/example-graph-contracts $out/bin/";
-      };
-      definitionPackage = name: emitter: hasGraph:
+      definitionPackage = name: emitter:
         pkgs.runCommand name { nativeBuildInputs = [ pkgs.python3 ]; } ''
           mkdir -p $out
-          ${emitter} $out/descriptor.bin ${pkgs.lib.optionalString hasGraph "$out/graph.bin"}
+          ${emitter} $out/descriptor.bin
           python - "$out" <<'PY'
           import hashlib, json, sys
           from pathlib import Path
           out = Path(sys.argv[1])
           digest = lambda name: hashlib.sha256((out / name).read_bytes()).hexdigest()
           record = dict(format="phenix.contract-package.v2", descriptor="descriptor.bin", descriptor_sha256=digest("descriptor.bin"))
-          if (out / "graph.bin").exists():
-              record["graph"] = dict(file="graph.bin", sha256=digest("graph.bin"))
           (out / "package.json").write_text(json.dumps(record))
           PY
           ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
         '';
-      graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts" true;
       basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
       basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
-      basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts" true;
+      basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts";
       basicContractsCheck = pkgs.runCommand "phenix-basic-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         python - "${basicDefinitions}/inspection.json" "$out" <<'PY'
@@ -291,7 +267,7 @@
         doCheck = true;
       };
       environmentDefinitions = definitionPackage "phenix-environment-contracts"
-        "${environmentContractsBinary}/bin/phenix-environment-contracts" false;
+        "${environmentContractsBinary}/bin/phenix-environment-contracts";
       environmentPluginSource = subset (publicPaths ++ [
         ./crates/phenix-environment-contracts
         ./crates/phenix-plugin-environment
@@ -333,7 +309,7 @@
         doCheck = true;
       };
       workspaceDefinitions = definitionPackage "phenix-workspace-contracts"
-        "${workspaceContractsBinary}/bin/phenix-workspace-contracts" false;
+        "${workspaceContractsBinary}/bin/phenix-workspace-contracts";
       workspacePluginSource = subset (publicPaths ++ [
         ./crates/phenix-workspace-contracts
         ./crates/phenix-plugin-workspace-selection
@@ -961,7 +937,7 @@
         preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
         doCheck = true;
       };
-      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts" false;
+      providerDefinitions = definitionPackage "phenix-provider-contracts" "${providerContractsBinary}/bin/phenix-provider-contracts";
       providerContractsCheck = pkgs.runCommand "phenix-provider-contracts-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p $out
         python - "${providerDefinitions}/inspection.json" "$out" <<'PY'
@@ -1017,6 +993,7 @@
       };
       p2ModelMeterProductRunner = build "phenix-p2-model-meter-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -1097,7 +1074,7 @@
         '';
       };
       advancedDefinitions = definitionPackage "phenix-advanced-contracts"
-        "${advancedContractsBinary}/bin/phenix-advanced-contracts" true;
+        "${advancedContractsBinary}/bin/phenix-advanced-contracts";
       advancedContractsCheck = pkgs.runCommand "phenix-p2-evidence-contracts" {
         nativeBuildInputs = [ pkgs.python3 ];
       } ''
@@ -1280,6 +1257,7 @@
       # phenix-conformance so provider edits do not rebuild kernel fixtures.
       selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-provider-contracts
@@ -1419,36 +1397,12 @@
         "phenix-plugin-basic-agent"
         "phenix_plugin_basic_agent"
         ./crates/phenix-plugin-basic-agent;
-      # Verification-only feature-variant of the very same Basic agent.
-      # The P1 preset and batched default-feature binary are unchanged.
-      basicStagedAgent = rust.buildRustPackage {
-        pname = "phenix-plugin-basic-agent-staged";
-        version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-plugin-basic-agent
-        ]);
-        cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
-        cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
-        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-        doCheck = true;
-        installPhase = ''
-          mkdir -p "$out/lib"
-          cp target/*/release/libphenix_plugin_basic_agent.so "$out/lib/plugin.so"
-        '';
-        postFixup = ''
-          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
-          ${pkgs.python3}/bin/python ${recordWriter} "$out"
-          test -s "$out/descriptor.bin"
-        '';
-      };
       p2BasicStagedPrepareCheck = pkgs.runCommand "phenix-p2-basic-staged-prepare"
         { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p "$out"
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out"
+          ${basicComposition} ${basicAgent} "$out"
         test -s "$out/accepted.json"
       '';
       # Test-only selected graph preparation, with a replaceable no-op
@@ -1503,16 +1457,10 @@
         mkdir -p "$out"
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out" \
+          ${basicComposition} ${basicAgent} "$out" \
           ${basicGraphPreparerPlugin} ${basicNoopPreparerPlugin} ${advancedDefinitions} \
           ${p2ModelMeterFixtureCheck}
         test -s "$out/accepted.json"
-      '';
-      basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
-        mkdir -p $out
-        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
-        ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModel} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
-        test -s "$out/agent.json"
       '';
       frontendTerminal = basicNativePlugin
         "phenix-plugin-basic-frontends"
@@ -1545,6 +1493,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-sdk
         ./crates/phenix-macros
@@ -2072,6 +2021,7 @@
       };
       p2SourceEvidenceRunner = build "phenix-p2-source-evidence" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2090,6 +2040,7 @@
       '';
       p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2109,6 +2060,7 @@
       '';
       p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2127,6 +2079,7 @@
       '';
       p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2339,10 +2292,30 @@
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b2-session ${basicSession} ${storageFixture} ${basicDefinitions} $out
       '';
-      graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
-        mkdir -p $out
-        ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} ${graphDefinitions} $out
+      # The graph engine is the single source of graph scheduling and testing.
+      # Do not build an alternative graph-app runner for V1/V2 conformance.
+      singleGraphInvariantCheck = pkgs.runCommand "phenix-single-graph-invariants" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        ${pkgs.python3}/bin/python ${./tools/check-single-graph.py} ${source}
+        mkdir -p "$out"
+        touch "$out/passed"
       '';
+      graphCheck = rust.buildRustPackage {
+        pname = "phenix-graph-conformance";
+        version = "0.1.0";
+        src = subset [
+          ./Cargo.toml
+          ./Cargo.lock
+          ./crates/phenix-contract
+          ./crates/phenix-graph
+        ];
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-graph" ];
+        cargoTestFlags = [ "-p" "phenix-graph" ];
+        doCheck = true;
+        installPhase = "mkdir -p $out; touch $out/graph-tests-passed";
+      };
       authoredProvider = plugin "example-authoring-provider";
       authoredClient = plugin "example-authoring-client";
       authoredField = plugin "example-authoring-field";
@@ -2363,7 +2336,7 @@
           cp target/*/release/example-authoring-api $out/bin/
         '';
       };
-      authoredDefinitions = definitionPackage "phenix-authored-definitions" "${authoredApi}/bin/example-authoring-api" false;
+      authoredDefinitions = definitionPackage "phenix-authored-definitions" "${authoredApi}/bin/example-authoring-api";
       authoringCheck = pkgs.runCommand "phenix-m1-native-authoring" { } ''
         ${conformanceBinary}/bin/phenix-m1-authoring ${authoredProvider} ${authoredClient} ${authoredField} ${authoredDefinitions} $out
       '';
@@ -2707,7 +2680,6 @@
         ln -s ${basicSessionCheck} $out/basic-session
         ln -s ${sqliteRestartCheck} $out/sqlite-restart
         ln -s ${basicMemoryCheck} $out/basic-memory
-        ln -s ${basicAgentCheck} $out/basic-agent
         ln -s ${frontendCheck} $out/frontends
         ln -s ${acpCheck} $out/acp-codec
         ln -s ${basicProductCheck} $out/basic-host-smoke
@@ -3040,6 +3012,7 @@
         m1-native-authoring = authoringCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
+        single-graph-invariants = singleGraphInvariantCheck;
         basic-contracts = basicContractsCheck;
         environment-product = environmentProductCheck;
         workspace-product = workspaceProductCheck;
@@ -3066,7 +3039,6 @@
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
         b3-memory = basicMemoryCheck;
-        b5-agent = basicAgentCheck;
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
@@ -3084,7 +3056,6 @@
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
-        p2-basic-staged-plugin = basicStagedAgent;
         p2-selected-graph-preparer = basicSelectedGraphPrepareCheck;
         p2-graph-preparer-plugin = basicGraphPreparerPlugin;
         p2-noop-preparer-plugin = basicNoopPreparerPlugin;

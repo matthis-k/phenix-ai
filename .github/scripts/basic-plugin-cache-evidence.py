@@ -36,7 +36,6 @@ CASES = {
     "F": ("shared-sdk", "crates/phenix-sdk/src/lib.rs"),
     "G": ("composition-configuration", "flake.nix"),
     "H": ("composition-add-artifact", "flake.nix"),
-    "I": ("nix-cargo-feature-variant", "flake.nix"),
     "J": ("fixture-provider-source", "examples/provider/src/lib.rs"),
 }
 # Compositions and shared consumers are discovered from the actual drv graph.
@@ -50,10 +49,8 @@ GUARDS = {
     "G": {"changed": [COMPOSITION], "stable": list(BASIC) + ["phenix-kernel"]},
     "H": {"changed": ["phenix-basic-verification-composition"],
           "stable": list(BASIC) + [COMPOSITION]},
-    "I": {"changed": [], "stable": list(BASIC) + [COMPOSITION]},
     "J": {"changed": ["phenix-core-example-plugins"], "stable": list(BASIC) + [COMPOSITION]},
 }
-# C and I assert the staged feature variant using checks.x86_64-linux.
 # Targets measure selected products; derivation dependencies still come from Nix.
 BUILD_TARGETS = {
     "B": [TOOLS, COMPOSITION],
@@ -67,8 +64,6 @@ BUILD_TARGETS = {
     "H": ["phenix-basic-verification-composition"],
     "J": ["phenix-core-example-plugins"],
 }
-# Feature variant I changes a check derivation, not a package derivation.
-BUILD_CHECK_TARGETS = {"I": ["p2-basic-staged-plugin"]}
 # H adds an unchanged plugin to a composition; pre-realize it so the
 # post-edit build cannot misclassify its first cold build as invalidation.
 BASELINE_EXTRA_TARGETS = {"H": ["phenix-plugin-model-http"]}
@@ -141,12 +136,6 @@ def mutate(root, case):
             'artifacts = basicCompositionSpec.artifacts ++ [ "${historyTestModel}" "${httpModel}" ];', 1)
         # This adds an existing already-built optional plugin, without modifying
         # any Rust source or the selected verification Model slot.
-    elif case == "I":
-        needle = 'cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];'
-        assert before.count(needle) == 1, "staged feature declaration drift"
-        after = before.replace(
-            needle,
-            'cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--no-default-features" "--features" "staged-graph" ];', 1)
     else:
         raise AssertionError(case)
     if after == before:
@@ -214,7 +203,7 @@ def main():
     if args.build:
         selected = sorted(set(args.cases) & set(args.build_cases))
         unsupported = [case for case in selected
-                       if case not in BUILD_TARGETS and case not in BUILD_CHECK_TARGETS]
+                       if case not in BUILD_TARGETS]
         if unsupported:
             parser.error("no physical build targets for cases: " + ", ".join(unsupported))
         if not selected:
@@ -263,10 +252,6 @@ def main():
             attr for case in args.cases if case in args.build_cases
             for attr in BUILD_TARGETS.get(case, ())
         }
-        baseline_check_targets = {
-            attr for case in args.cases if case in args.build_cases
-            for attr in BUILD_CHECK_TARGETS.get(case, ())
-        }
         baseline_targets.update(
             attr for case in args.cases if case in args.build_cases
             for attr in BASELINE_EXTRA_TARGETS.get(case, ())
@@ -278,12 +263,6 @@ def main():
                 repo, sorted(baseline_targets), target, "baseline")
             if evidence["builds"]["baseline"]["build"]["exit_code"] != 0:
                 error = "baseline package materialization failed"
-        if baseline_check_targets and not error:
-            evidence["builds"]["baseline-checks"] = run_build(
-                repo, sorted(baseline_check_targets), target, "baseline-checks",
-                kind="checks")
-            if evidence["builds"]["baseline-checks"]["build"]["exit_code"] != 0:
-                error = "baseline check materialization failed"
     try:
         with tempfile.TemporaryDirectory(prefix="phenix-nix-isolation-") as temporary:
             # Avoid changing or restoring tracked files in the original checkout.
@@ -312,10 +291,6 @@ def main():
                             candidate for candidate in needed
                             if candidate != key and is_dependent(
                                 baseline[candidate], baseline[key], graph))
-                    if case == "C" and baseline_checks.get("p2-basic-staged-plugin") == after_checks.get("p2-basic-staged-plugin"):
-                        changed_missing.append("checks.p2-basic-staged-plugin")
-                    if case == "I" and baseline_checks.get("p2-basic-staged-plugin") == after_checks.get("p2-basic-staged-plugin"):
-                        changed_missing.append("checks.p2-basic-staged-plugin")
                     record = {
                         "scenario": CASES[case][0], "baseline_sha": sha,
                         "probe_base_sha": sha, "changed_files": changed_files,
@@ -342,10 +317,10 @@ def main():
                     }
                     evidence["cases"][case] = record
                     if args.build and case in args.build_cases:
-                        kind = "checks" if case in BUILD_CHECK_TARGETS else "packages"
-                        attrs = (BUILD_CHECK_TARGETS if kind == "checks" else BUILD_TARGETS)[case]
-                        identities_before = baseline_checks if kind == "checks" else baseline
-                        identities_after = after_checks if kind == "checks" else after
+                        kind = "packages"
+                        attrs = BUILD_TARGETS[case]
+                        identities_before = baseline
+                        identities_after = after
                         if any(identities_before[a] == identities_after[a] for a in attrs):
                             raise AssertionError(
                                 "physical probe %s selected an unchanged %s target" % (case, kind))

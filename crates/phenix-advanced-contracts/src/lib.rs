@@ -379,13 +379,6 @@ pub trait CompactionStore {
     ) -> Result<CompactionCheckpoint, CheckpointStoreError>;
 }
 
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "phenix.advanced-contracts",
-    events: &[],
-    actions: &[],
-    nodes: &[],
-};
-
 #[plugin(
     id = "phenix.advanced-contracts",
     version = "1.0.0",
@@ -398,8 +391,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     define(CompactionSummarizer),
     define(ModelTokenMeter),
     define(ModelPreparation),
-    define(ModelPreparationChange),
-    graph(super::GRAPH)
+    define(ModelPreparationChange)
 )]
 pub mod definitions {
     use super::*;
@@ -426,9 +418,5 @@ mod tests {
             .definitions
             .iter()
             .any(|definition| { definition.contract == "phenix.advanced.compaction-summary@1" }));
-        let graph = GraphContribution::decode(definitions::GRAPH_METADATA.bytes()).unwrap();
-        assert!(graph.nodes.is_empty());
-        assert!(graph.events.is_empty());
-        assert!(graph.actions.is_empty());
     }
 }

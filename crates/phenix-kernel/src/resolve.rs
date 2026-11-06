@@ -91,7 +91,6 @@ pub struct Prepared {
     pub(crate) slot_counts: BTreeMap<(String, String), u64>,
     pub(crate) state_identity: Vec<String>,
     pub(crate) graph: Option<crate::graph::CompiledGraph>,
-    pub(crate) graph_v2: Option<crate::graph::v2::CompiledGraph>,
     pub(crate) startup_order: Vec<String>,
     pub(crate) operations: BTreeMap<(String, String), PreparedOperation>,
     pub(crate) ceilings: BTreeMap<String, BTreeSet<String>>,
@@ -103,29 +102,6 @@ fn invalid(message: &str) -> Failure {
     error(Code::DescriptorInvalid, message)
 }
 type Definitions = BTreeMap<(String, u64), ContractDefinition>;
-fn validate_graph_profile(
-    graph_v2_profile: bool,
-    has_v1: bool,
-    has_v2: bool,
-) -> Result<(), Failure> {
-    if graph_v2_profile {
-        if has_v1 {
-            return Err(invalid(
-                "graph-v1 contributions are unsupported in graph-v2 preparation",
-            ));
-        }
-        if !has_v2 {
-            return Err(invalid(
-                "graph-v2 preparation requires a verified contribution",
-            ));
-        }
-    } else if has_v2 {
-        return Err(invalid(
-            "graph-v2 contributions require explicit graph-v2 preparation",
-        ));
-    }
-    Ok(())
-}
 fn add_definition(
     definitions: &mut Definitions,
     definition: ContractDefinition,
@@ -153,29 +129,11 @@ fn definition<'a>(
         })
 }
 impl Prepared {
+    /// Assemble verified plugin and definition patches once, before native code loads.
     pub fn prepare(composition: Composition) -> Result<Self, Failure> {
-        Self::prepare_inner(composition, false)
+        Self::prepare_inner(composition)
     }
-    /// Verify and retain an offline plan and trusted host policy in this preparation.
-    /// The plan identity participates in this preparation's generation identity.
-    /// This does not initialize native code or authorize graph-v2 execution.
-    pub fn prepare_graph_v2(
-        composition: Composition,
-        policy: &crate::graph::v2::TrustedCompositionPolicy,
-    ) -> Result<Self, Failure> {
-        let mut prepared = Self::prepare_inner(composition, true)?;
-        let declarations = prepared
-            .packages
-            .values()
-            .filter_map(|package| package.graph_v2().cloned())
-            .collect::<Vec<_>>();
-        prepared.graph_v2 = Some(prepared.compile_graph_v2(&declarations, policy)?);
-        Ok(prepared)
-    }
-    fn prepare_inner(
-        mut composition: Composition,
-        graph_v2_profile: bool,
-    ) -> Result<Self, Failure> {
+    fn prepare_inner(mut composition: Composition) -> Result<Self, Failure> {
         if composition.format != "phenix.composition.v3"
             || !composition.authority.valid()
             || composition
@@ -207,12 +165,6 @@ impl Prepared {
             if !identifier(id) || packages.remove(id).is_none() {
                 return Err(invalid("excluded plugin absent"));
             }
-        }
-        let has_v2 = packages
-            .values()
-            .any(|package| package.graph_v2().is_some());
-        if !graph_v2_profile {
-            validate_graph_profile(false, false, has_v2)?;
         }
         let mut replacements = BTreeMap::new();
         for substitution in composition.substitutions {
@@ -246,9 +198,6 @@ impl Prepared {
                 return Err(invalid("duplicate definition package owner"));
             }
             state_identity.insert(format!("{}:{}", metadata.plugin, package.package_sha256()));
-            if let Some(graph) = package.graph() {
-                graph_inputs.push(graph.clone());
-            }
             for d in &metadata.definitions {
                 add_definition(&mut definitions, d.clone())?;
             }
@@ -269,11 +218,6 @@ impl Prepared {
                 add_definition(&mut definitions, d)?;
             }
         }
-        validate_graph_profile(
-            graph_v2_profile,
-            !graph_inputs.is_empty() || packages.values().any(|package| package.graph().is_some()),
-            has_v2,
-        )?;
         let mut operations = BTreeMap::<(String, String), PreparedOperation>::new();
         let mut ceilings = BTreeMap::<String, BTreeSet<String>>::new();
         for (id, package) in &packages {
@@ -561,7 +505,6 @@ impl Prepared {
             slot_counts,
             state_identity: state_identity.into_iter().collect(),
             graph: None,
-            graph_v2: None,
             startup_order,
             operations,
             ceilings,
@@ -577,29 +520,92 @@ impl Prepared {
             ));
         }
         if !graph_inputs.is_empty() {
-            prepared.graph = Some(prepared.compile_graph(&graph_inputs)?);
+            prepared.graph = Some(crate::graph::CompiledGraph::compile(&graph_inputs)?);
+            // Bind at preparation, before native library initialization.
+            prepared.graph_action_bindings()?;
         }
         Ok(prepared)
     }
+    /// Resolve every compiled node to exactly one verified selected operation.
+    /// Symbolic graph action strings and patch ownership never become authority.
+    pub(crate) fn graph_action_bindings(
+        &self,
+    ) -> Result<BTreeMap<String, crate::graph::BoundAction>, Failure> {
+        let graph = self.graph.as_ref().ok_or_else(|| {
+            error(
+                Code::MissingBinding,
+                "no graph compiled for this composition",
+            )
+        })?;
+        let mut actions = BTreeMap::new();
+        for (path, node) in graph.nodes() {
+            let owner = graph.owner(path).ok_or_else(|| {
+                error(
+                    Code::InfrastructureFailure,
+                    "compiled node lacks patch provenance",
+                )
+            })?;
+            if !operation_key(&node.action) {
+                return Err(error(
+                    Code::SchemaRejected,
+                    "invalid graph operation reference",
+                ));
+            }
+            let mut providers = BTreeSet::new();
+            if self
+                .operations
+                .contains_key(&(owner.into(), node.action.clone()))
+            {
+                providers.insert(owner.to_owned());
+            }
+            for ((caller, imported), provider) in &self.bindings {
+                if caller == owner
+                    && (imported == &node.action
+                        || imported
+                            .strip_suffix(&format!(":{}", node.action))
+                            .is_some())
+                {
+                    providers.insert(provider.clone());
+                }
+            }
+            let provider = match providers.len() {
+                1 => providers.into_iter().next().expect("one provider"),
+                0 => {
+                    return Err(error(
+                        Code::MissingBinding,
+                        format!("graph node {path} has no selected operation"),
+                    ))
+                }
+                _ => {
+                    return Err(error(
+                        Code::AmbiguousBinding,
+                        format!("graph node {path} resolves to multiple providers"),
+                    ))
+                }
+            };
+            let (interface, operation) = node
+                .action
+                .split_once('/')
+                .expect("operation_key accepted this operation");
+            let selected = Selection {
+                provider,
+                interface: interface.into(),
+                operation: operation.into(),
+            };
+            self.operation(&selected)?;
+            actions.insert(
+                path.clone(),
+                crate::graph::BoundAction {
+                    declaring_owner: owner.into(),
+                    selected,
+                },
+            );
+        }
+        Ok(actions)
+    }
+
     pub fn compiled_graph(&self) -> Option<&crate::graph::CompiledGraph> {
         self.graph.as_ref()
-    }
-    pub fn compiled_graph_v2(&self) -> Option<&crate::graph::v2::CompiledGraph> {
-        self.graph_v2.as_ref()
-    }
-    /// Discover only actions whose declared admission requirements have root grants.
-    pub fn discover_actions(&self) -> Vec<crate::graph::ActionInfo> {
-        self.graph
-            .iter()
-            .flat_map(|graph| graph.discover())
-            .filter(|action| {
-                action.required_operations.iter().all(|key| {
-                    self.authority.operations.contains(key)
-                        && self.grants.contains_key(&("root".into(), key.clone()))
-                })
-            })
-            .cloned()
-            .collect()
     }
     pub(crate) fn permits(&self, provider: &str, key: &str) -> bool {
         self.ceilings
@@ -622,27 +628,5 @@ impl Prepared {
         "bindings":self.bindings.iter().map(|((caller,key),provider)|serde_json::json!({"caller":caller,"operation":key,"provider":provider})).collect::<Vec<_>>(),"authority":self.authority,"resource":self.resource,
         "lifecycle":{"startup_order":self.startup_order,"stopped":false,"stop_failures":[]},"state":{"definition_inputs":self.state_identity,"slots":self.slot_counts.iter().map(|((caller,slot),count)|serde_json::json!({"caller":caller,"slot":slot,"count":count})).collect::<Vec<_>>()},
         "roots":{"active":null,"completed":0,"last_root_id":null},"calls":0,"denied_operations":0,"last_failure":null})
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_graph_profile;
-
-    #[test]
-    fn default_profile_preserves_v1_and_rejects_v2() {
-        assert!(validate_graph_profile(false, false, false).is_ok());
-        assert!(validate_graph_profile(false, true, false).is_ok());
-        assert!(validate_graph_profile(false, false, true).is_err());
-        assert!(validate_graph_profile(false, true, true).is_err());
-    }
-
-    #[test]
-    fn v2_profile_requires_v2_and_rejects_all_v1_contributions() {
-        assert!(validate_graph_profile(true, false, true).is_ok());
-        assert!(validate_graph_profile(true, false, false).is_err());
-        assert!(validate_graph_profile(true, true, false).is_err());
-        // has_v1 includes metadata-only definition package graphs.
-        assert!(validate_graph_profile(true, true, true).is_err());
     }
 }

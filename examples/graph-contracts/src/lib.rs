@@ -1,6 +1,5 @@
-use phenix_sdk::{action, contract, event, property, Portable};
+use phenix_sdk::{contract, property, Portable};
 
-#[event(id = "example.graph.start")]
 #[derive(Debug, Clone, Portable)]
 pub struct Start {
     pub text: String,
@@ -20,56 +19,28 @@ pub fn check_resource(
     Ok(())
 }
 
-#[action(
-    id = "example.graph.submit",
-    event = "example.graph.start",
-    description = "Run an independent multi-root graph",
-    requires = "example.graph.task@1/run"
-)]
 pub struct Submit;
 
-#[event(id = "example.graph.partial")]
 #[derive(Debug, Clone, Portable)]
 pub struct PartialStart {
     pub text: String,
 }
 
-#[action(
-    id = "example.graph.submit-partial",
-    event = "example.graph.partial",
-    description = "Run A and C with dormant B and D",
-    requires = "example.graph.task@1/run"
-)]
 pub struct SubmitPartial;
 
-#[event(id = "example.graph.slow")]
 #[derive(Debug, Clone, Portable)]
 pub struct SlowStart {
     pub text: String,
 }
 
-#[action(
-    id = "example.graph.submit-slow",
-    event = "example.graph.slow",
-    description = "Run a pending source with an independent source and a join",
-    requires = "example.graph.slow@1/run,example.graph.task@1/run"
-)]
 pub struct SubmitSlow;
-
-const GRAPH: phenix_sdk::StaticGraphContribution = phenix_sdk::StaticGraphContribution {
-    plugin: "example.graph-contracts",
-    events: &[PartialStart::EVENT, SlowStart::EVENT, Start::EVENT],
-    actions: &[Submit::ACTION, SubmitPartial::ACTION, SubmitSlow::ACTION],
-    nodes: &[],
-};
 
 #[phenix_sdk::plugin(
     id = "example.graph-contracts",
     version = "1.0.0",
     profile = "definitions",
     define(Task),
-    define(SlowTask),
-    graph(super::GRAPH)
+    define(SlowTask)
 )]
 pub mod definitions {
     use super::{SlowTask, Task};

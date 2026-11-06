@@ -294,7 +294,7 @@ fn invalid(message: &str) -> acp::Error {
 /// payloads, not JSON-RPC frames. Only the SDK writes protocol envelopes.
 fn send_updates(
     kernel: &Kernel,
-    graph: Option<&GraphExecution<'_>>,
+    graph: Option<&NativeGraphRun<'_, '_>>,
     session: &str,
     after: &mut u64,
     peer: &Peer,
@@ -1620,7 +1620,7 @@ impl Controller {
     #[allow(clippy::too_many_arguments)]
     fn drive(
         kernel: &Kernel,
-        mut execution: GraphExecution<'_>,
+        mut execution: NativeGraphRun<'_, '_>,
         session: &str,
         owner: &mut std::fs::File,
         after: &mut u64,
@@ -1637,14 +1637,14 @@ impl Controller {
                 execution.cancel().map_err(internal)?;
                 stopping = true;
             }
-            let status = execution.pump(|_| {}).map_err(internal)?;
+            let status = execution.pump(Some(64)).map_err(internal)?;
             if !marked {
                 marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
             }
             if !closed.load(Ordering::Acquire) {
                 send_updates(kernel, Some(&execution), session, after, peer, closed)?;
             }
-            if status == GraphStatus::Finished {
+            if status.is_finished() {
                 let cancelled = finish_submission(&execution).map_err(internal)?;
                 drop(execution);
                 if cancelled {
