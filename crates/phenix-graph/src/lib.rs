@@ -335,4 +335,118 @@ mod tests {
         assert_eq!(graph.nodes()["n"].action, "double");
     }
 
+    fn selective_fanout() -> CompiledGraph {
+        let mut base = Patch::new("base");
+        base.push(Edit::AddNode(node("a", "source")));
+        base.push(Edit::AddNode(node("b", "double")));
+        base.push(Edit::AddNode(node("c", "triple")));
+        base.push(edge("a", "b", "value"));
+        base.push(edge("a", "c", "value"));
+        base.push(Edit::AddTrigger(Trigger {
+            name: "run".into(),
+            to: input("a", "value"),
+        }));
+        let mut routing = Patch::new("route").after("base");
+        routing.output_policy(
+            OutputRef { node: "a".into(), port: "value".into() },
+            OutputPolicy::Select { selector: "choose.branch".into() },
+        );
+        CompiledGraph::compile(&[routing, base]).unwrap()
+    }
+
+    struct SelectHost;
+    impl ActionHost for SelectHost {
+        fn invoke(
+            &mut self,
+            action: &str,
+            args: BTreeMap<String, Value>,
+        ) -> Result<BTreeMap<String, Value>, Failure> {
+            Host.invoke(action, args)
+        }
+
+        fn route(
+            &mut self,
+            selector: &str,
+            _from: &OutputRef,
+            value: &Value,
+            candidates: &[InputRef],
+        ) -> Result<Vec<InputRef>, Failure> {
+            assert_eq!(selector, "choose.branch");
+            let chosen = match value {
+                Value::I64(n) if *n > 0 => Some("b"),
+                Value::I64(n) if *n < 0 => Some("c"),
+                Value::I64(_) => None,
+                _ => return Err(fail("invalid selector input")),
+            };
+            Ok(candidates.iter()
+                .filter(|dest| Some(dest.node.as_str()) == chosen)
+                .cloned().collect())
+        }
+    }
+
+    #[test]
+    fn output_policy_selects_different_edges_for_each_value() {
+        let graph = selective_fanout();
+        for (input_value, node_name, expected) in [
+            (5, "b", 10), (-5, "c", -15),
+        ] {
+            let report = graph.execute("run", Value::I64(input_value), &mut SelectHost, None).unwrap();
+            assert_eq!(report.activations, 2);
+            assert_eq!(
+                report.outputs[&OutputRef { node: node_name.into(), port: "value".into() }],
+                vec![Value::I64(expected)],
+            );
+            assert_eq!(report.outputs.len(), 2); // source + exactly one branch
+        }
+        let silent = graph.execute("run", Value::I64(0), &mut SelectHost, None).unwrap();
+        assert_eq!(silent.activations, 1);
+        assert_eq!(silent.outputs.len(), 1);
+    }
+
+    #[test]
+    fn selective_output_requires_a_policy_host_and_never_falls_back_to_broadcast() {
+        let graph = selective_fanout();
+        assert!(graph.execute("run", Value::I64(5), &mut Host, None).is_err());
+    }
+
+    #[test]
+    fn selected_destinations_must_be_existing_unique_edges() {
+        let graph = selective_fanout();
+        let source = OutputRef { node: "a".into(), port: "value".into() };
+        for invalid in [
+            vec![input("not-connected", "value")],
+            vec![input("b", "value"), input("b", "value")],
+        ] {
+            let mut session = graph.start("run", Value::I64(5)).unwrap();
+            let activation = session.next_ready(None).unwrap().unwrap();
+            let outcome = session.complete_with(
+                activation.id,
+                [("value".into(), Value::I64(5))].into(),
+                |_from, _selector, _value, _candidates| Ok(invalid.clone()),
+            );
+            assert!(outcome.is_err());
+            assert!(session.settled());
+            assert!(session.finish().is_err());
+        }
+        assert_eq!(
+            graph.output_policy(&source),
+            OutputPolicy::Select { selector: "choose.branch".into() },
+        );
+    }
+
+    #[test]
+    fn default_output_policy_remains_broadcast() {
+        let mut patch = Patch::new("all");
+        patch.push(Edit::AddNode(node("a", "source")));
+        patch.push(Edit::AddNode(node("b", "double")));
+        patch.push(Edit::AddNode(node("c", "triple")));
+        patch.push(edge("a", "b", "value"));
+        patch.push(edge("a", "c", "value"));
+        patch.push(Edit::AddTrigger(Trigger { name: "run".into(), to: input("a", "value") }));
+        let graph = CompiledGraph::compile(&[patch]).unwrap();
+        let report = graph.execute("run", Value::I64(5), &mut Host, None).unwrap();
+        assert_eq!(report.activations, 3);
+        assert_eq!(report.outputs.len(), 3);
+    }
+
 }
