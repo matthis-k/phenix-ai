@@ -43,20 +43,25 @@ fn decode_native_outputs(
 ) -> Result<BTreeMap<String, Value>, Failure> {
     match ports.len() {
         0 if value == Value::Null => Ok(BTreeMap::new()),
-        0 => Err(Failure::new(Code::SchemaRejected,
-            "outputless graph node returned a value")),
-        1 => Ok([(ports.keys().next().expect("one port").clone(), value)]
-            .into()),
+        0 => Err(Failure::new(
+            Code::SchemaRejected,
+            "outputless graph node returned a value",
+        )),
+        1 => Ok([(ports.keys().next().expect("one port").clone(), value)].into()),
         _ => match value {
             Value::Map(fields) => {
                 if fields.keys().any(|port| !ports.contains_key(port)) {
-                    return Err(Failure::new(Code::SchemaRejected,
-                        "native node returned an undeclared output port"));
+                    return Err(Failure::new(
+                        Code::SchemaRejected,
+                        "native node returned an undeclared output port",
+                    ));
                 }
                 Ok(fields)
             }
-            _ => Err(Failure::new(Code::SchemaRejected,
-                "multiple graph outputs require a named value map")),
+            _ => Err(Failure::new(
+                Code::SchemaRejected,
+                "multiple graph outputs require a named value map",
+            )),
         },
     }
 }
@@ -168,11 +173,16 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     ) -> Result<(), Failure> {
         match outcome {
             Outcome::Success(value) => {
-                let decoded = self.graph.nodes().get(node_path)
-                    .ok_or_else(|| Failure::new(
-                        Code::InfrastructureFailure,
-                        "native activation has no compiled node",
-                    ))
+                let decoded = self
+                    .graph
+                    .nodes()
+                    .get(node_path)
+                    .ok_or_else(|| {
+                        Failure::new(
+                            Code::InfrastructureFailure,
+                            "native activation has no compiled node",
+                        )
+                    })
                     .and_then(|node| decode_native_outputs(&node.outputs, value));
                 let outputs = match decoded {
                     Ok(outputs) => outputs,
@@ -371,22 +381,23 @@ mod output_projection_tests {
     }
     #[test]
     fn multiple_named_ports_are_independently_emitted() {
-        let ports = [("reply".to_owned(), schema()), ("usage".to_owned(), schema())].into();
-        let result = decode_native_outputs(
-            &ports,
-            Value::map([("reply", Value::I64(8))]),
-        ).unwrap();
+        let ports = [
+            ("reply".to_owned(), schema()),
+            ("usage".to_owned(), schema()),
+        ]
+        .into();
+        let result = decode_native_outputs(&ports, Value::map([("reply", Value::I64(8))])).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result["reply"], Value::I64(8));
-        assert!(decode_native_outputs(
-            &ports, Value::map([("unknown", Value::I64(3))])
-        ).is_err());
+        assert!(decode_native_outputs(&ports, Value::map([("unknown", Value::I64(3))])).is_err());
         assert!(decode_native_outputs(&ports, Value::I64(8)).is_err());
     }
     #[test]
     fn outputless_nodes_emit_nothing() {
         let ports = BTreeMap::new();
-        assert!(decode_native_outputs(&ports, Value::Null).unwrap().is_empty());
+        assert!(decode_native_outputs(&ports, Value::Null)
+            .unwrap()
+            .is_empty());
         assert!(decode_native_outputs(&ports, Value::I64(1)).is_err());
     }
 }
