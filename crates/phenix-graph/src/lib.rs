@@ -714,10 +714,9 @@ mod tests {
         let graph = CompiledGraph::compile(&[patch]).unwrap();
         let mut session = graph.start("run", Value::I64(3)).unwrap();
         let source = session.next_ready(None).unwrap().unwrap();
-        session.complete(
-            source.id,
-            [("value".into(), Value::I64(3))].into(),
-        ).unwrap();
+        session
+            .complete(source.id, [("value".into(), Value::I64(3))].into())
+            .unwrap();
         let finish = session.next_ready(None).unwrap().unwrap();
         assert_eq!(finish.node, "finish");
         assert!(session.next_ready(None).unwrap().is_none());
@@ -725,5 +724,4 @@ mod tests {
         assert!(session.settled());
         assert_eq!(session.finish().unwrap().activations, 2);
     }
-
 }
