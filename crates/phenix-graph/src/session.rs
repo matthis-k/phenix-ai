@@ -54,11 +54,35 @@ impl GraphSession<'_> {
         self.inflight.insert(id, node.path.clone());
         Ok(Some(Activation { id, node: node.path, action: node.action, args }))
     }
-    /// Complete a previously reserved activation. Validate every output before
-    /// delivering any of them, so invalid output schemas cannot partly fan out.
+    /// Complete a reserved activation using the default broadcast policy.
+    /// Ports with a Select policy require `complete_with`, so a missing
+    /// policy handler fails closed rather than silently broadcasting.
     pub fn complete(
-        &mut self, id: u64, outputs: BTreeMap<String, Value>,
+        &mut self,
+        id: u64,
+        outputs: BTreeMap<String, Value>,
     ) -> Result<(), Failure> {
+        self.complete_with(id, outputs, |_from, _selector, _value, _candidates| {
+            Err(fail("no handler for selective output policy"))
+        })
+    }
+
+    /// A port policy decides which *existing* outgoing edges receive this
+    /// emission. Its host implementation may read authorized store state.
+    /// It cannot create edges or activate nodes outside the compiled graph.
+    ///
+    /// Every selected endpoint must be a distinct member of candidates.
+    /// Routing and schema validation finish for every output before delivering
+    /// any value; rejected routing never produces a partial fan-out.
+    pub fn complete_with<F>(
+        &mut self,
+        id: u64,
+        outputs: BTreeMap<String, Value>,
+        mut select: F,
+    ) -> Result<(), Failure>
+    where
+        F: FnMut(&OutputRef, &str, &Value, &[InputRef]) -> Result<Vec<InputRef>, Failure>,
+    {
         let node = self.inflight.remove(&id)
             .ok_or_else(|| fail("unknown or already completed activation"))?;
         if self.cancelled || self.failed.is_some() {
@@ -68,19 +92,33 @@ impl GraphSession<'_> {
         let validation = (|| {
             let mut checked = Vec::new();
             for (port, value) in outputs {
-            let source = OutputRef { node: node.clone(), port };
-            if !self.graph.output_schema(&source)?.accepts(&value)? {
-                return Err(fail("output value rejected by schema"));
-            }
-            let destinations: Vec<_> = self.graph.edges.iter()
-                .filter(|edge| edge.from == source)
-                .map(|edge| edge.to.clone()).collect();
-            for dest in &destinations {
-                if !self.graph.input_schema(dest)?.accepts(&value)? {
-                    return Err(fail("input value rejected by schema"));
+                let source = OutputRef { node: node.clone(), port };
+                if !self.graph.output_schema(&source)?.accepts(&value)? {
+                    return Err(fail("output value rejected by schema"));
                 }
-            }
-            checked.push((source, value, destinations));
+                let candidates: Vec<_> = self.graph.edges.iter()
+                    .filter(|edge| edge.from == source)
+                    .map(|edge| edge.to.clone()).collect();
+                let destinations = match self.graph.output_policy(&source) {
+                    OutputPolicy::Broadcast => candidates.clone(),
+                    OutputPolicy::Select { selector } => {
+                        select(&source, &selector, &value, &candidates)?
+                    }
+                };
+                let available: BTreeSet<_> = candidates.into_iter().collect();
+                let mut selected = BTreeSet::new();
+                for destination in &destinations {
+                    if !available.contains(destination) {
+                        return Err(fail("output policy selected an undeclared edge"));
+                    }
+                    if !selected.insert(destination.clone()) {
+                        return Err(fail("output policy selected the same edge twice"));
+                    }
+                    if !self.graph.input_schema(destination)?.accepts(&value)? {
+                        return Err(fail("input value rejected by schema"));
+                    }
+                }
+                checked.push((source, value, destinations));
             }
             Ok::<_, Failure>(checked)
         })();
@@ -101,6 +139,7 @@ impl GraphSession<'_> {
         self.report.activations += 1;
         Ok(())
     }
+
     /// Record a failed host activation without converting it into a graph output.
     /// Other in-flight activations remain reserved until the host drains them.
     pub fn fail(&mut self, id: u64, failure: Failure) -> Result<(), Failure> {
