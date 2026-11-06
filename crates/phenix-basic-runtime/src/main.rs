@@ -138,7 +138,8 @@ fn invoke_graph<T: Portable>(
         provider: provider.into(),
     };
     match execution
-        .root().invoke_selected(&selected, &request.to_value())
+        .root()
+        .invoke_selected(&selected, &request.to_value())
         .map_err(|e| format!("{e:?}"))?
     {
         Outcome::Success(value) => Ok(Ok(T::from_value(value).map_err(|e| format!("{e:?}"))?)),
@@ -259,11 +260,17 @@ fn finish_submission(execution: &NativeGraphRun<'_, '_>) -> Result<bool, String>
     let cancelled = match execution.status() {
         NativeRunStatus::Succeeded | NativeRunStatus::Domain => false,
         NativeRunStatus::Cancelled => true,
-        NativeRunStatus::Failed => return Err(format!(
-            "{:?}", execution.failure().ok_or("graph failed without a failure")?
-        )),
-        NativeRunStatus::Running | NativeRunStatus::Draining =>
-            return Err("graph is not finished".into()),
+        NativeRunStatus::Failed => {
+            return Err(format!(
+                "{:?}",
+                execution
+                    .failure()
+                    .ok_or("graph failed without a failure")?
+            ))
+        }
+        NativeRunStatus::Running | NativeRunStatus::Draining => {
+            return Err("graph is not finished".into())
+        }
     };
     if execution.activations() == 0 && !cancelled {
         return Err("prompt action did not activate a graph node".into());
@@ -282,8 +289,12 @@ fn finish_submission(execution: &NativeGraphRun<'_, '_>) -> Result<bool, String>
 fn finish_stream_submission(execution: &NativeGraphRun<'_, '_>) -> Result<bool, String> {
     if execution.status() == NativeRunStatus::Domain {
         let cause = BasicError::from_value(
-            execution.domain().ok_or("domain graph finished without a domain outcome")?.clone()
-        ).map_err(|e| format!("{e:?}"))?;
+            execution
+                .domain()
+                .ok_or("domain graph finished without a domain outcome")?
+                .clone(),
+        )
+        .map_err(|e| format!("{e:?}"))?;
         if cause.code == phenix_basic_contracts::ErrorCode::ModelFailed
             || cause.code == phenix_basic_contracts::ErrorCode::TurnLimit
         {
