@@ -7,10 +7,12 @@ pub use phenix_contract::graph::{
     Edge, Edit, InputPort, InputRef, Node, OutputRef, Patch, Readiness, Schema, Trigger,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use sha2::{Digest, Sha256};
 fn fail(msg: impl Into<String>) -> Failure { Failure::new(Code::SchemaRejected, msg) }
 
 #[derive(Clone, Debug, Default)]
 pub struct CompiledGraph {
+    pub identity: String,
     nodes: BTreeMap<String, Node>,
     edges: BTreeSet<Edge>,
     triggers: BTreeMap<String, InputRef>,
@@ -46,6 +48,8 @@ impl CompiledGraph {
             }
         }
         let mut graph = Self::default();
+        let mut identity = Sha256::new();
+        identity.update(b"phenix.graph.patch-plan.v1\0");
         let mut closed = BTreeSet::<String>::new();
         let mut ancestry = BTreeMap::<String, BTreeSet<String>>::new();
         let mut writers = BTreeMap::<Target, String>::new();
@@ -55,6 +59,9 @@ impl CompiledGraph {
                 .map(|(id, _)| id.clone())
                 .ok_or_else(|| fail("patch dependency cycle"))?;
             let patch = pending.remove(&id).expect("chosen patch");
+            let bytes = patch.encode()?;
+            identity.update((bytes.len() as u64).to_be_bytes());
+            identity.update(&bytes);
             let mut previous = patch.after.clone();
             for dep in &patch.after {
                 previous.extend(ancestry[dep].iter().cloned());
@@ -81,6 +88,7 @@ impl CompiledGraph {
         for endpoint in graph.triggers.values() {
             graph.input_schema(endpoint)?;
         }
+        graph.identity = format!("{:x}", identity.finalize());
         Ok(graph)
     }
 
@@ -268,4 +276,20 @@ mod tests {
     fn missing_dependency_is_rejected() {
         assert!(CompiledGraph::compile(&[Patch::new("a").after("unknown")]).is_err());
     }
+    #[test]
+    fn identity_is_independent_of_contributor_arrival_order() {
+        let mut a = Patch::new("a");
+        a.push(Edit::AddNode(node("source", "source")));
+        a.push(Edit::AddTrigger(Trigger {
+            name: "run".into(), to: input("source", "value"),
+        }));
+        let mut b = Patch::new("b").after("a");
+        b.push(Edit::AddNode(node("twice", "double")));
+        b.push(edge("source", "twice", "value"));
+        let ordered = CompiledGraph::compile(&[a.clone(), b.clone()]).unwrap();
+        let reordered = CompiledGraph::compile(&[b, a]).unwrap();
+        assert_eq!(ordered.identity, reordered.identity);
+        assert!(!ordered.identity.is_empty());
+    }
+
 }
