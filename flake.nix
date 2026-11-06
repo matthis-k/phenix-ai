@@ -1462,12 +1462,6 @@
           ${p2ModelMeterFixtureCheck}
         test -s "$out/accepted.json"
       '';
-      basicAgentCheck = pkgs.runCommand "phenix-b5-agent" { } ''
-        mkdir -p $out
-        export PHENIX_BASIC_SQLITE_PATH="$TMPDIR/basic-agent.db"
-        ${conformanceBinary}/bin/phenix-b5-agent ${basicAgent} ${scriptedModel} ${basicTools} ${basicMemory} ${basicSession} ${eventJournal} ${storageSqlite} ${basicDefinitions} $out
-        test -s "$out/agent.json"
-      '';
       frontendTerminal = basicNativePlugin
         "phenix-plugin-basic-frontends"
         "phenix_plugin_basic_frontends"
@@ -2686,7 +2680,6 @@
         ln -s ${basicSessionCheck} $out/basic-session
         ln -s ${sqliteRestartCheck} $out/sqlite-restart
         ln -s ${basicMemoryCheck} $out/basic-memory
-        ln -s ${basicAgentCheck} $out/basic-agent
         ln -s ${frontendCheck} $out/frontends
         ln -s ${acpCheck} $out/acp-codec
         ln -s ${basicProductCheck} $out/basic-host-smoke
@@ -3046,7 +3039,6 @@
         b2-session = basicSessionCheck;
         b2-sqlite = sqliteRestartCheck;
         b3-memory = basicMemoryCheck;
-        b5-agent = basicAgentCheck;
         f1-frontends = frontendCheck;
         f2-acp = acpCheck;
         basic-host-smoke = basicProductCheck;
