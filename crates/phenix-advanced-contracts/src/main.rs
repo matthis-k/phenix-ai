@@ -3,6 +3,9 @@
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     assert_eq!(args.len(), 2, "DESCRIPTOR");
-    std::fs::write(&args[1], phenix_advanced_contracts::definitions::METADATA.bytes())
-        .expect("failed to write definition descriptor");
+    std::fs::write(
+        &args[1],
+        phenix_advanced_contracts::definitions::METADATA.bytes(),
+    )
+    .expect("failed to write definition descriptor");
 }
