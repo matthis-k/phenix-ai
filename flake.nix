@@ -2300,6 +2300,13 @@
       '';
       # The graph engine is the single source of graph scheduling and testing.
       # Do not build an alternative graph-app runner for V1/V2 conformance.
+      singleGraphInvariantCheck = pkgs.runCommand "phenix-single-graph-invariants" {
+        nativeBuildInputs = [ pkgs.python3 ];
+      } ''
+        ${pkgs.python3}/bin/python ${./tools/check-single-graph.py} ${source}
+        mkdir -p "$out"
+        touch "$out/passed"
+      '';
       graphCheck = rust.buildRustPackage {
         pname = "phenix-graph-conformance";
         version = "0.1.0";
@@ -3012,6 +3019,7 @@
         m1-native-authoring = authoringCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
+        single-graph-invariants = singleGraphInvariantCheck;
         basic-contracts = basicContractsCheck;
         environment-product = environmentProductCheck;
         workspace-product = workspaceProductCheck;
