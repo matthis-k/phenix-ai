@@ -729,7 +729,7 @@ fn run_console(
             }
         }
         if let Some(execution) = active.as_mut() {
-            let status = execution.pump(None).map_err(|e| format!("{e:?}"))?;
+            let status = execution.pump(Some(64)).map_err(|e| format!("{e:?}"))?;
             if !active_marked {
                 if let Some(owner) = active_lock.as_mut() {
                     active_marked = mark_admitted_run(&kernel, execution, session, owner)?;
@@ -917,7 +917,7 @@ fn run_jsonl(composition: &Composition) -> Result<(), String> {
                     queued.push_back(pending_line);
                 }
             }
-            let status = execution.pump(None).map_err(|e| format!("{e:?}"))?;
+            let status = execution.pump(Some(64)).map_err(|e| format!("{e:?}"))?;
             if !marked {
                 marked = mark_admitted_run(kernel, &execution, &session, &mut owner)?;
             }
