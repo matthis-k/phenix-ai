@@ -14,7 +14,7 @@ The policy can select `[Tool]`, `[Finish]`, both, or neither, independently **fo
 
 ## Current API and guarantees
 
-A portable Patch configures a policy on an existing output port:
+A portable Patch attaches a **selector function reference** to an output port:
 
 ```rust
 patch.output_policy(
@@ -23,40 +23,47 @@ patch.output_policy(
 );
 ```
 
-- Default `OutputPolicy::Broadcast`: all outgoing edges receive the emission.
-- `OutputPolicy::Select`: a host-supplied function receives output port, value and candidate destinations, and returns a subset of those destinations.
-- `OutputPolicy::SelectOne`: identical selection interface, but **exactly one** existing edge must be selected per emission. Compilation rejects zero candidate edges; execution rejects zero, multiple, duplicate, or unknown selected destinations. This handles five equally typed providers without a dedicated routing node.
-- An empty selection is valid. No downstream node is activated through omitted edges.
-- Unknown or duplicate destinations are rejected. The complete set is validated **before** any delivery; a failed policy cannot cause partial fan-out.
-- Only compiled edges may be selected. The policy cannot add graph topology or authorize capabilities.
-- Policy changes are ordinary Patch edits (`SetOutputPolicy`), resolved at compilation with the same conflict and deterministic identity rules as other patch edits.
-- Local `ActionHost::route` implements the policy. Missing policy implementation **fails closed** rather than broadcasting.
-
-Example: five providers offering the same request schema. Only the selected provider receives this emission:
+The resolved function has one responsibility:
 
 ```rust
-let source = OutputRef {
-    node: "provider.request".into(),
-    port: "request".into(),
-};
-for n in 0..5 {
-    patch.push(Edit::Connect(Edge {
-        from: source.clone(),
-        to: InputRef {
-            node: format!("provider.{n}"),
-            port: "run".into(),
-            slot: "request".into(),
-        },
-    }));
-}
-patch.output_policy(source, OutputPolicy::SelectOne {
-    selector: "select.provider".into(),
-});
+fn route(
+    &mut self,
+    selector: &str,
+    source: &OutputRef,
+    value: &Value,
+    existing_edges: &[Edge],
+) -> Result<Vec<Edge>, Failure>;
 ```
 
-The selector can depend on the emitted request and, once integrated with Phenix's authorized native host, the store. Choosing a provider is a delivery decision, **not** an extra actor responsible for calling the provider. A provider may later be a module with the same public input and output interface.
+It receives the outgoing edges **already declared and compiled** for that port, and returns **any subset**: 0, 1, 2, ... or all of them. There is deliberately **no `SelectOne` enum or hardcoded cardinality policy**. A provider-selection implementation may choose exactly one, but that is *its logic*, not a constraint of the graph engine.
 
-The policy's result selects `InputRef` endpoints. These are the *destination portions* of canonical edges; identity remains the source-output / destination-input pair. There are no user-managed edge IDs.
+- `OutputPolicy::Broadcast` sends the value to every connected edge by default.
+- `OutputPolicy::Select` invokes the registered function. It may inspect the output and authorized store state; it does not grant authority.
+- Returning no edges is valid and leaves all downstream branches inactive for this emission.
+- Returned edges must be distinct members of `existing_edges`. Nonexistent or duplicate edges are rejected.
+- All selected edges and payload schemas are checked **before delivery**, preventing partial fan-out.
+- The same compiler, readiness scheduler, Patch edit `SetOutputPolicy`, and deterministic generation identity handle both broadcast and selective delivery.
+- A missing selector host fails closed; it never silently broadcasts.
+
+### Example: five compatible providers
+
+```rust
+// All five have the same input schema.
+fn choose_provider(
+    request: &Value,
+    existing_edges: &[Edge],
+) -> Vec<Edge> {
+    let selected = select_provider_name(request); // domain policy
+    existing_edges.iter()
+        .filter(|edge| edge.to.node == selected)
+        .cloned()
+        .collect()
+}
+```
+
+Only that provider receives this value because the function happened to return one edge. Another function could return all five for replication, two for a race, or zero to suppress delivery. The graph remains unchanged, and no extra provider-selection node is required.
+
+The returned values are full canonical `Edge { from, to }` objects, not merely destination slots, so membership is exact.
 
 ## Kernel native-policy binding — **not yet implemented**
 
