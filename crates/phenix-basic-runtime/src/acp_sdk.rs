@@ -1637,7 +1637,7 @@ impl Controller {
                 execution.cancel().map_err(internal)?;
                 stopping = true;
             }
-            let status = execution.pump(None).map_err(internal)?;
+            let status = execution.pump(Some(64)).map_err(internal)?;
             if !marked {
                 marked = mark_admitted_run(kernel, &execution, session, owner).map_err(internal)?;
             }
