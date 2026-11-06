@@ -324,18 +324,29 @@ mod tests {
             ceilings: BTreeMap::new(),
         };
         let baseline = tuple(&prepared, "test").unwrap();
-        let Value::Map(fields) = &baseline else { unreachable!() };
+        let Value::Map(fields) = &baseline else {
+            unreachable!()
+        };
         assert!(!fields.contains_key("graph_identity"));
 
         prepared.graph = Some(crate::graph::CompiledGraph::compile(&[]).unwrap());
         let empty_graph = tuple(&prepared, "test").unwrap();
-        assert_ne!(identity(&baseline).unwrap(), identity(&empty_graph).unwrap());
+        assert_ne!(
+            identity(&baseline).unwrap(),
+            identity(&empty_graph).unwrap()
+        );
 
-        prepared.graph = Some(crate::graph::CompiledGraph::compile(
-            &[phenix_contract::Patch::new("test.contribution")]
-        ).unwrap());
+        prepared.graph = Some(
+            crate::graph::CompiledGraph::compile(&[phenix_contract::Patch::new(
+                "test.contribution",
+            )])
+            .unwrap(),
+        );
         let contributed = tuple(&prepared, "test").unwrap();
-        assert_ne!(identity(&empty_graph).unwrap(), identity(&contributed).unwrap());
+        assert_ne!(
+            identity(&empty_graph).unwrap(),
+            identity(&contributed).unwrap()
+        );
     }
     fn value(v: &serde_json::Value) -> Value {
         match v {
