@@ -1,6 +1,7 @@
 //! P2-3aj RED: a *second* state-triggered Basic node admits Model only
 //! after an independently contributed preparer has committed the handoff.
-use super::{verify_staged_model_candidate, GRAPH};
+use super::{verify_staged_model_candidate, graph_patch};
+use phenix_sdk::Edit;
 use phenix_basic_contracts::{Limits, Message, ModelRequest};
 
 fn source() -> ModelRequest {
@@ -17,19 +18,15 @@ fn source() -> ModelRequest {
 
 #[test]
 fn staged_graph_exposes_only_the_basic_owned_prepare_node() {
-    // The opt-in Advanced graph contributes the resume node and owns its
-    // trigger property. Basic-only staging must remain independently usable.
-    let graph = GRAPH.owned().unwrap();
-    assert_eq!(graph.nodes.len(), 1);
-    let first = graph
-        .nodes
-        .iter()
-        .find(|node| node.id == "prepare")
-        .unwrap();
-    assert_eq!(first.id, "prepare");
-    assert_eq!(first.triggers, ["phenix.basic.prompt"]);
-    assert_eq!(first.operation, "phenix.basic.turn-prepare@1/prepare");
-    assert_eq!(first.writes, ["phenix.basic.agent/pending_model_request"]);
+    let patch = graph_patch().unwrap();
+    assert_eq!(patch.id, "phenix.basic.agent");
+    assert_eq!(patch.edits.len(), 2);
+    let Edit::AddNode(node) = &patch.edits[0] else { panic!("expected node") };
+    assert_eq!(node.path, "phenix.basic.agent/prepare");
+    assert_eq!(node.action, "phenix.basic.turn-prepare@1/prepare");
+    let Edit::AddTrigger(trigger) = &patch.edits[1] else { panic!("expected trigger") };
+    assert_eq!(trigger.name, "phenix.basic.prompt");
+    assert_eq!(trigger.to.node, node.path);
 }
 
 #[test]
@@ -51,10 +48,10 @@ fn candidate_admission_rejects_every_modification_without_durable_proof() {
 }
 
 #[test]
-fn staged_graph_has_no_extra_public_action() {
-    let graph = GRAPH.owned().unwrap();
-    assert!(graph.actions.is_empty());
-    assert!(graph.events.is_empty());
+fn staged_graph_has_no_second_execution_path() {
+    let patch = graph_patch().unwrap();
+    assert!(patch.after.is_empty());
+    assert!(matches!(patch.edits.as_slice(), [Edit::AddNode(_), Edit::AddTrigger(_)]));
 }
 
 #[test]
