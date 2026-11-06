@@ -66,11 +66,21 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         })
     }
 
-    pub fn root(&self) -> &Root<'kernel> { &self.root }
-    pub fn domain(&self) -> Option<&Value> { self.domain.as_ref() }
-    pub fn failure(&self) -> Option<&Failure> { self.failure.as_ref() }
-    pub fn in_flight(&self) -> usize { self.pending.len() }
-    pub fn activations(&self) -> usize { self.session.activations() }
+    pub fn root(&self) -> &Root<'kernel> {
+        &self.root
+    }
+    pub fn domain(&self) -> Option<&Value> {
+        self.domain.as_ref()
+    }
+    pub fn failure(&self) -> Option<&Failure> {
+        self.failure.as_ref()
+    }
+    pub fn in_flight(&self) -> usize {
+        self.pending.len()
+    }
+    pub fn activations(&self) -> usize {
+        self.session.activations()
+    }
 
     pub fn status(&self) -> NativeRunStatus {
         if !self.pending.is_empty() || !self.session.settled() {
@@ -106,9 +116,10 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     fn native_result(&mut self, activation: u64, outcome: Outcome) -> Result<(), Failure> {
         match outcome {
             Outcome::Success(value) => {
-                if let Err(failure) = self.session.complete(
-                    activation, [("value".into(), value)].into(),
-                ) {
+                if let Err(failure) = self
+                    .session
+                    .complete(activation, [("value".into(), value)].into())
+                {
                     self.failure.get_or_insert(failure);
                     self.cancel()?;
                 }
@@ -139,7 +150,9 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     pub fn pump(&mut self, dispatch_quota: Option<usize>) -> Result<NativeRunStatus, Failure> {
         let ticket_ids: Vec<u64> = self.pending.keys().copied().collect();
         for id in ticket_ids {
-            let mut pending = self.pending.remove(&id)
+            let mut pending = self
+                .pending
+                .remove(&id)
                 .expect("ticket key was captured from this run");
             if !pending.logical_done {
                 match self.root.poll(&pending.ticket)? {
@@ -163,18 +176,22 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                         // Fail the logical activation, then keep this ticket
                         // until physical release succeeds.
                         pending.logical_done = true;
-                        self.native_failure(id, Failure::new(
-                            Code::InfrastructureFailure,
-                            "graph ticket lost a previously delivered outcome",
-                        ))?;
+                        self.native_failure(
+                            id,
+                            Failure::new(
+                                Code::InfrastructureFailure,
+                                "graph ticket lost a previously delivered outcome",
+                            ),
+                        )?;
                     }
                 }
             }
             if pending.logical_done {
                 match self.root.release(&pending.ticket) {
                     Ok(()) => continue,
-                    Err(failure) if failure.code == Code::ScopeRejected
-                        && failure.message == "physical lease is still live" =>
+                    Err(failure)
+                        if failure.code == Code::ScopeRejected
+                            && failure.message == "physical lease is still live" =>
                     {
                         // A delivered/cancelled ticket can still have a native
                         // child to poll. Advancing it is required for release.
@@ -189,17 +206,26 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         if !self.cancelled && self.failure.is_none() && self.domain.is_none() {
             let mut dispatched = 0usize;
             while dispatch_quota.is_none_or(|max| dispatched < max) {
-                let Some(activation) = self.session.next_ready(None)? else { break };
+                let Some(activation) = self.session.next_ready(None)? else {
+                    break;
+                };
                 dispatched += 1;
                 let binding = self.actions.get(&activation.node).ok_or_else(|| {
-                    Failure::new(Code::MissingBinding, "graph node has no verified native binding")
+                    Failure::new(
+                        Code::MissingBinding,
+                        "graph node has no verified native binding",
+                    )
                 });
                 let bound = match binding {
                     Ok(bound) if bound.selected.key() == activation.action => bound,
                     Ok(_) => {
-                        self.native_failure(activation.id, Failure::new(
-                            Code::Denied, "graph action does not match verified selected operation",
-                        ))?;
+                        self.native_failure(
+                            activation.id,
+                            Failure::new(
+                                Code::Denied,
+                                "graph action does not match verified selected operation",
+                            ),
+                        )?;
                         break;
                     }
                     Err(failure) => {
@@ -212,21 +238,28 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                 } else {
                     Value::Map(activation.args)
                 };
-                match self.root.call_graph(
-                    &bound.declaring_owner, &bound.selected, &request, true,
-                ) {
+                match self
+                    .root
+                    .call_graph(&bound.declaring_owner, &bound.selected, &request, true)
+                {
                     Ok(Call::Ready(outcome)) => self.native_result(activation.id, outcome)?,
                     Ok(Call::Pending(ticket)) => {
-                        self.pending.insert(activation.id, PendingActivation {
-                            ticket, logical_done: false,
-                        });
+                        self.pending.insert(
+                            activation.id,
+                            PendingActivation {
+                                ticket,
+                                logical_done: false,
+                            },
+                        );
                     }
                     Err(failure) => {
                         self.native_failure(activation.id, failure)?;
                         break;
                     }
                 }
-                if self.cancelled { break; }
+                if self.cancelled {
+                    break;
+                }
             }
         }
         Ok(self.status())
@@ -237,10 +270,14 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     pub fn finish(self) -> Result<(NativeRunStatus, ExecutionReport, Option<Value>), Failure> {
         let status = self.status();
         if matches!(status, NativeRunStatus::Running | NativeRunStatus::Draining) {
-            return Err(Failure::new(Code::ScopeRejected,
-                "native graph execution still has live work"));
+            return Err(Failure::new(
+                Code::ScopeRejected,
+                "native graph execution still has live work",
+            ));
         }
-        if let Some(failure) = self.failure { return Err(failure); }
+        if let Some(failure) = self.failure {
+            return Err(failure);
+        }
         let report = self.session.finish()?;
         Ok((status, report, self.domain))
     }
