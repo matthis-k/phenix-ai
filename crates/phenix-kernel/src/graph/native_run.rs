@@ -6,7 +6,7 @@ use crate::{
     pending::{Call, Poll, Ticket},
     runtime::{Outcome, Root},
 };
-use phenix_contract::{Code, Failure, Value};
+use phenix_contract::{Code, Failure, Schema, Value};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +30,35 @@ impl NativeRunStatus {
 
 struct PendingActivation {
     ticket: Ticket,
+    node: String,
     logical_done: bool,
+}
+
+/// Convert a selected native operation's response into named graph outputs.
+/// For one port, the entire response is that port's value (even if it is a Map).
+/// For multiple ports, the operation returns a Map keyed by declared port names.
+fn decode_native_outputs(
+    ports: &BTreeMap<String, Schema>,
+    value: Value,
+) -> Result<BTreeMap<String, Value>, Failure> {
+    match ports.len() {
+        0 if value == Value::Null => Ok(BTreeMap::new()),
+        0 => Err(Failure::new(Code::SchemaRejected,
+            "outputless graph node returned a value")),
+        1 => Ok([(ports.keys().next().expect("one port").clone(), value)]
+            .into()),
+        _ => match value {
+            Value::Map(fields) => {
+                if fields.keys().any(|port| !ports.contains_key(port)) {
+                    return Err(Failure::new(Code::SchemaRejected,
+                        "native node returned an undeclared output port"));
+                }
+                Ok(fields)
+            }
+            _ => Err(Failure::new(Code::SchemaRejected,
+                "multiple graph outputs require a named value map")),
+        },
+    }
 }
 
 /// One admitted root, one compiled graph, one graph execution session.
@@ -38,6 +66,7 @@ struct PendingActivation {
 /// A graph node path must be present in the host-verified action binding map.
 /// Its untrusted `Node::action` string never independently grants permission.
 pub struct NativeGraphRun<'graph, 'kernel> {
+    graph: &'graph CompiledGraph,
     root: Root<'kernel>,
     session: GraphSession<'graph>,
     actions: BTreeMap<String, BoundAction>,
@@ -56,6 +85,7 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         payload: Value,
     ) -> Result<Self, Failure> {
         Ok(Self {
+            graph,
             root,
             session: graph.start(trigger, payload)?,
             actions,
@@ -130,13 +160,25 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         Ok(())
     }
 
-    fn native_result(&mut self, activation: u64, outcome: Outcome) -> Result<(), Failure> {
+    fn native_result(
+        &mut self,
+        activation: u64,
+        node_path: &str,
+        outcome: Outcome,
+    ) -> Result<(), Failure> {
         match outcome {
             Outcome::Success(value) => {
-                if let Err(failure) = self
-                    .session
-                    .complete(activation, [("value".into(), value)].into())
-                {
+                let decoded = self.graph.nodes().get(node_path)
+                    .ok_or_else(|| Failure::new(
+                        Code::InfrastructureFailure,
+                        "native activation has no compiled node",
+                    ))
+                    .and_then(|node| decode_native_outputs(&node.outputs, value));
+                let outputs = match decoded {
+                    Ok(outputs) => outputs,
+                    Err(failure) => return self.native_failure(activation, failure),
+                };
+                if let Err(failure) = self.session.complete(activation, outputs) {
                     self.failure.get_or_insert(failure);
                     self.cancel()?;
                 }
@@ -179,7 +221,7 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                         Poll::Pending => {}
                         Poll::Ready(Ok(outcome)) => {
                             pending.logical_done = true;
-                            self.native_result(id, outcome)?;
+                            self.native_result(id, &pending.node, outcome)?;
                         }
                         Poll::Ready(Err(failure)) => {
                             pending.logical_done = true;
@@ -269,12 +311,15 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                     .root
                     .call_graph(&bound.declaring_owner, &bound.selected, &request, true)
                 {
-                    Ok(Call::Ready(outcome)) => self.native_result(activation.id, outcome)?,
+                    Ok(Call::Ready(outcome)) => {
+                        self.native_result(activation.id, &activation.node, outcome)?
+                    }
                     Ok(Call::Pending(ticket)) => {
                         self.pending.insert(
                             activation.id,
                             PendingActivation {
                                 ticket,
+                                node: activation.node,
                                 logical_done: false,
                             },
                         );
@@ -308,4 +353,40 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         let report = self.session.finish()?;
         Ok((status, report, self.domain))
     }
+#[cfg(test)]
+mod output_projection_tests {
+    use super::*;
+    use phenix_contract::ValueSchema;
+    fn schema() -> Schema {
+        Schema::of(&ValueSchema::I64).unwrap()
+    }
+    #[test]
+    fn one_named_port_preserves_a_structured_native_payload() {
+        let ports = [("reply".to_owned(), schema())].into();
+        let payload = Value::map([("nested", Value::I64(3))]);
+        let result = decode_native_outputs(&ports, payload.clone()).unwrap();
+        assert_eq!(result["reply"], payload);
+    }
+    #[test]
+    fn multiple_named_ports_are_independently_emitted() {
+        let ports = [("reply".to_owned(), schema()), ("usage".to_owned(), schema())].into();
+        let result = decode_native_outputs(
+            &ports,
+            Value::map([("reply", Value::I64(8))]),
+        ).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["reply"], Value::I64(8));
+        assert!(decode_native_outputs(
+            &ports, Value::map([("unknown", Value::I64(3))])
+        ).is_err());
+        assert!(decode_native_outputs(&ports, Value::I64(8)).is_err());
+    }
+    #[test]
+    fn outputless_nodes_emit_nothing() {
+        let ports = BTreeMap::new();
+        assert!(decode_native_outputs(&ports, Value::Null).unwrap().is_empty());
+        assert!(decode_native_outputs(&ports, Value::I64(1)).is_err());
+    }
+}
+
 }
