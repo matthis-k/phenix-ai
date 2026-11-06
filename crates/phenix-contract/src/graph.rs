@@ -270,10 +270,14 @@ mod tests {
         let mut sink = Node {
             path: "finish".into(),
             action: "test/finish".into(),
-            inputs: [("run".into(), InputPort {
-                slots: [("value".into(), schema)].into(),
-                readiness: Readiness::All,
-            })].into(),
+            inputs: [(
+                "run".into(),
+                InputPort {
+                    slots: [("value".into(), schema)].into(),
+                    readiness: Readiness::All,
+                },
+            )]
+            .into(),
             outputs: BTreeMap::new(),
         };
         let mut patch = Patch::new("sink");
