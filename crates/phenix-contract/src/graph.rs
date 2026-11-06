@@ -4,15 +4,21 @@ use crate::{Code, Failure, Value, ValueSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn bad(why: impl Into<String>) -> Failure { Failure::new(Code::DescriptorInvalid, why) }
+fn bad(why: impl Into<String>) -> Failure {
+    Failure::new(Code::DescriptorInvalid, why)
+}
 
 /// A canonical schema descriptor, never a local Rust TypeId.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Schema(pub Vec<u8>);
 impl Schema {
-    pub fn of(schema: &ValueSchema) -> Result<Self, Failure> { Ok(Self(schema.encode()?)) }
-    pub fn decode(&self) -> Result<ValueSchema, Failure> { ValueSchema::decode(&self.0) }
+    pub fn of(schema: &ValueSchema) -> Result<Self, Failure> {
+        Ok(Self(schema.encode()?))
+    }
+    pub fn decode(&self) -> Result<ValueSchema, Failure> {
+        ValueSchema::decode(&self.0)
+    }
     pub fn accepts(&self, value: &Value) -> Result<bool, Failure> {
         Ok(self.decode()?.accepts(value))
     }
@@ -21,13 +27,23 @@ impl Schema {
 /// Absolute module-scoped paths are normalized by assembly, not by the executor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OutputRef { pub node: String, pub port: String }
+pub struct OutputRef {
+    pub node: String,
+    pub port: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct InputRef { pub node: String, pub port: String, pub slot: String }
+pub struct InputRef {
+    pub node: String,
+    pub port: String,
+    pub slot: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Edge { pub from: OutputRef, pub to: InputRef }
+pub struct Edge {
+    pub from: OutputRef,
+    pub to: InputRef,
+}
 
 /// A policy of an *output port*, not of a node action or an individual edge.
 /// The runtime may choose zero or more of the port's declared edges.
@@ -44,7 +60,10 @@ pub enum OutputPolicy {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Readiness { All, Any }
+pub enum Readiness {
+    All,
+    Any,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +82,10 @@ pub struct Node {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Trigger { pub name: String, pub to: InputRef }
+pub struct Trigger {
+    pub name: String,
+    pub to: InputRef,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", content = "data", rename_all = "snake_case")]
 pub enum Edit {
@@ -72,7 +94,10 @@ pub enum Edit {
     RemoveNode(String),
     Connect(Edge),
     Disconnect(Edge),
-    SetOutputPolicy { from: OutputRef, policy: OutputPolicy },
+    SetOutputPolicy {
+        from: OutputRef,
+        policy: OutputPolicy,
+    },
     AddTrigger(Trigger),
     RemoveTrigger(String),
 }
@@ -88,10 +113,20 @@ pub struct Patch {
 }
 impl Patch {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), after: BTreeSet::new(), priority: None, edits: Vec::new() }
+        Self {
+            id: id.into(),
+            after: BTreeSet::new(),
+            priority: None,
+            edits: Vec::new(),
+        }
     }
-    pub fn after(mut self, id: impl Into<String>) -> Self { self.after.insert(id.into()); self }
-    pub fn push(&mut self, edit: Edit) { self.edits.push(edit); }
+    pub fn after(mut self, id: impl Into<String>) -> Self {
+        self.after.insert(id.into());
+        self
+    }
+    pub fn push(&mut self, edit: Edit) {
+        self.edits.push(edit);
+    }
     /// Set routing on a port without modifying its producer node.
     pub fn output_policy(&mut self, from: OutputRef, policy: OutputPolicy) {
         self.push(Edit::SetOutputPolicy { from, policy });
@@ -106,24 +141,45 @@ impl Patch {
         for edit in &self.edits {
             match edit {
                 Edit::AddNode(n) | Edit::ReplaceNode(n) => {
-                    if n.path.is_empty() || n.action.is_empty() || n.inputs.is_empty() || n.outputs.is_empty() {
+                    if n.path.is_empty()
+                        || n.action.is_empty()
+                        || n.inputs.is_empty()
+                        || n.outputs.is_empty()
+                    {
                         return Err(bad("node must declare path, action, inputs and outputs"));
                     }
                     for port in n.inputs.values() {
-                        if port.slots.is_empty() { return Err(bad("empty input port")); }
-                        for schema in port.slots.values() { schema.decode()?; }
+                        if port.slots.is_empty() {
+                            return Err(bad("empty input port"));
+                        }
+                        for schema in port.slots.values() {
+                            schema.decode()?;
+                        }
                     }
-                    for schema in n.outputs.values() { schema.decode()?; }
+                    for schema in n.outputs.values() {
+                        schema.decode()?;
+                    }
                 }
-                Edit::RemoveNode(path) | Edit::RemoveTrigger(path) if path.is_empty() =>
-                    return Err(bad("empty removal target")),
-                Edit::Connect(e) | Edit::Disconnect(e) if e.from.node.is_empty()
-                    || e.from.port.is_empty() || e.to.node.is_empty()
-                    || e.to.port.is_empty() || e.to.slot.is_empty() =>
-                    return Err(bad("empty edge endpoint")),
-                Edit::AddTrigger(t) if t.name.is_empty() || t.to.node.is_empty()
-                    || t.to.port.is_empty() || t.to.slot.is_empty() =>
-                    return Err(bad("invalid trigger")),
+                Edit::RemoveNode(path) | Edit::RemoveTrigger(path) if path.is_empty() => {
+                    return Err(bad("empty removal target"))
+                }
+                Edit::Connect(e) | Edit::Disconnect(e)
+                    if e.from.node.is_empty()
+                        || e.from.port.is_empty()
+                        || e.to.node.is_empty()
+                        || e.to.port.is_empty()
+                        || e.to.slot.is_empty() =>
+                {
+                    return Err(bad("empty edge endpoint"))
+                }
+                Edit::AddTrigger(t)
+                    if t.name.is_empty()
+                        || t.to.node.is_empty()
+                        || t.to.port.is_empty()
+                        || t.to.slot.is_empty() =>
+                {
+                    return Err(bad("invalid trigger"))
+                }
                 Edit::SetOutputPolicy { from, policy } => {
                     if from.node.is_empty() || from.port.is_empty() {
                         return Err(bad("invalid output policy port"));
@@ -150,17 +206,22 @@ impl Patch {
         Value::map([
             ("format", Value::String("phenix.graph.patch".into())),
             ("data", Value::Bytes(json)),
-        ]).encode()
+        ])
+        .encode()
     }
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
-        let Value::Map(mut fields) = Value::decode(bytes)? else { return Err(bad("patch envelope")); };
+        let Value::Map(mut fields) = Value::decode(bytes)? else {
+            return Err(bad("patch envelope"));
+        };
         if fields.remove("format") != Some(Value::String("phenix.graph.patch".into())) {
             return Err(bad("unknown graph contribution format"));
         }
         let Some(Value::Bytes(data)) = fields.remove("data") else {
             return Err(bad("missing patch descriptor"));
         };
-        if !fields.is_empty() { return Err(bad("unknown patch envelope keys")); }
+        if !fields.is_empty() {
+            return Err(bad("unknown patch envelope keys"));
+        }
         let patch: Self = serde_json::from_slice(&data).map_err(|e| bad(e.to_string()))?;
         patch.validate()?;
         Ok(patch)
@@ -180,18 +241,31 @@ mod tests {
         let bytes = Value::map([
             ("format", Value::String("phenix.graph.invalid".into())),
             ("data", Value::Bytes(vec![])),
-        ]).encode().unwrap();
+        ])
+        .encode()
+        .unwrap();
         assert!(Patch::decode(&bytes).is_err());
     }
     #[test]
     fn output_policy_roundtrips_and_rejects_an_empty_selector() {
-        let port = OutputRef { node: "model".into(), port: "reply".into() };
+        let port = OutputRef {
+            node: "model".into(),
+            port: "reply".into(),
+        };
         let mut patch = Patch::new("route");
-        patch.output_policy(port.clone(), OutputPolicy::Select {
-            selector: "route.model".into(),
-        });
+        patch.output_policy(
+            port.clone(),
+            OutputPolicy::Select {
+                selector: "route.model".into(),
+            },
+        );
         assert_eq!(Patch::decode(&patch.encode().unwrap()).unwrap(), patch);
-        patch.output_policy(port, OutputPolicy::Select { selector: "".into() });
+        patch.output_policy(
+            port,
+            OutputPolicy::Select {
+                selector: "".into(),
+            },
+        );
         assert!(patch.validate().is_err());
     }
     #[test]
