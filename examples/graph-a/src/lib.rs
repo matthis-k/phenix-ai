@@ -1,38 +1,6 @@
 use example_graph_contracts::{ReferenceSource, SlowTask, Start, Task};
 use phenix_sdk::{live, *};
 
-const GRAPH: StaticGraphContribution = StaticGraphContribution {
-    plugin: "example.graph-a",
-    events: &[],
-    actions: &[],
-    nodes: &[
-        StaticGraphNode {
-            id: "a",
-            triggers: &["example.graph.partial", "example.graph.start"],
-            after: &[],
-            selector: "",
-            operation: "example.graph.task@1/run",
-            writes: &[
-                "example.graph-a/pending_signal",
-                "example.graph-a/result",
-                "example.graph-a/signal",
-            ],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::Skip,
-        },
-        StaticGraphNode {
-            id: "slow",
-            triggers: &["example.graph.slow"],
-            after: &["example.graph-a/a"],
-            selector: "",
-            operation: "example.graph.slow@1/run",
-            writes: &["example.graph-a/result"],
-            join: JoinPolicy::AllActive,
-            failure: FailurePolicy::FailRoot,
-        },
-    ],
-};
-
 #[plugin(
     id = "example.graph-a",
     define(Task),
@@ -41,8 +9,7 @@ const GRAPH: StaticGraphContribution = StaticGraphContribution {
     provide(Task, slot = "task"),
     provide(SlowTask, slot = "slow"),
     provide(ReferenceSource, slot = "reference_source"),
-    profile = "state",
-    graph(GRAPH)
+    profile = "state"
 )]
 mod provider {
     use super::*;
