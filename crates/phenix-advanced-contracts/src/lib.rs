@@ -391,8 +391,7 @@ pub trait CompactionStore {
     define(CompactionSummarizer),
     define(ModelTokenMeter),
     define(ModelPreparation),
-    define(ModelPreparationChange),
-
+    define(ModelPreparationChange)
 )]
 pub mod definitions {
     use super::*;
