@@ -1,8 +1,6 @@
 use object::{Object, ObjectSection};
+use phenix_contract::{Code, ContractMetadata, Failure, MetadataExecution, NATIVE_SECTION_BYTES};
 use phenix_contract::{Patch, Value};
-use phenix_contract::{
-    Code, ContractMetadata, Failure, MetadataExecution, NATIVE_SECTION_BYTES,
-};
 use sha2::{Digest, Sha256};
 pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -168,7 +166,9 @@ impl VerifiedPackage {
     pub fn metadata(&self) -> &ContractMetadata {
         &self.metadata
     }
-    pub fn graph(&self) -> Option<&Patch> { self.graph.as_ref() }
+    pub fn graph(&self) -> Option<&Patch> {
+        self.graph.as_ref()
+    }
     /// Trusted control-plane caller attests a read-only package source. The CLI
     /// accepts Nix store sources only. Mutable paths cannot provide TOCTOU safety.
     pub fn verify_trusted_read_only(root: &Path) -> Result<Self, Failure> {
@@ -217,8 +217,14 @@ impl VerifiedPackage {
                 "native metadata execution profile",
             ));
         }
-        if graph.as_ref().is_some_and(|patch| patch.id != metadata.plugin) {
-            return Err(Failure::new(Code::DescriptorInvalid, "patch owner differs from artifact"));
+        if graph
+            .as_ref()
+            .is_some_and(|patch| patch.id != metadata.plugin)
+        {
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "patch owner differs from artifact",
+            ));
         }
         Ok(Self {
             artifact,
@@ -327,7 +333,7 @@ mod tests {
     fn invalid_sections_and_old_formats_fail_closed() {
         let bytes = Patch::new("test.plugin").encode().unwrap();
         let valid = section(&bytes);
-        assert!(extract_graph_section(&valid[..valid.len()-1]).is_err());
+        assert!(extract_graph_section(&valid[..valid.len() - 1]).is_err());
         assert!(extract_graph_section(&[]).is_err());
         let mut padding = valid.clone();
         *padding.last_mut().unwrap() = 1;
