@@ -353,6 +353,8 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         let report = self.session.finish()?;
         Ok((status, report, self.domain))
     }
+}
+
 #[cfg(test)]
 mod output_projection_tests {
     use super::*;
@@ -387,6 +389,4 @@ mod output_projection_tests {
         assert!(decode_native_outputs(&ports, Value::Null).unwrap().is_empty());
         assert!(decode_native_outputs(&ports, Value::I64(1)).is_err());
     }
-}
-
 }
