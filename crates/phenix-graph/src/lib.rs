@@ -14,6 +14,7 @@ fn fail(msg: impl Into<String>) -> Failure { Failure::new(Code::SchemaRejected, 
 pub struct CompiledGraph {
     pub identity: String,
     nodes: BTreeMap<String, Node>,
+    owners: BTreeMap<String, String>,
     edges: BTreeSet<Edge>,
     triggers: BTreeMap<String, InputRef>,
     applied: Vec<String>,
@@ -73,7 +74,7 @@ impl CompiledGraph {
                         return Err(fail(format!("unordered writes by {owner} and {id} to {key:?}")));
                     }
                 }
-                graph.apply(edit)?;
+                graph.apply(edit, &id)?;
                 writers.insert(key, id.clone());
             }
             graph.applied.push(id.clone());
@@ -92,11 +93,12 @@ impl CompiledGraph {
         Ok(graph)
     }
 
-    fn apply(&mut self, edit: &Edit) -> Result<(), Failure> {
+    fn apply(&mut self, edit: &Edit, patch_id: &str) -> Result<(), Failure> {
         match edit {
             Edit::AddNode(n) => {
                 if self.nodes.contains_key(&n.path) { return Err(fail("node already exists")); }
                 self.nodes.insert(n.path.clone(), n.clone());
+                self.owners.insert(n.path.clone(), patch_id.into());
             }
             Edit::ReplaceNode(n) => {
                 let old = self.nodes.get(&n.path).ok_or_else(|| fail("replacement node absent"))?;
@@ -104,9 +106,11 @@ impl CompiledGraph {
                     return Err(fail("replacement changes node interface"));
                 }
                 self.nodes.insert(n.path.clone(), n.clone());
+                self.owners.insert(n.path.clone(), patch_id.into());
             }
             Edit::RemoveNode(name) => {
                 if self.nodes.remove(name).is_none() { return Err(fail("node absent")); }
+                self.owners.remove(name);
             }
             Edit::Connect(edge) => {
                 if !self.edges.insert(edge.clone()) { return Err(fail("duplicate edge")); }
@@ -126,6 +130,10 @@ impl CompiledGraph {
     }
     pub fn applied(&self) -> &[String] { &self.applied }
     pub fn nodes(&self) -> &BTreeMap<String, Node> { &self.nodes }
+    /// Contributor responsible for the current node implementation.
+    pub fn owner(&self, path: &str) -> Option<&str> {
+        self.owners.get(path).map(String::as_str)
+    }
     pub fn edges(&self) -> &BTreeSet<Edge> { &self.edges }
     pub fn triggers(&self) -> &BTreeMap<String, InputRef> { &self.triggers }
     fn input_schema(&self, e: &InputRef) -> Result<&Schema, Failure> {
@@ -290,6 +298,17 @@ mod tests {
         let reordered = CompiledGraph::compile(&[b, a]).unwrap();
         assert_eq!(ordered.identity, reordered.identity);
         assert!(!ordered.identity.is_empty());
+    }
+
+    #[test]
+    fn replacement_provenance_names_the_replacing_patch() {
+        let mut base = Patch::new("plugin.base");
+        base.push(Edit::AddNode(node("n", "source")));
+        let mut replacement = Patch::new("plugin.replace").after("plugin.base");
+        replacement.push(Edit::ReplaceNode(node("n", "double")));
+        let graph = CompiledGraph::compile(&[replacement, base]).unwrap();
+        assert_eq!(graph.owner("n"), Some("plugin.replace"));
+        assert_eq!(graph.nodes()["n"].action, "double");
     }
 
 }
