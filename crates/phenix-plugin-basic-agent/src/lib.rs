@@ -2,7 +2,6 @@
 //! The kernel owns action admission, authority, scheduling and cancellation.
 use phenix_basic_contracts::{ContextItem, Limits, Message, ModelRequest, Skill, ToolInfo};
 
-
 /// Pure snapshot projection for the authoritative Basic-to-Model boundary.
 ///
 /// A future graph-managed prepare node must consume this exact typed value;
@@ -1113,7 +1112,6 @@ mod plugin {
         host.invoke::<EventJournal::checkpoint_observer>("Journal", &request)
     }
 }
-
 
 #[cfg(test)]
 mod patch_embedding_tests {
