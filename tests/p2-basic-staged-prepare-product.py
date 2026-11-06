@@ -1,7 +1,4 @@
-"""Opt-in native graph admission proof: preparation is not Model execution.
-
-Default Basic composition and its existing graph remain unchanged.
-"""
+"""Single graph admission proof: preparation is not Model execution."""
 import json
 import os
 from pathlib import Path
@@ -9,22 +6,17 @@ import sqlite3
 import subprocess
 import sys
 
-runtime, original_path, basic_agent, staged_agent, destination, *selected_args = sys.argv[1:]
+runtime, original_path, basic_agent, destination, *selected_args = sys.argv[1:]
 out = Path(destination)
 out.mkdir(parents=True, exist_ok=True)
 source = json.loads(Path(original_path).read_text())
 assert basic_agent in source["artifacts"], source["artifacts"]
-assert staged_agent not in source["artifacts"], source["artifacts"]
 assert source["entry"]["interface"] == "phenix.basic.input@1"
 assert source["entry"]["operation"] == "submit"
 key = "phenix.basic.turn-prepare@1/prepare"
 advance_key = "phenix.basic.turn-advance@1/advance"
 scoped = "phenix.session.s1"
 stage = json.loads(json.dumps(source))
-stage["artifacts"] = [
-    staged_agent if artifact == basic_agent else artifact
-    for artifact in source["artifacts"]
-]
 stage["authority"]["operations"].extend([key, advance_key])
 pending_property = "phenix.basic.agent.property.pending_model_request@1"
 # Basic owns this value. The graph may observe it, but neither the root
@@ -106,9 +98,9 @@ assert not [e for e in bad_events if e["kind"] in (
 
 # Optional selected Advanced graph contribution. Reuse this exact staged
 # composition builder rather than duplicating grant/origin logic in tests.
-if len(sys.argv) in (9, 10):
-    graph_plugin, noop_plugin, advanced_definitions = sys.argv[6:9]
-    failure_model_plugin = sys.argv[9] if len(sys.argv) == 10 else None
+if len(sys.argv) in (8, 9):
+    graph_plugin, noop_plugin, advanced_definitions = sys.argv[5:8]
+    failure_model_plugin = sys.argv[8] if len(sys.argv) == 9 else None
     selected = json.loads(json.dumps(stage))
     selected["artifacts"].extend([graph_plugin, noop_plugin])
     selected["definitions"].append(advanced_definitions)
