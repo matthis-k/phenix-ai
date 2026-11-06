@@ -1397,36 +1397,12 @@
         "phenix-plugin-basic-agent"
         "phenix_plugin_basic_agent"
         ./crates/phenix-plugin-basic-agent;
-      # Verification-only feature-variant of the very same Basic agent.
-      # The P1 preset and batched default-feature binary are unchanged.
-      basicStagedAgent = rust.buildRustPackage {
-        pname = "phenix-plugin-basic-agent-staged";
-        version = "0.1.0";
-        src = subset (publicPaths ++ [
-          ./crates/phenix-basic-contracts
-          ./crates/phenix-plugin-basic-agent
-        ]);
-        cargoLock.lockFile = ./Cargo.lock;
-        cargoBuildFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
-        cargoTestFlags = [ "-p" "phenix-plugin-basic-agent" "--features" "staged-graph" ];
-        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-        doCheck = true;
-        installPhase = ''
-          mkdir -p "$out/lib"
-          cp target/*/release/libphenix_plugin_basic_agent.so "$out/lib/plugin.so"
-        '';
-        postFixup = ''
-          ${describe}/bin/phenix-describe "$out/lib/plugin.so" "$out/descriptor.bin" > digests.json
-          ${pkgs.python3}/bin/python ${recordWriter} "$out"
-          test -s "$out/descriptor.bin"
-        '';
-      };
       p2BasicStagedPrepareCheck = pkgs.runCommand "phenix-p2-basic-staged-prepare"
         { nativeBuildInputs = [ pkgs.python3 ]; } ''
         mkdir -p "$out"
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out"
+          ${basicComposition} ${basicAgent} "$out"
         test -s "$out/accepted.json"
       '';
       # Test-only selected graph preparation, with a replaceable no-op
@@ -1481,7 +1457,7 @@
         mkdir -p "$out"
         ${pkgs.python3}/bin/python ${./tests/p2-basic-staged-prepare-product.py} \
           ${basicRuntime}/bin/phenix-basic-runtime \
-          ${basicComposition} ${basicAgent} ${basicStagedAgent} "$out" \
+          ${basicComposition} ${basicAgent} "$out" \
           ${basicGraphPreparerPlugin} ${basicNoopPreparerPlugin} ${advancedDefinitions} \
           ${p2ModelMeterFixtureCheck}
         test -s "$out/accepted.json"
@@ -3080,7 +3056,6 @@
         p2-model-token-meter-fixture = p2ModelMeterFixtureCheck;
         p2-selected-model-summarizer = p2SelectedModelSummarizer;
         p2-basic-staged-prepare = p2BasicStagedPrepareCheck;
-        p2-basic-staged-plugin = basicStagedAgent;
         p2-selected-graph-preparer = basicSelectedGraphPrepareCheck;
         p2-graph-preparer-plugin = basicGraphPreparerPlugin;
         p2-noop-preparer-plugin = basicNoopPreparerPlugin;
