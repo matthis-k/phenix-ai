@@ -245,14 +245,6 @@ pub struct ContractPackageRecord {
     pub format: String,
     pub descriptor: String,
     pub descriptor_sha256: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph: Option<ContractGraphRecord>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ContractGraphRecord {
-    pub file: String,
-    pub sha256: String,
 }
 #[derive(Debug)]
 pub struct VerifiedContractPackage {
@@ -306,12 +298,6 @@ impl VerifiedContractPackage {
         let mut hash = Sha256::new();
         hash.update(b"phenix.contract-package.v2\0");
         hash.update(Sha256::digest(&bytes));
-        if record.graph.is_some() {
-            return Err(Failure::new(
-                Code::DescriptorInvalid,
-                "definition-only packages no longer carry graph contributions",
-            ));
-        }
         let package_sha256 = format!("{:x}", hash.finalize());
         Ok(Self {
             metadata,
