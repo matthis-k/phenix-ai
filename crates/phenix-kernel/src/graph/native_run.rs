@@ -106,9 +106,26 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
         if !self.cancelled {
             self.cancelled = true;
             self.session.cancel();
-            for pending in self.pending.values() {
-                self.root.cancel(&pending.ticket)?;
+        }
+        // Physical cancellation must be attempted for every outstanding native
+        // ticket even if another ticket's cancellation fails. Already-delivered
+        // tickets only need physical draining/release.
+        let mut first_failure = None;
+        for pending in self.pending.values() {
+            if pending.logical_done {
+                continue;
             }
+            if let Err(failure) = self.root.cancel(&pending.ticket) {
+                if failure.code == Code::ScopeRejected
+                    && failure.message == "ticket is already cancelled or quiescent"
+                {
+                    continue;
+                }
+                first_failure.get_or_insert(failure);
+            }
+        }
+        if let Some(failure) = first_failure {
+            return Err(failure);
         }
         Ok(())
     }
@@ -154,53 +171,63 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
                 .pending
                 .remove(&id)
                 .expect("ticket key was captured from this run");
-            if !pending.logical_done {
-                match self.root.poll(&pending.ticket)? {
-                    Poll::Pending => {}
-                    Poll::Ready(Ok(outcome)) => {
-                        pending.logical_done = true;
-                        self.native_result(id, outcome)?;
-                    }
-                    Poll::Ready(Err(failure)) => {
-                        pending.logical_done = true;
-                        self.native_failure(id, failure)?;
-                    }
-                    Poll::Cancelled { .. } => {
-                        pending.logical_done = true;
-                        self.cancel()?;
-                        self.session.complete(id, BTreeMap::new())?;
-                    }
-                    Poll::Draining => {
-                        // An already delivered result must not cause an early
-                        // Root drop while its native lease is still alive.
-                        // Fail the logical activation, then keep this ticket
-                        // until physical release succeeds.
-                        pending.logical_done = true;
-                        self.native_failure(
-                            id,
-                            Failure::new(
-                                Code::InfrastructureFailure,
-                                "graph ticket lost a previously delivered outcome",
-                            ),
-                        )?;
+            // Every failure path restores the pending ticket before returning,
+            // so Root teardown can never silently abandon a native lease.
+            let advanced = (|| -> Result<bool, Failure> {
+                if !pending.logical_done {
+                    match self.root.poll(&pending.ticket)? {
+                        Poll::Pending => {}
+                        Poll::Ready(Ok(outcome)) => {
+                            pending.logical_done = true;
+                            self.native_result(id, outcome)?;
+                        }
+                        Poll::Ready(Err(failure)) => {
+                            pending.logical_done = true;
+                            self.native_failure(id, failure)?;
+                        }
+                        Poll::Cancelled { .. } => {
+                            pending.logical_done = true;
+                            self.cancel()?;
+                            self.session.complete(id, BTreeMap::new())?;
+                        }
+                        Poll::Draining => {
+                            pending.logical_done = true;
+                            self.native_failure(
+                                id,
+                                Failure::new(
+                                    Code::InfrastructureFailure,
+                                    "graph ticket lost a previously delivered outcome",
+                                ),
+                            )?;
+                        }
                     }
                 }
-            }
-            if pending.logical_done {
-                match self.root.release(&pending.ticket) {
-                    Ok(()) => continue,
-                    Err(failure)
-                        if failure.code == Code::ScopeRejected
-                            && failure.message == "physical lease is still live" =>
-                    {
-                        // A delivered/cancelled ticket can still have a native
-                        // child to poll. Advancing it is required for release.
-                        let _ = self.root.poll(&pending.ticket)?;
+                if pending.logical_done {
+                    match self.root.release(&pending.ticket) {
+                        Ok(()) => return Ok(true),
+                        Err(failure)
+                            if failure.code == Code::ScopeRejected
+                                && failure.message == "physical lease is still live" =>
+                        {
+                            // The result has already been delivered. Polling
+                            // again advances nested native children to quiescence.
+                            let _ = self.root.poll(&pending.ticket)?;
+                        }
+                        Err(failure) => return Err(failure),
                     }
-                    Err(failure) => return Err(failure),
+                }
+                Ok(false)
+            })();
+            match advanced {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.pending.insert(id, pending);
+                }
+                Err(failure) => {
+                    self.pending.insert(id, pending);
+                    return Err(failure);
                 }
             }
-            self.pending.insert(id, pending);
         }
 
         if !self.cancelled && self.failure.is_none() && self.domain.is_none() {
