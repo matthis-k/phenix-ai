@@ -19,6 +19,15 @@ pub enum NativeRunStatus {
     Failed,
 }
 
+impl NativeRunStatus {
+    pub fn is_finished(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Domain | Self::Cancelled | Self::Failed
+        )
+    }
+}
+
 struct PendingActivation {
     ticket: Ticket,
     logical_done: bool,
@@ -61,6 +70,7 @@ impl<'graph, 'kernel> NativeGraphRun<'graph, 'kernel> {
     pub fn domain(&self) -> Option<&Value> { self.domain.as_ref() }
     pub fn failure(&self) -> Option<&Failure> { self.failure.as_ref() }
     pub fn in_flight(&self) -> usize { self.pending.len() }
+    pub fn activations(&self) -> usize { self.session.activations() }
 
     pub fn status(&self) -> NativeRunStatus {
         if !self.pending.is_empty() || !self.session.settled() {
