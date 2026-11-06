@@ -25,11 +25,36 @@ patch.output_policy(
 
 - Default `OutputPolicy::Broadcast`: all outgoing edges receive the emission.
 - `OutputPolicy::Select`: a host-supplied function receives output port, value and candidate destinations, and returns a subset of those destinations.
+- `OutputPolicy::SelectOne`: identical selection interface, but **exactly one** existing edge must be selected per emission. Compilation rejects zero candidate edges; execution rejects zero, multiple, duplicate, or unknown selected destinations. This handles five equally typed providers without a dedicated routing node.
 - An empty selection is valid. No downstream node is activated through omitted edges.
 - Unknown or duplicate destinations are rejected. The complete set is validated **before** any delivery; a failed policy cannot cause partial fan-out.
 - Only compiled edges may be selected. The policy cannot add graph topology or authorize capabilities.
 - Policy changes are ordinary Patch edits (`SetOutputPolicy`), resolved at compilation with the same conflict and deterministic identity rules as other patch edits.
 - Local `ActionHost::route` implements the policy. Missing policy implementation **fails closed** rather than broadcasting.
+
+Example: five providers offering the same request schema. Only the selected provider receives this emission:
+
+```rust
+let source = OutputRef {
+    node: "provider.request".into(),
+    port: "request".into(),
+};
+for n in 0..5 {
+    patch.push(Edit::Connect(Edge {
+        from: source.clone(),
+        to: InputRef {
+            node: format!("provider.{n}"),
+            port: "run".into(),
+            slot: "request".into(),
+        },
+    }));
+}
+patch.output_policy(source, OutputPolicy::SelectOne {
+    selector: "select.provider".into(),
+});
+```
+
+The selector can depend on the emitted request and, once integrated with Phenix's authorized native host, the store. Choosing a provider is a delivery decision, **not** an extra actor responsible for calling the provider. A provider may later be a module with the same public input and output interface.
 
 The policy's result selects `InputRef` endpoints. These are the *destination portions* of canonical edges; identity remains the source-output / destination-input pair. There are no user-managed edge IDs.
 
@@ -52,6 +77,7 @@ Until these gates are implemented, custom policies remain usable in the local gr
 
 - Recursive module definitions/flattening (when added, only published module ports cross boundaries; output policies still operate on canonical compiled endpoints)
 - Rich slot policies beyond `Readiness::{All,Any}`, buffering policies and custom joins
+- Native selected-provider routing until the selector binding, pending-policy lifecycle and authorized store access have been implemented and tested
 - Priority-arbitrated patch conflicts and advanced splice resolution
 - Optional `patch!` authoring macro and graph visualization metadata
 
