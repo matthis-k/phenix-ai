@@ -532,35 +532,60 @@ impl Prepared {
         &self,
     ) -> Result<BTreeMap<String, crate::graph::BoundAction>, Failure> {
         let graph = self.graph.as_ref().ok_or_else(|| {
-            error(Code::MissingBinding, "no graph compiled for this composition")
+            error(
+                Code::MissingBinding,
+                "no graph compiled for this composition",
+            )
         })?;
         let mut actions = BTreeMap::new();
         for (path, node) in graph.nodes() {
             let owner = graph.owner(path).ok_or_else(|| {
-                error(Code::InfrastructureFailure, "compiled node lacks patch provenance")
+                error(
+                    Code::InfrastructureFailure,
+                    "compiled node lacks patch provenance",
+                )
             })?;
             if !operation_key(&node.action) {
-                return Err(error(Code::SchemaRejected, "invalid graph operation reference"));
+                return Err(error(
+                    Code::SchemaRejected,
+                    "invalid graph operation reference",
+                ));
             }
             let mut providers = BTreeSet::new();
-            if self.operations.contains_key(&(owner.into(), node.action.clone())) {
+            if self
+                .operations
+                .contains_key(&(owner.into(), node.action.clone()))
+            {
                 providers.insert(owner.to_owned());
             }
             for ((caller, imported), provider) in &self.bindings {
-                if caller == owner && (imported == &node.action
-                    || imported.strip_suffix(&format!(":{}", node.action)).is_some())
+                if caller == owner
+                    && (imported == &node.action
+                        || imported
+                            .strip_suffix(&format!(":{}", node.action))
+                            .is_some())
                 {
                     providers.insert(provider.clone());
                 }
             }
             let provider = match providers.len() {
                 1 => providers.into_iter().next().expect("one provider"),
-                0 => return Err(error(Code::MissingBinding,
-                    format!("graph node {path} has no selected operation"))),
-                _ => return Err(error(Code::AmbiguousBinding,
-                    format!("graph node {path} resolves to multiple providers"))),
+                0 => {
+                    return Err(error(
+                        Code::MissingBinding,
+                        format!("graph node {path} has no selected operation"),
+                    ))
+                }
+                _ => {
+                    return Err(error(
+                        Code::AmbiguousBinding,
+                        format!("graph node {path} resolves to multiple providers"),
+                    ))
+                }
             };
-            let (interface, operation) = node.action.split_once('/')
+            let (interface, operation) = node
+                .action
+                .split_once('/')
                 .expect("operation_key accepted this operation");
             let selected = Selection {
                 provider,
@@ -568,10 +593,13 @@ impl Prepared {
                 operation: operation.into(),
             };
             self.operation(&selected)?;
-            actions.insert(path.clone(), crate::graph::BoundAction {
-                declaring_owner: owner.into(),
-                selected,
-            });
+            actions.insert(
+                path.clone(),
+                crate::graph::BoundAction {
+                    declaring_owner: owner.into(),
+                    selected,
+                },
+            );
         }
         Ok(actions)
     }
@@ -602,4 +630,3 @@ impl Prepared {
         "roots":{"active":null,"completed":0,"last_root_id":null},"calls":0,"denied_operations":0,"last_failure":null})
     }
 }
-
