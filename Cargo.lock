@@ -1796,7 +1796,7 @@ name = "phenix-graph"
 version = "0.1.0"
 dependencies = [
  "phenix-contract",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
