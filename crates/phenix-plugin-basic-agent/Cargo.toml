@@ -13,3 +13,7 @@ staged-graph = []
 [dependencies]
 phenix-sdk = { path = "../phenix-sdk" }
 phenix-basic-contracts = { path = "../phenix-basic-contracts" }
+
+[build-dependencies]
+phenix-sdk = { path = "../phenix-sdk" }
+phenix-basic-contracts = { path = "../phenix-basic-contracts" }
