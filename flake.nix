@@ -54,6 +54,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./tests/generation-identity-v2.json
       ];
@@ -76,6 +77,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-conformance
         ./crates/phenix-sdk
@@ -1017,6 +1019,7 @@
       };
       p2ModelMeterProductRunner = build "phenix-p2-model-meter-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -1280,6 +1283,7 @@
       # phenix-conformance so provider edits do not rebuild kernel fixtures.
       selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-provider-contracts
@@ -1545,6 +1549,7 @@
         ./Cargo.lock
         ./crates/phenix-contract
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-sdk
         ./crates/phenix-macros
@@ -2072,6 +2077,7 @@
       };
       p2SourceEvidenceRunner = build "phenix-p2-source-evidence" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2090,6 +2096,7 @@
       '';
       p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2109,6 +2116,7 @@
       '';
       p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
@@ -2127,6 +2135,7 @@
       '';
       p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
         ./crates/phenix-artifact
+        ./crates/phenix-graph
         ./crates/phenix-kernel
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
