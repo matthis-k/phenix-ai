@@ -29,6 +29,19 @@ pub struct InputRef { pub node: String, pub port: String, pub slot: String }
 #[serde(deny_unknown_fields)]
 pub struct Edge { pub from: OutputRef, pub to: InputRef }
 
+/// A policy of an *output port*, not of a node action or an individual edge.
+/// The runtime may choose zero or more of the port's declared edges.
+/// Select is a symbolic host-bound policy: it cannot grant effect authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputPolicy {
+    /// Default: send each emission to every connected destination.
+    Broadcast,
+    /// Invoke the registered policy to choose a subset of connected destinations.
+    /// Runtime implementations may inspect the emitted value or authorized store.
+    Select { selector: String },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Readiness { All, Any }
@@ -59,6 +72,7 @@ pub enum Edit {
     RemoveNode(String),
     Connect(Edge),
     Disconnect(Edge),
+    SetOutputPolicy { from: OutputRef, policy: OutputPolicy },
     AddTrigger(Trigger),
     RemoveTrigger(String),
 }
@@ -78,6 +92,10 @@ impl Patch {
     }
     pub fn after(mut self, id: impl Into<String>) -> Self { self.after.insert(id.into()); self }
     pub fn push(&mut self, edit: Edit) { self.edits.push(edit); }
+    /// Set routing on a port without modifying its producer node.
+    pub fn output_policy(&mut self, from: OutputRef, policy: OutputPolicy) {
+        self.push(Edit::SetOutputPolicy { from, policy });
+    }
     pub fn validate(&self) -> Result<(), Failure> {
         if self.id.is_empty() || self.id.len() > 512 || self.after.contains(&self.id) {
             return Err(bad("invalid patch identity or self-dependency"));
@@ -106,6 +124,16 @@ impl Patch {
                 Edit::AddTrigger(t) if t.name.is_empty() || t.to.node.is_empty()
                     || t.to.port.is_empty() || t.to.slot.is_empty() =>
                     return Err(bad("invalid trigger")),
+                Edit::SetOutputPolicy { from, policy } => {
+                    if from.node.is_empty() || from.port.is_empty() {
+                        return Err(bad("invalid output policy port"));
+                    }
+                    if let OutputPolicy::Select { selector } = policy {
+                        if selector.is_empty() || selector.len() > 512 {
+                            return Err(bad("invalid output policy selector"));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -152,6 +180,17 @@ mod tests {
             ("data", Value::Bytes(vec![])),
         ]).encode().unwrap();
         assert!(Patch::decode(&bytes).is_err());
+    }
+    #[test]
+    fn output_policy_roundtrips_and_rejects_an_empty_selector() {
+        let port = OutputRef { node: "model".into(), port: "reply".into() };
+        let mut patch = Patch::new("route");
+        patch.output_policy(port.clone(), OutputPolicy::Select {
+            selector: "route.model".into(),
+        });
+        assert_eq!(Patch::decode(&patch.encode().unwrap()).unwrap(), patch);
+        patch.output_policy(port, OutputPolicy::Select { selector: "".into() });
+        assert!(patch.validate().is_err());
     }
     #[test]
     fn reject_self_dependency() {
