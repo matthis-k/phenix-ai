@@ -101,6 +101,19 @@ impl GraphSession<'_> {
         self.report.activations += 1;
         Ok(())
     }
+    /// Record a failed host activation without converting it into a graph output.
+    /// Other in-flight activations remain reserved until the host drains them.
+    pub fn fail(&mut self, id: u64, failure: Failure) -> Result<(), Failure> {
+        self.inflight.remove(&id)
+            .ok_or_else(|| fail("unknown or already completed activation"))?;
+        self.report.activations += 1;
+        if self.failed.is_none() {
+            self.failed = Some(failure);
+            self.queues.clear();
+        }
+        Ok(())
+    }
+
     /// Stop issuing work immediately. Native in-flight activations retain their
     /// identity until the host finishes physical cancellation and calls complete.
     pub fn cancel(&mut self) {
@@ -254,6 +267,17 @@ mod tests {
         session.complete(joined.id, [("value".into(), Value::I64(25))].into()).unwrap();
         assert!(session.settled());
         assert_eq!(session.finish().unwrap().activations, 4);
+    }
+
+    #[test]
+    fn host_failure_blocks_new_work_until_inflight_drains() {
+        let graph = source_graph();
+        let mut session = graph.start("run", Value::I64(5)).unwrap();
+        let activation = session.next_ready(None).unwrap().unwrap();
+        session.fail(activation.id, fail("native invocation failure")).unwrap();
+        assert!(session.settled());
+        assert!(session.next_ready(None).is_err());
+        assert!(session.finish().is_err());
     }
 
 }
