@@ -4,15 +4,10 @@ pub fn graph_patch() -> Result<phenix_sdk::Patch, phenix_sdk::Failure> {
     let request = Schema::of(
         &<phenix_basic_contracts::PromptSubmitted as phenix_sdk::Portable>::SCHEMA.owned()?
     )?;
-    #[cfg(feature = "staged-graph")]
+    // One graph-native admission path; no alternate Basic agent graph.
     let (name, action, response) = (
         "prepare", "phenix.basic.turn-prepare@1/prepare",
         Schema::of(&<phenix_basic_contracts::ModelRequest as phenix_sdk::Portable>::SCHEMA.owned()?)?,
-    );
-    #[cfg(not(feature = "staged-graph"))]
-    let (name, action, response) = (
-        "submit", "phenix.basic.input@1/submit",
-        Schema::of(&<phenix_basic_contracts::RunResult as phenix_sdk::Portable>::SCHEMA.owned()?)?,
     );
     let path = format!("phenix.basic.agent/{name}");
     let mut patch = Patch::new("phenix.basic.agent");
