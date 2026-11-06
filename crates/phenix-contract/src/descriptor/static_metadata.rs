@@ -583,8 +583,14 @@ pub const fn metadata<const N: usize, const I: usize, const E: usize, const P: u
 /// graph section. The artifact verifier decodes and authenticates it offline.
 /// Compile-time generation of these bytes is owned by the SDK authoring path.
 pub const fn patch(bytes: &[u8]) -> MetadataBytes {
-    assert!(!bytes.is_empty() && bytes.len() <= METADATA_BYTES, "invalid patch metadata");
-    let mut output = MetadataBytes { data: [0; METADATA_BYTES], len: 0 };
+    assert!(
+        !bytes.is_empty() && bytes.len() <= METADATA_BYTES,
+        "invalid patch metadata"
+    );
+    let mut output = MetadataBytes {
+        data: [0; METADATA_BYTES],
+        len: 0,
+    };
     output.raw(bytes);
     output
 }
