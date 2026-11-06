@@ -170,40 +170,23 @@ impl CompiledGraph {
         args
     }
 
-    /// One synchronous trigger wave. A native-host adapter will provide the
-    /// async/pending action path; there is no second scheduler in Phenix.
+    /// Run the same incremental session used for native pending dispatch,
+    /// draining local activations synchronously through the supplied host.
     pub fn execute(
         &self, trigger: &str, payload: Value, host: &mut impl ActionHost,
         activation_limit: Option<usize>,
     ) -> Result<ExecutionReport, Failure> {
-        let target = self.triggers.get(trigger)
-            .ok_or_else(|| fail(format!("unknown trigger {trigger}")))?;
-        let mut queues = BTreeMap::<InputRef, VecDeque<Value>>::new();
-        self.deliver(&mut queues, target, payload)?;
-        let mut report = ExecutionReport::default();
-        loop {
-            let next = self.nodes.values().find(|n| Self::ready(n, &queues)).cloned();
-            let Some(node) = next else { break };
-            if activation_limit.is_some_and(|max| report.activations >= max) {
-                return Err(fail("activation limit exceeded"));
-            }
-            let result = host.invoke(&node.action, Self::consume(&node, &mut queues))?;
-            report.activations += 1;
-            for (port, value) in result {
-                let out = OutputRef { node: node.path.clone(), port };
-                if !self.output_schema(&out)?.accepts(&value)? {
-                    return Err(fail("output value rejected by schema"));
-                }
-                report.outputs.entry(out.clone()).or_default().push(value.clone());
-                for edge in self.edges.iter().filter(|e| e.from == out) {
-                    self.deliver(&mut queues, &edge.to, value.clone())?;
-                }
-            }
+        let mut session = self.start(trigger, payload)?;
+        while let Some(activation) = session.next_ready(activation_limit)? {
+            let outputs = host.invoke(&activation.action, activation.args)?;
+            session.complete(activation.id, outputs)?;
         }
-        report.unconsumed = queues.values().map(VecDeque::len).sum();
-        Ok(report)
+        session.finish()
     }
 }
+mod session;
+pub use session::{Activation, GraphSession};
+
 pub trait ActionHost {
     fn invoke(
         &mut self, action: &str, args: BTreeMap<String, Value>,
