@@ -132,9 +132,6 @@
         "example-authoring-client"
         "example-authoring-field"
         "example-authoring-provider"
-        "example-graph-a"
-        "example-graph-b"
-        "example-graph-c"
         "example-pending-consumer"
         "example-pending-immediate"
         "example-pending-security"
@@ -227,26 +224,6 @@
       resources = plugin "example-resource-provider";
       valueProvider = plugin "example-value-provider";
       valueClient = plugin "example-value-client";
-      graphA = plugin "example-graph-a";
-      graphB = plugin "example-graph-b";
-      graphC = plugin "example-graph-c";
-      graphDefinitionsBinary = rust.buildRustPackage {
-        pname = "example-graph-contracts";
-        version = "0.1.0";
-        src = pluginSource;
-        buildAndTestSubdir = "examples";
-        cargoRoot = "examples";
-        cargoLock.lockFile = ./examples/Cargo.lock;
-        cargoBuildFlags = [
-          "-p"
-          "example-graph-contracts"
-          "--bin"
-          "example-graph-contracts"
-        ];
-        preBuild = "export CARGO_HOME=$TMPDIR/cargo-home";
-        doCheck = false;
-        installPhase = "mkdir -p $out/bin; cp target/*/release/example-graph-contracts $out/bin/";
-      };
       definitionPackage = name: emitter:
         pkgs.runCommand name { nativeBuildInputs = [ pkgs.python3 ]; } ''
           mkdir -p $out
@@ -261,7 +238,6 @@
           PY
           ${describe}/bin/phenix-describe --metadata $out > $out/inspection.json
         '';
-      graphDefinitions = definitionPackage "phenix-graph-definitions" "${graphDefinitionsBinary}/bin/example-graph-contracts";
       basicContractsSource = subset (publicPaths ++ [ ./crates/phenix-basic-contracts ]);
       basicContractsBinary = build "phenix-basic-contracts" basicContractsSource;
       basicDefinitions = definitionPackage "phenix-basic-contracts" "${basicContractsBinary}/bin/phenix-basic-contracts";
