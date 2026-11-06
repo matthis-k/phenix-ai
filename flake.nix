@@ -2346,10 +2346,23 @@
         mkdir -p $out
         ${conformanceBinary}/bin/phenix-b2-session ${basicSession} ${storageFixture} ${basicDefinitions} $out
       '';
-      graphCheck = pkgs.runCommand "phenix-m1-graph" { } ''
-        mkdir -p $out
-        ${conformanceBinary}/bin/phenix-m1-graph ${graphA} ${graphB} ${graphC} ${graphDefinitions} $out
-      '';
+      # The graph engine is the single source of graph scheduling and testing.
+      # Do not build an alternative graph-app runner for V1/V2 conformance.
+      graphCheck = rust.buildRustPackage {
+        pname = "phenix-graph-conformance";
+        version = "0.1.0";
+        src = subset [
+          ./Cargo.toml
+          ./Cargo.lock
+          ./crates/phenix-contract
+          ./crates/phenix-graph
+        ];
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "-p" "phenix-graph" ];
+        cargoTestFlags = [ "-p" "phenix-graph" ];
+        doCheck = true;
+        installPhase = "mkdir -p $out; touch $out/graph-tests-passed";
+      };
       authoredProvider = plugin "example-authoring-provider";
       authoredClient = plugin "example-authoring-client";
       authoredField = plugin "example-authoring-field";
