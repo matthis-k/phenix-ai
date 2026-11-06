@@ -457,4 +457,101 @@ mod tests {
         assert_eq!(report.outputs.len(), 3);
     }
 
+    fn five_providers() -> CompiledGraph {
+        let mut patch = Patch::new("five.providers");
+        patch.push(Edit::AddNode(node("router", "source")));
+        patch.push(Edit::AddTrigger(Trigger {
+            name: "choose".into(),
+            to: input("router", "value"),
+        }));
+        for index in 0..5 {
+            let name = format!("provider.{index}");
+            patch.push(Edit::AddNode(node(&name, "double")));
+            patch.push(edge("router", &name, "value"));
+        }
+        patch.output_policy(
+            OutputRef { node: "router".into(), port: "value".into() },
+            OutputPolicy::SelectOne { selector: "choose.provider".into() },
+        );
+        CompiledGraph::compile(&[patch]).unwrap()
+    }
+
+    struct ProviderHost;
+    impl ActionHost for ProviderHost {
+        fn invoke(
+            &mut self,
+            action: &str,
+            args: BTreeMap<String, Value>,
+        ) -> Result<BTreeMap<String, Value>, Failure> {
+            Host.invoke(action, args)
+        }
+
+        fn route(
+            &mut self,
+            selector: &str,
+            from: &OutputRef,
+            value: &Value,
+            candidates: &[InputRef],
+        ) -> Result<Vec<InputRef>, Failure> {
+            assert_eq!(selector, "choose.provider");
+            assert_eq!(from.node, "router");
+            assert_eq!(candidates.len(), 5);
+            let Value::I64(number) = value else {
+                return Err(fail("provider selector requires an integer"));
+            };
+            let path = format!("provider.{}", number.rem_euclid(5));
+            Ok(candidates.iter().filter(|endpoint| endpoint.node == path)
+                .cloned().collect())
+        }
+    }
+
+    #[test]
+    fn five_identically_typed_providers_select_exactly_one() {
+        let graph = five_providers();
+        assert_eq!(graph.nodes().len(), 6);
+        for selected in 0..5_i64 {
+            let result = graph.execute(
+                "choose", Value::I64(selected), &mut ProviderHost, None,
+            ).unwrap();
+            assert_eq!(result.activations, 2); // router + one provider
+            assert_eq!(result.outputs.len(), 2);
+            let provider = OutputRef {
+                node: format!("provider.{selected}"), port: "value".into(),
+            };
+            assert_eq!(result.outputs[&provider], vec![Value::I64(selected * 2)]);
+        }
+    }
+
+    #[test]
+    fn exactly_one_rejects_zero_and_multiple_destinations() {
+        let graph = five_providers();
+        for destinations in [
+            vec![],
+            vec![input("provider.0", "value"), input("provider.1", "value")],
+        ] {
+            let mut session = graph.start("choose", Value::I64(1)).unwrap();
+            let activation = session.next_ready(None).unwrap().unwrap();
+            assert_eq!(activation.node, "router");
+            let outcome = session.complete_with(
+                activation.id,
+                [("value".into(), Value::I64(1))].into(),
+                |_from, _selector, _value, _candidates| Ok(destinations.clone()),
+            );
+            assert!(outcome.is_err());
+            assert!(session.settled());
+            assert!(session.finish().is_err());
+        }
+    }
+
+    #[test]
+    fn exactly_one_rejects_unconnected_provider_at_compile_time() {
+        let mut patch = Patch::new("empty.selector");
+        patch.push(Edit::AddNode(node("router", "source")));
+        patch.output_policy(
+            OutputRef { node: "router".into(), port: "value".into() },
+            OutputPolicy::SelectOne { selector: "choose.provider".into() },
+        );
+        assert!(CompiledGraph::compile(&[patch]).is_err());
+    }
+
 }
