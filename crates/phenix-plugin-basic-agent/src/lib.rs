@@ -1126,3 +1126,16 @@ mod plugin {
         host.invoke::<EventJournal::checkpoint_observer>("Journal", &request)
     }
 }
+
+
+#[cfg(test)]
+mod patch_embedding_tests {
+    use super::*;
+    #[test]
+    fn embedded_native_patch_exactly_matches_authored_graph() {
+        let expected = graph_patch().expect("plugin graph patch");
+        let embedded = plugin::GRAPH_METADATA.bytes();
+        assert_eq!(embedded, expected.encode().unwrap().as_slice());
+        assert_eq!(phenix_sdk::Patch::decode(embedded).unwrap(), expected);
+    }
+}
