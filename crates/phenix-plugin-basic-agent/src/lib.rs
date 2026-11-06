@@ -242,7 +242,7 @@ mod graph_patch;
 pub use graph_patch::graph_patch;
 const GRAPH_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/graph_patch.bin"));
 
-#[cfg(all(test, feature = "staged-graph"))]
+#[cfg(test)]
 #[path = "staged_graph_tests.rs"]
 mod staged_graph_tests;
 
@@ -1020,32 +1020,19 @@ mod plugin {
         Ok(true)
     }
 
+    // The legacy direct BasicInput admission is no longer a second agent
+    // executor. It remains an explicit denial until root admission is moved
+    // from selected-operation identity to graph trigger identity.
     #[pending(BasicInput::submit)]
     fn begin(
-        state: &mut State,
-        host: &Host<'_>,
-        request: PromptSubmitted,
+        _state: &mut State,
+        _host: &Host<'_>,
+        _request: PromptSubmitted,
     ) -> PendingResult<RunResult, BasicError> {
-        if cfg!(feature = "staged-graph") {
-            return PendingResult::Ready(Err(CallError::Domain(error(
-                ErrorCode::Denied,
-                "staged Basic requires the graph preparation admission path",
-            ))));
-        }
-        if state.active.is_some() {
-            return PendingResult::Ready(Err(CallError::Domain(error(
-                ErrorCode::Conflict,
-                "a Basic run is already active",
-            ))));
-        }
-        match prepare(host, request) {
-            Ok(mut running) => {
-                let value = advance(host, &mut running, None);
-                finish(state, host, running, value)
-            }
-            Err(CallError::Domain(error)) => PendingResult::Ready(Err(CallError::Domain(error))),
-            Err(CallError::Kernel(failure)) => PendingResult::QuiescentFailure(failure),
-        }
+        PendingResult::Ready(Err(CallError::Domain(error(
+            ErrorCode::Denied,
+            "direct BasicInput execution is retired; use the graph trigger",
+        ))))
     }
 
     #[poll(BasicInput::submit)]
