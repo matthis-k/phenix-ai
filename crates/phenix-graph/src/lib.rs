@@ -88,8 +88,16 @@ impl CompiledGraph {
                 return Err(fail(format!("edge type mismatch {edge:?}")));
             }
         }
-        for source in graph.output_policies.keys() {
+        for (source, policy) in &graph.output_policies {
             graph.output_schema(source)?;
+            if matches!(policy, OutputPolicy::SelectOne { .. })
+                && !graph.edges.iter().any(|edge| &edge.from == source)
+            {
+                return Err(fail(format!(
+                    "exactly-one output policy on {}.{} has no outgoing edges",
+                    source.node, source.port,
+                )));
+            }
         }
         for endpoint in graph.triggers.values() {
             graph.input_schema(endpoint)?;
