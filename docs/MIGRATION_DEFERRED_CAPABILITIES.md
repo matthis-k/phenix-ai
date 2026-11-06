@@ -8,7 +8,7 @@
 Every plugin contributes a portable Patch. Each leaf node performs **one task**, with typed input slots and named outputs. Input policy controls *when* it runs; output policy controls *which declared edges* receive emitted values. An environment, model provider, tool, or security check may be a module exposing exactly the same kind of typed public ports as a leaf node; its internals are flattened into the same graph at compilation. Nodes never decide downstream node identities. The store is accessed through authorized node/policy operations; store reads and writes do not implicitly trigger execution.
 
 ```text
-prompt ──► Prepare ──► ModelFetch ──► [SelectOne provider] ──► Provider A
+prompt ──► Prepare ──► ModelFetch ──► [output selector] ──► Provider A
                                                   ├─────────► Provider B
                                                   ├─────────► Provider C
                                                   ├─────────► Provider D
@@ -17,7 +17,7 @@ prompt ──► Prepare ──► ModelFetch ──► [SelectOne provider] ─
 model_reply ──► output policy ──► (tools / finish / retry)
 ```
 
-The SelectOne policy validates exactly one *existing edge* per emission. Identical input schemas permit interchangeable providers; the selector does not grant permissions.
+The output policy is a function that returns **any subset of existing edges** (zero, one, several, or all). Selecting exactly one of five identically typed provider nodes is one possible policy function, not a separate graph capability. The selector does not grant permissions.
 
 ## Preserved and required even during cutover
 
@@ -38,7 +38,7 @@ The SelectOne policy validates exactly one *existing edge* per emission. Identic
 | R1 | Full Basic prompt/model/tool loop does not operate through the new graph; retired `BasicInput::submit` deliberately rejects | Split Basic into Prepare, ModelFetch, ParseReply, ToolInvoke, JoinTools, Finish and Journal nodes, with edge policies expressing continuations | Plain prompt; two tools and second model turn; repeated prompts; error/turn-limit checkpoints |
 | R2 | B5 native graph acceptance binary (`phenix-b5-agent`) removed because it calls deleted `GraphExecution` and old direct-submit behavior | Rebuild equivalent black-box conformance on `begin_graph`/`NativeGraphRun`, never restore old facade | Correct results; denied grants; nested denial reconciliation; durable session recovery; domain/error/turn-limit; tool order; usage counters |
 | R3 | Advanced preparer's property watch/state-trigger graph is not yet native | Store change is a typed explicit trigger event; admission and coloring handled by the existing GraphSession | Two contributions, property update, selected preparer, no implicit reruns, denied reads/writes |
-| R4 | `OutputPolicy::Select` and `SelectOne` execute with local `ActionHost::route` only | Bind selector through verified plugin operation; support sync then pending policy calls with same native ticket lifecycle | Five identical-schema providers select exactly one, policy reads authorized store, permission denied, malformed/zero/multiple destinations, pending cancellation |
+| R4 | `OutputPolicy::Select` executes with local `ActionHost::route` only | Bind selector through verified plugin operation; support sync then pending policy calls with same native ticket lifecycle | Five identical-schema providers choose one by function; zero/one/several/all existing edges allowed; unknown/duplicate edges rejected; policy reads authorized store, permission denied, pending cancellation |
 | R5 | Only `Readiness::{All, Any}`; incomplete cross-wave producer settlement | Extend input policy/slot state in the current GraphSession, never in plugins | Any-two, deferred/immediate, omitted upstream branch, independent waves and joins |
 | R6 | Module/subgraph flattening and public-port boundaries absent | Compile reusable module declarations into flat nodes/edges with stable instance paths and public-only endpoints | Reused module, nested module, independent configured instances, private boundary denied, flat equivalence |
 | R7 | Patch planner has only ordered edit conflict detection | Expand the current Patch resolver with priorities, splice/replacement policies and exact edge/slot conflict footprints | Independent diamond contributors, dependency ordering, collision, deterministic conflict resolution, rollback |
@@ -61,4 +61,4 @@ No new parallel app, runner, graph executor or legacy compatibility layer is per
 
 ## Current verification boundary
 
-The graph-unit conformance cases for SelectOne have been committed. The native host cannot yet run a selector and the graph-native Basic product is not yet functional. Rust formatting/CI and full native integration are **not passing/verified** at this stage. Keep PR #1241 draft until exact-head verification confirms the minimum migration gates; further functionality can remain listed as an explicit reduction when the reduced baseline itself is operational.
+The graph-unit conformance tests cover selection of zero, one, several, or all five compatible provider edges. The native host cannot yet run a selector and the graph-native Basic product is not yet functional. Rust formatting/CI and full native integration are **not passing/verified** at this stage. Keep PR #1241 draft until exact-head verification confirms the minimum migration gates; further functionality can remain listed as an explicit reduction when the reduced baseline itself is operational.
