@@ -295,26 +295,54 @@ impl PluginSet {
     ///
     /// The kernel coordinates this with activation of its compiled graph;
     /// this method does not mutate a graph or grant runtime authority.
+    /// Commit all staged selections together or none of them. This is the
+    /// kernel-facing publication primitive for a multi-plugin generation.
+    pub fn commit_batch(
+        &mut self,
+        staged: Vec<PreparedPlugin>,
+    ) -> Result<Vec<PluginSnapshot>, Failure> {
+        use std::collections::BTreeSet;
+        let mut names = BTreeSet::new();
+        for candidate in &staged {
+            if !names.insert(candidate.name.as_str()) {
+                return Err(Failure::new(Code::DescriptorInvalid, "duplicate staged plugin"));
+            }
+            if !Arc::ptr_eq(&self.catalog, &candidate.catalog) {
+                return Err(Failure::new(Code::Denied, "foreign staged plugin"));
+            }
+            let same_active = match (
+                &candidate.expected_active,
+                self.loaded.get(&candidate.name),
+            ) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            };
+            if !same_active
+                || self.revisions.get(&candidate.name).copied().unwrap_or(0)
+                    != candidate.expected_revision
+            {
+                return Err(Failure::new(Code::Denied, "stale plugin composition"));
+            }
+        }
+        // No fallible operations remain after the validation pass.
+        Ok(staged
+            .into_iter()
+            .map(|candidate| {
+                self.revisions
+                    .insert(candidate.name.clone(), candidate.loaded.revision);
+                let loaded = candidate.loaded;
+                self.loaded.insert(candidate.name, loaded.clone());
+                PluginSnapshot { loaded }
+            })
+            .collect())
+    }
+
     pub fn commit(&mut self, staged: PreparedPlugin) -> Result<PluginSnapshot, Failure> {
-        if !Arc::ptr_eq(&self.catalog, &staged.catalog) {
-            return Err(Failure::new(Code::Denied, "foreign staged plugin"));
-        }
-        let current = self.loaded.get(&staged.name);
-        let same_active = match (&staged.expected_active, current) {
-            (None, None) => true,
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            _ => false,
-        };
-        if !same_active
-            || self.revisions.get(&staged.name).copied().unwrap_or(0) != staged.expected_revision
-        {
-            return Err(Failure::new(Code::Denied, "stale plugin composition"));
-        }
-        self.revisions
-            .insert(staged.name.clone(), staged.loaded.revision);
-        let loaded = staged.loaded;
-        self.loaded.insert(staged.name, loaded.clone());
-        Ok(PluginSnapshot { loaded })
+        Ok(self
+            .commit_batch(vec![staged])?
+            .pop()
+            .expect("one validated candidate"))
     }
 
     pub fn load<C: Send + 'static>(
