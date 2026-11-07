@@ -740,6 +740,7 @@ pub fn local_port_layout(input: TokenStream) -> TokenStream {
 // methods: no compiler/executor mechanism exists behind the proc macro.
 mod patch_syntax {
     use proc_macro2::{Span, TokenStream as Tokens};
+    use syn::ext::IdentExt;
     use quote::quote;
     use syn::{
         Expr, Ident, LitInt, LitStr, Result, Token,
@@ -767,11 +768,11 @@ mod patch_syntax {
         if input.peek(LitStr) {
             Ok(input.parse::<LitStr>()?.value())
         } else {
-            Ok(input.parse::<Ident>()?.to_string())
+            Ok(input.call(Ident::parse_any)?.to_string())
         }
     }
     fn endpoint(input: ParseStream<'_>) -> Result<String> {
-        let mut output = input.parse::<Ident>()?.to_string();
+        let mut output = input.call(Ident::parse_any)?.to_string();
         while input.peek(Token![.]) || input.peek(Token![/]) {
             if input.peek(Token![.]) {
                 input.parse::<Token![.]>()?;
@@ -780,7 +781,7 @@ mod patch_syntax {
                 input.parse::<Token![/]>()?;
                 output.push('/');
             }
-            output.push_str(&input.parse::<Ident>()?.to_string());
+            output.push_str(&input.call(Ident::parse_any)?.to_string());
         }
         Ok(output)
     }
@@ -894,7 +895,7 @@ mod patch_syntax {
                                 input.parse::<Token![/]>()?;
                                 chain[0].push('/');
                             }
-                            chain[0].push_str(&input.parse::<Ident>()?.to_string());
+                            chain[0].push_str(&input.call(Ident::parse_any)?.to_string());
                         }
                         while input.peek(Token![->]) {
                             input.parse::<Token![->]>()?;
