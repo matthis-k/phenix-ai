@@ -1,5 +1,6 @@
 //! Contract test for exactly one typed payload, including a unit payload per node activation.
 //! Uses the production compiler, scheduler and unmodified node registration.
+use phenix_graph::testing::ExpectWave;
 use phenix_graph::{
     AllSameCohort, Atomic, Deployment, Emission, IntoEmission, ModuleCatalog, ModuleDefBuilder,
     ModuleTriggerTarget, NodeTemplate, OutputSchema, OutputSlot, ReportRetention, TypedPort, Value,
