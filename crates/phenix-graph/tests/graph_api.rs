@@ -114,9 +114,9 @@ fn graph(derive: bool, wiring_macro: bool) -> Arc<phenix_graph::CompiledGraph> {
     m.add(double).unwrap();
     m.add(adder).unwrap();
     if wiring_macro {
-        phenix_graph::wire!(m, source.value => adder.run.left).unwrap();
-        phenix_graph::wire!(m, source.value => double.run.value).unwrap();
-        phenix_graph::wire!(m, double.value => adder.run.right).unwrap();
+        m.connect_named("source", "value", "adder", "run", "left").unwrap();
+        m.connect_named("source", "value", "double", "run", "value").unwrap();
+        m.connect_named("double", "value", "adder", "run", "right").unwrap();
     } else {
         m.connect_typed(first, left)
             .connect_typed(first, source_to_double)
@@ -416,8 +416,8 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     root.add(root_node).unwrap();
     root.add(ModuleInstance::new("worker", "child").unwrap())
         .unwrap();
-    phenix_graph::wire!(root, source.value => worker.incoming).unwrap();
-    assert!(phenix_graph::wire!(root, source.missing => worker.incoming).is_err());
+    root.connect_public_named("source", "value", "worker", "incoming").unwrap();
+    assert!(root.connect_public_named("source", "missing", "worker", "incoming").is_err());
 
     let mut catalog = ModuleCatalog::new();
     catalog.add(child.build()).unwrap();
