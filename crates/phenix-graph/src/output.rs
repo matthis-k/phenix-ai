@@ -51,6 +51,7 @@ pub(crate) enum DestinationTarget {
     },
 }
 
+#[derive(Clone)]
 pub(crate) enum OutputSelection {
     All,
     Targets(Vec<DestinationTarget>),
