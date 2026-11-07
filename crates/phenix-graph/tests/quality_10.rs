@@ -346,14 +346,18 @@ fn generated_acyclic_graphs_match_an_independent_reference_model() {
                 _ => previous - 3,
             });
             if let Some(parent) = parent {
-                graph.connect(outputs[parent].clone(), node.inlet()).unwrap();
+                graph
+                    .connect(outputs[parent].clone(), node.inlet())
+                    .unwrap();
             } else {
                 first_input = Some(node.inlet());
             }
             parents.push(parent);
             outputs.push(node.output());
         }
-        let ingress = graph.expose_input("request", first_input.expect("root input")).unwrap();
+        let ingress = graph
+            .expose_input("request", first_input.expect("root input"))
+            .unwrap();
         let trigger = graph.trigger("run", [ingress]).unwrap();
         let compiled = graph.compile().unwrap();
         let expected = (0..n)
