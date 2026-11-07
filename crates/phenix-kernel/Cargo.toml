@@ -8,4 +8,4 @@ phenix-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 phenix-artifact = { path = "../phenix-artifact" }
-libloading = "0.8"
+phenix-plugin = { path = "../phenix-plugin" }

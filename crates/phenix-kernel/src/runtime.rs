@@ -1,5 +1,5 @@
+use phenix_plugin::Native;
 use crate::{
-    native::Native,
     resolve::{EffectTarget, Prepared, Selection},
 };
 use phenix_contract::{
@@ -159,7 +159,7 @@ impl Prepared {
             let metadata = kernel.prepared.packages[id].metadata();
             *kernel.initializing.borrow_mut() = Some(id.clone());
             let guard = CallGuard::new(&kernel, 0, id, Authority::default(), None, false)?;
-            let initialized = kernel.images.borrow()[id].initialize(guard.scope);
+            let initialized = kernel.images.borrow()[id].initialize(&state_host(guard.scope, 0, 0));
             drop(guard);
             *kernel.initializing.borrow_mut() = None;
             initialized?;
@@ -455,7 +455,7 @@ impl Kernel {
             );
         }
         let (status, value) =
-            self.images.borrow()[&selection.provider].invoke(guard.scope, &key, input)?;
+            self.images.borrow()[&selection.provider].invoke(&state_host(guard.scope, 0, 0), &key, input)?;
         match status {
             0 if contract.response.accepts(&value) => {
                 Ok(super::pending::Call::Ready(Outcome::Success(value)))

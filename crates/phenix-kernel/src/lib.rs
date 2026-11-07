@@ -1,6 +1,5 @@
 mod dag;
 pub mod graph;
-mod native;
 pub mod resolve;
 mod runtime;
 mod state_effects;
