@@ -100,9 +100,7 @@ fn one_low_level_local_function_handles_directed_returns() {
     let source = graph.local_output::<i64>("router", "value").unwrap();
     graph.connect(source.clone(), yes.inlet()).unwrap();
     graph.connect(source, no.inlet()).unwrap();
-    let input = graph
-        .local_input::<i64>("router", "run", "value")
-        .unwrap();
+    let input = graph.local_input::<i64>("router", "run", "value").unwrap();
     let input = graph.expose_input("request", input).unwrap();
     graph.trigger("run", [input]).unwrap();
 
