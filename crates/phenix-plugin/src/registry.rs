@@ -1,7 +1,10 @@
 //! Graph-independent, typed in-process contribution staging.
 //! Identity is host-supplied provenance, never a permission or ABI guarantee.
 use phenix_contract::{identifier, Code, Failure};
-use std::{any::{Any, TypeId}, collections::{BTreeMap, BTreeSet}};
+use std::{
+    any::{Any, TypeId},
+    collections::{BTreeMap, BTreeSet},
+};
 
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
@@ -45,10 +48,15 @@ impl Registrar {
                 "invalid contribution identity",
             ));
         }
-        if self.entries.iter().any(|entry| {
-            entry.kind == C::KIND && entry.type_id != TypeId::of::<C>()
-        }) {
-            return Err(Failure::new(Code::SchemaRejected, "contribution kind type mismatch"));
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.kind == C::KIND && entry.type_id != TypeId::of::<C>())
+        {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "contribution kind type mismatch",
+            ));
         }
         let id = value.id().to_owned();
         if !self.names.insert((C::KIND, id.clone())) {
@@ -88,11 +96,20 @@ impl Contributions {
             .iter()
             .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
             .collect();
-        let mut types: BTreeMap<&str, TypeId> = self.entries.iter()
-            .map(|entry| (entry.kind, entry.type_id)).collect();
+        let mut types: BTreeMap<&str, TypeId> = self
+            .entries
+            .iter()
+            .map(|entry| (entry.kind, entry.type_id))
+            .collect();
         for e in &batch.entries {
-            if types.insert(e.kind, e.type_id).is_some_and(|known| known != e.type_id) {
-                return Err(Failure::new(Code::SchemaRejected, "contribution kind type mismatch"));
+            if types
+                .insert(e.kind, e.type_id)
+                .is_some_and(|known| known != e.type_id)
+            {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "contribution kind type mismatch",
+                ));
             }
             if !names.insert((&e.owner, e.kind, &e.id)) {
                 return Err(Failure::new(
@@ -184,7 +201,9 @@ mod tests {
     struct Spoof(&'static str);
     impl Contribution for Spoof {
         const KIND: &'static str = "graph.patch";
-        fn id(&self) -> &str { self.0 }
+        fn id(&self) -> &str {
+            self.0
+        }
     }
 
     #[test]
