@@ -391,7 +391,9 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     module
         .export_input("request", vec![filter.input::<i32>("run", "value")])
         .unwrap();
-    module.export_output("result", filter.output::<i32>("value")).unwrap();
+    module
+        .export_output("result", filter.output::<i32>("value"))
+        .unwrap();
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -423,7 +425,9 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     module
         .export_input("request", vec![parser.input::<String>("run", "value")])
         .unwrap();
-    module.export_output("result", parser.output::<i32>("value")).unwrap();
+    module
+        .export_output("result", parser.output::<i32>("value"))
+        .unwrap();
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
