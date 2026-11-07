@@ -322,7 +322,8 @@ fn generated_acyclic_graphs_match_an_independent_reference_model() {
         let n = 2 + (next() % 7) as usize;
         let input_value = (next() % 17) as i64;
         let mut reference: Vec<i64> = Vec::new();
-        let mut handles = Vec::new();
+        let mut outputs: Vec<phenix_graph::OutputRef<i64>> = Vec::new();
+        let mut first_input: Option<phenix_graph::Input<i64>> = None;
         let mut parents = Vec::new();
         let mut graph = GraphBuilder::new(format!("model-{seed}"));
         for i in 0..n {
@@ -345,14 +346,14 @@ fn generated_acyclic_graphs_match_an_independent_reference_model() {
                 _ => previous - 3,
             });
             if let Some(parent) = parent {
-                graph
-                    .connect(handles[parent].output(), node.inlet())
-                    .unwrap();
+                graph.connect(outputs[parent].clone(), node.inlet()).unwrap();
+            } else {
+                first_input = Some(node.inlet());
             }
             parents.push(parent);
-            handles.push(node);
+            outputs.push(node.output());
         }
-        let ingress = graph.expose_input("request", handles[0].inlet()).unwrap();
+        let ingress = graph.expose_input("request", first_input.expect("root input")).unwrap();
         let trigger = graph.trigger("run", [ingress]).unwrap();
         let compiled = graph.compile().unwrap();
         let expected = (0..n)
