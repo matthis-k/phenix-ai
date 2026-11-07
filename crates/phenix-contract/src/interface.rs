@@ -43,9 +43,10 @@ fn valid_interface(id: &str) -> bool {
     let Some((name, major)) = id.rsplit_once('@') else {
         return false;
     };
-    identifier(name) && major
-        .parse::<u32>()
-        .is_ok_and(|version| version > 0 && major == version.to_string())
+    identifier(name)
+        && major
+            .parse::<u32>()
+            .is_ok_and(|version| version > 0 && major == version.to_string())
 }
 
 impl InterfaceSurface {
@@ -54,7 +55,10 @@ impl InterfaceSurface {
         if !valid_interface(&id) {
             return Err(invalid(format!("invalid interface identity {id:?}")));
         }
-        Ok(Self { id, ports: BTreeMap::new() })
+        Ok(Self {
+            id,
+            ports: BTreeMap::new(),
+        })
     }
 
     pub fn id(&self) -> &str {
@@ -81,30 +85,39 @@ impl InterfaceSurface {
         let schema = schema.owned()?;
         let key = (direction, name.to_owned());
         if self.ports.insert(key.clone(), schema).is_some() {
-            return Err(invalid(format!("duplicate public {} {name}", direction.as_str())));
+            return Err(invalid(format!(
+                "duplicate public {} {name}",
+                direction.as_str()
+            )));
         }
         Ok(self)
     }
 
     pub fn ports(&self) -> impl Iterator<Item = (PortDirection, &str, &ValueSchema)> {
-        self.ports.iter().map(|((direction, name), schema)| (*direction, name.as_str(), schema))
+        self.ports
+            .iter()
+            .map(|((direction, name), schema)| (*direction, name.as_str(), schema))
     }
 
     /// The normal serialized value representation is reused for offline Nix
     /// checks. This encoding is canonical and independent of Rust struct names
     /// or declaration order.
     pub fn encode(&self) -> Result<Vec<u8>, Failure> {
-        let ports = self.ports().map(|(direction, name, schema)| {
-            Ok(Value::map([
-                ("direction", Value::String(direction.as_str().into())),
-                ("name", Value::String(name.into())),
-                ("schema", Value::Bytes(schema.encode()?)),
-            ]))
-        }).collect::<Result<Vec<_>, Failure>>()?;
+        let ports = self
+            .ports()
+            .map(|(direction, name, schema)| {
+                Ok(Value::map([
+                    ("direction", Value::String(direction.as_str().into())),
+                    ("name", Value::String(name.into())),
+                    ("schema", Value::Bytes(schema.encode()?)),
+                ]))
+            })
+            .collect::<Result<Vec<_>, Failure>>()?;
         Value::map([
             ("interface", Value::String(self.id.clone())),
             ("ports", Value::List(ports)),
-        ]).encode()
+        ])
+        .encode()
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, Failure> {
@@ -140,7 +153,11 @@ impl InterfaceSurface {
             let key = (PortDirection::parse(&direction)?, name);
             let schema = ValueSchema::decode(&schema)?;
             if surface.ports.insert(key.clone(), schema).is_some() {
-                return Err(invalid(format!("duplicate public {} {}", key.0.as_str(), key.1)));
+                return Err(invalid(format!(
+                    "duplicate public {} {}",
+                    key.0.as_str(),
+                    key.1
+                )));
             }
         }
         Ok(surface)
@@ -157,14 +174,22 @@ impl InterfaceSurface {
         }
         for (key, expected) in &self.ports {
             match implementation.ports.get(key) {
-                None => return Err(invalid(format!(
-                    "interface {}: missing {} {}",
-                    self.id, key.0.as_str(), key.1
-                ))),
-                Some(actual) if actual != expected => return Err(invalid(format!(
-                    "interface {}: incompatible {} {}",
-                    self.id, key.0.as_str(), key.1
-                ))),
+                None => {
+                    return Err(invalid(format!(
+                        "interface {}: missing {} {}",
+                        self.id,
+                        key.0.as_str(),
+                        key.1
+                    )))
+                }
+                Some(actual) if actual != expected => {
+                    return Err(invalid(format!(
+                        "interface {}: incompatible {} {}",
+                        self.id,
+                        key.0.as_str(),
+                        key.1
+                    )))
+                }
                 Some(_) => {}
             }
         }
@@ -172,7 +197,9 @@ impl InterfaceSurface {
             if !self.ports.contains_key(&(*direction, name.clone())) {
                 return Err(invalid(format!(
                     "interface {}: unexpected {} {}",
-                    self.id, direction.as_str(), name
+                    self.id,
+                    direction.as_str(),
+                    name
                 )));
             }
         }
@@ -195,53 +222,86 @@ mod tests {
         prompt: String,
     }
     const REQUEST: StaticSchema = StaticSchema::Struct(&[
-        StaticField { name: "prompt", schema: StaticSchema::String },
-        StaticField { name: "tokens", schema: StaticSchema::U64 },
+        StaticField {
+            name: "prompt",
+            schema: StaticSchema::String,
+        },
+        StaticField {
+            name: "tokens",
+            schema: StaticSchema::U64,
+        },
     ]);
     impl Portable for ProviderRequest {
         const SCHEMA: StaticSchema = REQUEST;
         fn to_value(&self) -> Value {
-            Value::map([("prompt", Value::String(self.prompt.clone())),
-                ("tokens", Value::U64(self.tokens))])
+            Value::map([
+                ("prompt", Value::String(self.prompt.clone())),
+                ("tokens", Value::U64(self.tokens)),
+            ])
         }
         fn from_value(value: Value) -> Result<Self, Failure> {
-            let Value::Map(mut fields) = value else { return Err(invalid("not record")); };
+            let Value::Map(mut fields) = value else {
+                return Err(invalid("not record"));
+            };
             let (Some(Value::String(prompt)), Some(Value::U64(tokens))) =
                 (fields.remove("prompt"), fields.remove("tokens"))
-            else { return Err(invalid("not a request")); };
-            if !fields.is_empty() { return Err(invalid("extra fields")); }
+            else {
+                return Err(invalid("not a request"));
+            };
+            if !fields.is_empty() {
+                return Err(invalid("extra fields"));
+            }
             Ok(Self { prompt, tokens })
         }
     }
     impl Portable for ConsumerRequest {
         const SCHEMA: StaticSchema = REQUEST;
         fn to_value(&self) -> Value {
-            Value::map([("tokens", Value::U64(self.tokens)),
-                ("prompt", Value::String(self.prompt.clone()))])
+            Value::map([
+                ("tokens", Value::U64(self.tokens)),
+                ("prompt", Value::String(self.prompt.clone())),
+            ])
         }
         fn from_value(value: Value) -> Result<Self, Failure> {
-            let Value::Map(mut fields) = value else { return Err(invalid("not record")); };
+            let Value::Map(mut fields) = value else {
+                return Err(invalid("not record"));
+            };
             let (Some(Value::U64(tokens)), Some(Value::String(prompt))) =
                 (fields.remove("tokens"), fields.remove("prompt"))
-            else { return Err(invalid("not a request")); };
-            if !fields.is_empty() { return Err(invalid("extra fields")); }
+            else {
+                return Err(invalid("not a request"));
+            };
+            if !fields.is_empty() {
+                return Err(invalid("extra fields"));
+            }
             Ok(Self { tokens, prompt })
         }
     }
 
     #[test]
     fn independently_declared_types_match_and_roundtrip() {
-        let a = InterfaceSurface::new("model.generate@1").unwrap()
-            .input::<ProviderRequest>("request").unwrap()
-            .output::<String>("reply").unwrap();
-        let b = InterfaceSurface::new("model.generate@1").unwrap()
-            .input::<ConsumerRequest>("request").unwrap()
-            .output::<String>("reply").unwrap();
+        let a = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<ProviderRequest>("request")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
+        let b = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<ConsumerRequest>("request")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
         a.check_implementation(&b).unwrap();
         assert_eq!(a.encode().unwrap(), b.encode().unwrap());
         assert_eq!(InterfaceSurface::decode(&a.encode().unwrap()).unwrap(), a);
-        let encoded = ProviderRequest { prompt: "hello".into(), tokens: 128 }
-            .to_value().encode().unwrap();
+        let encoded = ProviderRequest {
+            prompt: "hello".into(),
+            tokens: 128,
+        }
+        .to_value()
+        .encode()
+        .unwrap();
         let other = ConsumerRequest::from_value(Value::decode(&encoded).unwrap()).unwrap();
         assert_eq!(other.prompt, "hello");
         assert_eq!(other.tokens, 128);
@@ -249,44 +309,67 @@ mod tests {
 
     #[test]
     fn identity_and_shapes_both_matter() {
-        let a = InterfaceSurface::new("model.generate@1").unwrap()
-            .input::<ProviderRequest>("request").unwrap()
-            .output::<String>("reply").unwrap();
-        let changed_identity = InterfaceSurface::new("other.generate@1").unwrap()
-            .input::<ConsumerRequest>("request").unwrap()
-            .output::<String>("reply").unwrap();
+        let a = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<ProviderRequest>("request")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
+        let changed_identity = InterfaceSurface::new("other.generate@1")
+            .unwrap()
+            .input::<ConsumerRequest>("request")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
         assert!(a.check_implementation(&changed_identity).is_err());
-        let changed_type = InterfaceSurface::new("model.generate@1").unwrap()
-            .input::<u64>("request").unwrap()
-            .output::<String>("reply").unwrap();
+        let changed_type = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<u64>("request")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
         assert!(a.check_implementation(&changed_type).is_err());
-        let missing = InterfaceSurface::new("model.generate@1").unwrap()
-            .output::<String>("reply").unwrap();
+        let missing = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .output::<String>("reply")
+            .unwrap();
         assert!(a.check_implementation(&missing).is_err());
         assert!(InterfaceSurface::new("model.generate@0").is_err());
     }
 
     #[test]
     fn port_names_directions_and_duplicate_bindings_are_checked() {
-        let base = InterfaceSurface::new("model.generate@1").unwrap()
-            .input::<u64>("request").unwrap();
+        let base = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<u64>("request")
+            .unwrap();
         assert!(base.clone().input::<u64>("request").is_err());
-        let wrong = InterfaceSurface::new("model.generate@1").unwrap()
-            .output::<u64>("request").unwrap();
+        let wrong = InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .output::<u64>("request")
+            .unwrap();
         assert!(base.check_implementation(&wrong).is_err());
-        assert!(InterfaceSurface::new("model.generate@1").unwrap().input::<u64>("").is_err());
+        assert!(InterfaceSurface::new("model.generate@1")
+            .unwrap()
+            .input::<u64>("")
+            .is_err());
     }
 
     #[test]
     fn decode_rejects_malformed_schema_and_unknown_fields() {
         let malformed = Value::map([
             ("interface", Value::String("model.generate@1".into())),
-            ("ports", Value::List(vec![Value::map([
-                ("direction", Value::String("input".into())),
-                ("name", Value::String("request".into())),
-                ("schema", Value::Bytes(vec![0, 1, 2])),
-            ])])),
-        ]).encode().unwrap();
+            (
+                "ports",
+                Value::List(vec![Value::map([
+                    ("direction", Value::String("input".into())),
+                    ("name", Value::String("request".into())),
+                    ("schema", Value::Bytes(vec![0, 1, 2])),
+                ])]),
+            ),
+        ])
+        .encode()
+        .unwrap();
         assert!(InterfaceSurface::decode(&malformed).is_err());
     }
 }

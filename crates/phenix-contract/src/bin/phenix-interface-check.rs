@@ -13,8 +13,14 @@ fn read(path: &str) -> Result<InterfaceSurface> {
 
 fn self_test() -> Result<()> {
     const REQUEST: StaticSchema = StaticSchema::Struct(&[
-        StaticField { name: "prompt", schema: StaticSchema::String },
-        StaticField { name: "tokens", schema: StaticSchema::U64 },
+        StaticField {
+            name: "prompt",
+            schema: StaticSchema::String,
+        },
+        StaticField {
+            name: "tokens",
+            schema: StaticSchema::U64,
+        },
     ]);
     let good = InterfaceSurface::new("model.generate@1")?
         .port("request", PortDirection::Input, REQUEST)?
@@ -22,7 +28,9 @@ fn self_test() -> Result<()> {
     let independently_declared = InterfaceSurface::new("model.generate@1")?
         .port("request", PortDirection::Input, REQUEST)?
         .output::<String>("reply")?;
-    good.check_implementation(&InterfaceSurface::decode(&independently_declared.encode()?)?)?;
+    good.check_implementation(&InterfaceSurface::decode(
+        &independently_declared.encode()?,
+    )?)?;
     let wrong_type = InterfaceSurface::new("model.generate@1")?
         .input::<u64>("request")?
         .output::<String>("reply")?;
@@ -31,8 +39,11 @@ fn self_test() -> Result<()> {
         .port("request", PortDirection::Input, REQUEST)?
         .output::<String>("reply")?;
     assert!(good.check_implementation(&wrong_id).is_err());
-    let missing_output = InterfaceSurface::new("model.generate@1")?
-        .port("request", PortDirection::Input, REQUEST)?;
+    let missing_output = InterfaceSurface::new("model.generate@1")?.port(
+        "request",
+        PortDirection::Input,
+        REQUEST,
+    )?;
     assert!(good.check_implementation(&missing_output).is_err());
     Ok(())
 }
