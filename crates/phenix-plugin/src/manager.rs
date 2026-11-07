@@ -106,6 +106,7 @@ impl PluginCatalog {
     pub fn instance(&self) -> PluginSet {
         PluginSet {
             catalog: self.identity.clone(),
+            set_identity: Arc::new(()),
             factories: self.factories.clone(),
             loaded: BTreeMap::new(),
             next_revision: 0,
@@ -189,7 +190,7 @@ impl<C: Contribution> Deref for ContributionHandle<C> {
 /// has compiled and validated the graph that will reference it. Dropping it
 /// aborts the replacement without changing the active plugin set.
 pub struct StagedPlugin {
-    catalog: Arc<()>,
+    set_identity: Arc<()>,
     name: String,
     expected_epoch: u64,
     expected_revision: Option<u64>,
@@ -212,6 +213,7 @@ impl StagedPlugin {
 /// deliberately not a graph builder or a second invocation scheduler.
 pub struct PluginSet {
     catalog: Arc<()>,
+    set_identity: Arc<()>,
     factories: BTreeMap<String, Arc<Factory>>,
     loaded: BTreeMap<String, Arc<Loaded>>,
     next_revision: u64,
@@ -269,7 +271,7 @@ impl PluginSet {
             ));
         }
         Ok(StagedPlugin {
-            catalog: self.catalog.clone(),
+            set_identity: self.set_identity.clone(),
             name: key.name().to_owned(),
             expected_epoch: self.next_revision,
             expected_revision: None,
@@ -287,7 +289,7 @@ impl PluginSet {
             .expected_revision(key.name())
             .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
         Ok(StagedPlugin {
-            catalog: self.catalog.clone(),
+            set_identity: self.set_identity.clone(),
             name: key.name().to_owned(),
             expected_epoch: self.next_revision,
             expected_revision: Some(expected_revision),
@@ -301,7 +303,7 @@ impl PluginSet {
             .expected_revision(key.name())
             .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
         Ok(StagedPlugin {
-            catalog: self.catalog.clone(),
+            set_identity: self.set_identity.clone(),
             name: key.name().to_owned(),
             expected_epoch: self.next_revision,
             expected_revision: Some(expected_revision),
@@ -313,8 +315,8 @@ impl PluginSet {
     /// Reject stale stages to prevent an older candidate from overwriting
     /// a newer plugin instance. No state changes on failure.
     pub fn commit(&mut self, staged: StagedPlugin) -> Result<Option<PluginSnapshot>, Failure> {
-        if !Arc::ptr_eq(&self.catalog, &staged.catalog) {
-            return Err(Failure::new(Code::Denied, "foreign plugin catalog"));
+        if !Arc::ptr_eq(&self.set_identity, &staged.set_identity) {
+            return Err(Failure::new(Code::Denied, "stage belongs to a different plugin set"));
         }
         if self.next_revision != staged.expected_epoch
             || self.expected_revision(&staged.name) != staged.expected_revision
@@ -590,6 +592,31 @@ mod tests {
         assert_eq!(initial.get::<GraphPatch>("calculate").unwrap().value, 4);
         drop(initial);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn stage_from_sibling_set_is_rejected_even_with_same_catalog_and_revision() {
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("shared", |value: i32| Ok(Example {
+                value,
+                drops: Arc::new(AtomicUsize::new(0)),
+            }))
+            .unwrap();
+        let mut a = catalog.instance();
+        let mut b = catalog.instance();
+        a.load(&key, 1).unwrap();
+        b.load(&key, 2).unwrap();
+        let foreign = a.prepare_reload(&key, 99).unwrap();
+        assert!(b.commit(foreign).is_err());
+        assert_eq!(
+            b.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value,
+            2
+        );
+        assert_eq!(
+            a.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value,
+            1
+        );
     }
 
     #[test]
