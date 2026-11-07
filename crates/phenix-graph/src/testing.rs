@@ -18,8 +18,10 @@
 //! fixture.fire(trigger.get(), vec![Value::local(41_i64)]).unwrap()
 //!     .expect_success().expect_local_at(fixture.output("increment", "value"), &42_i64);
 //! ```
-use crate::{CompiledGraph, ContractValue, Deployment, Engine, ExecutionSession, FindResult,
-    InputAddr, OutputAddr, ReportRetention, TriggerSelector, Value, WaveError, WaveReport};
+use crate::{
+    CompiledGraph, ContractValue, Deployment, Engine, ExecutionSession, FindResult, InputAddr,
+    OutputAddr, ReportRetention, TriggerSelector, Value, WaveError, WaveReport,
+};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -36,15 +38,19 @@ impl Fixture {
     /// useful assertions. Tests with custom execution bindings can use
     /// `from_deployment` instead.
     pub fn new(graph: Arc<CompiledGraph>) -> Result<Self, String> {
-        Self::from_deployment(Deployment::new(graph)
-            .report_retention(ReportRetention::RetainPayloads))
+        Self::from_deployment(
+            Deployment::new(graph).report_retention(ReportRetention::RetainPayloads),
+        )
     }
 
     /// Inject a production deployment directly: custom executors, store,
     /// adapters and report retention follow the exact production path.
     pub fn from_deployment(deployment: Deployment) -> Result<Self, String> {
         let graph = deployment.compiled_graph();
-        Ok(Self { engine: deployment.build()?, graph })
+        Ok(Self {
+            engine: deployment.build()?,
+            graph,
+        })
     }
 
     /// Resolve compiler-assigned endpoints by stable hierarchical node/output
@@ -53,9 +59,9 @@ impl Fixture {
         let Some(FindResult::Node(node_ref)) = self.graph.find(node) else {
             panic!("fixture has no node at {node:?}");
         };
-        node_ref.output(output).unwrap_or_else(|| {
-            panic!("fixture node {node:?} has no output {output:?}")
-        })
+        node_ref
+            .output(output)
+            .unwrap_or_else(|| panic!("fixture node {node:?} has no output {output:?}"))
     }
 
     /// Resolve an input from its named physical node, port, and slot.
@@ -64,9 +70,9 @@ impl Fixture {
         let Some(FindResult::Node(node_ref)) = self.graph.find(node) else {
             panic!("fixture has no node at {node:?}");
         };
-        node_ref.input(port, slot).unwrap_or_else(|| {
-            panic!("fixture node {node:?} has no input {port:?}/{slot:?}")
-        })
+        node_ref
+            .input(port, slot)
+            .unwrap_or_else(|| panic!("fixture node {node:?} has no input {port:?}/{slot:?}"))
     }
 
     pub fn node_id(&self, name: &str) -> u16 {
@@ -78,20 +84,29 @@ impl Fixture {
 
     /// Execute a real graph wave. Errors returned by `fire` are trigger
     /// admission errors; invocation failures are recorded in `WaveReport`.
-    pub fn fire<T: TriggerSelector>(&self, trigger: T, input: Vec<Value>) -> Result<WaveReport, String> {
+    pub fn fire<T: TriggerSelector>(
+        &self,
+        trigger: T,
+        input: Vec<Value>,
+    ) -> Result<WaveReport, String> {
         self.engine.fire(trigger, input)
     }
 
     /// Drive the same externally-completable wave as `Engine::begin`, allowing
     /// real pending, cancellation and interleaving assertions in Rust tests.
-    pub fn begin<T: TriggerSelector>(&self, trigger: T, input: Vec<Value>)
-        -> Result<ExecutionSession<'_>, String> {
+    pub fn begin<T: TriggerSelector>(
+        &self,
+        trigger: T,
+        input: Vec<Value>,
+    ) -> Result<ExecutionSession<'_>, String> {
         self.engine.begin(trigger, input)
     }
 
     /// Use the real execution session for controlled completion ordering,
     /// pending/cancellation tests, and explicit assertion of in-flight work.
-    pub fn engine(&self) -> &Engine { &self.engine }
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
 }
 
 /// Assertions over the ordinary `WaveReport`, not a competing result type.
@@ -111,15 +126,21 @@ pub trait ExpectWave {
     fn expect_deliveries_from(&self, from: OutputAddr, targets: &[InputAddr]) -> &Self;
     /// Assert a specific source, never relying on "last publication" ordering.
     fn expect_local_at<T>(&self, from: OutputAddr, expected: &T) -> &Self
-    where T: Send + Sync + PartialEq + Debug + 'static;
+    where
+        T: Send + Sync + PartialEq + Debug + 'static;
     fn expect_wire_at<T>(&self, from: OutputAddr, expected: T) -> &Self
-    where T: ContractValue + PartialEq + Debug;
+    where
+        T: ContractValue + PartialEq + Debug;
     fn expect_invocations(&self, node: u16, count: usize) -> &Self;
 }
 
 impl ExpectWave for WaveReport {
     fn expect_success(&self) -> &Self {
-        assert!(self.success(), "expected successful wave, got {:?}", self.error_messages());
+        assert!(
+            self.success(),
+            "expected successful wave, got {:?}",
+            self.error_messages()
+        );
         self
     }
 
@@ -132,64 +153,101 @@ impl ExpectWave for WaveReport {
     fn expect_failure_containing(&self, fragment: &str) -> &Self {
         assert!(!self.success(), "expected failed wave, but it succeeded");
         let errors = self.error_messages();
-        assert!(errors.iter().any(|error| error.contains(fragment)),
-            "expected failure containing {fragment:?}, got {errors:?}");
+        assert!(
+            errors.iter().any(|error| error.contains(fragment)),
+            "expected failure containing {fragment:?}, got {errors:?}"
+        );
         self
     }
 
     fn expect_error(&self, predicate: impl Fn(&WaveError) -> bool) -> &Self {
         assert!(!self.success(), "expected a failed wave, but it succeeded");
-        assert!(self.errors().iter().any(predicate),
-            "expected matching failure, got {:?}", self.errors());
+        assert!(
+            self.errors().iter().any(predicate),
+            "expected matching failure, got {:?}",
+            self.errors()
+        );
         self
     }
 
     fn expect_publication_count(&self, from: OutputAddr, expected: usize) -> &Self {
-        let observed = self.publication_events().iter()
-            .filter(|event| event.from == from).count();
-        assert_eq!(observed, expected, "unexpected publication count from {from:?}");
+        let observed = self
+            .publication_events()
+            .iter()
+            .filter(|event| event.from == from)
+            .count();
+        assert_eq!(
+            observed, expected,
+            "unexpected publication count from {from:?}"
+        );
         self
     }
 
     fn expect_deliveries_from(&self, from: OutputAddr, targets: &[InputAddr]) -> &Self {
-        let mut observed: Vec<_> = self.delivery_events().iter()
-            .filter(|event| event.from == from).map(|event| event.to).collect();
+        let mut observed: Vec<_> = self
+            .delivery_events()
+            .iter()
+            .filter(|event| event.from == from)
+            .map(|event| event.to)
+            .collect();
         let mut expected = targets.to_vec();
         observed.sort();
         expected.sort();
-        assert_eq!(observed, expected, "unexpected committed destinations from {from:?}");
+        assert_eq!(
+            observed, expected,
+            "unexpected committed destinations from {from:?}"
+        );
         self
     }
 
     fn expect_local_at<T>(&self, from: OutputAddr, expected: &T) -> &Self
-    where T: Send + Sync + PartialEq + Debug + 'static {
-        let mut matching = self.publications()
-            .filter(|event| event.source_node_id() == from.node_id()
-                && event.source_slot_id() == from.slot_id());
-        let published = matching.next()
+    where
+        T: Send + Sync + PartialEq + Debug + 'static,
+    {
+        let mut matching = self.publications().filter(|event| {
+            event.source_node_id() == from.node_id() && event.source_slot_id() == from.slot_id()
+        });
+        let published = matching
+            .next()
             .unwrap_or_else(|| panic!("no retained publication from {from:?}"));
-        assert!(matching.next().is_none(),
-            "expected exactly one retained publication from {from:?}");
-        assert_eq!(published.borrow::<T>().expect("wrong local output type"), expected);
+        assert!(
+            matching.next().is_none(),
+            "expected exactly one retained publication from {from:?}"
+        );
+        assert_eq!(
+            published.borrow::<T>().expect("wrong local output type"),
+            expected
+        );
         self
     }
 
     fn expect_wire_at<T>(&self, from: OutputAddr, expected: T) -> &Self
-    where T: ContractValue + PartialEq + Debug {
-        let mut matching = self.publications()
-            .filter(|event| event.source_node_id() == from.node_id()
-                && event.source_slot_id() == from.slot_id());
-        let published = matching.next()
+    where
+        T: ContractValue + PartialEq + Debug,
+    {
+        let mut matching = self.publications().filter(|event| {
+            event.source_node_id() == from.node_id() && event.source_slot_id() == from.slot_id()
+        });
+        let published = matching
+            .next()
             .unwrap_or_else(|| panic!("no retained publication from {from:?}"));
-        assert!(matching.next().is_none(),
-            "expected exactly one retained publication from {from:?}");
-        assert_eq!(published.value::<T>().expect("wrong wire output type"), expected);
+        assert!(
+            matching.next().is_none(),
+            "expected exactly one retained publication from {from:?}"
+        );
+        assert_eq!(
+            published.value::<T>().expect("wrong wire output type"),
+            expected
+        );
         self
     }
 
     fn expect_invocations(&self, node: u16, count: usize) -> &Self {
-        assert_eq!(self.invocation_count(node), count,
-            "unexpected node {node} invocation count");
+        assert_eq!(
+            self.invocation_count(node),
+            count,
+            "unexpected node {node} invocation count"
+        );
         self
     }
 }

@@ -5,7 +5,10 @@
 //! binding has no special scheduler treatment: it is one ordinary node action.
 //! This adapter demonstrates the integration seam; it is NOT Phenix's ABI.
 
-use phenix_graph::{emit, AllSameCohort, Atomic, ContractValue, InvocationCtx, NodeTemplate, OutputSlot, Port, Value};
+use phenix_graph::{
+    AllSameCohort, Atomic, ContractValue, InvocationCtx, NodeTemplate, OutputSlot, Port, Value,
+    emit,
+};
 use std::sync::Arc;
 
 /// Implemented by the surrounding host; not by the graph scheduler.
@@ -14,8 +17,7 @@ use std::sync::Arc;
 /// Requests and results are explicit portable envelopes, never Rust references
 /// or trait objects crossing the native plugin boundary.
 pub trait SelectedOperationDispatcher: Send + Sync {
-    fn invoke(&self, selected: &str, operation: &str, request: Value)
-        -> Result<Value, String>;
+    fn invoke(&self, selected: &str, operation: &str, request: Value) -> Result<Value, String>;
 }
 
 /// A *resolved* operation reference. No plugin discovery, policy decisions,
@@ -38,11 +40,19 @@ impl SelectedOperation {
         if selected.trim().is_empty() || operation.trim().is_empty() {
             return Err("selected provider and operation must be nonempty".into());
         }
-        Ok(Self { selected, operation, dispatcher })
+        Ok(Self {
+            selected,
+            operation,
+            dispatcher,
+        })
     }
 
-    pub fn selected(&self) -> &str { &self.selected }
-    pub fn operation(&self) -> &str { &self.operation }
+    pub fn selected(&self) -> &str {
+        &self.selected
+    }
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
 
     /// Lower a resolved external operation to the existing typed node action.
     /// The input/output contract is verified using the graph's usual wire
@@ -54,9 +64,9 @@ impl SelectedOperation {
             vec![OutputSlot::typed::<O>(0).named("value")],
             move |mut ctx: InvocationCtx| {
                 let input = ctx.take_prepared::<A>()?;
-                let value = self.dispatcher.invoke(
-                    &self.selected, &self.operation, Value::of(input),
-                )?;
+                let value =
+                    self.dispatcher
+                        .invoke(&self.selected, &self.operation, Value::of(input))?;
                 Ok(vec![emit(0, value.get::<O>()?)])
             },
         )

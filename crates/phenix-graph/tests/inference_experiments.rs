@@ -47,6 +47,8 @@ fn closure_function_item_and_associated_type_handler_patterns_compile() {
     let function = closure_adapter(add_function);
     assert_eq!(function(AddArgs { left: 3, right: 4 }, &Context), 7);
 
-    assert_eq!(execute_handler(&AddHandler, AddArgs { left: 1, right: 8 }), 9);
+    assert_eq!(
+        execute_handler(&AddHandler, AddArgs { left: 1, right: 8 }),
+        9
+    );
 }
-

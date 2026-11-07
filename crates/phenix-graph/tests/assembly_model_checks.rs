@@ -1,7 +1,8 @@
 //! Independent reference checks for nested module composition, cyclic agent
 //! feedback, and deliberately interleaved execution across distinct waves.
-use phenix_graph::{Deployment, CompilePhase, GraphBuilder, ModuleCatalog,
-    ModuleDefBuilder, ReportRetention, Value};
+use phenix_graph::{
+    CompilePhase, Deployment, GraphBuilder, ModuleCatalog, ModuleDefBuilder, ReportRetention, Value,
+};
 
 fn next(rng: &mut u64) -> u64 {
     *rng ^= *rng << 13;
@@ -54,61 +55,106 @@ fn nested_compilation_matches_independent_arithmetic_reference() {
             let mut parent = GraphBuilder::new(format!("nest_{seed}_{level}"));
             let child = parent.instance("child", &nested).unwrap();
             let bump = parent.node("bump", move |v: i64| v + delta).unwrap();
-            parent.connect(child.local_output::<i64>("result").unwrap(), bump.inlet()).unwrap();
-            parent.expose_input("request", child.local_input::<i64>("request").unwrap()).unwrap();
+            parent
+                .connect(child.local_output::<i64>("result").unwrap(), bump.inlet())
+                .unwrap();
+            parent
+                .expose_input("request", child.local_input::<i64>("request").unwrap())
+                .unwrap();
             parent.expose_output("result", bump.output()).unwrap();
             nested = parent.module();
         }
         let mut graph = GraphBuilder::new(format!("root_{seed}"));
         let child = graph.instance("calculator", &nested).unwrap();
-        let input = graph.expose_input("request", child.local_input::<i64>("request").unwrap()).unwrap();
-        graph.expose_output("result", child.local_output::<i64>("result").unwrap()).unwrap();
+        let input = graph
+            .expose_input("request", child.local_input::<i64>("request").unwrap())
+            .unwrap();
+        graph
+            .expose_output("result", child.local_output::<i64>("result").unwrap())
+            .unwrap();
         let trigger = graph.trigger("compute", [input]).unwrap();
         let compiled = graph.compile().unwrap();
-        let engine = Deployment::new(compiled).report_retention(ReportRetention::TerminalOutputs).build().unwrap();
+        let engine = Deployment::new(compiled)
+            .report_retention(ReportRetention::TerminalOutputs)
+            .build()
+            .unwrap();
         let report = engine.fire(trigger.get(), vec![Value::local(x)]).unwrap();
-        assert!(report.success(), "seed={seed}: {:?}", report.error_messages());
-        assert_eq!(report.publications().last().unwrap().borrow::<i64>(), Some(&expected),
-            "nested arithmetic seed={seed} depth={depth}");
+        assert!(
+            report.success(),
+            "seed={seed}: {:?}",
+            report.error_messages()
+        );
+        assert_eq!(
+            report.publications().last().unwrap().borrow::<i64>(),
+            Some(&expected),
+            "nested arithmetic seed={seed} depth={depth}"
+        );
     }
 }
 
 #[derive(Clone)]
-struct Cycle { remaining: usize, value: i64 }
+struct Cycle {
+    remaining: usize,
+    value: i64,
+}
 
 #[test]
 fn random_finite_cycles_match_small_step_reference() {
     let mut g = GraphBuilder::new("cyclic-reference");
-    let tool = g.node("tool", |mut state: Cycle| {
-        state.remaining -= 1;
-        state.value += 2;
-        state
-    }).unwrap();
+    let tool = g
+        .node("tool", |mut state: Cycle| {
+            state.remaining -= 1;
+            state.value += 2;
+            state
+        })
+        .unwrap();
     let finish = g.node("finish", |state: Cycle| state.value).unwrap();
     let tool_target = tool.inlet();
     let final_target = finish.inlet();
-    let model = g.node("model", move |state: Cycle| {
-        phenix_graph::Output::to(
-            if state.remaining != 0 { &tool_target } else { &final_target },
-            state,
-        )
-    }).unwrap();
+    let model = g
+        .node("model", move |state: Cycle| {
+            phenix_graph::Output::to(
+                if state.remaining != 0 {
+                    &tool_target
+                } else {
+                    &final_target
+                },
+                state,
+            )
+        })
+        .unwrap();
     g.connect(model.output(), tool.inlet()).unwrap();
     g.connect(tool.output(), model.inlet()).unwrap();
     g.connect(model.output(), finish.inlet()).unwrap();
     let input = g.expose_input("request", model.inlet()).unwrap();
     g.expose_output("result", finish.output()).unwrap();
     let trigger = g.trigger("run", [input]).unwrap();
-    let engine = Deployment::new(g.compile().unwrap()).report_retention(ReportRetention::TerminalOutputs).build().unwrap();
+    let engine = Deployment::new(g.compile().unwrap())
+        .report_retention(ReportRetention::TerminalOutputs)
+        .build()
+        .unwrap();
     let mut rng = 0x7651fe_u64;
     for _ in 0..96 {
         let steps = (next(&mut rng) % 25) as usize;
         let x = (next(&mut rng) % 111) as i64;
-        let result = engine.fire(trigger.get(), vec![Value::local(Cycle {
-            remaining: steps, value: x,
-        })]).unwrap();
-        assert!(result.success(), "steps={steps}: {:?}", result.error_messages());
-        assert_eq!(result.publications().last().unwrap().borrow::<i64>(), Some(&(x + 2 * steps as i64)));
+        let result = engine
+            .fire(
+                trigger.get(),
+                vec![Value::local(Cycle {
+                    remaining: steps,
+                    value: x,
+                })],
+            )
+            .unwrap();
+        assert!(
+            result.success(),
+            "steps={steps}: {:?}",
+            result.error_messages()
+        );
+        assert_eq!(
+            result.publications().last().unwrap().borrow::<i64>(),
+            Some(&(x + 2 * steps as i64))
+        );
         // Each iteration emits model-left and tool; last iteration emits model-right + finish.
         assert_eq!(result.publication_events().len(), 2 * steps + 2);
     }
@@ -123,13 +169,18 @@ fn randomized_wave_interleavings_and_cancellations_are_isolated() {
     let input = g.expose_input("request", first.inlet()).unwrap();
     g.expose_output("result", second.output()).unwrap();
     let trigger = g.trigger("run", [input]).unwrap();
-    let engine = Deployment::new(g.compile().unwrap()).report_retention(ReportRetention::TerminalOutputs).build().unwrap();
+    let engine = Deployment::new(g.compile().unwrap())
+        .report_retention(ReportRetention::TerminalOutputs)
+        .build()
+        .unwrap();
 
     let mut rng = 0x90c024_u64;
     for case in 0..64_i64 {
         let inputs: Vec<i64> = (0..5).map(|i| 10 * case + i).collect();
-        let mut waves: Vec<_> = inputs.iter().map(|&x|
-            engine.begin(trigger.get(), vec![Value::local(x)]).unwrap()).collect();
+        let mut waves: Vec<_> = inputs
+            .iter()
+            .map(|&x| engine.begin(trigger.get(), vec![Value::local(x)]).unwrap())
+            .collect();
         let mut cancelled = [false; 5];
         for step in 0..80 {
             let index = (next(&mut rng) % waves.len() as u64) as usize;
@@ -154,9 +205,15 @@ fn randomized_wave_interleavings_and_cancellations_are_isolated() {
                 assert!(!report.success());
                 assert!(report.publications().next().is_none());
             } else {
-                assert!(report.success(), "case={case} wave={i}: {:?}", report.error_messages());
-                assert_eq!(report.publications().last().unwrap().borrow::<i64>(),
-                    Some(&((inputs[i] + 3) * 2)));
+                assert!(
+                    report.success(),
+                    "case={case} wave={i}: {:?}",
+                    report.error_messages()
+                );
+                assert_eq!(
+                    report.publications().last().unwrap().borrow::<i64>(),
+                    Some(&((inputs[i] + 3) * 2))
+                );
             }
         }
     }
@@ -164,15 +221,19 @@ fn randomized_wave_interleavings_and_cancellations_are_isolated() {
 
 #[test]
 fn expansion_diagnostic_reports_invalid_named_connection() {
-    use phenix_graph::{ModuleOutputSource, ModuleInputTarget,
-        NodeTemplate};
+    use phenix_graph::{ModuleInputTarget, ModuleOutputSource, NodeTemplate};
     let mut root = ModuleDefBuilder::new("invalid_wiring");
     let target = NodeTemplate::local_function(|value: i64| value + 1);
     root.add_named("target", target).unwrap();
     root.connect(
-        ModuleOutputSource::NodeNamed { node: "absent".into(), output: "value".into() },
+        ModuleOutputSource::NodeNamed {
+            node: "absent".into(),
+            output: "value".into(),
+        },
         ModuleInputTarget::NodeNamed {
-            node: "target".into(), port: "run".into(), slot: "value".into()
+            node: "target".into(),
+            port: "run".into(),
+            slot: "value".into(),
         },
     );
     let mut catalog = ModuleCatalog::new();

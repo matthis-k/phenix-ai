@@ -4,9 +4,12 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use std::collections::BTreeSet;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, GenericArgument, LitInt, LitStr, PathArguments, Type};
+use syn::{
+    Data, DeriveInput, Fields, GenericArgument, LitInt, LitStr, PathArguments, Type,
+    parse_macro_input,
+};
 
 struct FieldSpec {
     ident: syn::Ident,
@@ -18,11 +21,19 @@ struct FieldSpec {
 }
 
 fn option_inner(ty: &Type) -> Option<Type> {
-    let Type::Path(path) = ty else { return None; };
+    let Type::Path(path) = ty else {
+        return None;
+    };
     let seg = path.path.segments.last()?;
-    if seg.ident != "Option" { return None; }
-    let PathArguments::AngleBracketed(args) = &seg.arguments else { return None; };
-    if args.args.len() != 1 { return None; }
+    if seg.ident != "Option" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    if args.args.len() != 1 {
+        return None;
+    }
     match args.args.first()? {
         GenericArgument::Type(ty) => Some(ty.clone()),
         _ => None,
@@ -31,20 +42,30 @@ fn option_inner(ty: &Type) -> Option<Type> {
 
 fn fields(input: &DeriveInput, parse_slots: bool) -> syn::Result<Vec<FieldSpec>> {
     if !input.generics.params.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident, "prototype derive supports only non-generic named structs; implement the trait manually for generic types"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "prototype derive supports only non-generic named structs; implement the trait manually for generic types",
+        ));
     }
     let Data::Struct(s) = &input.data else {
-        return Err(syn::Error::new_spanned(&input.ident, "derive requires a struct"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "derive requires a struct",
+        ));
     };
     let Fields::Named(named) = &s.fields else {
-        return Err(syn::Error::new_spanned(&input.ident, "derive requires named fields"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "derive requires named fields",
+        ));
     };
     let mut result = Vec::new();
     let mut seen_ids = BTreeSet::new();
     let mut seen_names = BTreeSet::new();
     for (index, field) in named.named.iter().enumerate() {
         let ident = field.ident.clone().expect("named field");
-        let mut slot_id = u16::try_from(index).map_err(|_| syn::Error::new_spanned(&ident, "too many fields for slot ID"))?;
+        let mut slot_id = u16::try_from(index)
+            .map_err(|_| syn::Error::new_spanned(&ident, "too many fields for slot ID"))?;
         let mut name = LitStr::new(&ident.to_string(), ident.span());
         let mut immediate = false;
         for attr in field.attrs.iter().filter(|a| a.path().is_ident("slot")) {
@@ -66,23 +87,42 @@ fn fields(input: &DeriveInput, parse_slots: bool) -> syn::Result<Vec<FieldSpec>>
                     match mode.value().as_str() {
                         "immediate" => immediate = true,
                         "deferred" => immediate = false,
-                        _ => return Err(syn::Error::new_spanned(&mode, "buffer must be immediate or deferred")),
+                        _ => {
+                            return Err(syn::Error::new_spanned(
+                                &mode,
+                                "buffer must be immediate or deferred",
+                            ));
+                        }
                     }
                     Ok(())
                 } else {
-                    Err(meta.error("supported: id = N, name = \"...\", buffer = \"immediate|deferred\""))
+                    Err(meta.error(
+                        "supported: id = N, name = \"...\", buffer = \"immediate|deferred\"",
+                    ))
                 }
             })?;
         }
         if !seen_ids.insert(slot_id) {
-            return Err(syn::Error::new_spanned(&ident, format!("duplicate slot ID {slot_id}")));
+            return Err(syn::Error::new_spanned(
+                &ident,
+                format!("duplicate slot ID {slot_id}"),
+            ));
         }
         if !seen_names.insert(name.value()) {
-            return Err(syn::Error::new_spanned(&ident, format!("duplicate slot name {:?}", name.value())));
+            return Err(syn::Error::new_spanned(
+                &ident,
+                format!("duplicate slot name {:?}", name.value()),
+            ));
         }
         let optional = option_inner(&field.ty);
-        result.push(FieldSpec { ident, value_type: optional.clone().unwrap_or_else(|| field.ty.clone()),
-            optional: optional.is_some(), name, slot_id, immediate });
+        result.push(FieldSpec {
+            ident,
+            value_type: optional.clone().unwrap_or_else(|| field.ty.clone()),
+            optional: optional.is_some(),
+            name,
+            slot_id,
+            immediate,
+        });
     }
     Ok(result)
 }
@@ -130,42 +170,83 @@ fn scalar_field(ty: &Type) -> bool {
     if matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty()) {
         return true;
     }
-    if matches!(ty, Type::Reference(_) | Type::Ptr(_) | Type::TraitObject(_) | Type::ImplTrait(_)) {
+    if matches!(
+        ty,
+        Type::Reference(_) | Type::Ptr(_) | Type::TraitObject(_) | Type::ImplTrait(_)
+    ) {
         return true;
     }
-    let Type::Path(path) = ty else { return false; };
-    let Some(segment) = path.path.segments.last() else { return false; };
-    matches!(segment.ident.to_string().as_str(),
-        "bool" | "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" |
-        "u8" | "u16" | "u32" | "u64" | "u128" | "String" |
-        "Option" | "Vec" | "Box" | "Arc" | "Rc" | "HashMap" | "BTreeMap")
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return false;
+    };
+    matches!(
+        segment.ident.to_string().as_str(),
+        "bool"
+            | "f32"
+            | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "String"
+            | "Option"
+            | "Vec"
+            | "Box"
+            | "Arc"
+            | "Rc"
+            | "HashMap"
+            | "BTreeMap"
+    )
 }
-fn tuple_field(ty: &Type) -> bool { matches!(ty, Type::Tuple(tuple) if !tuple.elems.is_empty()) }
+fn tuple_field(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(tuple) if !tuple.elems.is_empty())
+}
 /// `Arc<T>` leaf fields have an explicit shared-ownership reconstruction path.
 fn arc_inner(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else { return None; };
+    let Type::Path(path) = ty else {
+        return None;
+    };
     let segment = path.path.segments.last()?;
-    if segment.ident != "Arc" { return None; }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else { return None; };
+    if segment.ident != "Arc" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
     match args.args.first()? {
         syn::GenericArgument::Type(inner) if args.args.len() == 1 => Some(inner),
         _ => None,
     }
 }
 
-
 fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     if !input.generics.params.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident,
-            "PortLayout derive supports non-generic structs; implement PortLayout manually for generic types"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "PortLayout derive supports non-generic structs; implement PortLayout manually for generic types",
+        ));
     }
     let ident = &input.ident;
     let Data::Struct(data) = &input.data else {
-        return Err(syn::Error::new_spanned(ident, "PortLayout derive requires a struct"));
+        return Err(syn::Error::new_spanned(
+            ident,
+            "PortLayout derive requires a struct",
+        ));
     };
     let Fields::Named(fields) = &data.fields else {
-        return Err(syn::Error::new_spanned(ident,
-            "PortLayout derive currently requires named fields; implement PortLayout manually for tuple/unit structs"));
+        return Err(syn::Error::new_spanned(
+            ident,
+            "PortLayout derive currently requires named fields; implement PortLayout manually for tuple/unit structs",
+        ));
     };
 
     let mut append = Vec::new();
@@ -175,7 +256,11 @@ fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
         let name = field.ident.as_ref().expect("named field");
         let ty = &field.ty;
         let mut directive: Option<bool> = None; // true = flatten, false = atomic
-        for attr in field.attrs.iter().filter(|attr| attr.path().is_ident("port")) {
+        for attr in field
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("port"))
+        {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("flatten") {
                     if directive.replace(true).is_some() {
@@ -193,11 +278,17 @@ fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
             })?;
         }
         let flatten = directive.unwrap_or_else(|| !scalar_field(ty));
-        if flatten && ty.to_token_stream().to_string().split(|c: char| !c.is_alphanumeric() && c != '_')
-            .any(|part| part == ident.to_string())
+        if flatten
+            && ty
+                .to_token_stream()
+                .to_string()
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|part| part == ident.to_string())
         {
-            return Err(syn::Error::new_spanned(ty,
-                "recursive PortLayout expansion is unsupported; keep the recursive field atomic or implement a bounded layout manually"));
+            return Err(syn::Error::new_spanned(
+                ty,
+                "recursive PortLayout expansion is unsupported; keep the recursive field atomic or implement a bounded layout manually",
+            ));
         }
         let path = quote! {
             if prefix.is_empty() { ::std::string::ToString::to_string(stringify!(#name)) }
@@ -346,8 +437,12 @@ fn derive_contract_value(input: DeriveInput) -> syn::Result<Tokens> {
             }
         })?;
     }
-    let schema = schema.ok_or_else(|| syn::Error::new_spanned(ident,
-        "#[derive(ContractValue)] requires #[contract(schema = \"stable.schema.id\")]"))?;
+    let schema = schema.ok_or_else(|| {
+        syn::Error::new_spanned(
+            ident,
+            "#[derive(ContractValue)] requires #[contract(schema = \"stable.schema.id\")]",
+        )
+    })?;
     if schema.value().trim().is_empty() {
         return Err(syn::Error::new_spanned(&schema, "schema must not be empty"));
     }
@@ -423,36 +518,49 @@ fn derive_contract_value(input: DeriveInput) -> syn::Result<Tokens> {
 #[proc_macro_derive(PortArgs, attributes(slot))]
 pub fn port_args(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    derive_port_args(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    derive_port_args(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro_derive(PortLayout, attributes(port))]
 pub fn port_layout(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    derive_port_layout(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    derive_port_layout(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro_derive(ContractValue, attributes(contract, slot))]
 pub fn contract_value(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    derive_contract_value(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    derive_contract_value(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
-
 
 /// In-process struct layout. No ContractValue implementation or byte encoding
 /// is generated or required. Owned assembly clones selected leaf values; a
 /// field of type Arc<T> can be used when T itself is not Clone.
 fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     if !input.generics.params.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident,
-            "LocalPortLayout derive currently supports non-generic named structs; implement the trait manually for generic types"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "LocalPortLayout derive currently supports non-generic named structs; implement the trait manually for generic types",
+        ));
     }
     let ident = &input.ident;
     let Data::Struct(data) = &input.data else {
-        return Err(syn::Error::new_spanned(ident, "LocalPortLayout requires a struct"));
+        return Err(syn::Error::new_spanned(
+            ident,
+            "LocalPortLayout requires a struct",
+        ));
     };
     let Fields::Named(fields) = &data.fields else {
-        return Err(syn::Error::new_spanned(ident, "LocalPortLayout requires named fields"));
+        return Err(syn::Error::new_spanned(
+            ident,
+            "LocalPortLayout requires named fields",
+        ));
     };
     let mut specs = Vec::new();
     for field in &fields.named {
@@ -461,9 +569,13 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
         let mut directive = None;
         for attr in field.attrs.iter().filter(|a| a.path().is_ident("port")) {
             attr.parse_nested_meta(|meta| {
-                let value = if meta.path.is_ident("flatten") { true }
-                    else if meta.path.is_ident("atomic") { false }
-                    else { return Err(meta.error("supported: port(flatten), port(atomic)")); };
+                let value = if meta.path.is_ident("flatten") {
+                    true
+                } else if meta.path.is_ident("atomic") {
+                    false
+                } else {
+                    return Err(meta.error("supported: port(flatten), port(atomic)"));
+                };
                 if directive.replace(value).is_some() {
                     return Err(meta.error("duplicate or conflicting port layout directive"));
                 }
@@ -471,11 +583,17 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
             })?;
         }
         let flatten = directive.unwrap_or_else(|| !scalar_field(&ty));
-        if flatten && ty.to_token_stream().to_string()
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .any(|part| part == ident.to_string()) {
-            return Err(syn::Error::new_spanned(&ty,
-                "recursive local flattening requires an atomic field or an explicit manual bounded layout"));
+        if flatten
+            && ty
+                .to_token_stream()
+                .to_string()
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|part| part == ident.to_string())
+        {
+            return Err(syn::Error::new_spanned(
+                &ty,
+                "recursive local flattening requires an atomic field or an explicit manual bounded layout",
+            ));
         }
         specs.push((field_name, ty, flatten, directive == Some(true)));
     }
@@ -583,8 +701,11 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
             });
         }
     }
-    let keys = specs.iter().map(|(field,ty,_,_)| {
-        let upper = syn::Ident::new(&format!("SLOT_{}",field.to_string().to_uppercase()), field.span());
+    let keys = specs.iter().map(|(field, ty, _, _)| {
+        let upper = syn::Ident::new(
+            &format!("SLOT_{}", field.to_string().to_uppercase()),
+            field.span(),
+        );
         quote! {
             pub const #upper: ::phenix_graph::authoring::SlotField<Self, #ty> =
                 ::phenix_graph::authoring::SlotField::new(stringify!(#field));
@@ -610,7 +731,9 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
 #[proc_macro_derive(LocalPortLayout, attributes(port))]
 pub fn local_port_layout(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    derive_local_port_layout(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    derive_local_port_layout(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 // Optional patch syntax. This lowers exclusively to the public PatchBuilder
@@ -618,7 +741,10 @@ pub fn local_port_layout(input: TokenStream) -> TokenStream {
 mod patch_syntax {
     use proc_macro2::{Span, TokenStream as Tokens};
     use quote::quote;
-    use syn::{parse::{Parse, ParseStream}, Expr, Ident, LitInt, LitStr, Result, Token};
+    use syn::{
+        Expr, Ident, LitInt, LitStr, Result, Token,
+        parse::{Parse, ParseStream},
+    };
 
     enum Statement {
         Node(Ident, Expr, Option<Expr>),
@@ -632,17 +758,28 @@ mod patch_syntax {
         After(Vec<String>),
         Priority(LitInt),
     }
-    pub struct PatchSyntax { id: LitStr, statements: Vec<Statement> }
+    pub struct PatchSyntax {
+        id: LitStr,
+        statements: Vec<Statement>,
+    }
 
     fn name(input: ParseStream<'_>) -> Result<String> {
-        if input.peek(LitStr) { Ok(input.parse::<LitStr>()?.value()) }
-        else { Ok(input.parse::<Ident>()?.to_string()) }
+        if input.peek(LitStr) {
+            Ok(input.parse::<LitStr>()?.value())
+        } else {
+            Ok(input.parse::<Ident>()?.to_string())
+        }
     }
     fn endpoint(input: ParseStream<'_>) -> Result<String> {
         let mut output = input.parse::<Ident>()?.to_string();
         while input.peek(Token![.]) || input.peek(Token![/]) {
-            if input.peek(Token![.]) { input.parse::<Token![.]>()?; output.push('.'); }
-            else { input.parse::<Token![/]>()?; output.push('/'); }
+            if input.peek(Token![.]) {
+                input.parse::<Token![.]>()?;
+                output.push('.');
+            } else {
+                input.parse::<Token![/]>()?;
+                output.push('/');
+            }
             output.push_str(&input.parse::<Ident>()?.to_string());
         }
         Ok(output)
@@ -653,7 +790,9 @@ mod patch_syntax {
         let mut names = Vec::new();
         while !content.is_empty() {
             names.push(name(&content)?);
-            if content.is_empty() { break; }
+            if content.is_empty() {
+                break;
+            }
             content.parse::<Token![,]>()?;
         }
         Ok(names)
@@ -667,7 +806,9 @@ mod patch_syntax {
                 match first.to_string().as_str() {
                     "id" => {
                         input.parse::<Token![:]>()?;
-                        if id.is_some() { return Err(syn::Error::new(first.span(), "duplicate patch id")); }
+                        if id.is_some() {
+                            return Err(syn::Error::new(first.span(), "duplicate patch id"));
+                        }
                         id = Some(input.parse::<LitStr>()?);
                     }
                     "after" | "requires" => {
@@ -685,10 +826,17 @@ mod patch_syntax {
                         let layout = if input.peek(Token![,]) {
                             input.parse::<Token![,]>()?;
                             let label: Ident = input.parse()?;
-                            if label != "layout" { return Err(syn::Error::new(label.span(), "expected `layout = ...`")); }
+                            if label != "layout" {
+                                return Err(syn::Error::new(
+                                    label.span(),
+                                    "expected `layout = ...`",
+                                ));
+                            }
                             input.parse::<Token![=]>()?;
                             Some(input.parse::<Expr>()?)
-                        } else { None };
+                        } else {
+                            None
+                        };
                         statements.push(Statement::Node(n, handler, layout));
                     }
                     "instance" => {
@@ -707,7 +855,9 @@ mod patch_syntax {
                         let path = endpoint(input)?;
                         statements.push(if first == "input" {
                             Statement::Input(exported, path)
-                        } else { Statement::Output(exported, path) });
+                        } else {
+                            Statement::Output(exported, path)
+                        });
                     }
                     "trigger" => {
                         let exported = name(input)?;
@@ -726,27 +876,41 @@ mod patch_syntax {
                             input.parse::<Token![->]>()?;
                             chain.push(endpoint(input)?);
                         }
-                        if chain.len() < 2 { return Err(syn::Error::new(first.span(), "a connection needs two endpoints")); }
+                        if chain.len() < 2 {
+                            return Err(syn::Error::new(
+                                first.span(),
+                                "a connection needs two endpoints",
+                            ));
+                        }
                         statements.push(Statement::Connect(chain));
                     }
                     _ => {
                         let mut chain = vec![first.to_string()];
                         while input.peek(Token![.]) || input.peek(Token![/]) {
-                            if input.peek(Token![.]) { input.parse::<Token![.]>()?; chain[0].push('.'); }
-                            else { input.parse::<Token![/]>()?; chain[0].push('/'); }
+                            if input.peek(Token![.]) {
+                                input.parse::<Token![.]>()?;
+                                chain[0].push('.');
+                            } else {
+                                input.parse::<Token![/]>()?;
+                                chain[0].push('/');
+                            }
                             chain[0].push_str(&input.parse::<Ident>()?.to_string());
                         }
                         while input.peek(Token![->]) {
                             input.parse::<Token![->]>()?;
                             chain.push(endpoint(input)?);
                         }
-                        if chain.len() < 2 { return Err(syn::Error::new(first.span(), "unknown patch statement")); }
+                        if chain.len() < 2 {
+                            return Err(syn::Error::new(first.span(), "unknown patch statement"));
+                        }
                         statements.push(Statement::Connect(chain));
                     }
                 }
                 input.parse::<Token![;]>()?;
             }
-            let id = id.ok_or_else(|| syn::Error::new(Span::call_site(), "patch requires `id: \"...\";`"))?;
+            let id = id.ok_or_else(|| {
+                syn::Error::new(Span::call_site(), "patch requires `id: \"...\";`")
+            })?;
             Ok(Self { id, statements })
         }
     }
@@ -783,15 +947,20 @@ mod patch_syntax {
                     }
                     Statement::Connect(chain) => {
                         let pairs = chain.windows(2).map(|p| {
-                            let from = &p[0]; let to = &p[1];
+                            let from = &p[0];
+                            let to = &p[1];
                             quote! { __patch.connect(#from, #to)?; }
                         });
                         quote! { #(#pairs)* }
                     }
                     Statement::Disconnect(from, to) => quote! { __patch.disconnect(#from, #to)?; },
                     Statement::Input(name, path) => quote! { __patch.expose_input(#name, #path); },
-                    Statement::Output(name, path) => quote! { __patch.expose_output(#name, #path); },
-                    Statement::Trigger(name, values) => quote! { __patch.trigger(#name, &[#(#values),*]); },
+                    Statement::Output(name, path) => {
+                        quote! { __patch.expose_output(#name, #path); }
+                    }
+                    Statement::Trigger(name, values) => {
+                        quote! { __patch.trigger(#name, &[#(#values),*]); }
+                    }
                     Statement::After(values) => {
                         let deps = values.iter().map(|dep| quote! { __patch.after(#dep); });
                         quote! { #(#deps)* }

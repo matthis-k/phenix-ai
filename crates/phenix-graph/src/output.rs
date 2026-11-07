@@ -2,8 +2,8 @@
 //! zero or one produced payload, together with its selected destinations.
 //! A missing value is different from a produced value with zero recipients.
 //! No selection directly invokes another node or modifies graph topology.
-use crate::{EdgeId, Emission, InputAddr, SlotId, Value};
 use crate::authoring::Input;
+use crate::{EdgeId, Emission, InputAddr, SlotId, Value};
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,18 +18,37 @@ pub struct Destination {
     pub(crate) input: InputAddr,
 }
 impl Destination {
-    pub fn path(&self) -> &str { &self.node_path }
-    pub fn edge(&self) -> EdgeId { self.edge }
-    pub fn input(&self) -> InputAddr { self.input }
-    pub fn port(&self) -> &str { &self.port }
-    pub fn slot(&self) -> &str { &self.slot }
+    pub fn path(&self) -> &str {
+        &self.node_path
+    }
+    pub fn edge(&self) -> EdgeId {
+        self.edge
+    }
+    pub fn input(&self) -> InputAddr {
+        self.input
+    }
+    pub fn port(&self) -> &str {
+        &self.port
+    }
+    pub fn slot(&self) -> &str {
+        &self.slot
+    }
 }
 
 /// Symbolic typed destination; resolved against this output's compiled edges.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DestinationTarget {
-    Node { scope: u64, name: String, port: String, slot: String },
-    Module { scope: u64, name: String, port: String },
+    Node {
+        scope: u64,
+        name: String,
+        port: String,
+        slot: String,
+    },
+    Module {
+        scope: u64,
+        name: String,
+        port: String,
+    },
 }
 
 pub(crate) enum OutputSelection {
@@ -80,14 +99,22 @@ pub enum Output<T: Send + Sync + 'static = ()> {
 }
 impl<T: Send + Sync + 'static> Output<T> {
     fn new(value: T, selection: OutputSelection) -> Self {
-        Self::Some(Produced { value, selection, _local: PhantomData })
+        Self::Some(Produced {
+            value,
+            selection,
+            _local: PhantomData,
+        })
     }
     /// Produce no value. This is NOT equivalent to a value with no recipients.
     /// The generic output type is inferred from the node/return context; for
     /// a completely unconstrained closure annotate it, e.g. `Output::<()>::none()`.
-    pub fn none() -> Self { Self::None }
+    pub fn none() -> Self {
+        Self::None
+    }
     /// Produce a value and broadcast to every existing outgoing connection.
-    pub fn all(value: T) -> Self { Self::new(value, OutputSelection::All) }
+    pub fn all(value: T) -> Self {
+        Self::new(value, OutputSelection::All)
+    }
     /// Send to one typed input, provided this output is connected to it.
     ///
     /// ```compile_fail
@@ -98,30 +125,45 @@ impl<T: Send + Sync + 'static> Output<T> {
     /// graph.node("source", move |x: i64| Output::to(&target, x)).unwrap();
     /// ```
     pub fn to(target: &Input<T>, value: T) -> Self {
-        Self::new(value, OutputSelection::Targets(vec![target.dispatch_target()]))
+        Self::new(
+            value,
+            OutputSelection::Targets(vec![target.dispatch_target()]),
+        )
     }
     /// Send one identical value to a selection of existing connected inputs.
     pub fn to_all<'a>(targets: impl IntoIterator<Item = &'a Input<T>>, value: T) -> Self
-    where T: 'a {
-        Self::new(value, OutputSelection::Targets(
-            targets.into_iter().map(Input::dispatch_target).collect(),
-        ))
+    where
+        T: 'a,
+    {
+        Self::new(
+            value,
+            OutputSelection::Targets(targets.into_iter().map(Input::dispatch_target).collect()),
+        )
     }
     /// Route only to connected node paths in this prefix. A prefix matches
     /// whole segments: `workers` includes `workers/a` but not `workers-old`.
     /// Empty or slash-only prefixes match nothing; use `all` to broadcast.
     pub fn to_prefix(prefix: impl Into<String>, value: T) -> Self {
         let prefix = prefix.into().trim_end_matches('/').to_owned();
-        Self::to_filter(move |dest| {
-            !prefix.is_empty() && (dest.path() == prefix
-                || dest.path().strip_prefix(prefix.as_str())
-                    .is_some_and(|tail| tail.starts_with('/')))
-        }, value)
+        Self::to_filter(
+            move |dest| {
+                !prefix.is_empty()
+                    && (dest.path() == prefix
+                        || dest
+                            .path()
+                            .strip_prefix(prefix.as_str())
+                            .is_some_and(|tail| tail.starts_with('/')))
+            },
+            value,
+        )
     }
     /// Choose among only the existing outgoing connections. The callback
     /// may capture intermediate computations. Captured state must be Send +
     /// Sync so an emission can cross an external executor completion boundary.
-    pub fn to_filter(filter: impl Fn(&Destination) -> bool + Send + Sync + 'static, value: T) -> Self {
+    pub fn to_filter(
+        filter: impl Fn(&Destination) -> bool + Send + Sync + 'static,
+        value: T,
+    ) -> Self {
         Self::new(value, OutputSelection::Filter(Arc::new(filter)))
     }
     pub(crate) fn into_emission(self) -> Option<Emission> {
