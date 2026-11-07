@@ -389,9 +389,9 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     let mut module = ModuleDefBuilder::new("optional");
     let filter = module.register("filter", optional).unwrap();
     module
-        .export_input("request", vec![filter.slot::<i32>("value")])
+        .export_input("request", vec![filter.input::<i32>("run", "value")])
         .unwrap();
-    module.export_output("result", filter.output()).unwrap();
+    module.export_output("result", filter.output::<i32>("value")).unwrap();
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -421,9 +421,9 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     let mut module = ModuleDefBuilder::new("fallible");
     let parser = module.register("parse", parser).unwrap();
     module
-        .export_input("request", vec![parser.slot::<String>("value")])
+        .export_input("request", vec![parser.input::<String>("run", "value")])
         .unwrap();
-    module.export_output("result", parser.output()).unwrap();
+    module.export_output("result", parser.output::<i32>("value")).unwrap();
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
