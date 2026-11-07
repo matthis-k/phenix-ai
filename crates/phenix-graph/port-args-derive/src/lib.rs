@@ -740,8 +740,8 @@ pub fn local_port_layout(input: TokenStream) -> TokenStream {
 // methods: no compiler/executor mechanism exists behind the proc macro.
 mod patch_syntax {
     use proc_macro2::{Span, TokenStream as Tokens};
-    use syn::ext::IdentExt;
     use quote::quote;
+    use syn::ext::IdentExt;
     use syn::{
         Expr, Ident, LitInt, LitStr, Result, Token,
         parse::{Parse, ParseStream},
