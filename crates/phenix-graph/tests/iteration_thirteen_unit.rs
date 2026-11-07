@@ -61,10 +61,10 @@ fn typed_unit_output_can_feed_a_wire_typed_consumer() {
         )
         .unwrap();
     let sink = graph.node("sink", Node::wire(|_: ()| 42_i64)).unwrap();
-    let wire_output = graph.wire_output::<()>(source.name(), "value").unwrap();
+    let wire_output = graph.wire_output::<()>("source", "value").unwrap();
     graph.connect(wire_output, sink.inlet()).unwrap();
     let wire_input = graph
-        .wire_input::<i64>(source.name(), "run", "value")
+        .wire_input::<i64>("source", "run", "value")
         .unwrap();
     let request = graph.expose_input("request", wire_input).unwrap();
     graph.trigger("run", [request]).unwrap();
