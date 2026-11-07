@@ -1,7 +1,10 @@
 //! Graph-independent, typed in-process contribution staging.
 //! Identity is host-supplied provenance, never a permission or ABI guarantee.
 use phenix_contract::{identifier, Code, Failure};
-use std::{any::Any, collections::BTreeSet};
+use std::{
+    any::{Any, TypeId},
+    collections::{BTreeMap, BTreeSet},
+};
 
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
@@ -12,6 +15,7 @@ struct Entry {
     owner: String,
     kind: &'static str,
     id: String,
+    type_id: TypeId,
     value: Box<dyn Any + Send + Sync>,
 }
 
@@ -44,6 +48,16 @@ impl Registrar {
                 "invalid contribution identity",
             ));
         }
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.kind == C::KIND && entry.type_id != TypeId::of::<C>())
+        {
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "contribution kind type mismatch",
+            ));
+        }
         let id = value.id().to_owned();
         if !self.names.insert((C::KIND, id.clone())) {
             return Err(Failure::new(
@@ -55,6 +69,7 @@ impl Registrar {
             owner: self.owner.clone(),
             kind: C::KIND,
             id,
+            type_id: TypeId::of::<C>(),
             value: Box::new(value),
         });
         Ok(())
@@ -81,7 +96,21 @@ impl Contributions {
             .iter()
             .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
             .collect();
+        let mut types: BTreeMap<&str, TypeId> = self
+            .entries
+            .iter()
+            .map(|entry| (entry.kind, entry.type_id))
+            .collect();
         for e in &batch.entries {
+            if types
+                .insert(e.kind, e.type_id)
+                .is_some_and(|known| known != e.type_id)
+            {
+                return Err(Failure::new(
+                    Code::SchemaRejected,
+                    "contribution kind type mismatch",
+                ));
+            }
             if !names.insert((&e.owner, e.kind, &e.id)) {
                 return Err(Failure::new(
                     Code::DescriptorInvalid,
@@ -168,6 +197,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["alpha", "zeta"]
         );
+    }
+    struct Spoof(&'static str);
+    impl Contribution for Spoof {
+        const KIND: &'static str = "graph.patch";
+        fn id(&self) -> &str {
+            self.0
+        }
+    }
+
+    #[test]
+    fn incompatible_types_cannot_claim_one_registered_kind() {
+        let mut registrar = Registrar::new("alpha").unwrap();
+        registrar.add(Patch("node")).unwrap();
+        assert!(registrar.add(Spoof("different")).is_err());
+        let mut inventory = registrar.finish();
+
+        let mut other = Registrar::new("beta").unwrap();
+        other.add(Spoof("another")).unwrap();
+        assert!(inventory.merge(other.finish()).is_err());
+        assert_eq!(inventory.keys().count(), 1);
+        assert_eq!(inventory.iter::<Patch>().count(), 1);
     }
     #[test]
     fn invalid_names_fail() {
