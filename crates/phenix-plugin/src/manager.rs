@@ -309,18 +309,21 @@ impl PluginSet {
         let mut names = BTreeSet::new();
         for candidate in &staged {
             if !Arc::ptr_eq(&self.identity, &candidate.instance) {
-                return Err(Failure::new(Code::Denied, "foreign plugin instance candidate"));
+                return Err(Failure::new(
+                    Code::Denied,
+                    "foreign plugin instance candidate",
+                ));
             }
             if !names.insert(candidate.name.as_str()) {
-                return Err(Failure::new(Code::DescriptorInvalid, "duplicate staged plugin"));
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "duplicate staged plugin",
+                ));
             }
             if !Arc::ptr_eq(&self.catalog, &candidate.catalog) {
                 return Err(Failure::new(Code::Denied, "foreign staged plugin"));
             }
-            let same_active = match (
-                &candidate.expected_active,
-                self.loaded.get(&candidate.name),
-            ) {
+            let same_active = match (&candidate.expected_active, self.loaded.get(&candidate.name)) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                 _ => false,

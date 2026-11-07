@@ -155,23 +155,26 @@ fn unrelated_plugins_can_commit_candidates_independently() {
     assert_eq!(plugins.snapshot(&b).unwrap().revision(), 1);
 }
 
-
 // A batch containing one stale candidate must not publish even the valid ones.
 #[test]
 fn multi_plugin_commit_is_atomic_on_stale_candidate() {
     let mut catalog = PluginCatalog::new();
-    let a = catalog.register("alpha", |version: i32| {
-        Ok(Example {
-            version,
-            drops: Arc::new(AtomicUsize::new(0)),
+    let a = catalog
+        .register("alpha", |version: i32| {
+            Ok(Example {
+                version,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
         })
-    }).unwrap();
-    let b = catalog.register("beta", |version: i32| {
-        Ok(Example {
-            version,
-            drops: Arc::new(AtomicUsize::new(0)),
+        .unwrap();
+    let b = catalog
+        .register("beta", |version: i32| {
+            Ok(Example {
+                version,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
         })
-    }).unwrap();
+        .unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&a, 1).unwrap();
     plugins.load(&b, 10).unwrap();
@@ -180,26 +183,63 @@ fn multi_plugin_commit_is_atomic_on_stale_candidate() {
     let stale = plugins.stage_reload(&b, 20).unwrap();
     plugins.reload(&b, 30).unwrap();
     assert!(plugins.commit_batch(vec![valid, stale]).is_err());
-    assert_eq!(plugins.snapshot(&a).unwrap().get::<GraphPatch>("model").unwrap().version, 1);
-    assert_eq!(plugins.snapshot(&b).unwrap().get::<GraphPatch>("model").unwrap().version, 30);
+    assert_eq!(
+        plugins
+            .snapshot(&a)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        1
+    );
+    assert_eq!(
+        plugins
+            .snapshot(&b)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        30
+    );
 
     let valid_a = plugins.stage_reload(&a, 3).unwrap();
     let valid_b = plugins.stage_reload(&b, 40).unwrap();
     let committed = plugins.commit_batch(vec![valid_a, valid_b]).unwrap();
-    assert_eq!(committed.iter().map(|s|s.revision()).collect::<Vec<_>>(), [2, 3]);
-    assert_eq!(plugins.snapshot(&a).unwrap().get::<GraphPatch>("model").unwrap().version, 3);
-    assert_eq!(plugins.snapshot(&b).unwrap().get::<GraphPatch>("model").unwrap().version, 40);
+    assert_eq!(
+        committed.iter().map(|s| s.revision()).collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(
+        plugins
+            .snapshot(&a)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        3
+    );
+    assert_eq!(
+        plugins
+            .snapshot(&b)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        40
+    );
 }
 
 #[test]
 fn a_staged_candidate_is_bound_to_one_kernel_plugin_set() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("model", |version: i32| {
-        Ok(Example {
-            version,
-            drops: Arc::new(AtomicUsize::new(0)),
+    let key = catalog
+        .register("model", |version: i32| {
+            Ok(Example {
+                version,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
         })
-    }).unwrap();
+        .unwrap();
     let mut a = catalog.instance();
     let mut b = catalog.instance();
     let staged_a = a.stage_load(&key, 10).unwrap();
@@ -207,6 +247,20 @@ fn a_staged_candidate_is_bound_to_one_kernel_plugin_set() {
     assert!(b.snapshot(&key).is_err());
     assert!(a.snapshot(&key).is_err());
     // No state leaked between independently configured kernel instances.
-    assert_eq!(a.load(&key, 11).unwrap().get::<GraphPatch>("model").unwrap().version, 11);
-    assert_eq!(b.load(&key, 12).unwrap().get::<GraphPatch>("model").unwrap().version, 12);
+    assert_eq!(
+        a.load(&key, 11)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        11
+    );
+    assert_eq!(
+        b.load(&key, 12)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        12
+    );
 }
