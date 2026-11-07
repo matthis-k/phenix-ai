@@ -932,8 +932,6 @@
     }
 
 
-}
-
 // Conformance tests are deliberately separated from scenario tests above.
 // A failure in the graph is an expected result when asserted through WaveReport;
 // only a violated test assertion is a failing test.
