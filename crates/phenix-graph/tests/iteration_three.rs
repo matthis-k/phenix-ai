@@ -74,7 +74,7 @@ fn invalid_conditional_output_type_is_rejected_without_partial_connection() {
     let mut graph = GraphBuilder::new("type-reject");
     let choice = graph.node("choice", |x: i64| x).unwrap();
     let sink = graph.node("sink", |x: String| x).unwrap();
-    assert!(graph.connect(choice.output(), sink.inlet()).is_err());
+    assert!(graph.connect("choice.out.value", "sink.in.run.value").is_err());
     let input = graph.expose_input("request", choice.inlet()).unwrap();
     graph.trigger("run", [input]).unwrap();
     let fixture = Fixture::new(graph.compile().unwrap()).unwrap();
@@ -188,7 +188,7 @@ fn duplicate_conditional_output_names_fail_compilation() {
     // Duplicate output names are illegal even through the low-level node
     // declaration API; there is no special conditional node kind.
     use phenix_graph::{InputSlot, OutputSlot, Port};
-    let choice = graph
+    let _choice = graph
         .add(
             "choice",
             NodeTemplate::with_action(
@@ -203,7 +203,7 @@ fn duplicate_conditional_output_names_fail_compilation() {
         )
         .unwrap();
     let choice_input = graph
-        .local_input::<i64>(choice.name(), "run", "value")
+        .local_input::<i64>("choice", "run", "value")
         .unwrap();
     let input = graph.expose_input("request", choice_input).unwrap();
     graph.trigger("run", [input]).unwrap();
