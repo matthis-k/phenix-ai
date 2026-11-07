@@ -1,0 +1,19 @@
+name: Graph interface surface tests
+
+on:
+  pull_request:
+    paths:
+      - "crates/phenix-contract/**"
+      - ".github/workflows/graph-interface-surfaces.yml"
+  workflow_dispatch:
+
+jobs:
+  contract-interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test portable contract interfaces and offline checker
+        run: cargo test --locked -p phenix-contract --all-targets
+      - name: Run interface checker self-test
+        run: cargo run --locked -p phenix-contract --bin phenix-interface-check -- --self-test
