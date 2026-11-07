@@ -1795,9 +1795,9 @@ dependencies = [
 name = "phenix-kernel"
 version = "0.1.0"
 dependencies = [
- "libloading",
  "phenix-artifact",
  "phenix-contract",
+ "phenix-plugin",
  "serde",
  "serde_json",
 ]
@@ -1878,6 +1878,15 @@ dependencies = [
  "phenix-kernel",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "phenix-plugin"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "phenix-artifact",
+ "phenix-contract",
 ]
 
 [[package]]

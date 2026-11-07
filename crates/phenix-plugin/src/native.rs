@@ -5,13 +5,13 @@ use phenix_contract::{
     Code, Failure, Value,
 };
 use std::ffi::c_void;
-pub(crate) struct Native {
+pub struct Native {
     table: StatePluginTable,
     instance: *mut c_void,
     _image: Library,
 }
 impl Native {
-    pub(crate) fn load(package: &VerifiedPackage) -> Result<Self, Failure> {
+    pub fn load(package: &VerifiedPackage) -> Result<Self, Failure> {
         package.recheck()?;
         let image = unsafe { Library::new(package.artifact()) }
             .map_err(|e| Failure::new(Code::ArtifactInvalid, e.to_string()))?;
@@ -45,9 +45,8 @@ impl Native {
             _image: image,
         })
     }
-    pub(crate) fn initialize(&self, scope: u64) -> Result<(), Failure> {
-        let host = super::runtime::state_host(scope, 0, 0);
-        match unsafe { self.table.initialize.unwrap()(self.instance, &host).consume() }? {
+    pub fn initialize(&self, host: &StateHostApi) -> Result<(), Failure> {
+        match unsafe { self.table.initialize.unwrap()(self.instance, host).consume() }? {
             (0, Value::Null) => Ok(()),
             (2, value) => Err(Failure::from_value(value)?),
             _ => Err(Failure::new(
@@ -56,16 +55,15 @@ impl Native {
             )),
         }
     }
-    pub(crate) fn invoke(
+    pub fn invoke(
         &self,
-        scope: u64,
+        host: &StateHostApi,
         key: &str,
         input: &[u8],
     ) -> Result<(u32, Value), Failure> {
-        let host = super::runtime::state_host(scope, 0, 0);
-        self.pending(&host, key, Some(input), false)
+        self.pending(host, key, Some(input), false)
     }
-    pub(crate) fn pending(
+    pub fn pending(
         &self,
         host: &StateHostApi,
         key: &str,
@@ -87,7 +85,7 @@ impl Native {
             reply.consume()
         }
     }
-    pub(crate) fn stop(&mut self) -> Result<(), Failure> {
+    pub fn stop(&mut self) -> Result<(), Failure> {
         let instance = std::mem::replace(&mut self.instance, std::ptr::null_mut());
         if instance.is_null() {
             return Err(Failure::new(Code::PluginFailed, "instance already stopped"));
