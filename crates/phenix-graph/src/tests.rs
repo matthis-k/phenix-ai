@@ -4430,7 +4430,10 @@ mod conformance {
             0,
             "input",
             S,
-            vec![ModuleInputTarget::Node(input(1, 0, 0)); (CompileLimits::default().max_work + 1) as usize],
+            vec![
+                ModuleInputTarget::Node(input(1, 0, 0));
+                (CompileLimits::default().max_work + 1) as usize
+            ],
         );
         let mut work_catalog = ModuleCatalog::new();
         work_catalog.add(large.build()).unwrap();
@@ -8453,13 +8456,13 @@ mod partitioned_active_coloring_conformance {
 // In particular, a consumer never names the runtime's erased node representation.
 #[cfg(test)]
 mod declarative_consumer_api_tests {
-    use crate::{Deployment, ReportRetention};
     use super::{
         BufferMode, Candidate, ContractValue, Emission, Engine, IncompleteGroup, InputSlot,
         InvocationCtx, ModuleCatalog, ModuleDefBuilder, ModuleInputTarget, ModuleOutputSource,
         ModuleTriggerTarget, NodeAction, NodeTemplate, OutputSlot, Pick, Port, PortPolicy,
         PortSnapshot, Selection, Store, Value, WaveError, WhenUpstreamSettles, emit, input, output,
     };
+    use crate::{Deployment, ReportRetention};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
