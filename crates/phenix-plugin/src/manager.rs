@@ -108,7 +108,7 @@ impl PluginCatalog {
             catalog: self.identity.clone(),
             factories: self.factories.clone(),
             loaded: BTreeMap::new(),
-            next_revision: 0,
+            revisions: BTreeMap::new(),
         }
     }
 }
@@ -185,13 +185,36 @@ impl<C: Contribution> Deref for ContributionHandle<C> {
     }
 }
 
+/// A sealed, unpublished plugin candidate. The kernel may compile a graph using
+/// the staged snapshot before committing the selected implementation.
+/// Dropping this candidate aborts staging without changing the active selection.
+pub struct PreparedPlugin {
+    catalog: Arc<()>,
+    name: String,
+    expected_revision: u64,
+    expected_active: Option<Arc<Loaded>>,
+    loaded: Arc<Loaded>,
+}
+
+impl PreparedPlugin {
+    pub fn snapshot(&self) -> PluginSnapshot {
+        PluginSnapshot {
+            loaded: self.loaded.clone(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 /// Independent plugin instances selected for one kernel instance. This is
 /// deliberately not a graph builder or a second invocation scheduler.
 pub struct PluginSet {
     catalog: Arc<()>,
     factories: BTreeMap<String, Arc<Factory>>,
     loaded: BTreeMap<String, Arc<Loaded>>,
-    next_revision: u64,
+    revisions: BTreeMap<String, u64>,
 }
 
 impl PluginSet {
@@ -209,21 +232,90 @@ impl PluginSet {
         &self,
         key: &PluginKey<C>,
         configuration: C,
-    ) -> Result<Arc<Loaded>, Failure> {
+        require_loaded: bool,
+    ) -> Result<PreparedPlugin, Failure> {
         let factory = self.factory(key)?;
-        let revision = self.next_revision.checked_add(1).ok_or_else(|| {
+        let previous = self.loaded.get(key.name()).cloned();
+        if require_loaded != previous.is_some() {
+            return Err(Failure::new(
+                Code::MissingBinding,
+                if require_loaded {
+                    "plugin is not loaded"
+                } else {
+                    "plugin already loaded"
+                },
+            ));
+        }
+        // Revision history survives unload. Otherwise an old staged candidate
+        // could be committed after unload/reload with the same revision (ABA).
+        let expected_revision = *self.revisions.get(key.name()).unwrap_or(&0);
+        let revision = expected_revision.checked_add(1).ok_or_else(|| {
             Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
         })?;
         let instance = (factory.make)(Box::new(configuration))?;
         let mut registrar = Registrar::new(key.name())?;
         instance.contribute(&mut registrar)?;
-        Ok(Arc::new(Loaded {
+        let loaded = Arc::new(Loaded {
             contributions: registrar.finish(),
             _implementation: instance,
             _factory: factory,
             name: key.name().to_owned(),
             revision,
-        }))
+        });
+        Ok(PreparedPlugin {
+            catalog: self.catalog.clone(),
+            name: key.name().to_owned(),
+            expected_revision,
+            expected_active: previous,
+            loaded,
+        })
+    }
+
+    /// Prepare a new plugin without activating it. Kernel composition may
+    /// validate the candidate graph and resources before calling commit.
+    pub fn stage_load<C: Send + 'static>(
+        &self,
+        key: &PluginKey<C>,
+        configuration: C,
+    ) -> Result<PreparedPlugin, Failure> {
+        self.stage(key, configuration, false)
+    }
+
+    /// Prepare a replacement. The previous revision stays active until commit.
+    pub fn stage_reload<C: Send + 'static>(
+        &self,
+        key: &PluginKey<C>,
+        configuration: C,
+    ) -> Result<PreparedPlugin, Failure> {
+        self.stage(key, configuration, true)
+    }
+
+    /// Publish an already validated candidate. Reject stale candidates
+    /// atomically, including candidates prepared before an unload.
+    ///
+    /// The kernel coordinates this with activation of its compiled graph;
+    /// this method does not mutate a graph or grant runtime authority.
+    pub fn commit(&mut self, staged: PreparedPlugin) -> Result<PluginSnapshot, Failure> {
+        if !Arc::ptr_eq(&self.catalog, &staged.catalog) {
+            return Err(Failure::new(Code::Denied, "foreign staged plugin"));
+        }
+        let current = self.loaded.get(&staged.name);
+        let same_active = match (&staged.expected_active, current) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        if !same_active
+            || self.revisions.get(&staged.name).copied().unwrap_or(0)
+                != staged.expected_revision
+        {
+            return Err(Failure::new(Code::Denied, "stale plugin composition"));
+        }
+        self.revisions
+            .insert(staged.name.clone(), staged.loaded.revision);
+        let loaded = staged.loaded;
+        self.loaded.insert(staged.name, loaded.clone());
+        Ok(PluginSnapshot { loaded })
     }
 
     pub fn load<C: Send + 'static>(
@@ -231,34 +323,19 @@ impl PluginSet {
         key: &PluginKey<C>,
         configuration: C,
     ) -> Result<PluginSnapshot, Failure> {
-        self.factory(key)?;
-        if self.loaded.contains_key(key.name()) {
-            return Err(Failure::new(
-                Code::DescriptorInvalid,
-                "plugin already loaded",
-            ));
-        }
-        let staged = self.stage(key, configuration)?;
-        self.next_revision = staged.revision;
-        self.loaded.insert(key.name().to_owned(), staged.clone());
-        Ok(PluginSnapshot { loaded: staged })
+        let candidate = self.stage_load(key, configuration)?;
+        self.commit(candidate)
     }
 
-    /// Construct and register a complete replacement before publishing it.
-    /// A failed factory or contribution leaves the previous revision active.
+    /// Convenience for plugin-only use. Kernel graph recomposition must use
+    /// stage_reload + graph compile + commit to avoid publishing too early.
     pub fn reload<C: Send + 'static>(
         &mut self,
         key: &PluginKey<C>,
         configuration: C,
     ) -> Result<PluginSnapshot, Failure> {
-        self.factory(key)?;
-        if !self.loaded.contains_key(key.name()) {
-            return Err(Failure::new(Code::MissingBinding, "plugin is not loaded"));
-        }
-        let staged = self.stage(key, configuration)?;
-        self.next_revision = staged.revision;
-        self.loaded.insert(key.name().to_owned(), staged.clone());
-        Ok(PluginSnapshot { loaded: staged })
+        let candidate = self.stage_reload(key, configuration)?;
+        self.commit(candidate)
     }
 
     /// Logical unload: no new snapshots or activations from this plugin.
