@@ -55,6 +55,7 @@
         ./crates/phenix-contract
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./tests/generation-identity-v2.json
       ];
       build =
@@ -77,6 +78,7 @@
         ./crates/phenix-contract
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-conformance
         ./crates/phenix-sdk
         ./crates/phenix-macros
@@ -1018,6 +1020,7 @@
       p2ModelMeterProductRunner = build "phenix-p2-model-meter-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-model-meter-product
@@ -1281,6 +1284,7 @@
       selectedHttpModelRunner = build "phenix-http-selected-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-provider-contracts
         ./crates/phenix-provider-protocols
@@ -1546,6 +1550,7 @@
         ./crates/phenix-contract
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-sdk
         ./crates/phenix-macros
         ./crates/phenix-basic-contracts
@@ -2073,6 +2078,7 @@
       p2SourceEvidenceRunner = build "phenix-p2-source-evidence" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-source-evidence
@@ -2091,6 +2097,7 @@
       p2CompactionProductRunner = build "phenix-p2-compaction-product" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-compaction-replay
@@ -2110,6 +2117,7 @@
       p2EvidenceStoreRunner = build "phenix-p2-evidence-store" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-evidence-store
@@ -2128,6 +2136,7 @@
       p2ProjectStorageRunner = build "phenix-p2-project-storage" (subset (publicPaths ++ [
         ./crates/phenix-artifact
         ./crates/phenix-kernel
+        ./crates/phenix-plugin
         ./crates/phenix-basic-contracts
         ./crates/phenix-advanced-contracts
         ./crates/phenix-p2-project-storage

@@ -1795,9 +1795,9 @@ dependencies = [
 name = "phenix-kernel"
 version = "0.1.0"
 dependencies = [
- "phenix-plugin",
  "phenix-artifact",
  "phenix-contract",
+ "phenix-plugin",
  "serde",
  "serde_json",
 ]
