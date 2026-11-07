@@ -28,49 +28,81 @@ impl Registrar {
         if !identifier(&owner) {
             return Err(Failure::new(Code::DescriptorInvalid, "invalid owner"));
         }
-        Ok(Self { owner, names: BTreeSet::new(), entries: Vec::new() })
+        Ok(Self {
+            owner,
+            names: BTreeSet::new(),
+            entries: Vec::new(),
+        })
     }
-    pub fn owner(&self) -> &str { &self.owner }
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
     pub fn add<C: Contribution>(&mut self, value: C) -> Result<(), Failure> {
         if !identifier(C::KIND) || !identifier(value.id()) {
-            return Err(Failure::new(Code::DescriptorInvalid, "invalid contribution identity"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "invalid contribution identity",
+            ));
         }
         let id = value.id().to_owned();
         if !self.names.insert((C::KIND, id.clone())) {
-            return Err(Failure::new(Code::DescriptorInvalid, "duplicate contribution"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "duplicate contribution",
+            ));
         }
-        self.entries.push(Entry { owner: self.owner.clone(), kind: C::KIND, id, value: Box::new(value) });
+        self.entries.push(Entry {
+            owner: self.owner.clone(),
+            kind: C::KIND,
+            id,
+            value: Box::new(value),
+        });
         Ok(())
     }
     pub fn finish(self) -> Contributions {
         let mut entries = self.entries;
-        entries.sort_by(|a,b| (&a.owner,a.kind,&a.id).cmp(&(&b.owner,b.kind,&b.id)));
+        entries.sort_by(|a, b| (&a.owner, a.kind, &a.id).cmp(&(&b.owner, b.kind, &b.id)));
         Contributions { entries }
     }
 }
 
 #[derive(Default)]
-pub struct Contributions { entries: Vec<Entry> }
+pub struct Contributions {
+    entries: Vec<Entry>,
+}
 impl Contributions {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// Validate the entire batch before installing any member.
     pub fn merge(&mut self, batch: Self) -> Result<(), Failure> {
-        let mut names: BTreeSet<(&str,&str,&str)> = self.entries.iter()
-            .map(|e| (e.owner.as_str(), e.kind, e.id.as_str())).collect();
+        let mut names: BTreeSet<(&str, &str, &str)> = self
+            .entries
+            .iter()
+            .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
+            .collect();
         for e in &batch.entries {
             if !names.insert((&e.owner, e.kind, &e.id)) {
-                return Err(Failure::new(Code::DescriptorInvalid, "duplicate selected contribution"));
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "duplicate selected contribution",
+                ));
             }
         }
         self.entries.extend(batch.entries);
-        self.entries.sort_by(|a,b| (&a.owner,a.kind,&a.id).cmp(&(&b.owner,b.kind,&b.id)));
+        self.entries
+            .sort_by(|a, b| (&a.owner, a.kind, &a.id).cmp(&(&b.owner, b.kind, &b.id)));
         Ok(())
     }
-    pub fn keys(&self) -> impl Iterator<Item=(&str,&str,&str)> {
-        self.entries.iter().map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
+    pub fn keys(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.entries
+            .iter()
+            .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
     }
-    pub fn iter<C: Contribution>(&self) -> impl Iterator<Item=(&str,&C)> {
-        self.entries.iter().filter_map(|e| e.value.downcast_ref::<C>().map(|v| (e.owner.as_str(), v)))
+    pub fn iter<C: Contribution>(&self) -> impl Iterator<Item = (&str, &C)> {
+        self.entries
+            .iter()
+            .filter_map(|e| e.value.downcast_ref::<C>().map(|v| (e.owner.as_str(), v)))
     }
 }
 
@@ -88,11 +120,15 @@ mod tests {
     struct Resource(&'static str);
     impl Contribution for Patch {
         const KIND: &'static str = "graph.patch";
-        fn id(&self) -> &str { self.0 }
+        fn id(&self) -> &str {
+            self.0
+        }
     }
     impl Contribution for Resource {
         const KIND: &'static str = "resource.offer";
-        fn id(&self) -> &str { self.0 }
+        fn id(&self) -> &str {
+            self.0
+        }
     }
     #[test]
     fn multiple_kinds_use_one_graph_agnostic_collector() {
@@ -122,7 +158,12 @@ mod tests {
         let mut c = Registrar::new("zeta").unwrap();
         c.add(Patch("main")).unwrap();
         inv.merge(c.finish()).unwrap();
-        assert_eq!(inv.iter::<Patch>().map(|(owner,_)|owner).collect::<Vec<_>>(), ["alpha","zeta"]);
+        assert_eq!(
+            inv.iter::<Patch>()
+                .map(|(owner, _)| owner)
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
     }
     #[test]
     fn invalid_names_fail() {

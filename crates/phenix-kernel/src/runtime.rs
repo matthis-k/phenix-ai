@@ -1,11 +1,9 @@
-use phenix_plugin::Native;
-use crate::{
-    resolve::{EffectTarget, Prepared, Selection},
-};
+use crate::resolve::{EffectTarget, Prepared, Selection};
 use phenix_contract::{
     abi::{Header, StateHostApi},
     Authority, Code, Failure, ScopedRequest, Value,
 };
+use phenix_plugin::Native;
 use std::{
     cell::RefCell,
     collections::BTreeMap,
@@ -454,8 +452,11 @@ impl Kernel {
                 },
             );
         }
-        let (status, value) =
-            self.images.borrow()[&selection.provider].invoke(&state_host(guard.scope, 0, 0), &key, input)?;
+        let (status, value) = self.images.borrow()[&selection.provider].invoke(
+            &state_host(guard.scope, 0, 0),
+            &key,
+            input,
+        )?;
         match status {
             0 if contract.response.accepts(&value) => {
                 Ok(super::pending::Call::Ready(Outcome::Success(value)))
