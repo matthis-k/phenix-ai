@@ -1756,7 +1756,12 @@ fn graph_rejects_edge_type_mismatch() {
         |_ctx| Ok(vec![]),
     ));
     g.connect(output(1, 0), input(2, 0, 0));
-    assert!(g.build().err().unwrap().contains("type identity mismatch on edge"));
+    assert!(
+        g.build()
+            .err()
+            .unwrap()
+            .contains("type identity mismatch on edge")
+    );
 }
 
 // Conformance tests are deliberately separated from scenario tests above.
@@ -2444,7 +2449,12 @@ mod conformance {
         g.add_node(passthrough(1));
         g.add_node(scalar(2));
         g.connect(output(1, 0), input(2, 0, 0));
-        assert!(g.build().err().unwrap().contains("type identity mismatch on edge"));
+        assert!(
+            g.build()
+                .err()
+                .unwrap()
+                .contains("type identity mismatch on edge")
+        );
     }
     #[test]
     fn compiler_rejects_unknown_trigger_target() {
