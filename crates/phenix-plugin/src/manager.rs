@@ -316,7 +316,10 @@ impl PluginSet {
     /// a newer plugin instance. No state changes on failure.
     pub fn commit(&mut self, staged: StagedPlugin) -> Result<Option<PluginSnapshot>, Failure> {
         if !Arc::ptr_eq(&self.set_identity, &staged.set_identity) {
-            return Err(Failure::new(Code::Denied, "stage belongs to a different plugin set"));
+            return Err(Failure::new(
+                Code::Denied,
+                "stage belongs to a different plugin set",
+            ));
         }
         if self.next_revision != staged.expected_epoch
             || self.expected_revision(&staged.name) != staged.expected_revision
@@ -598,10 +601,12 @@ mod tests {
     fn stage_from_sibling_set_is_rejected_even_with_same_catalog_and_revision() {
         let mut catalog = PluginCatalog::new();
         let key = catalog
-            .register("shared", |value: i32| Ok(Example {
-                value,
-                drops: Arc::new(AtomicUsize::new(0)),
-            }))
+            .register("shared", |value: i32| {
+                Ok(Example {
+                    value,
+                    drops: Arc::new(AtomicUsize::new(0)),
+                })
+            })
             .unwrap();
         let mut a = catalog.instance();
         let mut b = catalog.instance();
@@ -610,11 +615,19 @@ mod tests {
         let foreign = a.prepare_reload(&key, 99).unwrap();
         assert!(b.commit(foreign).is_err());
         assert_eq!(
-            b.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value,
+            b.snapshot(&key)
+                .unwrap()
+                .get::<GraphPatch>("calculate")
+                .unwrap()
+                .value,
             2
         );
         assert_eq!(
-            a.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value,
+            a.snapshot(&key)
+                .unwrap()
+                .get::<GraphPatch>("calculate")
+                .unwrap()
+                .value,
             1
         );
     }
