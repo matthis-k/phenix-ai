@@ -100,9 +100,9 @@ impl Contributions {
             .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
     }
     pub(crate) fn find_index<C: Contribution>(&self, id: &str) -> Option<usize> {
-        self.entries.iter().position(|entry| {
-            entry.kind == C::KIND && entry.id == id && entry.value.is::<C>()
-        })
+        self.entries
+            .iter()
+            .position(|entry| entry.kind == C::KIND && entry.id == id && entry.value.is::<C>())
     }
     pub(crate) fn get_index<C: Contribution>(&self, index: usize) -> Option<&C> {
         self.entries.get(index)?.value.downcast_ref::<C>()

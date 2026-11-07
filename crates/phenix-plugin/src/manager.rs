@@ -5,13 +5,7 @@
 //! Dynamically linked cdylibs require a separate ABI adapter (not Rust Any).
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
 use phenix_contract::{identifier, Code, Failure};
-use std::{
-    any::Any,
-    collections::BTreeMap,
-    marker::PhantomData,
-    ops::Deref,
-    sync::Arc,
-};
+use std::{any::Any, collections::BTreeMap, marker::PhantomData, ops::Deref, sync::Arc};
 
 type Configuration = Box<dyn Any + Send>;
 type Constructor = dyn Fn(Configuration) -> Result<Box<dyn PluginInstance>, Failure> + Send + Sync;
@@ -77,10 +71,16 @@ impl PluginCatalog {
     {
         let name = name.into();
         if name == "root" || !identifier(&name) {
-            return Err(Failure::new(Code::DescriptorInvalid, "invalid plugin identity"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "invalid plugin identity",
+            ));
         }
         if self.factories.contains_key(&name) {
-            return Err(Failure::new(Code::DescriptorInvalid, "duplicate plugin factory"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "duplicate plugin factory",
+            ));
         }
         let make = move |configuration: Configuration| {
             let configuration = configuration.downcast::<C>().map_err(|_| {
@@ -233,7 +233,10 @@ impl PluginSet {
     ) -> Result<PluginSnapshot, Failure> {
         self.factory(key)?;
         if self.loaded.contains_key(key.name()) {
-            return Err(Failure::new(Code::DescriptorInvalid, "plugin already loaded"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "plugin already loaded",
+            ));
         }
         let staged = self.stage(key, configuration)?;
         self.next_revision = staged.revision;
@@ -420,12 +423,14 @@ mod tests {
                 })
             })
             .unwrap();
-        assert!(a.register("same", |_: ()| {
-            Ok(Example {
-                value: 0,
-                drops: Arc::new(AtomicUsize::new(0)),
+        assert!(a
+            .register("same", |_: ()| {
+                Ok(Example {
+                    value: 0,
+                    drops: Arc::new(AtomicUsize::new(0)),
+                })
             })
-        }).is_err());
+            .is_err());
         let mut b = PluginCatalog::new().instance();
         assert!(b.load(&key, ()).is_err());
     }
