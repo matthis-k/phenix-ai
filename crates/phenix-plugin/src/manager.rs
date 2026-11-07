@@ -263,7 +263,10 @@ impl PluginSet {
     ) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
         if self.loaded.contains_key(key.name()) {
-            return Err(Failure::new(Code::DescriptorInvalid, "plugin already loaded"));
+            return Err(Failure::new(
+                Code::DescriptorInvalid,
+                "plugin already loaded",
+            ));
         }
         Ok(StagedPlugin {
             catalog: self.catalog.clone(),
@@ -280,7 +283,8 @@ impl PluginSet {
         configuration: C,
     ) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
-        let expected_revision = self.expected_revision(key.name())
+        let expected_revision = self
+            .expected_revision(key.name())
             .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
         Ok(StagedPlugin {
             catalog: self.catalog.clone(),
@@ -293,7 +297,8 @@ impl PluginSet {
 
     pub fn prepare_unload<C>(&self, key: &PluginKey<C>) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
-        let expected_revision = self.expected_revision(key.name())
+        let expected_revision = self
+            .expected_revision(key.name())
             .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
         Ok(StagedPlugin {
             catalog: self.catalog.clone(),
@@ -319,8 +324,15 @@ impl PluginSet {
         let next_revision = self.next_revision.checked_add(1).ok_or_else(|| {
             Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
         })?;
-        if staged.candidate.as_ref().is_some_and(|loaded| loaded.revision != next_revision) {
-            return Err(Failure::new(Code::InfrastructureFailure, "candidate revision mismatch"));
+        if staged
+            .candidate
+            .as_ref()
+            .is_some_and(|loaded| loaded.revision != next_revision)
+        {
+            return Err(Failure::new(
+                Code::InfrastructureFailure,
+                "candidate revision mismatch",
+            ));
         }
         self.next_revision = next_revision;
         match staged.candidate {
@@ -355,7 +367,10 @@ impl PluginSet {
     ) -> Result<PluginSnapshot, Failure> {
         let staged = self.prepare_reload(key, configuration)?;
         self.commit(staged)?.ok_or_else(|| {
-            Failure::new(Code::InfrastructureFailure, "reloaded stage has no candidate")
+            Failure::new(
+                Code::InfrastructureFailure,
+                "reloaded stage has no candidate",
+            )
         })
     }
 
@@ -489,15 +504,35 @@ mod tests {
     #[test]
     fn staged_reload_is_not_visible_until_explicit_commit() {
         let mut catalog = PluginCatalog::new();
-        let key = catalog.register("model", |n: i32| Ok(Example {
-            value: n,
-            drops: Arc::new(AtomicUsize::new(0)),
-        })).unwrap();
+        let key = catalog
+            .register("model", |n: i32| {
+                Ok(Example {
+                    value: n,
+                    drops: Arc::new(AtomicUsize::new(0)),
+                })
+            })
+            .unwrap();
         let mut plugins = catalog.instance();
         plugins.load(&key, 1).unwrap();
         let staged = plugins.prepare_reload(&key, 9).unwrap();
-        assert_eq!(staged.candidate().unwrap().get::<GraphPatch>("calculate").unwrap().value, 9);
-        assert_eq!(plugins.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value, 1);
+        assert_eq!(
+            staged
+                .candidate()
+                .unwrap()
+                .get::<GraphPatch>("calculate")
+                .unwrap()
+                .value,
+            9
+        );
+        assert_eq!(
+            plugins
+                .snapshot(&key)
+                .unwrap()
+                .get::<GraphPatch>("calculate")
+                .unwrap()
+                .value,
+            1
+        );
         drop(staged); // simulated compiler failure: no graph or plugin change
         assert_eq!(plugins.snapshot(&key).unwrap().revision(), 1);
         let replacement = plugins.prepare_reload(&key, 5).unwrap();
@@ -508,17 +543,29 @@ mod tests {
     #[test]
     fn stale_prepared_changes_cannot_replace_current_revision() {
         let mut catalog = PluginCatalog::new();
-        let key = catalog.register("model", |n: i32| Ok(Example {
-            value: n,
-            drops: Arc::new(AtomicUsize::new(0)),
-        })).unwrap();
+        let key = catalog
+            .register("model", |n: i32| {
+                Ok(Example {
+                    value: n,
+                    drops: Arc::new(AtomicUsize::new(0)),
+                })
+            })
+            .unwrap();
         let mut plugins = catalog.instance();
         plugins.load(&key, 1).unwrap();
         let older = plugins.prepare_reload(&key, 2).unwrap();
         let newer = plugins.prepare_reload(&key, 3).unwrap();
         plugins.commit(newer).unwrap();
         assert!(plugins.commit(older).is_err());
-        assert_eq!(plugins.snapshot(&key).unwrap().get::<GraphPatch>("calculate").unwrap().value, 3);
+        assert_eq!(
+            plugins
+                .snapshot(&key)
+                .unwrap()
+                .get::<GraphPatch>("calculate")
+                .unwrap()
+                .value,
+            3
+        );
     }
 
     #[test]
@@ -526,9 +573,14 @@ mod tests {
         let mut catalog = PluginCatalog::new();
         let drops = Arc::new(AtomicUsize::new(0));
         let counts = drops.clone();
-        let key = catalog.register("model", move |n: i32| Ok(Example {
-            value: n, drops: counts.clone(),
-        })).unwrap();
+        let key = catalog
+            .register("model", move |n: i32| {
+                Ok(Example {
+                    value: n,
+                    drops: counts.clone(),
+                })
+            })
+            .unwrap();
         let mut plugins = catalog.instance();
         let initial = plugins.load(&key, 4).unwrap();
         let prepared = plugins.prepare_unload(&key).unwrap();
