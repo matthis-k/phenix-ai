@@ -306,8 +306,7 @@ impl PluginSet {
             _ => false,
         };
         if !same_active
-            || self.revisions.get(&staged.name).copied().unwrap_or(0)
-                != staged.expected_revision
+            || self.revisions.get(&staged.name).copied().unwrap_or(0) != staged.expected_revision
         {
             return Err(Failure::new(Code::Denied, "stale plugin composition"));
         }

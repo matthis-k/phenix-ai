@@ -44,7 +44,10 @@ impl GraphGeneration {
             .get::<GraphPatch>("model")
             .ok_or_else(|| Failure::new(Code::MissingBinding, "model action absent"))?;
         if action.version < 0 {
-            return Err(Failure::new(Code::SchemaRejected, "invalid candidate graph"));
+            return Err(Failure::new(
+                Code::SchemaRejected,
+                "invalid candidate graph",
+            ));
         }
         Ok(Self { action })
     }
@@ -93,12 +96,14 @@ fn failed_compile_does_not_change_plugin_or_executable_generation() {
 #[test]
 fn competing_candidates_and_unload_reload_cannot_resurrect_stale_code() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("model", |v: i32| {
-        Ok(Example {
-            version: v,
-            drops: Arc::new(AtomicUsize::new(0)),
+    let key = catalog
+        .register("model", |v: i32| {
+            Ok(Example {
+                version: v,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
         })
-    }).unwrap();
+        .unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&key, 1).unwrap();
     let candidate_a = plugins.stage_reload(&key, 2).unwrap();
@@ -111,18 +116,36 @@ fn competing_candidates_and_unload_reload_cannot_resurrect_stale_code() {
     // Load a new revision after unload; revision history must not reset.
     assert_eq!(plugins.load(&key, 5).unwrap().revision(), 3);
     assert!(plugins.commit(stale).is_err());
-    assert_eq!(plugins.snapshot(&key).unwrap().get::<GraphPatch>("model").unwrap().version, 5);
+    assert_eq!(
+        plugins
+            .snapshot(&key)
+            .unwrap()
+            .get::<GraphPatch>("model")
+            .unwrap()
+            .version,
+        5
+    );
 }
 
 #[test]
 fn unrelated_plugins_can_commit_candidates_independently() {
     let mut catalog = PluginCatalog::new();
-    let a = catalog.register("a", |v: i32| {
-        Ok(Example { version: v, drops: Arc::new(AtomicUsize::new(0)) })
-    }).unwrap();
-    let b = catalog.register("b", |v: i32| {
-        Ok(Example { version: v, drops: Arc::new(AtomicUsize::new(0)) })
-    }).unwrap();
+    let a = catalog
+        .register("a", |v: i32| {
+            Ok(Example {
+                version: v,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
+        })
+        .unwrap();
+    let b = catalog
+        .register("b", |v: i32| {
+            Ok(Example {
+                version: v,
+                drops: Arc::new(AtomicUsize::new(0)),
+            })
+        })
+        .unwrap();
     let mut plugins = catalog.instance();
     let staged_a = plugins.stage_load(&a, 4).unwrap();
     let staged_b = plugins.stage_load(&b, 8).unwrap();
