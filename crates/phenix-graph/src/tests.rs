@@ -2090,7 +2090,7 @@ mod conformance {
         for definition in definitions {
             catalog.add(definition)?;
         }
-        catalog.compile(root)
+        catalog.compile(root).map_err(|error| error.message)
     }
     fn named_lookup_graph() -> Arc<Graph> {
         let mut deepest = ModuleDefBuilder::new("deepest-definition");
@@ -4387,9 +4387,9 @@ mod conformance {
     #[test]
     fn compiler_budgets_deep_wide_and_high_work_module_expansion() {
         let mut depth_catalog = ModuleCatalog::new();
-        for depth in 0..=MAX_MODULE_EXPANSION_DEPTH {
+        for depth in 0..=CompileLimits::default().max_depth {
             let mut definition = ModuleDefBuilder::new(format!("depth-{depth}"));
-            if depth < MAX_MODULE_EXPANSION_DEPTH {
+            if depth < CompileLimits::default().max_depth {
                 definition
                     .try_instance("next", format!("depth-{}", depth + 1))
                     .unwrap();
@@ -4410,7 +4410,7 @@ mod conformance {
             .add(ModuleDefBuilder::new("leaf").build())
             .unwrap();
         let mut wide = ModuleDefBuilder::new("wide");
-        for index in 0..=MAX_MODULE_INSTANCE_COUNT {
+        for index in 0..=CompileLimits::default().max_instances {
             wide.instances
                 .push(ModuleInstance::new(format!("m{index}"), "leaf").unwrap());
         }
@@ -4430,7 +4430,7 @@ mod conformance {
             0,
             "input",
             S,
-            vec![ModuleInputTarget::Node(input(1, 0, 0)); (MAX_MODULE_EXPANSION_WORK + 1) as usize],
+            vec![ModuleInputTarget::Node(input(1, 0, 0)); (CompileLimits::default().max_work + 1) as usize],
         );
         let mut work_catalog = ModuleCatalog::new();
         work_catalog.add(large.build()).unwrap();
@@ -8453,6 +8453,7 @@ mod partitioned_active_coloring_conformance {
 // In particular, a consumer never names the runtime's erased node representation.
 #[cfg(test)]
 mod declarative_consumer_api_tests {
+    use crate::{Deployment, ReportRetention};
     use super::{
         BufferMode, Candidate, ContractValue, Emission, Engine, IncompleteGroup, InputSlot,
         InvocationCtx, ModuleCatalog, ModuleDefBuilder, ModuleInputTarget, ModuleOutputSource,
