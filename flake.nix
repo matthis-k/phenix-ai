@@ -85,6 +85,11 @@
         ./crates/phenix-basic-contracts
         ./tests/generation-identity-v2.json
       ];
+      interfaceChecker = build "phenix-contract" artifactSource;
+      interfaceSurfaceCheck = pkgs.runCommand "phenix-interface-surfaces" { } ''
+        ${interfaceChecker}/bin/phenix-interface-check --self-test
+        touch $out
+      '';
       describe = build "phenix-artifact" artifactSource;
       pluginSourceTool = pkgs.writeShellApplication {
         name = "phenix-plugin-sources";
@@ -3046,6 +3051,7 @@
         };
       };
       checks.${system} = {
+        graph-interface-surfaces = interfaceSurfaceCheck;
         m1-native-authoring = authoringCheck;
         plugin-source-preparation = pluginSourceCheck;
         m1-graph = graphCheck;
