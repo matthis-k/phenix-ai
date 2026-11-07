@@ -55,8 +55,8 @@ fn argument_type_is_its_input_layout_without_an_adapter_wrapper() {
             ),
         )
         .unwrap();
-    let left = graph.wire_input::<i64>(sum.name(), "run", "left").unwrap();
-    let right = graph.wire_input::<i64>(sum.name(), "run", "right").unwrap();
+    let left = graph.wire_input::<i64>("sum", "run", "left").unwrap();
+    let right = graph.wire_input::<i64>("sum", "run", "right").unwrap();
     let left = graph.expose_input("left", left).unwrap();
     let right = graph.expose_input("right", right).unwrap();
     graph.trigger("calculate", [left, right]).unwrap();
@@ -97,11 +97,11 @@ fn one_low_level_local_function_handles_directed_returns() {
             }),
         )
         .unwrap();
-    let source = graph.local_output::<i64>(router.name(), "value").unwrap();
+    let source = graph.local_output::<i64>("router", "value").unwrap();
     graph.connect(source.clone(), yes.inlet()).unwrap();
     graph.connect(source, no.inlet()).unwrap();
     let input = graph
-        .local_input::<i64>(router.name(), "run", "value")
+        .local_input::<i64>("router", "run", "value")
         .unwrap();
     let input = graph.expose_input("request", input).unwrap();
     graph.trigger("run", [input]).unwrap();
