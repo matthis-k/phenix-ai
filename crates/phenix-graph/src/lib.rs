@@ -5178,11 +5178,10 @@ impl CompiledGraph {
             });
             for slot in outputs {
                 manifest.push(format!(
-                    " output {:?} {:?} local={} route={:?}",
+                    " output {:?} {:?} local={}",
                     slot.name,
                     slot.schema,
-                    slot.local_type.is_some(),
-                    slot.routing
+                    slot.local_type.is_some()
                 ));
             }
             let mut grants = node
