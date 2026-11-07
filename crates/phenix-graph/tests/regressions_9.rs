@@ -1,7 +1,7 @@
 //! Boundary and layout regression tests for the 9/10-target improvement pass.
 use phenix_graph::Node;
 use phenix_graph::ReportRetention;
-use phenix_graph::{GraphBuilder, Layout, Store, Value};
+use phenix_graph::{Deployment, GraphBuilder, Layout, Store, Value};
 
 #[test]
 fn public_input_from_another_graph_is_never_accepted_by_trigger() {
