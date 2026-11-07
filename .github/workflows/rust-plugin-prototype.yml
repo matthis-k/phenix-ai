@@ -1,0 +1,17 @@
+name: Rust plugin prototype
+
+on:
+  pull_request:
+    paths:
+      - "crates/phenix-plugin/**"
+      - ".github/workflows/rust-plugin-prototype.yml"
+  workflow_dispatch:
+
+jobs:
+  plugin-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check plugin unit and cross-crate tests
+        run: cargo test --locked -p phenix-plugin --all-targets

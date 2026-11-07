@@ -99,6 +99,14 @@ impl Contributions {
             .iter()
             .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
     }
+    pub(crate) fn find_index<C: Contribution>(&self, id: &str) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|entry| entry.kind == C::KIND && entry.id == id && entry.value.is::<C>())
+    }
+    pub(crate) fn get_index<C: Contribution>(&self, index: usize) -> Option<&C> {
+        self.entries.get(index)?.value.downcast_ref::<C>()
+    }
     pub fn iter<C: Contribution>(&self) -> impl Iterator<Item = (&str, &C)> {
         self.entries
             .iter()
@@ -106,10 +114,6 @@ impl Contributions {
     }
 }
 
-/// Creates a plugin implementation with state scoped to one selected instance.
-pub trait PluginFactory: Send + Sync {
-    fn create(&self, configuration: &[u8]) -> Result<Box<dyn PluginInstance>, Failure>;
-}
 pub trait PluginInstance: Send + Sync {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure>;
 }
