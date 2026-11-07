@@ -105,6 +105,7 @@ impl PluginCatalog {
     /// cannot silently change already created kernel instances.
     pub fn instance(&self) -> PluginSet {
         PluginSet {
+            identity: Arc::new(()),
             catalog: self.identity.clone(),
             factories: self.factories.clone(),
             loaded: BTreeMap::new(),
@@ -189,6 +190,7 @@ impl<C: Contribution> Deref for ContributionHandle<C> {
 /// the staged snapshot before committing the selected implementation.
 /// Dropping this candidate aborts staging without changing the active selection.
 pub struct PreparedPlugin {
+    instance: Arc<()>,
     catalog: Arc<()>,
     name: String,
     expected_revision: u64,
@@ -211,6 +213,7 @@ impl PreparedPlugin {
 /// Independent plugin instances selected for one kernel instance. This is
 /// deliberately not a graph builder or a second invocation scheduler.
 pub struct PluginSet {
+    identity: Arc<()>,
     catalog: Arc<()>,
     factories: BTreeMap<String, Arc<Factory>>,
     loaded: BTreeMap<String, Arc<Loaded>>,
@@ -263,6 +266,7 @@ impl PluginSet {
             revision,
         });
         Ok(PreparedPlugin {
+            instance: self.identity.clone(),
             catalog: self.catalog.clone(),
             name: key.name().to_owned(),
             expected_revision,
@@ -304,6 +308,9 @@ impl PluginSet {
         use std::collections::BTreeSet;
         let mut names = BTreeSet::new();
         for candidate in &staged {
+            if !Arc::ptr_eq(&self.identity, &candidate.instance) {
+                return Err(Failure::new(Code::Denied, "foreign plugin instance candidate"));
+            }
             if !names.insert(candidate.name.as_str()) {
                 return Err(Failure::new(Code::DescriptorInvalid, "duplicate staged plugin"));
             }

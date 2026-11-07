@@ -190,3 +190,23 @@ fn multi_plugin_commit_is_atomic_on_stale_candidate() {
     assert_eq!(plugins.snapshot(&a).unwrap().get::<GraphPatch>("model").unwrap().version, 3);
     assert_eq!(plugins.snapshot(&b).unwrap().get::<GraphPatch>("model").unwrap().version, 40);
 }
+
+#[test]
+fn a_staged_candidate_is_bound_to_one_kernel_plugin_set() {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog.register("model", |version: i32| {
+        Ok(Example {
+            version,
+            drops: Arc::new(AtomicUsize::new(0)),
+        })
+    }).unwrap();
+    let mut a = catalog.instance();
+    let mut b = catalog.instance();
+    let staged_a = a.stage_load(&key, 10).unwrap();
+    assert!(b.commit(staged_a).is_err());
+    assert!(b.snapshot(&key).is_err());
+    assert!(a.snapshot(&key).is_err());
+    // No state leaked between independently configured kernel instances.
+    assert_eq!(a.load(&key, 11).unwrap().get::<GraphPatch>("model").unwrap().version, 11);
+    assert_eq!(b.load(&key, 12).unwrap().get::<GraphPatch>("model").unwrap().version, 12);
+}
