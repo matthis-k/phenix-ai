@@ -334,6 +334,12 @@ impl Registry {
         Self::default()
     }
     pub fn mount(&self, name: &str, backend: impl Backend + 'static) -> Result<()> {
+        self.mount_boxed(name, Box::new(backend))
+    }
+    /// Trusted host may install an erased backend supplied by a leased plugin
+    /// contribution. The host must retain the provider's code/instance lease
+    /// until after the backend is dropped (see phenix-storage-plugin).
+    pub fn mount_boxed(&self, name: &str, backend: Box<dyn Backend>) -> Result<()> {
         if !component(name) {
             return Err(Error::InvalidAddress);
         }
@@ -344,7 +350,7 @@ impl Registry {
         state.mounts.insert(
             name.into(),
             Arc::new(Mutex::new(Mount {
-                backend: Box::new(backend),
+                backend,
                 datasets: BTreeMap::new(),
             })),
         );
