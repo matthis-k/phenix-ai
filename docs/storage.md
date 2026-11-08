@@ -5,6 +5,9 @@ graph, kernel, async runtime, SQLx, serde, JSON, or Rust `TypeId` dependency.
 SQLite uses the maintained `rusqlite` library with bundled SQLite and authorizer
 hooks. It is a root workspace member, with dependencies recorded in Cargo.lock.
 
+See [Scoped storage](scoped-storage.md) for user/project/session resource
+identity, XDG policy, persistent SQLite KV, and resource/backend plugin offers.
+
 ## Ownership
 
 - The trusted host owns a `Registry`: mount provisioning, SQLite filesystem paths,
@@ -12,10 +15,10 @@ hooks. It is a root workspace member, with dependencies recorded in Cargo.lock.
 - A `Session` holds immutable explicit grants and a shared registry reference.
   Give plugins sessions, never the registry. Grant declarations alone are not
   authority; only the trusted registry creates operational sessions.
-- Each mount owns either an in-memory byte map or a SQLite connection. The
-  private backend enum is the primitive boundary. No extensible object-safe
-  backend trait is needed for these two concrete implementations; adding one
-  now would expose authorization/invalidation invariants unnecessarily.
+- Each mount owns a boxed object-safe `Backend` and its own mutex. A short
+  registry lock resolves mount identity; no global lock is held throughout
+  unrelated SQLite transaction callbacks. An optional `phenix-storage-plugin`
+  bridge can install backend contributions while pinning their plugin lease.
 - `Codec` is a typed application boundary with an associated value type. Its
   schema contains authoritative name, revision, structure, and codec identity.
   All four fields must match registered metadata before memory encoding or
@@ -41,20 +44,26 @@ and non-ASCII text are rejected. Addresses never become filesystem paths or SQL
 identifiers. Memory keys are opaque strings, not address components.
 
 Mounts and datasets cannot be replaced, and duplicate registration is an error.
-Metadata is registry-local, including for persistent SQLite files; the host must
-register datasets again on restart. A dataset does not create a SQL table.
+Memory metadata is registry-local; SQLite persists authoritative dataset
+schemas in `__phenix_schema` and rejects incompatible re-registration after
+restart. The host must still register datasets during startup. A logical
+dataset declaration does not create an application SQL table.
 
 Grants pair an exact dataset or mount scope with explicit operations: `Read`,
-`Write`, `Delete`, `Sql`, and `Subscribe`. There is no implicit hierarchy among
+`Write`, `Delete`, `SqlRead`, `SqlWrite`, `SqlAdmin`, the legacy
+`Sql` alias for administrator authority, and `Subscribe`. There is no implicit hierarchy among
 operations and no prefix matching. Authorization precedes resource lookup.
 `capabilities(address, operation)` requires the specified grant and reports the
-backend's features, not additional permissions. Memory supports typed KV; SQLite
-supports native SQL; both support invalidation.
+backend's features, not additional permissions. Memory supports typed KV; SQLite supports typed KV through its reserved
+`__phenix_kv` table **and** native SQL; both support bounded invalidation.
 
-**SQL requires a mount-scoped `Sql` grant**, even when called using a particular
-dataset address. Arbitrary SQL crosses logical dataset boundaries through joins,
-DDL, triggers, and table names. A dataset-scoped SQL grant is deliberately useless.
-SQL authority is not a read-only grant or a general hostile-SQL/process sandbox.
+**SQL requires mount-scoped authority**, through `SqlRead`, `SqlWrite`,
+`SqlAdmin`, or legacy `Sql` (administrator). Arbitrary SQL crosses logical
+dataset boundaries through joins, DDL, triggers and table names. Dataset-scoped
+SQL grants do not authorize transactions. Read-only SQL authority cannot
+execute mutations; native SQL remains no general hostile-SQL/process sandbox.
+Do not colocate sensitive KV data and untrusted mount-wide SQL readers in one
+database: read-only SQL can also query the reserved typed-KV table.
 Callback transaction controls, savepoints, attachment and detachment are denied by
 SQLite's authorizer. All PRAGMAs, including read-only PRAGMAs, and functions whose
 names start with `pragma_` (case-insensitive) are denied too. Internal transaction
@@ -201,16 +210,18 @@ from the notification path.
 
 ## Limits And Verification
 
-One mutex serializes all mounts and SQL callbacks. Do not reenter the same registry
-from a SQL closure, SQL parameter conversion, or row decoder: that deadlocks.
+Each mount has its own mutex. Recursive same-mount entry returns
+`Error::Reentrant` on the same thread. Nested cross-mount transactions can
+still deadlock if application code locks mounts in inconsistent order; avoid
+calling independent storage operations from SQL callbacks.
 Codec `schema`, `encode`, and `decode` callbacks all run outside the lock. Schema
 equality is checked under the lock before encoding/decoding, and put rechecks it
-under the mutation lock after encoding. SQLite query results
-are eagerly collected. There is no async API, streaming cursor, cross-mount
-transaction, memory batch transaction, SQL typed-KV emulation, backend plugin ABI,
-read-only SQL permission, grant revocation, schema migration, persistence of the
-registry metadata, snapshot/subscription handshake, live-query tracking, automatic
-graph integration, or general poison recovery. `Error::Poisoned` still represents
+under the mutation lock after encoding. SQLite `query` eagerly collects; `query_each` and `returning` can visit
+rows incrementally. There is no async API, cross-mount transaction, memory batch
+transaction, native shared-library ABI, grant revocation, automated schema
+migration, snapshot/subscription handshake, live-query tracking, or general
+poison recovery. Scoped resources, XDG path policy and a graph observer binding
+are provided as separate modules/crates. SQL remains SQLite-specific. `Error::Poisoned` still represents
 an actually poisoned mutex; ordinary SQL callback unwinding does not cause it.
 Subscription drop releases its queue even if the registry mutex was poisoned.
 Drain does not wait for an event; it may briefly contend with queue publication.
@@ -229,11 +240,12 @@ overflow delivery. Run from the workspace with `cargo test --locked -p
 phenix-storage`, `cargo test --locked -p phenix-kernel`, and `cargo run --locked -p
 phenix-kernel --example storage`.
 
-The backend set is closed: only memory and SQLite exist. A schema descriptor is
-self-attestation by the host and codec author, not proof of structural identity:
-there is no automatic structural derivation, Rust-layout inspection, SQL table
-validation, or enforcement that two codecs claiming the same descriptor behave
-identically. SQL registration metadata does not type-check SQL rows. No future
+The bundled backends are memory and SQLite, but external typed-KV backends
+can implement the object-safe `Backend` interface and be contributed through
+`phenix-storage-plugin`. Native `SqlBackend` still exposes rusqlite and is
+not PostgreSQL-neutral. Canonical structural schema support exists in
+`phenix-schema`; a hand-written codec may still falsely claim compatible bytes.
+No arbitrary codec is proven correct by the descriptor alone. SQL registration metadata does not type-check SQL rows. No future
 backend or abstraction below should be read as an implemented capability.
 
 ## Public Abstraction Review
@@ -250,7 +262,7 @@ it can be replaced. Phase describes current use, not a promised roadmap.
 | `Operation` | Host grant policy | No implicit operation hierarchy | Closed enum | Explicit permission vocabulary | Authorization | New operations require API/policy changes |
 | `Scope` | Host grants; plugin subscriptions | Exact dataset or whole mount, no prefixes | `Address`/mount string | Align authority and invalidation scope | Authorization and delivery | Closed enum; changing scope semantics affects policy |
 | `Grant` | Host declaration, copied into session | Declaration alone conveys no authority | Set of operations | Explicit session provisioning | Host setup | Host policy replaceable; issuance remains trusted |
-| `Registry` | Trusted host; shared handles | Unique mounts/datasets, trusted issuance, serialized mutation | `Arc<Mutex<_>>`, map, rusqlite connection | Resource and authority root | Provisioning and commit | Private closed backend implementation replaceable, not pluggable |
+| `Registry` | Trusted host; shared handles | Unique mounts/datasets, trusted issuance, per-mount mutation | Registry map plus per-mount `Arc<Mutex<_>>` | Resource and authority root | Provisioning and commit | Object-safe external backend support; plugin bridge optional |
 | `Session` | Host issues; plugin holds/clones | Immutable explicit grants; authorize before lookup | Shared registry and grant vector | Separate use from provisioning authority | Plugin execution | Internal authorization replaceable, public semantics must hold |
 | `Capabilities` | Adapter returns to authorized caller | Features are not permissions | Booleans and `Observation` | Report supported access modes | Binding setup | Closed report; no dynamic backend protocol |
 | `Capability` | Adapter error metadata | Unsupported identifies `TypedKv` or `Sql` | Closed enum | Machine-readable failure | Access failure handling | Additions require API review |
