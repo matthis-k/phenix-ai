@@ -7,6 +7,7 @@ edition = "2024"
 phenix-storage = { path = "../phenix-storage" }
 phenix-kernel = { path = "../phenix-kernel" }
 phenix-graph = { path = "../phenix-graphs" }
+phenix-plugin = { path = "../phenix-plugins" }
 
 [dev-dependencies]
-phenix-plugin = { path = "../phenix-plugins" }
+phenix-storage-plugin = { path = "../phenix-storage-plugin" }

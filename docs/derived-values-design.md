@@ -1,6 +1,6 @@
 # Phenix — Graph-native derived values
 
-**Status:** proposed implementation design, not implemented  
+**Status:** V1 implemented; implementation commit `465033b2835c` passed exact-head CI. Sections 1-16 preserve the historical proposal and rationale, not the current API contract. See section 17 and [the usage guide](derived-values.md).
 **Date:** 2026-11-08  
 **Repository:** `matthis-k/phenix-ai`  
 **Inspected implementation:** `impl/scoped-storage-resources-20261108` @ `86c29792f4f33eea58736a9c19d5f0a299fcc128` (base `rewrite/clean-foundation` @ `b53f5be1ca83a7208568e8d891eaa2e2b9ec30e5`)  
@@ -649,3 +649,42 @@ These are **reference patterns**, not selected runtime dependencies:
 3. Only after durable change/recovery requirements are defined, add materialization with source revisions and revalidation.
 
 **Final architectural acceptance:** Graph continues to own execution, Storage owns persisted state and snapshots, Plugin contributions own domain declaration/behavior, and Kernel only composes and runs them. The public API remains concise because expensive validation and wiring happens at initialization, not on every node invocation.
+
+---
+
+## 17. Implementation status and deliberate deviations
+
+This section supersedes proposed signatures and acceptance claims above without rewriting their historical rationale. The current contract is documented in [derived-values.md](derived-values.md); review history and verification status are in [derived-values-review.md](derived-values-review.md).
+
+### Implemented V1
+
+- Storage provides authorized, ordered versioned batches in `packages/phenix-storage/src/snapshot.rs`, plus singleton cells in `src/scoped.rs`. Memory holds the mount lock; SQLite reads a batch in one transaction. Entries preserve duplicates and absence. Each source retains its own immutable authority; grants are never unioned.
+- `Storage::bind((A.read(), B.read()))` replaces proposed `cx.bind`. Binding belongs in Storage and introduces no Kernel dependency. Cells reserve the KV key `value`. A domain newtype implements `Stored` and its `Codec`; there is no built-in arbitrary primitive integer codec.
+- `GraphDeriveExt::{sources, derive_from, derive}` lowers declarations to ordinary graph source, function and same-cohort join nodes. Explicit `sources("values", ...)` lets sum and difference share a root, then combine as a product, chain and fan out. Independently created roots are rejected with `MultipleRefreshRoots`, even when they read the same cells. Stored and derived tuple inputs cannot be mixed; declare a unified source group instead.
+- All graph-derived source groups request `AtomicWithinMount`. Low-level Storage still offers explicit `BestEffort`; the derived graph API does not. Construction validates every grant and schema before probing backend capabilities without reading payloads; reading repeats these checks.
+- `Observation` is deferred composition metadata. `activate()` acquires every subscription before exposing a bootstrap rescan producer. Changed and overflow notices request full snapshots through `StorageBinding` and existing Kernel producer routing.
+- `graph.query_spec(name, &value)` explicitly adds a terminal tap, including when the compute output has downstream consumers. `DerivedRuntime::bind_query(&spec)` borrows the runtime, and `QueryHandle::query()` calls `Kernel::fire` for one demand wave. It is not a direct cached read.
+
+### Runtime identity, ownership and graph boundary
+
+`DerivedRuntime` is a lifetime-pinning Kernel wrapper with a panic-safe dispatch guard, not a scheduler. It delegates dispatch once to the supplied executor and guards both dispatch and action execution (including executor offload). Host queries made during guarded node dispatch fail with `NestedQuery`, including queries to another derived runtime. Use graph edges inside nodes.
+
+The initial ambient `BUILD` registry and factory-registration/generation tokens were removed. A minimal generic `Engine::node_ids_for_action(&Arc<dyn NodeAction>) -> Vec<u16>` pointer-identity lookup establishes membership in the actual deployed engine. Binding requires exactly one physical source and one tap. Generic `Engine::trigger_targets` inspection verifies that the demand route has one payload targeting only that source inlet; absent or redirected routes return `InvalidRefreshRoute` without executing a wave. Extraction uses the exact node IDs and slot IDs, successful wave status, payload/event counts, and matching current wave/cohort receipts. Self-consistent identities claimed by a publication are insufficient.
+
+Source and tap actions use shared stateless `with_dyn_action` allocations. Deliberately deploying the same authored module/compatible compiled graph again can reuse its spec; each query still borrows its particular runtime. Fresh incompatible recomposition creates different actions and rejects the old spec with `WrongGeneration`. Multiple physical instances sharing those actions are ambiguous and rejected. This is deployed action membership, not a universal unique-generation-token rule.
+
+No scheduler/compiler behavior or foundational dependency changes were needed. The two generic Engine inspection methods are the small graph-core API additions, superseding section 12's proposed zero graph-core changes. General graph loops remain unchanged. Immutable derived handles are created only after their inputs, so cycles cannot be constructed through this topological API; there is no separate cycle-path detector. An undefined-variable `compile_fail` snippet is not evidence of cycle detection.
+
+### Bounds, limits and deferred work
+
+Tuple arities 1-4 and local Rust values require `Clone + Send + Sync + 'static`; stored codec formats used in graphs must be `Send + Sync`. Cloning bound cells shares their codec/authority; computation delivery and query return can clone values. Matching storage schemas do not make different Rust `TypeId`s interchangeable at graph endpoints.
+
+No memoization, equality suppression, `latest()`, dynamic dependency tracking or persistent materialization is implemented. Optional absence has no history/memo token and must be revalidated. Querying one node refreshes the whole root, including siblings and downstream side effects. Snapshot freshness is at the read, not a latest-at-return guarantee.
+
+Startup is subscribe-before-bootstrap with registry-local bounded invalidations and overflow rescans, not a durable changefeed, cross-process observation, or a coherent watermark protocol. There is no exactly-once computation per transaction or guarantee of one wave for every original notice under overflow. Review and verification must retain these limits.
+
+### Review and verification
+
+The implementation went through three passes: initial V1 implementation; independent review identifying nested queries, temporary-deployment pollution of ambient factory registration, and self-consistent rather than exact endpoint validation; then the action-membership/guard refactor and targeted regressions. See the review ledger for test names and remaining verification gates.
+
+The fresh design baseline `0bb81da48` contains scoped-storage docs head `86c29792f` through ancestry. Fresh baseline checks passed before edits. Storage now has 66 passing tests; derived integration has 29 focused tests and 5 persistent plugin tests. Workspace tests with and without default features, strict Clippy, formatting, the runnable example and full Nix flake checks pass locally. Part A is [draft PR #1249](https://github.com/matthis-k/phenix-ai/pull/1249), with completed exact-head CI. Part B is [draft PR #1250](https://github.com/matthis-k/phenix-ai/pull/1250); [run 42466175498](https://github.com/matthis-k/phenix-ai/actions/runs/42466175498) completed successfully on implementation commit `465033b2835ce06f58bd3aa42bc88fc77e6d199f`, including all shards and the evidence aggregate. See the verification ledger for completed results rather than relying on historical Storage CI.

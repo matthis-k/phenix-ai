@@ -167,6 +167,8 @@
         storage = test "storage" [ "phenix-storage" "phenix-schema" ] "--all-targets";
         graph = test "graph" [ "phenix-graph" "phenix-plugin" ] "--all-targets";
         kernel = test "kernel" [ "phenix-kernel" ] "--lib --test kernel --test scoped_storage";
+        derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";
+        no-default = test "no-default" allPackages "--no-default-features --lib --tests";
         integration =
           if integrationPackages == [ ] then
             test "integration" [ "phenix-kernel" ] "--test storage"

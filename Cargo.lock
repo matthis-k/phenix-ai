@@ -169,6 +169,7 @@ dependencies = [
  "phenix-kernel",
  "phenix-plugin",
  "phenix-storage",
+ "phenix-storage-plugin",
 ]
 
 [[package]]
