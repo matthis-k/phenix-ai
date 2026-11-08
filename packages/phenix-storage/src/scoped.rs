@@ -282,6 +282,9 @@ pub struct Storage {
     identity: Identity,
 }
 impl Storage {
+    pub fn bind<B: BindCells>(&self, cells: B) -> Result<B::Bound> {
+        cells.bind(self)
+    }
     pub fn user(&self) -> View<'_> {
         View {
             store: self,
@@ -363,6 +366,163 @@ impl View<'_> {
 /// if the registered schema and actual wire encoding agree.
 pub trait Stored: Sized {
     type Format: Codec<Value = Self> + Default;
+}
+
+/// Static singleton descriptor. Each resource uses the reserved KV key `value`.
+/// No primitive codec is imposed: T must explicitly implement Stored.
+pub struct CellSpec<T> {
+    scope: ScopeKind,
+    class: StorageClass,
+    name: &'static str,
+    _value: PhantomData<fn() -> T>,
+}
+impl<T> Copy for CellSpec<T> {}
+impl<T> Clone for CellSpec<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> CellSpec<T> {
+    pub const fn new(scope: ScopeKind, class: StorageClass, name: &'static str) -> Self {
+        Self {
+            scope,
+            class,
+            name,
+            _value: PhantomData,
+        }
+    }
+    pub const fn project_state(name: &'static str) -> Self {
+        Self::new(ScopeKind::Project, StorageClass::State, name)
+    }
+    pub const fn read(self) -> CellRead<T> {
+        CellRead(self)
+    }
+}
+impl<T: Stored> CellSpec<T> {
+    pub fn resource_spec(&self) -> ResourceSpec {
+        ResourceSpec {
+            scope: self.scope,
+            class: self.class,
+            name: self.name.into(),
+            kind: ResourceKind::TypedKv(T::Format::default().schema()),
+        }
+    }
+}
+pub struct CellRead<T>(CellSpec<T>);
+
+/// Kernel-independent binding adapter, implemented for tuples of arity 1-4.
+pub trait BindCells {
+    type Bound;
+    fn bind(self, storage: &Storage) -> Result<Self::Bound>;
+}
+impl<T: Stored> BindCells for CellRead<T> {
+    type Bound = ReadCell<T>;
+    fn bind(self, storage: &Storage) -> Result<Self::Bound> {
+        let spec = self.0;
+        let resource = spec.resource_spec().resolve(&storage.identity)?;
+        let BindingTarget::Dataset(address) = storage.resolve(&resource)? else {
+            return Err(Error::WrongResourceKind);
+        };
+        let format = Arc::new(T::Format::default());
+        let source = storage
+            .session
+            .read_source(address, "value".into(), format.schema())?;
+        Ok(ReadCell { source, format })
+    }
+}
+macro_rules! bind_cells {
+    ($($name:ident),+) => {
+        impl<$($name: BindCells),+> BindCells for ($($name,)+) {
+            type Bound = ($($name::Bound,)+);
+            #[allow(non_snake_case)]
+            fn bind(self, storage: &Storage) -> Result<Self::Bound> {
+                let ($($name,)+) = self;
+                Ok(($($name.bind(storage)?,)+))
+            }
+        }
+    };
+}
+bind_cells!(A);
+bind_cells!(A, B);
+bind_cells!(A, B, C);
+bind_cells!(A, B, C, D);
+
+pub struct ReadCell<T: Stored> {
+    source: crate::snapshot::ReadSource,
+    format: Arc<T::Format>,
+}
+impl<T: Stored> Clone for ReadCell<T> {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            format: self.format.clone(),
+        }
+    }
+}
+impl<T: Stored> ReadCell<T> {
+    pub fn source(&self) -> crate::snapshot::ReadSource {
+        self.source.clone()
+    }
+    /// Decodes only a matching pinned registry/address/key/schema, outside locks.
+    pub fn decode(&self, entry: &crate::snapshot::SnapshotEntry) -> crate::Result<Revisioned<T>> {
+        self.optional()
+            .decode(entry)?
+            .ok_or_else(|| crate::Error::MissingInput {
+                address: self.source.address().clone(),
+                key: self.source.key().into(),
+            })
+    }
+    pub fn get(&self) -> crate::Result<Revisioned<T>> {
+        let snapshot = crate::snapshot::SnapshotReader::new(
+            vec![self.source()],
+            crate::snapshot::ReadConsistency::AtomicWithinMount,
+        )?
+        .read()?;
+        self.decode(&snapshot.entries()[0])
+    }
+    pub fn optional(&self) -> OptionalReadCell<T> {
+        OptionalReadCell(self.clone())
+    }
+    pub fn changed(&self, capacity: usize) -> crate::Result<Subscription> {
+        self.source.changed(capacity)
+    }
+}
+/// Explicit absence policy; storage and codec errors remain errors.
+pub struct OptionalReadCell<T: Stored>(ReadCell<T>);
+impl<T: Stored> Clone for OptionalReadCell<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+impl<T: Stored> OptionalReadCell<T> {
+    pub fn source(&self) -> crate::snapshot::ReadSource {
+        self.0.source()
+    }
+    pub fn decode(
+        &self,
+        entry: &crate::snapshot::SnapshotEntry,
+    ) -> crate::Result<Option<Revisioned<T>>> {
+        if !self.0.source.matches(entry.source()) {
+            return Err(crate::Error::SnapshotEntryMismatch);
+        }
+        entry
+            .value()
+            .map(|v| {
+                Ok(Revisioned {
+                    value: self.0.format.decode(&v.value)?,
+                    revision: v.revision.clone(),
+                })
+            })
+            .transpose()
+    }
+    pub fn get(&self) -> crate::Result<Option<Revisioned<T>>> {
+        let snapshot = crate::snapshot::SnapshotReader::new(
+            vec![self.source()],
+            crate::snapshot::ReadConsistency::AtomicWithinMount,
+        )?
+        .read()?;
+        self.decode(&snapshot.entries()[0])
+    }
 }
 
 /// Typed KV view; no extra hidden cache and no implicit provisioning.
