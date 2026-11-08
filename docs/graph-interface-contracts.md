@@ -2,25 +2,23 @@
 
 ## Implementation Status
 
-This is the final implementation report for the **current working tree**, not a
+This is the implementation report for [draft PR #1251](https://github.com/matthis-k/phenix-ai/pull/1251), not a
 preimplementation proposal or a release acceptance certificate. C2, shape plus
 explicit claim, is implemented in Graph and integrated with Plugin and Kernel.
 C1, C3 and C4 remain alternative designs, not independently implemented or tested.
 The report and implementation are reviewed together on the new contract branch.
 
-Acceptance is **incomplete**. The corrected Kernel origin regression and new
-symbolic-layout, patch-lineage and static-contract suites pass. The parent reports
-successful workspace default/no-default tests, strict workspace Clippy and the
-derived example; these are distinguished from this report's fresh focused runs.
-H21/H22 have current regression evidence, but H23 exact-new-head checks and CI
-remain PARTIAL. Q04 remains PARTIAL because schema interning is not bounded by
-the implementation.
+Mission acceptance is **incomplete**, despite passing implementation checks. All
+requested commands passed on implementation commit
+`2a95b8519ff162caa68fee8b844df6ca42e1e515`, including the full Nix check and
+[exact-head CI 42503290164](https://github.com/matthis-k/phenix-ai/actions/runs/42503290164).
+Q04 remains PARTIAL because schema interning is not bounded by the implementation.
 Kernel validates host-selected offers; it does not discover providers or wire
 consumers automatically. There is no atomic plugin/kernel activation coordinator.
 The weighted implementation assessment is **8.3/10**, not 9+ and not an override
 of these outstanding gates.
 
-The central correction to the old report is H07: **inputs must match exactly**,
+H07 requires that **inputs match exactly**,
 including port sets, slot sets and identities. Additional actual outputs are
 allowed for contract satisfaction. Additional inputs are not. Complete public
 replacement and same-ID contract-definition equality are stricter than output
@@ -48,7 +46,7 @@ means the actual test exists, not a proposed test name.
 | T4 | [composition_origin.rs](../packages/phenix-graphs/tests/composition_origin.rs) | 5 tests: allocation identity, attribution, replacement, packaging and scope restoration. |
 | T5 | [contract_dependency_identity.rs](../packages/phenix-graphs/tests/contract_dependency_identity.rs) | 7 tests: transitive claim edits/import conflicts, alias refresh and replacement request retention. |
 | T6 | [module_slots.rs](../packages/phenix-graphs/tests/module_slots.rs) | 8 tests: grouped public slots, real nested routing, literal names, escaped routing keys and replacement grouping. Requires `derive`. |
-| T7 | [portable_wire.rs](../packages/phenix-graphs/tests/portable_wire.rs) | 15 tests: independently compiled provider/consumer fixture crates, independent codecs, descriptor mismatch dimensions, legacy/local rejection, ordinary connect, stale tokens and rustc type probes. |
+| T7 | [portable_wire.rs](../packages/phenix-graphs/tests/portable_wire.rs) | 15 tests: `independently_compiled_portable_crates_execute` builds separate provider/consumer rlibs and runs a linked harness; independent codecs, descriptor mismatch dimensions, legacy/local rejection, ordinary connect, stale tokens and rustc type probes. |
 | T8 | [declaration_layout.rs](../packages/phenix-graphs/tests/declaration_layout.rs), [manual_api.rs](../packages/phenix-graphs/tests/manual_api.rs) | 9 layout tests and 6 manual tests, including new revision regression and updated direct literals. |
 | T9 | [Plugin graph_contracts.rs](../packages/phenix-plugins/tests/graph_contracts.rs) | 3 tests: final node/module binding, missing claims/locators, reload, sibling sets and aborted candidates. |
 | T10 | [Kernel graph_contracts.rs](../packages/phenix-kernel/tests/graph_contracts.rs) | 4 tests: three-plugin portable execution, generation leases, failed candidates, missing references and late composition. |
@@ -59,19 +57,18 @@ means the actual test exists, not a proposed test name.
 
 ### Historical Baseline
 
-These are evidence recorded by the previous report, not newly run final checks.
-Historical source must be read at the pinned baseline, not at moving relative
-line links: [baseline tree](https://github.com/matthis-k/phenix-ai/tree/ee2abaa2f0b39e09ae32db5b16d6618b18fc388a),
+The implementation builds on derived baseline
+`ee2abaa2f0b39e09ae32db5b16d6618b18fc388a`, descended from storage prerequisite
+`44f66c1d155eedd7a1ca374df0f00e6127be65b7`. Historical source is pinned here:
+[baseline tree](https://github.com/matthis-k/phenix-ai/tree/ee2abaa2f0b39e09ae32db5b16d6618b18fc388a),
 [old InterfaceBounds](https://github.com/matthis-k/phenix-ai/blob/ee2abaa2f0b39e09ae32db5b16d6618b18fc388a/packages/phenix-graphs/src/interface.rs),
 [old graph_bounds test](https://github.com/matthis-k/phenix-ai/blob/ee2abaa2f0b39e09ae32db5b16d6618b18fc388a/packages/phenix-plugins/tests/graph_bounds.rs).
 
-| Evidence | Recorded Result And Limit |
-|---|---|
-| Storage prerequisite | `git ls-remote origin refs/heads/impl/atomic-storage-cells-20261108` returned `44f66c1d155eedd7a1ca374df0f00e6127be65b7`; ancestry check to derived baseline exited 0. |
-| Derived baseline | `ee2abaa2f0b39e09ae32db5b16d6618b18fc388a`; `git rev-parse HEAD` during this report still returns that commit, with uncommitted implementation changes. |
-| Branch / PR | Prior report recorded `impl/graph-interface-contracts-20261108` and open [PR #1250](https://github.com/matthis-k/phenix-ai/pull/1250), based on the storage branch. PR state was not re-queried here. |
-| Hosted baseline CI | Prior report recorded [run 42466577317](https://github.com/matthis-k/phenix-ai/actions/runs/42466577317) successful on the exact derived baseline. It does not contain this implementation. |
-| Local baseline | Prior report recorded `nix develop --command cargo test --workspace --locked` exit 0 before implementation. Existing introductory derived doctest was ignored. This is not a final workspace run. |
+The baseline workspace test run and
+[baseline CI 42466577317](https://github.com/matthis-k/phenix-ai/actions/runs/42466577317)
+passed before contracts were implemented. They establish ancestry and regression
+context, not contract acceptance. Current verification is recorded below for
+implementation commit `2a95b8519ff162caa68fee8b844df6ca42e1e515` in draft PR #1251.
 
 ## Ownership And Semantics
 
@@ -199,9 +196,9 @@ ownership of every private handler imported in its definition.
 origin, then delegates semantic validation to Graph. Kernel composes each
 contribution under its leased origin and checks every final offer's origin against
 the offering generation. Neither contract-ID equality nor matching shapes can
-launder a foreign unit. T4 and T9 pass; T11 now explicitly claims the compatible
-replacement contract and passes the final foreign-origin rejection for nodes
-and modules. Its earlier fixture failure is superseded, as recorded below.
+launder a foreign unit. T4 and T9 pass; T11 explicitly claims the compatible
+replacement contract and verifies final foreign-origin rejection for nodes
+and modules.
 
 Compiled `BoundInput::resolve(&CompiledGraph)` and `BoundOutput::resolve` compare
 the supplied graph pointer to the retained graph borrow with `std::ptr::eq`.
@@ -221,6 +218,18 @@ revision, endpoint existence, identity and duplicate-edge checks before insertio
 The receiver decodes ordinary bytes; there is no adapter node, transport or ABI
 cast. T7 executes independent types in both directions and observes native typed
 wave failures for a malformed encoder. A descriptor does not prove codec honesty.
+
+T7's `independently_compiled_portable_crates_execute` also compiles
+[`fixtures/portable_provider.rs`](../packages/phenix-graphs/tests/fixtures/portable_provider.rs)
+and [`fixtures/portable_consumer.rs`](../packages/phenix-graphs/tests/fixtures/portable_consumer.rs)
+separately as `libportable_provider.rlib` and `libportable_consumer.rlib`, then
+links and runs
+[`fixtures/portable_execution.rs`](../packages/phenix-graphs/tests/fixtures/portable_execution.rs).
+The harness asserts distinct Rust `TypeId`s and SCHEMA constants but equal full
+descriptors, connects the independently defined types with `connect_wire`, and
+executes six value vectors through the real deployment, checking both invocations
+and the consumer's decoded publication. This is separate-compilation execution
+evidence, not just two declarations within one test crate or a native ABI claim.
 
 `ContractValue::SCHEMA` remains a required associated constant. The default
 `schema_descriptor()` is `None`; `wire_schema()` and `schema()` retain legacy
@@ -278,10 +287,9 @@ pub fn resolve(&self, graph: &CompiledGraph) -> Result<OutputAddr, InterfaceErro
 ```
 
 This is a signature inventory, not a standalone Rust module: several methods have
-the same name on different owners. `BoundAuthoringUnit` is returned through type
-inference; it is public in the private `authoring::interfaces` module but is not
-re-exported under that name. `AuthoringUnit` is re-exported. Users should not be
-shown a nonexistent root import for `BoundAuthoringUnit`.
+the same name on different owners. Both `AuthoringUnit` and `BoundAuthoringUnit`
+are re-exported from `phenix_graph::authoring` and the `phenix_graph` crate root;
+callers may name either borrowed view type directly or use type inference.
 
 ### Node And Module Example
 
@@ -356,7 +364,7 @@ Existing unrelated graph/runtime APIs are not duplicated here.
 | `UnitSnapshot { shape, claims: Vec<GraphContract>, provenance }`, `check_contract(&GraphContract) -> Result<(), InterfaceError>` | Graph owned historical inspection data. Public fields allow data construction, not sealed-unit attestation. | T1 absent/contradictory claims; final compiler rechecks rather than trusting snapshots. |
 | `GraphUnit::inspect` | Graph sealed object-safe trait on `AuthoringUnit`, `CompiledGraph`, `FindResult`, `NodeRef`, `ModuleRef`. | T1 dynamic inspection, T3 compiled root; two compile-fail doctests reject external implementations and `NodeHandle` as unit. |
 | `AuthoringUnit<'a> { graph: &'a GraphBuilder, path: String }`, consuming `bind_contract` | Graph borrowed effective view, no cached shape. | A overlays pending layouts; T1 late-layout revalidation and missing-path tests. |
-| `BoundAuthoringUnit { unit, contract }`; `wire_input<T: ContractValue>`, `wire_output<T: ContractValue>`, `local_input<T: Send + Sync + 'static>`, `local_output<T: Send + Sync + 'static>` | Graph borrowed projection; typed outputs are `OutputRef<T>`, inputs `Input<T>`, all return `InterfaceError`. Not separately re-exported. | Checks promised name/type then normal authoring accessibility; T1 wrong type, extra debug output, private nested access and revision revocation. |
+| `BoundAuthoringUnit { unit, contract }`; `wire_input<T: ContractValue>`, `wire_output<T: ContractValue>`, `local_input<T: Send + Sync + 'static>`, `local_output<T: Send + Sync + 'static>` | Graph borrowed projection, re-exported at the crate root; typed outputs are `OutputRef<T>`, inputs `Input<T>`, all return `InterfaceError`. | Checks promised name/type then normal authoring accessibility; T1 wrong type, extra debug output, private nested access and revision revocation. |
 | `GraphBuilder::{inspect, implements, implements_public, require_contract, bind_contract}` | Graph authoring; requirements store paths for final checking, not early certification. | T1 final requests and claims; T5 transitive identity; A claim footprint ledger. |
 | `NodeTemplate::claims: Vec<GraphContract>`; private `composition_origin`, `declaration_id` | Graph declaration owns explicit promises and handler lineage; layout retarget preserves claims/origin, replacement requires new explicit claims. | T1 low-level claims and explicit replacement; T4 origins; T8 late layout. |
 | `ModuleDef::{claims, contract_requests, declaration_ids: BTreeMap<String, u64>}`; corresponding private builder storage | Graph reusable declaration owns obligations and instance lineage; raw literals may use an empty ID map without typed handles. | T5 retained requests; T8 direct literal; T2 low-level handles. No plugin-owned actual shape. |
@@ -454,8 +462,9 @@ node and module API. Its additional types separate genuinely different roles:
 wire descriptor, actual shape, semantic definition, historical snapshot,
 authoritative borrowed unit, restricted projection and composition origin.
 No plugin implementation descriptor or runtime wrapper node is introduced.
-The remaining limitations are acceptance/regression evidence, automatic host
-wiring and atomic activation, not absent origin or generation implementations.
+Implementation checks and exact-head CI pass. Remaining limitations are manual
+host-selected wiring, explicit activation sequencing, API complexity and unbounded
+schema interning, not missing origin/generation checks or regression verification.
 
 ### C3: Per-Contract Trait
 
@@ -529,15 +538,12 @@ same-ID conflicts. Those are FAILs for the semantic task, not cosmetic deduction
 
 ## Horizontal Gates
 
-The row IDs and meanings below are the user's criteria, not substituted design
-gates. In particular H15 concerns nonduplicated/unforged compiled claims, H19
-concerns scheduler/dependency/ABI scope, and H21 concerns Derived V1. Origins,
-lineage and explicit host wiring are evaluated as evidence or limitations under
-the appropriate criteria, not used to rename them. PASS means implemented with
-the cited source/tests and the verification provenance recorded below, **not**
-complete mission acceptance. PARTIAL names a missing implementation or check;
-FAIL means the candidate omits the requirement. C1/C3/C4 remain unimplemented,
-and reusable C2 infrastructure is not independent verification of those designs.
+The matrix preserves the requested H01-H23 and Q01-Q05 criteria. PASS means
+implemented with the cited source/tests and exact-commit verification below,
+**not** complete mission acceptance. PARTIAL names a missing implementation,
+check or quality constraint; FAIL means the candidate omits the requirement.
+C1/C3/C4 remain unimplemented, and reusable C2 infrastructure is not independent
+verification of those designs.
 
 | Gate / Requirement | C1 Extended Bounds | C2 Shape + Claim | C3 Per-Contract Trait | C4 Structural Only |
 |---|---|---|---|---|
@@ -550,7 +556,7 @@ and reusable C2 infrastructure is not independent verification of those designs.
 | H07 Exact inputs | PARTIAL: implement exact named/unnamed input comparison and regressions. | PASS: I `check_shape`; T1 three `h07_*` tests reject extra/missing named ports/slots on actual nodes/modules; I unnamed H07 map/identity test. | PARTIAL: adapters need exact erased input validation, tests absent. | PARTIAL: exact structural comparison feasible, candidate tests absent. |
 | H08 Required outputs extra allowed | PARTIAL: separate satisfaction from exact bounds-definition/replacement equality. | PASS: I output inclusion versus `same_shape`; T1 output-subset/debug-extension test and bound extension hiding. | PARTIAL: generated promised outputs plus erased extension matching missing. | PARTIAL: output inclusion feasible, independent structural matcher unverified. |
 | H09 No local TypeId wire coercion | PARTIAL: preserve identity distinctions in new bounds extraction/binding, tests missing. | PASS: I identity checks, A typed projections, B connector; I local/wire tests, T1 distinct local types/wrong binding, T7 actual local endpoint rejection. | PARTIAL: typed/erased adapter identity enforcement missing. | PARTIAL: structural identity distinction feasible but not candidate-tested. |
-| H10 Explicit safe portable unrelated Rust types execute | PARTIAL: descriptor-aware cross-type connector missing. | PASS: B `connect_wire`; T7 independent bidirectional codecs/negative descriptor vectors/native decode failure, T10 A/B/C independent request/response execution. | PARTIAL: descriptor-based cross-type adapter/connector missing. | PARTIAL: descriptor connector feasible, candidate execution unimplemented. |
+| H10 Explicit safe portable unrelated Rust types execute | PARTIAL: descriptor-aware cross-type connector missing. | PASS: B `connect_wire`; T7 `independently_compiled_portable_crates_execute` builds provider/consumer rlibs and executes the linked harness; bidirectional codecs/descriptor negatives/native decode failure and T10 A/B/C execution add coverage. | PARTIAL: descriptor-based cross-type adapter/connector missing. | PARTIAL: descriptor connector feasible, candidate execution unimplemented. |
 | H11 Nominal legacy no portable certification | PARTIAL: strict descriptor path separate from nominal legacy missing. | PASS: B requires explicit `Some` descriptors/canonical Wire endpoints; T7 equal-SCHEMA legacy/overridden-identity rejection; ordinary same-type baseline retained. | PARTIAL: nominal-versus-structural adapter admission missing. | PARTIAL: legacy rejection possible structurally, candidate tests missing. |
 | H12 Bound only promised endpoints | PARTIAL: restricted bounds projection missing. | PASS: A/I promised-name/type projections; T1 debug/private/wrong-type negatives and authoring connections, T3 restricted root/nested compiled projections. | PARTIAL: sealed promised-only adapters not implemented. | PARTIAL: shape-bound projection possible but missing. |
 | H13 Replacements protect all edges exports used extra | PARTIAL: exact complete public replacement plus claim/request retention missing. | PASS: B compares complete node numeric/name/identity signatures and module public maps, A exact shape/obligations; T1 explicit replacement and rollback, T5 requests, T6 grouping; existing assembly replacement tests preserve external edges/exports. Output extensions are not ignored by replacement. | PARTIAL: generated replacement must protect full actual boundary, not only adapter methods; missing tests. | PARTIAL: exact structural replacement feasible, candidate integration/regressions missing. |
@@ -559,12 +565,12 @@ and reusable C2 infrastructure is not independent verification of those designs.
 | H16 Staged final candidate validation failure old preserved | PARTIAL: candidate final-unit validation and retained old generation tests missing. | PASS: P staging and K final compile/check before build/start; T10 failed candidate drops without commit/activation and old graph executes; T12/T13 rejected patches preserve graph/revisions/handles. No atomic commit/start coordinator is implied. | PARTIAL: candidate adapter validation/rollback lifecycle unimplemented. | PARTIAL: structural candidate validation with preserved leases feasible, tests missing. |
 | H17 Bound handles/plugin leases generation safe | PARTIAL: graph-bound projections and exact-origin leased binding missing. | PASS: I graph-pointer `resolve`, P Arc-backed Loaded/origin leases, K retained snapshots; T3 equal-address foreign graph rejection/same-Arc acceptance, T9 sibling/aborted candidates, T10 old/new reload/unload/drop behavior. | PARTIAL: adapter generation and executable lease coupling missing. | PARTIAL: structural binding still requires graph-generation and code leases, unimplemented. |
 | H18 No auth/semantic proof/scheduling from claims | PARTIAL: must document/test bounds as declarations, not grants/behavior/readiness. | PASS: I metadata has no grants/policy; T14 equal claims with AnyOne/AllSameCohort/custom policy differ in invocation count and never promise emission; read denied without separate grant; T7 malformed codec still fails. Semantic opt-in is not proof of behavior. | PARTIAL: trait membership must not imply behavior, readiness or grants; candidate tests missing. | PARTIAL: structural equality implies neither behavior nor authority; candidate policy/auth tests missing. |
-| H19 No scheduler/storage dep/blanket ABI/crate explosion | PARTIAL: feasible on existing compiler/engine, candidate dependency/diff audit missing. | PASS: G/B/K reuse compiler/engine and existing crates; Graph has no storage dependency, S shared descriptor reused; T10 real engine execution and parent workspace regressions. Native Rust registration remains in-process, not blanket ABI compatibility. | PARTIAL: adapter generation could stay authoring-only, implementation/dependency audit missing. | PARTIAL: structural tooling could reuse engine without storage, candidate audit missing. |
-| H20 Macrofree lowlevel viable | PARTIAL: macro-free bounds attachment/extraction prototype missing. | PASS: T1 manual shapes/claims and low-level templates, T8 direct module literal/manual execution, T14 source/sink; parent no-default workspace tests pass. | PARTIAL: handwritten adapters possible, macro-free dynamic catalog prototype missing. | PARTIAL: macro-free structural surface feasible, candidate prototype missing. |
-| H21 Full Derived V1 preserved | PARTIAL: candidate-specific full derived regression run missing. | PASS: parent default/no-default workspace runs and derived example exit 0; existing derived engine-membership/freshness/cohort/redeploy/authority suites remain authoritative; T2 preserves deliberate preflight replay. See protected-invariant table. | PARTIAL: adapter generation/lifecycle changes need full Derived V1 regressions. | PARTIAL: structural integration needs full Derived V1 regressions, absent. |
-| H22 Every protected invariant negative + multiplugin | PARTIAL: bounds-specific positive/negative and multiplugin matrix absent. | PASS: traceability below maps T1-T14 plus existing Graph/Kernel/storage/Derived negative/recovery suites; parent workspace runs pass, T10 real three-plugin execution, T11 foreign offers, T14 source/sink/readiness/auth. This is executable coverage, not exhaustive behavioral proof. | PARTIAL: spoofed adapters/version registry/multiplugin and protected negatives missing. | FAIL: structural negatives feasible but required semantic membership/conflict negatives cannot be satisfied by this design. |
-| H23 Exact new-head fmt workspace nodefault clippy Nix CI | PARTIAL: no implemented candidate/head or checks. | PARTIAL: parent workspace default/no-default and strict Clippy exit 0; fresh focused tests pass. Exact committed new head, fmt/Nix verification and matching hosted CI remain pending; current dirty-tree results are not exact-head CI. | PARTIAL: no implemented candidate/head or checks. | PARTIAL: no implemented candidate/head or checks. |
-| Q01 Smallest API stateful abstraction | PARTIAL: fewer names, but ID-free bounds mode and restricted projections still undesigned. | PARTIAL: I/A/B/O split real ownership roles and reuse Graph; T1/T3/T14 validate useful stateful projections. No minimality proof; token/map complexity and non-re-exported `BoundAuthoringUnit` remain API costs. | PARTIAL: adapter/codegen/erased registry state exceeds plain traits; prototype/cost evidence missing. | PARTIAL: smallest structural surface feasible, but omits required semantics and has no candidate prototype. |
+| H19 No scheduler/storage dep/blanket ABI/crate explosion | PARTIAL: feasible on existing compiler/engine, candidate dependency/diff audit missing. | PASS: G/B/K reuse compiler/engine and existing crates; Graph has no storage dependency, S shared descriptor reused; T10 real engine execution and exact-commit workspace regressions pass. Native Rust registration remains in-process, not blanket ABI compatibility. | PARTIAL: adapter generation could stay authoring-only, implementation/dependency audit missing. | PARTIAL: structural tooling could reuse engine without storage, candidate audit missing. |
+| H20 Macrofree lowlevel viable | PARTIAL: macro-free bounds attachment/extraction prototype missing. | PASS: T1 manual shapes/claims and low-level templates, T8 direct module literal/manual execution, T14 source/sink; exact-commit no-default workspace tests pass. | PARTIAL: handwritten adapters possible, macro-free dynamic catalog prototype missing. | PARTIAL: macro-free structural surface feasible, candidate prototype missing. |
+| H21 Full Derived V1 preserved | PARTIAL: candidate-specific full derived regression run missing. | PASS: exact-commit default/no-default workspace runs, derived suites and example exit 0; existing engine-membership/freshness/cohort/redeploy/authority checks remain authoritative; T2 preserves deliberate preflight replay. See protected-invariant table. | PARTIAL: adapter generation/lifecycle changes need full Derived V1 regressions. | PARTIAL: structural integration needs full Derived V1 regressions, absent. |
+| H22 Every protected invariant negative + multiplugin | PARTIAL: bounds-specific positive/negative and multiplugin matrix absent. | PASS: traceability below maps T1-T14 plus existing Graph/Kernel/storage/Derived negative/recovery suites; exact-commit workspace runs pass, T10 real three-plugin execution, T11 foreign offers, T14 source/sink/readiness/auth. This is executable coverage, not exhaustive behavioral proof. | PARTIAL: spoofed adapters/version registry/multiplugin and protected negatives missing. | FAIL: structural negatives feasible but required semantic membership/conflict negatives cannot be satisfied by this design. |
+| H23 Exact new-head fmt workspace nodefault clippy Nix CI | PARTIAL: no implemented candidate/head or checks. | PASS: all ten Cargo commands and full Nix check exit 0 on `2a95b8519ff162caa68fee8b844df6ca42e1e515`; [CI 42503290164](https://github.com/matthis-k/phenix-ai/actions/runs/42503290164) completed/success on that same SHA. Exact commands and check inventory are below. | PARTIAL: no implemented candidate/head or checks. | PARTIAL: no implemented candidate/head or checks. |
+| Q01 Smallest API stateful abstraction | PARTIAL: fewer names, but ID-free bounds mode and restricted projections still undesigned. | PARTIAL: I/A/B/O split real ownership roles and reuse Graph; T1/T3/T14 validate useful stateful projections. No minimality proof; revision/origin tokens and maps remain real API/maintenance costs. | PARTIAL: adapter/codegen/erased registry state exceeds plain traits; prototype/cost evidence missing. | PARTIAL: smallest structural surface feasible, but omits required semantics and has no candidate prototype. |
 | Q02 Diagnostics path stage contract endpoint expected actual | PARTIAL: contextual structured bounds errors missing. | PASS: I `InterfaceError` fields; T1 asserts phase/path/contract/endpoint/identities, T3 generation context. Optional fields are populated when applicable; existing compiler/plugin/kernel wrappers retain formatted context, not every legacy error supplies identities. | PARTIAL: adapters need both runtime path and expected/actual identity diagnostics, absent. | PARTIAL: structural diagnostic context feasible, candidate errors/tests absent. |
 | Q03 Migration bounds ContractValue graph_bounds | PARTIAL: bounds attachment migration missing. | PASS: G/B/P remove InterfaceBounds/copied graph_bounds with no shim, T8 literal migration, T9 actual-unit replacement test; required SCHEMA/ordinary same-type legacy retained while portable path rejects nominal certification. | PARTIAL: every semantic contract needs adapters and erased registry migration. | FAIL: removing semantic identity loses required old membership meaning, not an equivalent migration. |
 | Q04 No per-wave matching bounded schema lifecycle | PARTIAL: authoring-only comparison feasible; bounded schema-lifecycle policy missing. | PARTIAL: I/B match during authoring/compile/bind, no per-wave matcher; new connector uses `canonical`, not `intern`. S still leaks distinct canonical identities for process lifetime; finite stable reload descriptors are expected, not enforced. | PARTIAL: avoid runtime adapter matching and bound schema registry; both unverified. | PARTIAL: structural matching can be compile-time, but bounded schema-lifecycle implementation missing. |
@@ -573,7 +579,7 @@ and reusable C2 infrastructure is not independent verification of those designs.
 Automatic Kernel provider resolution/wiring and atomic plugin/kernel activation
 remain additional mission limitations described above. They are not substituted
 for H19 or H20, and do not become implemented merely because explicit host policy
-is supported. No extra numbered gate is needed to preserve that disclosure.
+is supported.
 
 ## Invariant Traceability
 
@@ -590,12 +596,12 @@ path covers all mutation paths. File aliases resolve in the Evidence Index.
 | Root and instance boundaries | T1 root claim survives packaging/nesting; T3 compiled root maps actual physical endpoints. | T3 `find("")` is None, unpromised root outputs reject, foreign graph generation rejects; T1 invalid direct root claim fails catalog compilation. |
 | All final claims/requests are checked | T1 equal repeated definitions compile; T5 preserved requests compile with valid internal claims. | T1 low-level bad claims/conflicting definitions/missing requests fail; invalid claim factory count stays zero; T5 replacement preserving request but losing internal membership fails final compile. |
 | Explicit replacement promise | T1 `same_shape_node_replacement_requires_author_claim_without_mutating_on_failure` executes old +0 behavior then explicit claimed +1 replacement. | Same shape without claim rejects and leaves handles usable; T1 module claim removal rejects unchanged; T5 removes/changes request path/definition rejects before import/revocation. |
-| Patch claim and replacement writes are transactional | A `claim_changes` accounts for root/node/transitive claims and root requests; B assembly diff observes declaration ID changes even for the same package/factory. | T1 undeclared claim write rolls back; T13 same-package/same-factory replacements require declared writes, roll back earlier edits and preserve handles/origin on failure; declared writes revoke old handles. Existing patch suites pass in parent workspace runs; no exhaustive nested-ledger fuzzing claimed. |
+| Patch claim and replacement writes are transactional | A `claim_changes` accounts for root/node/transitive claims and root requests; B assembly diff observes declaration ID changes even for the same package/factory. | T1 undeclared claim write rolls back; T13 same-package/same-factory replacements require declared writes, roll back earlier edits and preserve handles/origin on failure; declared writes revoke old handles. Existing patch suites pass in exact-commit workspace runs; no exhaustive nested-ledger fuzzing claimed. |
 | Dependency edits cannot hide behind wrappers | T5 `claim_edits_refresh_every_ancestor_alias_but_leave_unrelated_dependencies_reusable`; repeated identical claim preserves reuse. | T5 nested node/module claim conflicts reject in both import orders; cloned unique wrappers cannot hide divergent dependencies; failed import leaves no second instance. |
 | Clones distinguish lineage without banning replay | T2 inherited endpoints connect in both preflight and original; T8 inherited old revision still works on untouched clone. | T2 sibling same-name handles/public inputs and replacement endpoints reject; directed destination runtime checks reject divergent nodes/modules; T8 revised endpoint cannot bind unchanged clone. |
 | Origin tracks actual ownership boundary | T4 created nodes, low-level registration, nested instantiation and replacement record expected opaque origins. | T4 no relabel by inspect scope, unscoped replacement clears origin, failure preserves origin, nested error/panic restores scope; T9 equal numeric revisions/aborted/sibling origins reject; corrected T11 compatible-claim foreign nodes/modules/replacements fail origin checks. |
 | Compiled endpoints cannot cross generations | T3 same Arc and endpoints retained after binding drop resolve. | T3 equal paths/addresses across separately compiled graphs reject for node, nested module and root, with compiled path/contract/endpoint context. |
-| Portable encoding is explicit | T7 independent codecs roundtrip vectors and execute both directions; T10 independent A/B/C types execute. | T7 changes name/revision/structure/codec/optionality independently; legacy None, local endpoints, overridden nominal identity, stale tokens reject; malformed bytes cause native `InvalidArgs`, later valid wave succeeds. |
+| Portable encoding is explicit | T7 separately compiled provider/consumer rlibs execute through the linked `portable_execution` harness; independent codecs also roundtrip vectors in both directions; T10 independent A/B/C types execute. | T7 changes name/revision/structure/codec/optionality independently; legacy None, local endpoints, overridden nominal identity, stale tokens reject; malformed bytes cause native `InvalidArgs`, later valid wave succeeds. |
 | Plugin bind uses final actual unit | T9 node/module bind requires matching origin and actual claim. | Missing locator/path, dishonest definition and unclaimed shape reject; old snapshot still binds old graph after unload, newer/sibling/candidate snapshot does not. |
 | Kernel checks final selection before activation | T10 real three-plugin execution; T11 valid node/module matrix passes. | T10 missing definitions/paths/selections, unrelated IDs, conflict, failed candidate and late builder replacement reject with activation counters unchanged. Does not prove automatic wiring or activation atomicity. |
 | Diagnostics preserve useful context | T1 asserts phase/path/contract/endpoint/expected/actual; T3 asserts generation error context. | Compile errors are formatted into existing diagnostics; plugin errors into `Failure`; kernel uses `String`. Not every legacy boundary error has optional endpoint/identity fields populated. |
@@ -605,22 +611,22 @@ path covers all mutation paths. File aliases resolve in the Evidence Index.
 ### H22 Protected Invariants
 
 Existing protected behavior is not replaced by contracts. H22 is PASS for the
-positive/negative regression coverage below, combining actual test inspection,
-fresh focused runs and the parent's reported default/no-default workspace passes.
+positive/negative regression coverage below, supported by the default/no-default
+workspace runs on implementation commit `2a95b8519ff162caa68fee8b844df6ca42e1e515`.
 H21 uses the existing full Derived V1 suites, not a new contract-only approximation.
-These working-tree results do not satisfy H23's exact committed-head requirement.
+The exact-commit command results and matching CI evidence also satisfy H23.
 Coverage means concrete executable regressions, not an exhaustive proof of every
 possible native handler, codec, malformed declaration or concurrent host sequence.
 
-| Protected Area | Evidence Available And Remaining Check |
+| Protected Area | Verified Evidence And Limits |
 |---|---|
-| Graph identity, layouts, module routing, replacement, clone replay and codec failures | T1-T8 plus I unit/doctests supply positive/negative boundaries; fresh T11-T14 cover corrected origins, stale symbolic rollback, same-package/factory patch writes, source/sink and policy/auth distinctions. Existing conformance/output/patch suites are included in parent workspace passes. |
-| Single engine/executor, waves/cohorts, publication retention and module output timing | G/B reuse the engine but add directed destination lineage checks, so this is not zero runtime change. Existing Graph output/cohort/fanout negatives and recovery suites pass in parent workspace runs; T2 divergent directed targets reject, T14 static claims do not alter readiness/emission. |
-| Kernel dependencies, route preflight, rollback/retry and drop order | [kernel.rs](../packages/phenix-kernel/tests/kernel.rs), notably `compile_failure_never_starts_and_startup_rolls_back` and `routes_are_preflighted_without_activation`, is included in parent workspace passes. T10 failed candidates preserve old behavior/code lifetime; full lifecycle suite remains authoritative for activation retry/drop. |
-| Storage schema admission, grants, session/dataset authority and no unauthorized effects | [scoped_storage.rs](../packages/phenix-kernel/tests/scoped_storage.rs), [storage.rs](../packages/phenix-kernel/tests/storage.rs), [shared_schema.rs](../packages/phenix-storage-graph/tests/shared_schema.rs) and derived_plugins grant tests are included in parent workspace passes. T14 directly tests claim-without-resource-grant denial versus separately granted success. ContractRequirement grants nothing. |
-| Atomic storage batches, revisions, subscriptions, bounded tails/overflow and wake/teardown | Kernel storage/scoped_storage, [binding.rs](../packages/phenix-storage-graph/tests/binding.rs) and storage suites are included in parent workspace passes, including mismatch/no-effect and overflow/recovery negatives. No storage source, format or observation protocol change is attributed to contracts. |
-| Derived exact-engine/physical endpoint membership, query freshness and cohort/count validation | [derived.rs](../packages/phenix-storage-graph/tests/derived.rs) is included in parent workspace passes: `binding_uses_final_engine_not_temporary_or_discarded_deployments`, `failed_and_nested_builds_have_no_ambient_membership_state`, `shared_actions_in_two_module_instances_are_ambiguous`, `same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected`, freshness/count/cohort negatives. GraphOrigin does not replace those runtime checks. |
-| Derived preflight replay, deliberate redeployment, recursion/dispatch guards and backend lifetime | Same passing derived suite includes `an_authored_module_can_be_deliberately_redeployed_and_each_query_pins_its_runtime`, guard/error/panic tests and `backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order`; parent also reports derived example exit 0. T2 verifies inherited declaration replay remains valid while divergent clones reject. |
+| Graph identity, layouts, module routing, replacement, clone replay and codec failures | T1-T8 plus I unit/doctests supply positive/negative boundaries; T11-T14 cover origins, stale symbolic rollback, same-package/factory patch writes, source/sink and policy/auth distinctions. Existing conformance/output/patch suites pass in exact-commit workspace verification. |
+| Single engine/executor, waves/cohorts, publication retention and module output timing | G/B reuse the engine but add directed destination lineage checks, so this is not zero runtime change. Existing Graph output/cohort/fanout negatives and recovery suites pass in exact-commit workspace verification; T2 divergent directed targets reject, T14 static claims do not alter readiness/emission. |
+| Kernel dependencies, route preflight, rollback/retry and drop order | [kernel.rs](../packages/phenix-kernel/tests/kernel.rs), notably `compile_failure_never_starts_and_startup_rolls_back` and `routes_are_preflighted_without_activation`, passes in exact-commit workspace verification. T10 failed candidates preserve old behavior/code lifetime; full lifecycle suite remains authoritative for activation retry/drop. |
+| Storage schema admission, grants, session/dataset authority and no unauthorized effects | [scoped_storage.rs](../packages/phenix-kernel/tests/scoped_storage.rs), [storage.rs](../packages/phenix-kernel/tests/storage.rs), [shared_schema.rs](../packages/phenix-storage-graph/tests/shared_schema.rs) and derived_plugins grant tests pass in exact-commit workspace verification. T14 directly tests claim-without-resource-grant denial versus separately granted success. ContractRequirement grants nothing. |
+| Atomic storage batches, revisions, subscriptions, bounded tails/overflow and wake/teardown | Kernel storage/scoped_storage, [binding.rs](../packages/phenix-storage-graph/tests/binding.rs) and storage suites pass in exact-commit workspace verification, including mismatch/no-effect and overflow/recovery negatives. No storage source, format or observation protocol change is attributed to contracts. |
+| Derived exact-engine/physical endpoint membership, query freshness and cohort/count validation | [derived.rs](../packages/phenix-storage-graph/tests/derived.rs) passes in exact-commit workspace verification: `binding_uses_final_engine_not_temporary_or_discarded_deployments`, `failed_and_nested_builds_have_no_ambient_membership_state`, `shared_actions_in_two_module_instances_are_ambiguous`, `same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected`, freshness/count/cohort negatives. GraphOrigin does not replace those runtime checks. |
+| Derived preflight replay, deliberate redeployment, recursion/dispatch guards and backend lifetime | Same passing derived suite includes `an_authored_module_can_be_deliberately_redeployed_and_each_query_pins_its_runtime`, guard/error/panic tests and `backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order`; the derived example also exits 0 on the implementation commit. T2 verifies inherited declaration replay remains valid while divergent clones reject. |
 | Native handler/codec trust and authorization | T7 malformed codecs still fail natively; T14 identical contracts do not promise readiness, emission or access. No claim proves behavior, sandboxing or ABI compatibility. These explicit negatives plus T10 three-plugin execution support H18/H22 without promoting opt-in into behavioral proof. |
 
 ## Migration And File Inventory
@@ -646,26 +652,27 @@ structural descriptors. There is no storage schema/version or grant migration.
 | Graph `src/provenance.rs`, `src/authoring/provenance.rs` | New Graph-owned opaque origin and scoped composition attribution. |
 | Graph `src/authoring.rs`, `src/authoring/addresses.rs`, `src/lib.rs`, `src/output.rs` | Integrate grouping/routing, declaration/package lineage, portable connect, final validation, compiled root metadata and directed selection tokens. |
 | Graph new integration suites T1-T7 and T12-T14; modified T8 layout/manual fixtures | Actual executable coverage, including pending symbolic layouts, same-factory/package patch lineage, static source/sink/readiness/auth invariants and explicit low-level literal migration; not the old planned `interface_contracts.rs`. |
+| Graph `tests/fixtures/portable_provider.rs`, `portable_consumer.rs`, `portable_execution.rs` | Two independently compiled rlibs with distinct Rust types and equal portable descriptors, plus a linked real-engine execution harness invoked by T7. No new production crate or runtime type. |
 | Plugin `src/manager.rs`, `src/registry.rs`; deleted `tests/graph_bounds.rs`, new T9 | Replace copied bounds authority with actual-unit locator binding, opaque origin checks and exact-generation leases. |
 | Kernel `src/lib.rs`; new T10/T11 | Generic graph definition/offer/requirement contributions, host-selected final validation, origin-scoped composition and retained snapshots. |
 | Plugin [README](../packages/phenix-plugins/README.md) | Plugin-owned lease/locator/origin binding instructions, not an alternative Graph schema authority. |
 | Kernel [README](../packages/phenix-kernel/README.md) | Kernel-owned composition/selection/lifecycle policy, explicitly no auto wiring or activation coordinator. |
 | This report | Cross-owner implementation comparison, evidence and acceptance limitations. It is not an additional runtime/specification owner. |
-| `phenix-schema`, storage and storage-graph sources | No implementation change attributed to this task; descriptor interning and storage/derived authority remain their existing owners. |
+| `phenix-schema`, storage and storage-graph sources | Contract implementation does not change these sources; descriptor interning and storage/derived authority remain their existing owners. |
 
 ## Scoring
 
 Scores use exactly the requested dimensions and weights. They are an engineering
 assessment, not a hard-gate completion percentage. C2 scores describe inspected
-implementation, fresh focused results and parent-reported workspace verification.
+implementation and exact-commit command/CI verification.
 Comparative C1/C3/C4 scores are **feasibility estimates only**, not verified
 implementations; uncertainty about their missing code/tests informs each estimate
 rather than adding an unrequested verification dimension.
 
 | Dimension | Weight | C1 Feasible | C2 Implemented | C3 Feasible | C4 Feasible | C2 Evidence / Deduction |
 |---|---:|---:|---:|---:|---:|---|
-| Correctness/invariants | 30% | 6 | 9 | 6 | 2 | I/A/G final checks, exact inputs/output inclusion, T1-T14 negative/recovery evidence and parent workspace/Derived passes. H23 not yet exact-head; no proof of native behavior or host wiring. |
-| Domain API ergonomics | 20% | 6 | 8 | 7 | 7 | Uniform macro-free node/module/root inspection/binding; T1/T3/T8/T14. Explicit portable opt-in and host wiring are visible; projection names and non-re-exported authoring bound type add friction. |
+| Correctness/invariants | 30% | 6 | 9 | 6 | 2 | I/A/G final checks, exact inputs/output inclusion, T1-T14 negative/recovery evidence and exact-commit workspace/Derived/CI passes. Native behavior and correct host-selected wiring still require independent policy/testing; claims do not prove them. |
+| Domain API ergonomics | 20% | 6 | 8 | 7 | 7 | Uniform macro-free node/module/root inspection/binding with named public borrowed types; T1/T3/T8/T14. Explicit portable opt-in, separate authoring/compiled projections and manual host-selected wiring remain usability costs. |
 | Responsibilities/dependencies | 20% | 5 | 8 | 5 | 7 | One Graph matcher, Schema owns wire descriptors, Plugin owns leases and Kernel owns selected composition; P/K delegate, no scheduler/storage dependency/crate expansion. No atomic activation coordinator; Q04 lifecycle cost remains. |
 | Evolution/replacement | 15% | 6 | 9 | 6 | 6 | Full actual signature and explicit replacement claims/requests, origins, dependency refresh and revision checks; T1-T5/T8/T11/T13 cover rollback/reload/foreign generations. Conservative exact replacement intentionally limits evolution. |
 | Migration/complexity | 15% | 7 | 7 | 4 | 8 | No bounds shim/duplicate actual-shape authority, T8 literals/T9 graph_bounds migration, legacy same-type baseline preserved. Source-breaking fields, token/maps and unchanged schema interning add cost. |
@@ -687,89 +694,60 @@ a weighted average. C2 is not complete; C4 fails the semantic task by definition
 
 ## Verification
 
-Verification has three distinct provenances: historical baseline, earlier focused
-runs, and current evidence after the fixture/pending-layout/patch-lineage fixes.
-All local implementation results discussed here concern an uncommitted working
-tree based on `ee2abaa2f0b39e09ae32db5b16d6618b18fc388a`, not a new committed
-implementation head. Nix warned that the Git tree was dirty. A `nix develop`
-test invocation is not itself a successful Nix check or exact-head hosted CI.
+The implementation is committed as
+`2a95b8519ff162caa68fee8b844df6ca42e1e515`. The exact commands below were run
+sequentially under `nix develop --command`, with the same HEAD checked before and
+after. No Cargo package/test-target adjustments were needed.
 
 ### Current Evidence
 
-The parent reports these broader runs after the fixes. They are accepted as
-reported verification, not represented as commands rerun by this documentation
-edit. Exact invocation flags/logs and the final commit should be appended by the
-implementation owner rather than reconstructed here.
-
-| Parent-Reported Run | Result / Scope |
+| Command (Cargo Commands Prefixed With `nix develop --command`) | Exit / Result |
 |---|---|
-| Workspace default-feature tests | Exit 0, including Graph, Plugin, Kernel, storage and full Derived V1 regression suites. Supersedes baseline-only regression status. |
-| Workspace no-default-feature tests | Exit 0. Establishes current macro-free/low-level viability alongside default-feature coverage, not a new-head CI result. |
-| Strict workspace Clippy | Exit 0. No exact-final-head lint certificate is implied. |
-| Derived example | Exit 0. Supports H21 in addition to the complete workspace regression runs. |
+| `cargo fmt --all --check` | 0 |
+| `cargo test --workspace --locked` | 0; 665 passed, 0 failed, 1 existing ignored introductory doctest |
+| `cargo test --workspace --no-default-features --locked` | 0; 665 passed, 0 failed, 1 existing ignored doctest |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | 0 |
+| `cargo test --locked -p phenix-graph` | 0; 495 passed including doctests |
+| `cargo test --locked -p phenix-plugin` | 0; 16 passed |
+| `cargo test --locked -p phenix-kernel` | 0; 23 passed |
+| `cargo test --locked -p phenix-storage` | 0; 66 passed |
+| `cargo test --locked -p phenix-storage-graph --test derived --test derived_plugins` | 0; 29 + 5 passed |
+| `cargo run --locked -p phenix-storage-graph --example derived` | 0; sum=9, diff=-1, both=-9, twice=18; independent subscriptions, project isolation, persistence, denied grants verified |
+| `nix flake check --no-update-lock-file --print-build-logs` | 0; full check inventory passed |
 
-Fresh command run during this report correction:
+Ninety tests in the new integration suites pass. T7's
+`independently_compiled_portable_crates_execute` separately builds
+`portable_provider.rs` and `portable_consumer.rs` as rlibs, links
+`portable_execution.rs` against both, and runs it. The fixture types differ in
+Rust identity and SCHEMA constants but share an explicit portable record
+descriptor; checked bytes and separate decoders drive actual graph execution,
+not native layout assumptions.
 
-```sh
-nix develop --command cargo test --locked -p phenix-graph --test canonical_interfaces --test symbolic_pending --test patch_lineage --test static_contracts -p phenix-kernel --test contract_offers
-```
+[CI run 42503290164](https://github.com/matthis-k/phenix-ai/actions/runs/42503290164)
+completed successfully on that exact implementation SHA. Inventory, shared build,
+all three shards and aggregate evidence checks passed. The Nix inventory includes
+`derived`, `no-default`, `storage`, `kernel`, `integration`, `graph`, `format`,
+`clippy`, `workflow` and `kernel-smoke`. Existing graph and integration outputs
+already run the new suites, so no redundant new check was introduced. This is
+new contract CI, distinct from V1 run 42466577317.
 
-Exit 0: **37 passed**, 0 failed, 0 ignored: 26 canonical interfaces, 2 symbolic
-pending, 2 patch lineage, 5 static contracts and 2 Kernel offers. In particular,
-the foreign replacement fixture now explicitly pushes `contract()` onto the
-replacement node; the entire node/module foreign-origin matrix passes. No current
-failure from the earlier missing-claim fixture remains a blocker.
+The current change is tracked in
+[draft PR #1251](https://github.com/matthis-k/phenix-ai/pull/1251). Local Cargo
+logs for the implementation run are retained under
+`/tmp/opencode/verify-2a95b851-*.log`.
 
-### Earlier Focused Runs
+### Superseded Failure
 
-These commands/results were recorded in the earlier report revision. Their
-failure is preserved as history, **superseded by the current evidence above**;
-they are not the latest implementation status.
+An earlier focused `contract_offers` run exited 101 because the foreign-node
+replacement fixture omitted its explicit contract claim: it failed at replacement
+validation before reaching the expected origin mismatch. The fixture now attaches
+the compatible claim, and T11's complete node/module foreign-origin matrix passes
+in the exact-commit verification above. This was a fixture correction, not a
+relaxation of replacement or origin checks.
 
-```sh
-nix develop --command cargo test --locked -p phenix-graph --test canonical_interfaces --test clone_lineage --test compiled_bindings --test composition_origin --test contract_dependency_identity --test module_slots --test portable_wire --test declaration_layout --test manual_api
-```
-
-Exit 0: **86 passed**, 0 failed, 0 ignored across the nine integration suites
-(26 + 7 + 4 + 5 + 7 + 8 + 14 + 9 + 6). This default-feature run does not establish
-default-free workspace success.
-
-```sh
-nix develop --command cargo test --locked -p phenix-plugin -p phenix-kernel --test graph_contracts --test contract_offers
-```
-
-Historical exit 101: Kernel `contract_offers` ran first, **1 passed, 1 failed**. The failing
-test is `offers_cannot_launder_foreign_nodes_modules_or_replacement_generations`
-at `contract_offers.rs:226`: for `module=false, replace=true`, the observed error
-is `replacement removes contract claim example/service@1`, not the asserted
-`origin mismatch`. At that time `ForeignPlugin`'s node replacement omitted the
-contract. It failed closed at replacement without exercising the intended origin
-check. The parent subsequently fixed the fixture outside this documentation edit;
-the fresh 37-test run above proves the corrected test passes. That earlier command
-stopped before proving the graph_contracts targets, so those were run separately:
-
-```sh
-nix develop --command cargo test --locked -p phenix-plugin -p phenix-kernel --test graph_contracts
-```
-
-Exit 0: **7 passed** (4 Kernel, 3 Plugin), including three-plugin execution,
-reload/unload/drop behavior and candidate-build rejection before activation.
-
-```sh
-nix develop --command cargo test --locked -p phenix-graph --lib interface::tests
-nix develop --command cargo test --locked -p phenix-graph --doc interface::
-```
-
-Both exit 0: **4 interface unit tests** and **2 compile-fail GraphUnit doctests**
-passed. Filtered unrelated unit/doctests were not counted as executed. The broader
-current workspace results are parent-reported in Current Evidence, not conflated
-with these earlier focused commands or the historical baseline.
-
-H23 remains **PARTIAL: exact-new-head fmt/workspace/no-default/Clippy/Nix checks
-and matching hosted CI pending**. Current dirty-tree workspace/Clippy successes
-are real reported evidence, not a substitute for that final-head requirement.
-H21/H22 PASS is based on concrete negative/recovery and multiplugin coverage plus
-the reported workspace runs. Q01/Q04 remain PARTIAL for API complexity and
+H23 PASS is supported by exact committed implementation-head commands and hosted
+CI above. H21/H22 PASS is based on concrete negative/recovery and multiplugin
+coverage plus those workspace runs. Q01/Q04 remain PARTIAL for API complexity and
 unbounded process-lifetime schema interning respectively. Automatic Kernel wiring
-and atomic activation remain explicit mission limitations, so neither a passing
-regression suite nor the 8.3 score is a claim of full completion.
+and atomic activation remain explicit mission limitations, so neither passing
+regression suites nor the 8.3 score is a claim of full mission completion.
