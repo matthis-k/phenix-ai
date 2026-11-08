@@ -5901,6 +5901,24 @@ pub struct Engine {
     report_retention: ReportRetention,
 }
 impl Engine {
+    /// Resolve a named trigger's physical inputs without admitting a wave.
+    /// Each outer entry corresponds to one supplied payload; its inner entries
+    /// are all destinations receiving that payload, including module fan-out.
+    pub fn trigger_targets(&self, name: &str) -> Option<&[Vec<InputAddr>]> {
+        let id = self.graph.trigger(name)?;
+        self.graph.triggers.get(&id).map(Vec::as_slice)
+    }
+
+    /// Find physical nodes using this exact action allocation in this deployment.
+    /// Shared dynamic actions may match multiple nodes; factory-created actions
+    /// match only their actual instance. Does not invoke actions or factories.
+    pub fn node_ids_for_action(&self, action: &Arc<dyn NodeAction>) -> Vec<u16> {
+        self.instances
+            .iter()
+            .filter_map(|(id, instance)| Arc::ptr_eq(instance, action).then_some(id.get()))
+            .collect()
+    }
+
     pub(crate) fn new(graph: Arc<CompiledGraph>, store: Store) -> Self {
         let instances = graph
             .nodes
@@ -7045,5 +7063,7 @@ impl fmt::Debug for Engine {
     }
 }
 
+#[cfg(test)]
+mod inspection_tests;
 #[cfg(test)]
 mod tests;
