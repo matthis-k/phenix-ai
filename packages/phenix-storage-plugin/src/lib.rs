@@ -57,6 +57,9 @@ struct LeasedBackend {
     _lease: ContributionHandle<BackendOffer>,
 }
 impl Backend for LeasedBackend {
+    fn register_dataset(&mut self, dataset: &str, schema: &Schema) -> Result<(), StorageError> {
+        self.backend.register_dataset(dataset, schema)
+    }
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
         self.backend.typed_kv()
     }
