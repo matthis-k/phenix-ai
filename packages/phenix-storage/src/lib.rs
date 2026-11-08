@@ -245,8 +245,35 @@ impl TypedKv for MemoryBackend {
 }
 struct SqliteBackend(Connection);
 impl Backend for SqliteBackend {
+    fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+        Some(self)
+    }
     fn sql(&mut self) -> Option<&mut dyn SqlBackend> {
         Some(self)
+    }
+}
+impl TypedKv for SqliteBackend {
+    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        use rusqlite::OptionalExtension;
+        Ok(self.0.query_row(
+            "SELECT value FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+            rusqlite::params![dataset, key],
+            |row| row.get(0),
+        ).optional()?)
+    }
+    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
+        self.0.execute(
+            "INSERT INTO __phenix_kv (dataset, key, value) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(dataset, key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![dataset, key, value],
+        )?;
+        Ok(())
+    }
+    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
+        Ok(self.0.execute(
+            "DELETE FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+            rusqlite::params![dataset, key],
+        )? != 0)
     }
 }
 impl SqlBackend for SqliteBackend {
@@ -330,6 +357,16 @@ impl Registry {
     pub fn mount_sqlite(&self, name: &str, path: impl AsRef<std::path::Path>) -> Result<()> {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", true)?;
+        // Typed KV is an adapter table, not a new database engine. Each write
+        // is an autocommitted SQLite statement before invalidation publication.
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS __phenix_kv (
+                dataset TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value BLOB NOT NULL,
+                PRIMARY KEY (dataset, key)
+            )",
+        )?;
         self.mount(name, SqliteBackend(connection))
     }
     pub fn register(&self, address: &Address, schema: Schema) -> Result<()> {
