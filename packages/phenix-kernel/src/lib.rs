@@ -247,6 +247,16 @@ impl Kernel {
                     requirement.offer
                 ));
             }
+            // An offer advertises one named contract. Its unit may implement
+            // others, but a requirement cannot silently reinterpret the offer.
+            let requested = &definitions[&requirement.contract].contract;
+            let advertised = &definitions[&offers[&requirement.offer].contract].contract;
+            requested.check_definition(advertised).map_err(|error| {
+                format!(
+                    "requirement {key:?} selects offer {:?} advertising an incompatible contract: {error}",
+                    requirement.offer
+                )
+            })?;
         }
         for (key, contribution) in &pending {
             let mut dependencies = BTreeSet::new();
@@ -291,6 +301,11 @@ impl Kernel {
                 .map_err(|error| format!("requirement {key:?} at {}: {error}", offer.unit))?;
         }
         let compiled = graph.compile().map_err(|error| error.to_string())?;
+        // Check all registered definitions against all compiled claims and
+        // requests, including units with no offer or selected requirement.
+        compiled
+            .check_contract_catalog(definitions.values().map(|entry| &entry.contract))
+            .map_err(|error| format!("host/graph contract catalog conflict: {error}"))?;
         for (key, offer) in &offers {
             let contract = &definitions[&offer.contract].contract;
             let unit = compiled.find(&offer.unit).ok_or_else(|| {

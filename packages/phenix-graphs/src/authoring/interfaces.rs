@@ -352,6 +352,46 @@ impl GraphBuilder {
         snapshot.provenance.instance_path = instances;
         Ok(snapshot)
     }
+    /// A scoped plugin may make claims on its own direct nodes only. Claims on
+    /// imported module definitions are shared across every alias, and must be
+    /// declared on the reusable ModulePackage before it is instantiated.
+    /// Unscoped manual authoring retains the full low-level editing API.
+    fn check_claim_owner(&self, path: &str) -> Result<(), InterfaceError> {
+        let Some(origin) = &self.active_origin else {
+            return Ok(());
+        };
+        if path.is_empty() {
+            return Err(InterfaceError::new(
+                "a scoped contribution cannot claim the composite graph root",
+            ));
+        }
+        let parts = parse_name_path(path)
+            .ok_or_else(|| InterfaceError::new("invalid claim target path"))?;
+        if parts.len() != 1 {
+            return Err(InterfaceError::new(
+                "a scoped contribution cannot alter nested shared module claims; declare them on the module definition",
+            ));
+        }
+        let name = parts[0];
+        if self.module.instances.iter().any(|unit| unit.name == name) {
+            return Err(InterfaceError::new(
+                "a scoped contribution cannot alter shared module claims; declare them before instantiation",
+            ));
+        }
+        let node = self
+            .module
+            .nodes
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .ok_or_else(|| InterfaceError::new("unknown direct node for claim"))?;
+        if node.composition_origin.as_ref() != Some(origin) {
+            return Err(InterfaceError::new(
+                "contract claim would alter a graph unit owned by another contribution generation",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn implements_public(&mut self, contract: &GraphContract) -> Result<(), InterfaceError> {
         self.implements("", contract)
     }
@@ -360,6 +400,7 @@ impl GraphBuilder {
         path: &str,
         contract: &GraphContract,
     ) -> Result<(), InterfaceError> {
+        self.check_claim_owner(path)?;
         let snapshot = self.inspect(path)?.inspect()?;
         contract
             .required()
