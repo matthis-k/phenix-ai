@@ -2,7 +2,7 @@
 
 ## Scope And Status
 
-V1 is implemented in the current worktree; final exact-head CI is **pending**. This ledger distinguishes code/test inspection from executed verification. [Usage](derived-values.md) documents actual APIs; [design section 17](derived-values-design.md#17-implementation-status-and-deliberate-deviations) records deviations while preserving the original rationale.
+V1 implementation commit `465033b2835ce06f58bd3aa42bc88fc77e6d199f` passed exact-head hosted CI. This ledger distinguishes code/test inspection from executed verification. [Usage](derived-values.md) documents actual APIs; [design section 17](derived-values-design.md#17-implementation-status-and-deliberate-deviations) records deviations while preserving the original rationale. The implementation is [draft PR #1250](https://github.com/matthis-k/phenix-ai/pull/1250), stacked on #1249.
 
 The fresh design baseline `0bb81da48` contains storage docs head `86c29792f` through ancestry. Fresh formatting, Cargo tests, Clippy and Nix passed before implementation edits. The storage prerequisite is delivered by `60c4ec611` and capability-preflight fix `44f66c1d1` in [draft PR #1249](https://github.com/matthis-k/phenix-ai/pull/1249). Its exact-head [CI run 42465075375](https://github.com/matthis-k/phenix-ai/actions/runs/42465075375) completed successfully; this does not substitute for Part B CI.
 
@@ -32,7 +32,7 @@ This is a record of implementation/review passes, not a claim of three independe
 
 ## Regression Evidence
 
-These tests passed locally in [tests/derived.rs](../packages/phenix-storage-graph/tests/derived.rs); hosted Part B CI remains a separate gate.
+These tests passed locally in [tests/derived.rs](../packages/phenix-storage-graph/tests/derived.rs) and through the completed Part B CI matrix.
 
 | Concern | Named coverage |
 |---|---|
@@ -85,11 +85,14 @@ Complete this table only from the final exact head, after code/tests stop changi
 | `cargo test --workspace --no-default-features --locked` | Passed. |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed. |
 | `nix flake check --no-update-lock-file --print-build-logs` | Passed, including new `derived` and `no-default` checks and generated-workflow synchronization. |
-| Hosted Part B CI | Awaiting the pushed implementation head; no success inferred from Part A. |
+| Hosted Part B CI | [Run 42466175498](https://github.com/matthis-k/phenix-ai/actions/runs/42466175498) completed successfully on `465033b2835ce06f58bd3aa42bc88fc77e6d199f`: exact-head inventory, shared builder, all three shards and evidence aggregate. No pending/canceled run is counted as success. |
 
 Additional explicit checks passed: `cargo test --locked -p phenix-storage`,
 `cargo test --locked -p phenix-storage-graph --test derived --test derived_plugins`,
 and `cargo test --locked -p phenix-kernel` (17 integration tests).
+Direct `nix build` checks also passed for `derived`, `no-default`, `storage`,
+`kernel` and `integration`. The generated CI workflow remains synchronized;
+the existing matrix backend automatically includes the two added checks.
 The only ignored derived doctest is the intentionally incomplete introductory
 authoring sketch; the complete guide block was compiled separately and the full
 plugin example is exercised by tests. No execution tests were removed or ignored.
