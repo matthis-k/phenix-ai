@@ -2,8 +2,10 @@
 //! in-process plugin Registrar. No second loader, database engine or kernel API.
 use phenix_plugin::{Contribution, ContributionHandle, PluginSnapshot};
 use phenix_storage::{
-    Backend, Error as StorageError, Observation, Registry, SqlBackend, TypedKv,
+    scoped::ResourceId, Backend, Error as StorageError, Observation, Registry, Schema,
+    SqlBackend, TypedKv,
 };
+use std::collections::BTreeMap;
 
 pub type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, String> + Send + Sync;
 
@@ -31,6 +33,8 @@ impl Contribution for BackendOffer {
 #[derive(Debug)]
 pub enum Error {
     MissingOffer,
+    MissingResourceOffer,
+    SchemaConflict,
     Open(String),
     Storage(StorageError),
 }
@@ -84,6 +88,60 @@ pub fn mount_offer(
     Ok(())
 }
 
+
+/** A declarative request for one logical resource. Independent plugins can
+ * offer the same ResourceId provided their canonical Schema agrees.
+ * Declaration grants no permission and never opens a database.
+ */
+pub struct ResourceOffer {
+    id: String,
+    pub resource: ResourceId,
+    pub schema: Schema,
+}
+impl ResourceOffer {
+    pub fn new(id: impl Into<String>, resource: ResourceId, schema: Schema) -> Self {
+        Self { id: id.into(), resource, schema }
+    }
+}
+impl Contribution for ResourceOffer {
+    const KIND: &'static str = "storage.resource";
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Pure declarations after schema validation. The trusted host supplies
+/// physical bindings, provisions datasets, and issues separate Session grants.
+pub struct ResourceRequirements {
+    entries: BTreeMap<ResourceId, Schema>,
+}
+impl ResourceRequirements {
+    pub fn collect(snapshots: impl IntoIterator<Item = PluginSnapshot>) -> Result<Self, Error> {
+        let mut entries = BTreeMap::new();
+        for snapshot in snapshots {
+            for (_, kind, id) in snapshot.keys() {
+                if kind != ResourceOffer::KIND {
+                    continue;
+                }
+                let offer = snapshot
+                    .get::<ResourceOffer>(id)
+                    .ok_or(Error::MissingResourceOffer)?;
+                if let Some(previous) = entries.get(&offer.resource) {
+                    if previous != &offer.schema {
+                        return Err(Error::SchemaConflict);
+                    }
+                } else {
+                    entries.insert(offer.resource.clone(), offer.schema.clone());
+                }
+            }
+        }
+        Ok(Self { entries })
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&ResourceId, &Schema)> {
+        self.entries.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +178,38 @@ mod tests {
             String::from_utf8(bytes.to_vec())
                 .map_err(|error| StorageError::Codec(error.to_string()))
         }
+    }
+
+    #[test]
+    fn independent_resource_offers_share_identity_only_when_schemas_match() {
+        use phenix_storage::scoped::{ScopeId, StorageClass};
+        struct Offers(u32);
+        impl PluginInstance for Offers {
+            fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+                let resource = ResourceId::new(
+                    ScopeId::Project("project-1".into()),
+                    StorageClass::Config,
+                    "phenix.agent/settings",
+                ).unwrap();
+                let mut schema = TextCodec.schema();
+                schema.revision = self.0;
+                registrar.add(ResourceOffer::new("settings", resource, schema))
+            }
+        }
+        let mut catalog = PluginCatalog::new();
+        let a = catalog.register("a", |revision: u32| Ok(Offers(revision))).unwrap();
+        let b = catalog.register("b", |revision: u32| Ok(Offers(revision))).unwrap();
+        let mut instances = catalog.instance();
+        instances.load(&a, 1).unwrap();
+        instances.load(&b, 1).unwrap();
+        let requirements = ResourceRequirements::collect(instances.snapshots()).unwrap();
+        assert_eq!(requirements.iter().count(), 1);
+
+        instances.reload(&b, 2).unwrap();
+        assert!(matches!(
+            ResourceRequirements::collect(instances.snapshots()),
+            Err(Error::SchemaConflict)
+        ));
     }
 
     #[test]
