@@ -25,7 +25,11 @@ fn scoped_contributor_cannot_claim_another_contributors_direct_node() {
     let error = graph
         .with_origin(&foreign, |g| g.implements("service", &contract()))
         .unwrap_err();
-    assert!(error.to_string().contains("another contribution generation"));
+    assert!(
+        error
+            .to_string()
+            .contains("another contribution generation")
+    );
 
     graph
         .with_origin(&provider, |g| g.implements("service", &contract()))
@@ -38,7 +42,9 @@ fn scoped_claims_on_imported_definitions_must_be_declared_on_the_package() {
     let provider = GraphOrigin::default();
     let mut child = GraphBuilder::new("child");
     let node = child.node("private", |v: i64| v + 1).unwrap();
-    child.expose_input_slot("run", "value", node.inlet()).unwrap();
+    child
+        .expose_input_slot("run", "value", node.inlet())
+        .unwrap();
     child.expose_output("value", node.output()).unwrap();
     child.implements_public(&contract()).unwrap();
 
@@ -61,7 +67,9 @@ fn scoped_claims_on_imported_definitions_must_be_declared_on_the_package() {
 fn manual_graph_authoring_retains_definition_level_claim_edits() {
     let mut child = GraphBuilder::new("child");
     let node = child.node("private", |v: i64| v + 1).unwrap();
-    child.expose_input_slot("run", "value", node.inlet()).unwrap();
+    child
+        .expose_input_slot("run", "value", node.inlet())
+        .unwrap();
     child.expose_output("value", node.output()).unwrap();
     let mut graph = GraphBuilder::new("host");
     graph.instance("one", &child.module()).unwrap();
