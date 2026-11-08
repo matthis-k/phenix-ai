@@ -451,6 +451,55 @@ mod tests {
     }
 
     #[test]
+    fn scoped_sqlite_kv_survives_reopen_without_changing_resource_identity() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "phenix-scoped-{}-{stamp}.sqlite",
+            std::process::id(),
+        ));
+        let address = Address::parse("store://main/settings").unwrap();
+        let resource = ResourceId::new(
+            ScopeId::Project("stable-repo".into()),
+            StorageClass::Config,
+            "phenix.agent/settings",
+        ).unwrap();
+        let open = |registry: &Registry| {
+            let mut catalog = ResourceCatalog::new();
+            catalog.bind(resource.clone(), address.clone()).unwrap();
+            catalog.freeze().access(
+                registry.session([Grant::new(
+                    Scope::Dataset(address.clone()),
+                    [Operation::Read, Operation::Write],
+                )]),
+                Identity::user("alice").unwrap().project("stable-repo").unwrap(),
+            )
+        };
+
+        {
+            let registry = Registry::new();
+            registry.mount_sqlite("main", &path).unwrap();
+            registry.register(&address, TextCodec.schema()).unwrap();
+            let access = open(&registry);
+            access.project().unwrap().config::<Text>("phenix.agent/settings").unwrap()
+                .put("default", &Text("persisted".into())).unwrap();
+        }
+
+        {
+            let registry = Registry::new();
+            registry.mount_sqlite("main", &path).unwrap();
+            registry.register(&address, TextCodec.schema()).unwrap();
+            let access = open(&registry);
+            let found = access.project().unwrap().config::<Text>("phenix.agent/settings").unwrap()
+                .get("default").unwrap().unwrap();
+            assert_eq!(found.0, "persisted");
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn xdg_placement_uses_stable_identity_not_workspace_path() {
         let xdg = XdgPaths::new(
             "/tmp/config".into(), "/tmp/data".into(), "/tmp/state".into(),
