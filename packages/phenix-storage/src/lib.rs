@@ -3,6 +3,7 @@
 //! Observations are invalidations, not committed row changes or a durable change log.
 
 pub mod scoped;
+pub mod snapshot;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -30,6 +31,9 @@ pub enum Error {
     TransactionEnded,
     Poisoned,
     Reentrant,
+    MixedSnapshotSources,
+    SnapshotEntryMismatch,
+    MissingInput { address: Address, key: String },
     Codec(String),
     Sql(rusqlite::Error),
 }
@@ -195,6 +199,7 @@ pub struct Capabilities {
 pub enum Capability {
     TypedKv,
     CompareExchange,
+    AtomicReadMany,
     Sql,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,6 +249,18 @@ pub trait Backend: Send {
     }
 }
 pub trait TypedKv: Send {
+    /// Opt in only for a coherent, versioned snapshot over the entire batch.
+    fn supports_atomic_read_many(&self) -> bool {
+        false
+    }
+    fn read_many(
+        &mut self,
+        _keys: &[snapshot::ReadKey<'_>],
+    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
+        Err(Error::UnsupportedCapability {
+            capability: Capability::AtomicReadMany,
+        })
+    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()>;
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool>;
@@ -304,6 +321,17 @@ impl Backend for MemoryBackend {
     }
 }
 impl TypedKv for MemoryBackend {
+    fn supports_atomic_read_many(&self) -> bool {
+        true
+    }
+    fn read_many(
+        &mut self,
+        keys: &[snapshot::ReadKey<'_>],
+    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
+        keys.iter()
+            .map(|k| self.get_revisioned(k.dataset, k.key))
+            .collect()
+    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .values
@@ -447,6 +475,38 @@ impl SqliteBackend {
     }
 }
 impl TypedKv for SqliteBackend {
+    fn supports_atomic_read_many(&self) -> bool {
+        true
+    }
+    fn read_many(
+        &mut self,
+        keys: &[snapshot::ReadKey<'_>],
+    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
+        use rusqlite::OptionalExtension;
+        self.reset_sql_authority()?;
+        let tx = self
+            .0
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
+        let entries = {
+            let mut statement = tx.prepare(
+                "SELECT value, revision FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+            )?;
+            keys.iter()
+                .map(|key| {
+                    Ok(statement
+                        .query_row(rusqlite::params![key.dataset, key.key], |row| {
+                            Ok(Revisioned {
+                                value: row.get(0)?,
+                                revision: Revision(row.get::<_, i64>(1)?.to_be_bytes().to_vec()),
+                            })
+                        })
+                        .optional()?)
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        tx.commit()?;
+        Ok(entries)
+    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
         self.reset_sql_authority()?;
         use rusqlite::OptionalExtension;
