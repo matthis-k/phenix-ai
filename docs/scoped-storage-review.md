@@ -5,7 +5,8 @@
 Comparison baseline: the exact fetched HEAD `eeb39b64` (locally resolved as
 `eeb39b64b`, `docs(storage): document durable SQLite schema validation and migration boundary`).
 The earlier `b53f5be1` design foundation is not this review's baseline.
-Current means the working-tree implementation, not a claimed release or green CI.
+Implementation commit: `bcbad5edc7510eaa527ec0301b9af0128aecd2d3`.
+This review does not claim a release; exact-head CI evidence is recorded below.
 Sources inspected: storage core and scoped module, storage-plugin implementation
 and README, scoped kernel example and integration tests, and revision, reserved-SQL
 and SQLite-preflight regression tests. This documentation update changes no code.
@@ -205,8 +206,8 @@ test `fixed_host_policy_rejects_extra_requests_before_storage_injection`.
 
 ## Final Scorecard
 
-This is a code-and-regression-evidence assessment, not a numeric security rating or
-a final CI verdict. Paths under tests below are relative to the named package.
+This is a code-and-regression-evidence assessment, not a numeric security rating.
+Paths under tests below are relative to the named package.
 
 | Area | Assessment | Evidence |
 | --- | --- | --- |
@@ -219,7 +220,7 @@ a final CI verdict. Paths under tests below are relative to the named package.
 | Provider lifetime | Exact provider revision pinned; requester leases removed | `LeasedBackend` field order; pass-1 lease tests |
 | Failure lifecycle | No partial view publication; no filesystem rollback promised | Plugin `failed_activation_drops_earlier_backends_and_can_retry`; `PreparedStorage::activate` private registry |
 | Graph integration | Same snapshots, independent types/codecs, restricted injected views | Kernel `tests/scoped_storage.rs::independent_plugins_drive_real_storage_waves_and_enforce_grants`, `restart_preserves_data_and_revisions_while_project_switch_isolates_both_resources`, `public_entry_point_runs` |
-| Final checks | Local Cargo and Nix checks passed; hosted CI not yet rerun | Verification record below |
+| Final checks | Local Cargo, Nix and exact-head hosted CI passed | Verification record below |
 
 ## Limits And Verification
 
@@ -240,7 +241,11 @@ Verification record:
 - System `cargo fmt`/`cargo clippy` were unavailable then. Subsequent
   `nix develop` cargo fmt/check/clippy checks passed at that stage.
 - CI run [42450640340](https://github.com/matthis-k/phenix-ai/actions/runs/42450640340)
-  failed on rustfmt formatting. That failure is not superseded by a green result here.
+  failed on rustfmt formatting at the baseline.
+- Replacement run [42456482434](https://github.com/matthis-k/phenix-ai/actions/runs/42456482434)
+  completed successfully for implementation commit `bcbad5edc751`: exact-head
+  inventory, shared builder, all three shards, and the evidence aggregate passed.
+  This is a completed result, not a pending or canceled run.
 - The first local Nix formatting check also found `flake.nix` formatting; both
   Rust and Nix formatting are now corrected.
 - Final local commands passed through the repository's Nix development shell:
