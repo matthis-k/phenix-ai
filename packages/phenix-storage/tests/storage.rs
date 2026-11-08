@@ -725,12 +725,11 @@ fn sqlite_native_binding_rows_commit_rollback() {
             .unwrap(),
         vec![1]
     );
-    assert!(matches!(
-        session.get(&a, "k", &Text),
-        Err(Error::UnsupportedCapability {
-            capability: Capability::TypedKv
-        })
-    ));
+    // SQLite now exposes a transactional typed-KV table alongside native SQL.
+    assert!(session.capabilities(&a, Operation::Read).unwrap().typed_kv);
+    assert!(session.get(&a, "k", &Text).unwrap().is_none());
+    session.put(&a, "k", &"persisted".into(), &Text).unwrap();
+    assert_eq!(session.get(&a, "k", &Text).unwrap(), Some("persisted".into()));
 }
 
 #[test]
