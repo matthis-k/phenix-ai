@@ -1,6 +1,8 @@
 //! Synchronous, explicitly authorized storage. See `docs/storage.md` in the repository.
 //! Hosts can mount external backends through object-safe optional capabilities.
 //! Observations are invalidations, not committed row changes or a durable change log.
+
+pub mod scoped;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -20,6 +22,8 @@ pub enum Error {
     UnknownDataset,
     Denied,
     UnsupportedCapability { capability: Capability },
+    Conflict { current: Option<Revision> },
+    RevisionExhausted,
     SubscriptionClosed,
     SchemaMismatch,
     InvalidCapacity,
@@ -48,6 +52,26 @@ impl From<rusqlite::Error> for Error {
     }
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Opaque backend token, comparable only for the same mount/dataset/key.
+/// Not authority or a database snapshot. Restoring an older database file also
+/// restores its tokens; absence has no token and carries no history guarantee.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revision(Vec<u8>);
+impl Revision {
+    /// Backend extension point. Tokens must never be reused after a mutation.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revisioned<T> {
+    pub value: T,
+    pub revision: Revision,
+}
 
 fn component(s: &str) -> bool {
     !s.is_empty()
@@ -160,6 +184,8 @@ impl Grant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub typed_kv: bool,
+    /// Revisioned reads and atomic conditional writes, not additional authority.
+    pub compare_exchange: bool,
     pub sql: bool,
     pub invalidation: bool,
     pub observation: Observation,
@@ -168,6 +194,7 @@ pub struct Capabilities {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capability {
     TypedKv,
+    CompareExchange,
     Sql,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +227,12 @@ fn observation(coverage: ObservationCoverage) -> Observation {
 
 /// Trusted host extension point. Backends must not expose authority to sessions.
 pub trait Backend: Send {
+    /// Validate/provision persistent dataset metadata before registry admission.
+    /// In-memory adapters may use the default; durable adapters should enforce
+    /// schema identity across process restarts.
+    fn register_dataset(&mut self, _dataset: &str, _schema: &Schema) -> Result<()> {
+        Ok(())
+    }
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
         None
     }
@@ -214,13 +247,54 @@ pub trait TypedKv: Send {
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()>;
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool>;
+    /// Opt in only when both revision methods are implemented. All successful
+    /// puts must invalidate older tokens, including delete/recreate cycles.
+    /// Durable backends must retain that guarantee across reopen.
+    fn supports_compare_exchange(&self) -> bool {
+        false
+    }
+    fn get_revisioned(
+        &mut self,
+        _dataset: &str,
+        _key: &str,
+    ) -> Result<Option<Revisioned<Vec<u8>>>> {
+        Err(Error::UnsupportedCapability {
+            capability: Capability::CompareExchange,
+        })
+    }
+    /// Must atomically compare and mutate within this backend's resource boundary.
+    fn compare_exchange(
+        &mut self,
+        _dataset: &str,
+        _key: &str,
+        _expected: Option<&Revision>,
+        _value: Vec<u8>,
+    ) -> Result<Revision> {
+        Err(Error::UnsupportedCapability {
+            capability: Capability::CompareExchange,
+        })
+    }
 }
-/// Supplies a SQLite connection; the registry installs authorization and controls transactions.
+/// Lends a connection with no installed authorizer or active transaction.
+/// The registry installs its SQL policy only for the duration of each transaction,
+/// then removes it before returning the connection to the trusted backend.
 pub trait SqlBackend: Send {
     fn connection(&mut self) -> &mut Connection;
 }
 #[derive(Default)]
-pub struct MemoryBackend(BTreeMap<(String, String), Vec<u8>>);
+pub struct MemoryBackend {
+    values: BTreeMap<(String, String), Revisioned<Vec<u8>>>,
+    sequence: u64,
+}
+impl MemoryBackend {
+    fn next_revision(&mut self) -> Result<Revision> {
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::RevisionExhausted)?;
+        Ok(Revision(self.sequence.to_be_bytes().to_vec()))
+    }
+}
 impl Backend for MemoryBackend {
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
         Some(self)
@@ -231,20 +305,199 @@ impl Backend for MemoryBackend {
 }
 impl TypedKv for MemoryBackend {
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
-        Ok(self.0.get(&(dataset.into(), key.into())).cloned())
+        Ok(self
+            .values
+            .get(&(dataset.into(), key.into()))
+            .map(|v| v.value.clone()))
     }
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
-        self.0.insert((dataset.into(), key.into()), value);
+        let revision = self.next_revision()?;
+        self.values
+            .insert((dataset.into(), key.into()), Revisioned { value, revision });
         Ok(())
     }
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
-        Ok(self.0.remove(&(dataset.into(), key.into())).is_some())
+        Ok(self.values.remove(&(dataset.into(), key.into())).is_some())
+    }
+    fn supports_compare_exchange(&self) -> bool {
+        true
+    }
+    fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
+        Ok(self.values.get(&(dataset.into(), key.into())).cloned())
+    }
+    fn compare_exchange(
+        &mut self,
+        dataset: &str,
+        key: &str,
+        expected: Option<&Revision>,
+        value: Vec<u8>,
+    ) -> Result<Revision> {
+        let current = self
+            .values
+            .get(&(dataset.into(), key.into()))
+            .map(|v| v.revision.clone());
+        if current.as_ref() != expected {
+            return Err(Error::Conflict { current });
+        }
+        let revision = self.next_revision()?;
+        self.values.insert(
+            (dataset.into(), key.into()),
+            Revisioned {
+                value,
+                revision: revision.clone(),
+            },
+        );
+        Ok(revision)
     }
 }
 struct SqliteBackend(Connection);
 impl Backend for SqliteBackend {
+    fn register_dataset(&mut self, dataset: &str, schema: &Schema) -> Result<()> {
+        use rusqlite::OptionalExtension;
+        self.reset_sql_authority()?;
+        let tx = self
+            .0
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let existing = tx
+            .query_row(
+                "SELECT name, revision, structure, codec FROM __phenix_schema WHERE dataset = ?1",
+                rusqlite::params![dataset],
+                |row| {
+                    Ok(Schema {
+                        name: row.get(0)?,
+                        revision: row.get(1)?,
+                        structure: row.get(2)?,
+                        codec: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?;
+        if let Some(previous) = existing {
+            if previous != *schema {
+                return Err(Error::SchemaMismatch);
+            }
+        } else {
+            tx.execute(
+                "INSERT INTO __phenix_schema (dataset, name, revision, structure, codec) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    dataset,
+                    &schema.name,
+                    schema.revision,
+                    &schema.structure,
+                    &schema.codec
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+        Some(self)
+    }
     fn sql(&mut self) -> Option<&mut dyn SqlBackend> {
         Some(self)
+    }
+}
+impl SqliteBackend {
+    fn write_revisioned(
+        &mut self,
+        dataset: &str,
+        key: &str,
+        expected: Option<Option<&Revision>>,
+        value: Vec<u8>,
+    ) -> Result<Revision> {
+        self.reset_sql_authority()?;
+        let tx = self
+            .0
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(expected) = expected {
+            use rusqlite::OptionalExtension;
+            let current = tx
+                .query_row(
+                    "SELECT revision FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+                    rusqlite::params![dataset, key],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?
+                .map(|v| Revision(v.to_be_bytes().to_vec()));
+            if current.as_ref() != expected {
+                return Err(Error::Conflict { current });
+            }
+        }
+        let sequence: i64 = tx.query_row(
+            "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        let sequence = sequence.checked_add(1).ok_or(Error::RevisionExhausted)?;
+        tx.execute(
+            "UPDATE __phenix_revision_clock SET sequence = ?1 WHERE id = 1",
+            [sequence],
+        )?;
+        tx.execute("INSERT INTO __phenix_kv (dataset, key, value, revision) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(dataset, key) DO UPDATE SET value = excluded.value, revision = excluded.revision", rusqlite::params![dataset, key, value, sequence])?;
+        tx.commit()?;
+        Ok(Revision(sequence.to_be_bytes().to_vec()))
+    }
+    // Only direct adapter SQL gets internal authority. In particular, triggers
+    // persisted by older versions must not inherit it during KV writes.
+    fn reset_sql_authority(&mut self) -> Result<()> {
+        self.0.authorizer(Some(adapter_authorizer))?;
+        Ok(())
+    }
+}
+impl TypedKv for SqliteBackend {
+    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        self.reset_sql_authority()?;
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .0
+            .query_row(
+                "SELECT value FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+                rusqlite::params![dataset, key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
+        self.write_revisioned(dataset, key, None, value)?;
+        Ok(())
+    }
+    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
+        self.reset_sql_authority()?;
+        Ok(self.0.execute(
+            "DELETE FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+            rusqlite::params![dataset, key],
+        )? != 0)
+    }
+    fn supports_compare_exchange(&self) -> bool {
+        true
+    }
+    fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
+        self.reset_sql_authority()?;
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .0
+            .query_row(
+                "SELECT value, revision FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+                rusqlite::params![dataset, key],
+                |r| {
+                    Ok(Revisioned {
+                        value: r.get(0)?,
+                        revision: Revision(r.get::<_, i64>(1)?.to_be_bytes().to_vec()),
+                    })
+                },
+            )
+            .optional()?)
+    }
+    fn compare_exchange(
+        &mut self,
+        dataset: &str,
+        key: &str,
+        expected: Option<&Revision>,
+        value: Vec<u8>,
+    ) -> Result<Revision> {
+        self.write_revisioned(dataset, key, Some(expected), value)
     }
 }
 impl SqlBackend for SqliteBackend {
@@ -305,6 +558,12 @@ impl Registry {
         Self::default()
     }
     pub fn mount(&self, name: &str, backend: impl Backend + 'static) -> Result<()> {
+        self.mount_boxed(name, Box::new(backend))
+    }
+    /// Trusted host may install an erased backend supplied by a leased plugin
+    /// contribution. The host must retain the provider's code/instance lease
+    /// until after the backend is dropped (see phenix-storage-plugin).
+    pub fn mount_boxed(&self, name: &str, backend: Box<dyn Backend>) -> Result<()> {
         if !component(name) {
             return Err(Error::InvalidAddress);
         }
@@ -315,7 +574,7 @@ impl Registry {
         state.mounts.insert(
             name.into(),
             Arc::new(Mutex::new(Mount {
-                backend: Box::new(backend),
+                backend,
                 datasets: BTreeMap::new(),
             })),
         );
@@ -324,10 +583,119 @@ impl Registry {
     pub fn mount_memory(&self, name: &str) -> Result<()> {
         self.mount(name, MemoryBackend::default())
     }
+    /// Advisory, read-only planner preflight. Missing files, missing dataset rows,
+    /// and legacy databases without schema metadata are allowed, matching initial
+    /// registration behavior. No tables, directories or migrations are provisioned.
+    /// This checks schema declarations, not KV contents or revision-clock health.
+    /// Activation must still register every dataset to recheck after planning races.
+    pub fn validate_sqlite_datasets(
+        path: impl AsRef<std::path::Path>,
+        datasets: &[(String, Schema)],
+    ) -> Result<()> {
+        use rusqlite::OptionalExtension;
+        let path = path.as_ref();
+        if matches!(path.try_exists(), Ok(false)) {
+            return Ok(());
+        }
+        // Let SQLite report inaccessible/invalid paths as structured SQL errors.
+        // READ_ONLY deliberately omits CREATE and URI interpretation.
+        let mut connection =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        connection.authorizer(Some(adapter_authorizer))?;
+        let tx = connection.transaction()?;
+        let kind: Option<String> = tx
+            .query_row(
+                "SELECT type FROM main.sqlite_schema WHERE name = '__phenix_schema' COLLATE NOCASE",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match kind.as_deref() {
+            None => return Ok(()),
+            Some("table") => {}
+            _ => return Err(Error::SchemaMismatch),
+        }
+        for (dataset, schema) in datasets {
+            let existing: Option<Schema> = tx.query_row(
+                "SELECT name, revision, structure, codec FROM main.__phenix_schema WHERE dataset = ?1",
+                [dataset],
+                |row| Ok(Schema {
+                    name: row.get(0)?,
+                    revision: row.get(1)?,
+                    structure: row.get(2)?,
+                    codec: row.get(3)?,
+                }),
+            ).optional()?;
+            if existing.is_some_and(|existing| existing != *schema) {
+                return Err(Error::SchemaMismatch);
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
     /// The host owns path selection; logical addresses never select files.
     pub fn mount_sqlite(&self, name: &str, path: impl AsRef<std::path::Path>) -> Result<()> {
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", true)?;
+        connection.authorizer(Some(adapter_authorizer))?;
+        // Migrate adapter metadata under the same cross-connection write lock
+        // used by CAS. Publication always follows a successful commit.
+        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS __phenix_kv (
+                dataset TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value BLOB NOT NULL,
+                PRIMARY KEY (dataset, key)
+            );
+            CREATE TABLE IF NOT EXISTS __phenix_schema (
+                dataset TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                structure TEXT NOT NULL,
+                codec TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS __phenix_revision_clock (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                sequence INTEGER NOT NULL
+            )",
+        )?;
+        let has_revision = {
+            let mut statement = tx.prepare("PRAGMA table_info(__phenix_kv)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .iter()
+                .any(|name| name == "revision")
+        };
+        if !has_revision {
+            // Legacy rows predate revision tokens. Zero is never allocated again.
+            tx.execute_batch(
+                "ALTER TABLE __phenix_kv ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
+            )?;
+            tx.execute("INSERT INTO __phenix_revision_clock VALUES (1, 0)", [])?;
+        } else {
+            use rusqlite::OptionalExtension;
+            let clock: Option<i64> = tx
+                .query_row(
+                    "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let maximum: i64 = tx.query_row(
+                "SELECT coalesce(max(revision), 0) FROM __phenix_kv",
+                [],
+                |r| r.get(0),
+            )?;
+            // Never reconstruct a clock from live rows: deleted rows may have
+            // issued larger tokens. Missing metadata must fail closed.
+            if clock.is_none_or(|clock| clock < maximum || clock < 0) {
+                return Err(Error::SchemaMismatch);
+            }
+        }
+        tx.commit()?;
         self.mount(name, SqliteBackend(connection))
     }
     pub fn register(&self, address: &Address, schema: Schema) -> Result<()> {
@@ -341,6 +709,9 @@ impl Registry {
         if mount.datasets.contains_key(address.dataset()) {
             return Err(Error::DuplicateDataset);
         }
+        // Persistent backends must verify the existing on-disk schema before
+        // the in-memory dataset declaration becomes visible.
+        mount.backend.register_dataset(address.dataset(), &schema)?;
         mount.datasets.insert(address.dataset.clone(), schema);
         Ok(())
     }
@@ -390,10 +761,42 @@ impl Session {
     pub fn capabilities(&self, address: &Address, operation: Operation) -> Result<Capabilities> {
         self.authorize(address, operation)?;
         let mount = self.mount(address)?;
+        self.mount_capabilities(mount)
+    }
+    /// Mount-scoped capability lookup without a dataset declaration.
+    /// Requires the exact requested grant; SQL's execution hierarchy is not used.
+    pub fn capabilities_mount(&self, name: &str, operation: Operation) -> Result<Capabilities> {
+        let mount = self.authorized_mount(name, operation)?;
+        self.mount_capabilities(mount)
+    }
+    fn authorized_mount(&self, name: &str, operation: Operation) -> Result<Arc<Mutex<Mount>>> {
+        if !self.has_mount_grant(name, operation) {
+            return Err(Error::Denied);
+        }
+        if !component(name) {
+            return Err(Error::InvalidAddress);
+        }
+        lock(&self.inner)?
+            .mounts
+            .get(name)
+            .cloned()
+            .ok_or(Error::UnknownMount)
+    }
+    fn has_mount_grant(&self, name: &str, operation: Operation) -> bool {
+        self.grants.iter().any(|g| {
+            matches!(&g.scope, Scope::Mount(m) if m == name) && g.operations.contains(&operation)
+        })
+    }
+    fn mount_capabilities(&self, mount: Arc<Mutex<Mount>>) -> Result<Capabilities> {
         let _active = Active::enter(&mount)?;
         let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+        let (typed_kv, compare_exchange) = match mount.backend.typed_kv() {
+            Some(kv) => (true, kv.supports_compare_exchange()),
+            None => (false, false),
+        };
         Ok(Capabilities {
-            typed_kv: mount.backend.typed_kv().is_some(),
+            typed_kv,
+            compare_exchange,
             sql: mount.backend.sql().is_some(),
             invalidation: true,
             observation: mount.backend.observation(),
@@ -422,6 +825,91 @@ impl Session {
             values.get(address.dataset(), key)?
         };
         bytes.map(|b| codec.decode(&b)).transpose()
+    }
+    pub fn get_revisioned<C: Codec>(
+        &self,
+        address: &Address,
+        key: &str,
+        codec: &C,
+    ) -> Result<Option<Revisioned<C::Value>>> {
+        self.authorize(address, Operation::Read)?;
+        let schema = codec.schema();
+        let bytes = {
+            let mount = self.mount(address)?;
+            let _active = Active::enter(&mount)?;
+            let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+            if mount.datasets[address.dataset()] != schema {
+                return Err(Error::SchemaMismatch);
+            }
+            let values = mount
+                .backend
+                .typed_kv()
+                .ok_or(Error::UnsupportedCapability {
+                    capability: Capability::TypedKv,
+                })?;
+            values.get_revisioned(address.dataset(), key)?
+        };
+        bytes
+            .map(|v| {
+                Ok(Revisioned {
+                    value: codec.decode(&v.value)?,
+                    revision: v.revision,
+                })
+            })
+            .transpose()
+    }
+    /// Requires Write, not Read. `None` creates only if absent; a stale token
+    /// returns Conflict with the revision current at the atomic comparison.
+    /// Encoding runs before comparison, outside storage locks, and may fail first.
+    pub fn compare_exchange<C: Codec>(
+        &self,
+        address: &Address,
+        key: &str,
+        expected: Option<&Revision>,
+        value: &C::Value,
+        codec: &C,
+    ) -> Result<Revision> {
+        self.authorize(address, Operation::Write)?;
+        let schema = codec.schema();
+        {
+            let mount = self.mount(address)?;
+            let _active = Active::enter(&mount)?;
+            let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+            if mount.datasets[address.dataset()] != schema {
+                return Err(Error::SchemaMismatch);
+            }
+            let values = mount
+                .backend
+                .typed_kv()
+                .ok_or(Error::UnsupportedCapability {
+                    capability: Capability::TypedKv,
+                })?;
+            if !values.supports_compare_exchange() {
+                return Err(Error::UnsupportedCapability {
+                    capability: Capability::CompareExchange,
+                });
+            }
+        }
+        let bytes = codec.encode(value)?;
+        let mount = self.mount(address)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+        if mount.datasets[address.dataset()] != schema {
+            return Err(Error::SchemaMismatch);
+        }
+        let values = mount
+            .backend
+            .typed_kv()
+            .ok_or(Error::UnsupportedCapability {
+                capability: Capability::TypedKv,
+            })?;
+        let revision = values.compare_exchange(address.dataset(), key, expected, bytes)?;
+        lock(&self.inner)?.emit(
+            Scope::Dataset(address.clone()),
+            Some(key.into()),
+            mount.backend.observation(),
+        );
+        Ok(revision)
     }
     pub fn put<C: Codec>(
         &self,
@@ -494,14 +982,43 @@ impl Session {
         address: &Address,
         f: impl FnOnce(&Sql<'_>) -> Result<T>,
     ) -> Result<T> {
-        let legacy = self.authorize(address, Operation::Sql).is_ok();
-        let admin = legacy || self.authorize(address, Operation::SqlAdmin).is_ok();
-        let write = admin || self.authorize(address, Operation::SqlWrite).is_ok();
-        let read = write || self.authorize(address, Operation::SqlRead).is_ok();
+        // Preserve authorization-before-lookup for the address-based API.
+        let allowed = [
+            Operation::Sql,
+            Operation::SqlAdmin,
+            Operation::SqlWrite,
+            Operation::SqlRead,
+        ]
+        .into_iter()
+        .any(|op| self.authorize(address, op).is_ok());
+        if !allowed {
+            return Err(Error::Denied);
+        }
+        self.mount(address)?;
+        self.transaction_mount(address.mount(), f)
+    }
+    /// Mount-wide native SQL without a synthetic dataset. SQL grants must be
+    /// mount-scoped; closure success commits, error or unwind rolls back.
+    pub fn transaction_mount<T>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&Sql<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let legacy = self.has_mount_grant(name, Operation::Sql);
+        let admin = legacy || self.has_mount_grant(name, Operation::SqlAdmin);
+        let write = admin || self.has_mount_grant(name, Operation::SqlWrite);
+        let read = write || self.has_mount_grant(name, Operation::SqlRead);
         if !read {
             return Err(Error::Denied);
         }
-        let mount = self.mount(address)?;
+        if !component(name) {
+            return Err(Error::InvalidAddress);
+        }
+        let mount = lock(&self.inner)?
+            .mounts
+            .get(name)
+            .cloned()
+            .ok_or(Error::UnknownMount)?;
         let _active = Active::enter(&mount)?;
         let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
         let observation = mount.backend.observation();
@@ -515,6 +1032,9 @@ impl Session {
         let internal = Arc::new(AtomicBool::new(true));
         let permission = internal.clone();
         connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            action if reserved_sql(action) || context.accessor.is_some_and(reserved_name) => {
+                Authorization::Deny
+            }
             AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }
                 if !permission.load(Ordering::Relaxed) =>
             {
@@ -524,6 +1044,7 @@ impl Session {
             AuthAction::Attach { .. } | AuthAction::Detach { .. } | AuthAction::Pragma { .. } => {
                 Authorization::Deny
             }
+            AuthAction::Unknown { .. } => Authorization::Deny,
             AuthAction::Function { function_name }
                 if function_name.to_ascii_lowercase().starts_with("pragma_") =>
             {
@@ -542,35 +1063,42 @@ impl Session {
             _ if admin => Authorization::Allow,
             _ => Authorization::Deny,
         }))?;
-        let tx = connection.transaction()?;
-        internal.store(false, Ordering::Relaxed);
-        // Restore internal control before Transaction::drop, including on unwind.
-        struct Internal(Arc<AtomicBool>);
-        impl Drop for Internal {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Relaxed);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_> {
+            let tx = connection.transaction()?;
+            internal.store(false, Ordering::Relaxed);
+            // Only transaction control is restored for commit/rollback. All SQL
+            // data and connection restrictions remain installed until tx ends.
+            struct Internal(Arc<AtomicBool>);
+            impl Drop for Internal {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Relaxed);
+                }
             }
-        }
-        let internal = Internal(internal);
-        let sql = Sql {
-            connection: &tx,
-            dirty: std::cell::Cell::new(false),
-        };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&sql)));
-        let dirty = sql.dirty.get();
-        drop(internal);
+            let internal = Internal(internal);
+            let sql = Sql {
+                connection: &tx,
+                dirty: std::cell::Cell::new(false),
+            };
+            let result = f(&sql);
+            let dirty = sql.dirty.get();
+            drop(internal);
+            let value = result?;
+            tx.commit()?;
+            Ok((value, dirty))
+        }));
+        // Also runs after failed BEGIN/COMMIT, implicit rollback and unwinding.
+        let restored = connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
         let result = match result {
             Ok(result) => result,
             Err(panic) => {
-                drop(tx);
                 drop(mount);
                 std::panic::resume_unwind(panic);
             }
         };
-        let value = result?;
-        tx.commit()?;
+        restored?;
+        let (value, dirty) = result?;
         if dirty {
-            lock(&self.inner)?.emit(Scope::Mount(address.mount.clone()), None, observation);
+            lock(&self.inner)?.emit(Scope::Mount(name.into()), None, observation);
         }
         Ok(value)
     }
@@ -618,6 +1146,84 @@ impl Session {
             inner: Arc::downgrade(&self.inner),
             watch,
         })
+    }
+}
+
+fn adapter_authorizer(context: AuthContext<'_>) -> Authorization {
+    if context.accessor.is_some() {
+        Authorization::Deny
+    } else {
+        Authorization::Allow
+    }
+}
+
+fn reserved_name(name: &str) -> bool {
+    name.to_ascii_lowercase().starts_with("__phenix_")
+}
+
+fn reserved_sql(action: AuthAction<'_>) -> bool {
+    use AuthAction::*;
+    match action {
+        Read {
+            table_name,
+            column_name,
+        } => {
+            reserved_name(table_name)
+            // The schema SQL text can disclose reserved definitions and is also
+            // used internally by ALTER TABLE to rewrite arbitrary object names.
+            || (matches!(table_name.to_ascii_lowercase().as_str(), "sqlite_master" | "sqlite_schema" | "sqlite_temp_master" | "sqlite_temp_schema") && column_name.eq_ignore_ascii_case("sql"))
+        }
+        CreateIndex {
+            index_name,
+            table_name,
+        }
+        | CreateTempIndex {
+            index_name,
+            table_name,
+        }
+        | DropIndex {
+            index_name,
+            table_name,
+        }
+        | DropTempIndex {
+            index_name,
+            table_name,
+        } => reserved_name(index_name) || reserved_name(table_name),
+        CreateTrigger {
+            trigger_name,
+            table_name,
+        }
+        | CreateTempTrigger {
+            trigger_name,
+            table_name,
+        }
+        | DropTrigger {
+            trigger_name,
+            table_name,
+        }
+        | DropTempTrigger {
+            trigger_name,
+            table_name,
+        } => reserved_name(trigger_name) || reserved_name(table_name),
+        CreateTable { table_name }
+        | CreateTempTable { table_name }
+        | DropTable { table_name }
+        | DropTempTable { table_name }
+        | Insert { table_name }
+        | Update { table_name, .. }
+        | Delete { table_name }
+        | Analyze { table_name }
+        | CreateVtable { table_name, .. }
+        | DropVtable { table_name, .. } => reserved_name(table_name),
+        CreateView { view_name }
+        | CreateTempView { view_name }
+        | DropView { view_name }
+        | DropTempView { view_name } => reserved_name(view_name),
+        Reindex { index_name } => reserved_name(index_name),
+        // SQLite's authorizer omits the destination name. Deny renames rather
+        // than allowing an ordinary object to enter the reserved namespace.
+        AlterTable { .. } => true,
+        _ => false,
     }
 }
 

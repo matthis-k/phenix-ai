@@ -9,3 +9,6 @@ phenix-plugin = { path = "../phenix-plugins" }
 
 [dev-dependencies]
 phenix-storage = { path = "../phenix-storage" }
+phenix-storage-plugin = { path = "../phenix-storage-plugin" }
+phenix-storage-graph = { path = "../phenix-storage-graph" }
+tempfile = "3"
