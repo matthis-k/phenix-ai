@@ -48,6 +48,7 @@ impl PluginInstance for Plugin {
         r.add(Contribution {
             id: "main".into(),
             requires: self.requires.clone(),
+            routes: vec![name.clone()],
             compose: Box::new(move |g| {
                 log.lock().unwrap().push(format!("compose:{name}"));
                 if compile_fail {
@@ -305,4 +306,144 @@ fn wave_failures_remain_reports_and_do_not_stop_draining() {
     assert!(!events[1].result.as_ref().unwrap().success());
     assert!(events[2].result.is_err());
     assert!(events[3].result.is_err());
+}
+
+struct DriverPlugin {
+    routes: Vec<String>,
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+}
+struct WakeSource {
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+    wake: Option<phenix_kernel::WakeHandle>,
+}
+impl Producer for WakeSource {
+    fn poll(&mut self) -> Result<Option<Notice>, String> {
+        self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Notification during polling must not be lost before the driver waits.
+        if let Some(wake) = self.wake.take() {
+            wake.shutdown();
+        }
+        Ok(None)
+    }
+    fn set_waker(&mut self, wake: phenix_kernel::WakeHandle) -> bool {
+        self.wake = Some(wake);
+        true
+    }
+}
+impl PluginInstance for DriverPlugin {
+    fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
+        let polls = self.polls.clone();
+        r.add(Contribution {
+            id: "driver".into(),
+            requires: vec![],
+            routes: self.routes.clone(),
+            compose: Box::new(|g| {
+                let n = g.node("sink", |_: i64| ()).map_err(|e| e.to_string())?;
+                let input = g.expose_input("in", n.inlet())?;
+                g.trigger("run", [input])?;
+                Ok(())
+            }),
+            activate: Some(Box::new(move || {
+                Ok(Box::new(WakeSource {
+                    polls: polls.clone(),
+                    wake: None,
+                }))
+            })),
+        })
+    }
+}
+fn driver_kernel(
+    routes: &[&str],
+    polls: Arc<std::sync::atomic::AtomicUsize>,
+) -> Result<Kernel, String> {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog.register("driver", |p: DriverPlugin| Ok(p)).unwrap();
+    let mut plugins = catalog.instance();
+    plugins
+        .load(
+            &key,
+            DriverPlugin {
+                routes: routes.iter().map(|s| s.to_string()).collect(),
+                polls,
+            },
+        )
+        .unwrap();
+    Kernel::build("driver", plugins.snapshots(), Arc::new(LocalExecutor))
+}
+#[test]
+fn routes_are_preflighted_without_activation() {
+    for (routes, expected) in [
+        (vec!["missing"], "unknown producer route"),
+        (vec!["run", "run"], "duplicate producer route"),
+    ] {
+        let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let error = driver_kernel(&routes, polls.clone()).err().unwrap();
+        assert!(error.contains(expected), "{error}");
+        assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}
+#[test]
+fn driver_handles_shutdown_during_poll_and_rejects_legacy_sources() {
+    let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut kernel = driver_kernel(&["run"], polls.clone()).unwrap();
+    let wake = phenix_kernel::WakeHandle::default();
+    assert!(kernel.run_until(&wake, |_| {}).is_err());
+    kernel.start().unwrap();
+    kernel.run_until(&wake, |_| panic!("idle")).unwrap();
+    assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let mut kernel = Kernel::build(
+        "legacy",
+        snapshots(vec![], vec![], false, false, &Log::default()),
+        Arc::new(LocalExecutor),
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    assert!(
+        kernel
+            .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
+            .unwrap_err()
+            .contains("does not support")
+    );
+    assert_eq!(kernel.drain(2).len(), 2);
+}
+#[test]
+fn producer_errors_are_distinct_from_admission_and_wave_failures() {
+    let mut kernel = Kernel::build(
+        "errors",
+        snapshots(vec![], vec![], false, false, &Log::default()),
+        Arc::new(LocalExecutor),
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    let events = kernel.drain(6);
+    assert!(matches!(
+        events[2].result,
+        Err(phenix_kernel::ProducerError::UndeclaredRoute(_))
+    ));
+    assert!(matches!(
+        events[4].result,
+        Err(phenix_kernel::ProducerError::Poll(_))
+    ));
+}
+
+#[test]
+fn empty_driver_blocks_until_cross_thread_shutdown() {
+    let mut kernel = Kernel::build("empty", vec![], Arc::new(LocalExecutor)).unwrap();
+    kernel.start().unwrap();
+    let wake = phenix_kernel::WakeHandle::default();
+    let driver_wake = wake.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        kernel
+            .run_until(&driver_wake, |_| panic!("no producers"))
+            .unwrap();
+        tx.send(()).unwrap();
+    });
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(30))
+            .is_err()
+    );
+    wake.shutdown();
+    rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    thread.join().unwrap();
 }

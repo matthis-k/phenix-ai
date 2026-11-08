@@ -496,10 +496,19 @@ fn derive_contract_value(input: DeriveInput) -> syn::Result<Tokens> {
             cursor = end;
         }
     });
+    let descriptors = fields.iter().map(|f| {
+        let name = f.ident.to_string();
+        let ty = &f.value_type;
+        let optional = f.optional;
+        quote! { (#name, #optional, <#ty as ::phenix_graph::ContractValue>::schema()) }
+    });
     let identifiers = fields.iter().map(|f| &f.ident);
     Ok(quote! {
         impl ::phenix_graph::ContractValue for #ident {
             const SCHEMA: &'static str = #schema;
+            fn schema_descriptor() -> Option<::phenix_graph::Schema> {
+                Some(::phenix_graph::Schema::record(#schema, &[#(#descriptors),*]))
+            }
             fn encode(&self) -> ::std::vec::Vec<u8> {
                 let mut out = ::std::vec::Vec::new();
                 #(#write_fields)*

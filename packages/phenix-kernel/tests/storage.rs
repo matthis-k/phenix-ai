@@ -58,6 +58,7 @@ impl PluginInstance for SubscriptionPlugin {
             let attempts = AtomicUsize::new(0);
             registrar.add(Contribution {
                 id: if later { "later" } else { "subscription" }.into(),
+                routes: vec!["observed".into()],
                 requires: if later {
                     vec![Key::new("storage", "subscription")]
                 } else {

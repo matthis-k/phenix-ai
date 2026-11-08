@@ -1,5 +1,241 @@
 use phenix_storage::*;
 
+#[test]
+fn external_optional_backend_is_object_safe() {
+    struct External(MemoryBackend);
+    impl Backend for External {
+        fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+            Some(&mut self.0)
+        }
+    }
+    struct Empty;
+    impl Backend for Empty {}
+    let registry = Registry::new();
+    registry
+        .mount("main", External(MemoryBackend::default()))
+        .unwrap();
+    registry.register(&address(), Text.schema()).unwrap();
+    let session = registry.session([Grant::new(
+        Scope::Mount("main".into()),
+        [Operation::Read, Operation::Write],
+    )]);
+    session
+        .put(&address(), "key", &"external".into(), &Text)
+        .unwrap();
+    assert_eq!(
+        session.get(&address(), "key", &Text).unwrap(),
+        Some("external".into())
+    );
+    registry.mount("empty", Empty).unwrap();
+    let empty = Address::parse("store://empty/items").unwrap();
+    registry.register(&empty, Text.schema()).unwrap();
+    let session = registry.session([Grant::new(Scope::Mount("empty".into()), [Operation::Read])]);
+    assert!(
+        !session
+            .capabilities(&empty, Operation::Read)
+            .unwrap()
+            .typed_kv
+    );
+    assert!(matches!(
+        session.get(&empty, "key", &Text),
+        Err(Error::UnsupportedCapability { .. })
+    ));
+}
+
+#[test]
+fn per_mount_locking_and_reentrant_error() {
+    let (registry, session, a) = setup(true);
+    registry.mount_memory("other").unwrap();
+    let other = Address::parse("store://other/items").unwrap();
+    registry.register(&other, Text.schema()).unwrap();
+    let memory = registry.session([Grant::new(
+        Scope::Mount("other".into()),
+        [Operation::Read, Operation::Write],
+    )]);
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        session
+            .transaction(&a, |_| {
+                assert!(matches!(
+                    session.transaction(&a, |_| Ok(())),
+                    Err(Error::Reentrant)
+                ));
+                assert!(matches!(
+                    session.capabilities(&a, Operation::Sql),
+                    Err(Error::Reentrant)
+                ));
+                assert!(matches!(
+                    registry.register(&a, Text.schema()),
+                    Err(Error::Reentrant)
+                ));
+                entered.send(()).unwrap();
+                released
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    });
+    ready
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    memory
+        .put(&other, "key", &"independent".into(), &Text)
+        .unwrap();
+    assert_eq!(
+        memory.get(&other, "key", &Text).unwrap(),
+        Some("independent".into())
+    );
+    release.send(()).unwrap();
+    worker.join().unwrap();
+}
+
+#[test]
+fn granular_sql_authorizer_and_incremental_rows() {
+    let (registry, admin, a) = setup(true);
+    admin
+        .transaction(&a, |sql| {
+            sql.execute("CREATE TABLE t (x INTEGER)", &[])?;
+            sql.execute("CREATE TABLE audit (x INTEGER)", &[])?;
+            sql.execute(
+                "CREATE TRIGGER log AFTER INSERT ON t BEGIN INSERT INTO audit VALUES (new.x); END",
+                &[],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let read = registry.session([Grant::new(
+        Scope::Mount("main".into()),
+        [Operation::SqlRead],
+    )]);
+    let write = registry.session([Grant::new(
+        Scope::Mount("main".into()),
+        [Operation::SqlWrite],
+    )]);
+    for denied in [
+        "INSERT INTO t VALUES (1)",
+        "DELETE FROM t",
+        "UPDATE t SET x = 2",
+        "CREATE TABLE forbidden (x)",
+        "DROP TABLE t",
+        "PRAGMA user_version = 2",
+        "ATTACH DATABASE ':memory:' AS escape",
+        "SAVEPOINT escape",
+        "CREATE TEMP TABLE forbidden (x)",
+    ] {
+        assert!(
+            read.transaction(&a, |sql| sql.execute(denied, &[]))
+                .is_err(),
+            "{denied}"
+        );
+    }
+    for denied in [
+        "CREATE TABLE forbidden (x)",
+        "DROP TABLE t",
+        "CREATE INDEX forbidden ON t(x)",
+        "PRAGMA foreign_keys = OFF",
+    ] {
+        assert!(
+            write
+                .transaction(&a, |sql| sql.execute(denied, &[]))
+                .is_err(),
+            "{denied}"
+        );
+    }
+    assert!(
+        read.transaction(&a, |sql| sql.returning(
+            "INSERT INTO t VALUES (1) RETURNING x",
+            &[],
+            |_| Ok(())
+        ))
+        .is_err()
+    );
+    let mut returned = Vec::new();
+    write
+        .transaction(&a, |sql| {
+            sql.returning(
+                "INSERT INTO t VALUES (1), (2), (3) RETURNING x",
+                &[],
+                |row| {
+                    returned.push(row.get::<i64>(0)?);
+                    Ok(())
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(returned, vec![1, 2, 3]);
+    let mut visited = 0;
+    let result = read.transaction(&a, |sql| {
+        sql.query_each("SELECT x FROM audit", &[], |_| {
+            visited += 1;
+            Err(Error::Codec("stop".into()))
+        })
+    });
+    assert!(matches!(result, Err(Error::Codec(_))));
+    assert_eq!(visited, 1);
+    let result = write.transaction(&a, |sql| {
+        sql.returning("INSERT INTO t VALUES (4) RETURNING x", &[], |_| {
+            Err(Error::Codec("rollback".into()))
+        })
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        read.transaction(&a, |sql| sql
+            .query("SELECT count(*) FROM t", &[], |row| row.get::<i64>(0)))
+            .unwrap(),
+        vec![3]
+    );
+    let admin_only = registry.session([Grant::new(
+        Scope::Mount("main".into()),
+        [Operation::SqlAdmin],
+    )]);
+    admin_only
+        .transaction(&a, |sql| sql.execute("CREATE INDEX allowed ON t(x)", &[]))
+        .unwrap();
+    let narrow = registry.session([Grant::new(
+        Scope::Dataset(a.clone()),
+        [Operation::SqlRead, Operation::SqlWrite, Operation::SqlAdmin],
+    )]);
+    assert!(matches!(
+        narrow.transaction(&a, |_| Ok(())),
+        Err(Error::Denied)
+    ));
+}
+
+#[test]
+fn sqlite_persists_across_registry_reopen() {
+    let path = std::env::temp_dir().join(format!(
+        "phenix-storage-persistence-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    for first in [true, false] {
+        let registry = Registry::new();
+        registry.mount_sqlite("main", &path).unwrap();
+        registry.register(&address(), Text.schema()).unwrap();
+        let session = registry.session([Grant::new(Scope::Mount("main".into()), [Operation::Sql])]);
+        session
+            .transaction(&address(), |sql| {
+                if first {
+                    sql.execute("CREATE TABLE persisted (value TEXT)", &[])?;
+                    sql.execute("INSERT INTO persisted VALUES (?)", &[&"durable"])?;
+                }
+                assert_eq!(
+                    sql.query("SELECT value FROM persisted", &[], |row| row
+                        .get::<String>(0))?,
+                    vec!["durable"]
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
 struct Text;
 impl Codec for Text {
     type Value = String;
@@ -295,6 +531,88 @@ fn subscription_drop_and_drain_inside_transaction_callback() {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("subscription operation deadlocked inside transaction");
         worker.join().unwrap();
+    }
+}
+
+#[test]
+fn panicking_waker_does_not_poison_storage_or_skip_subscribers() {
+    struct PanicWake;
+    impl std::task::Wake for PanicWake {
+        fn wake(self: std::sync::Arc<Self>) {
+            panic!("subscriber panic");
+        }
+    }
+    for sql in [false, true] {
+        let (_registry, session, a) = setup(sql);
+        let mut first = session.subscribe(Scope::Dataset(a.clone()), 4).unwrap();
+        let mut second = session.subscribe(Scope::Dataset(a.clone()), 4).unwrap();
+        let waker = std::task::Waker::from(std::sync::Arc::new(PanicWake));
+        first.set_waker(waker.clone()).unwrap();
+        for _ in 0..2 {
+            if sql {
+                session
+                    .transaction(&a, |sql| {
+                        sql.execute("CREATE TABLE IF NOT EXISTS wake_test (x)", &[])?;
+                        sql.execute("INSERT INTO wake_test VALUES (1)", &[])?;
+                        Ok(())
+                    })
+                    .unwrap();
+            } else {
+                session.put(&a, "k", &"v".into(), &Text).unwrap();
+                assert_eq!(session.get(&a, "k", &Text).unwrap(), Some("v".into()));
+            }
+            // Registration with an already-ready queue also invokes the waker.
+            first.set_waker(waker.clone()).unwrap();
+            let notices = first.drain().unwrap();
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices, second.drain().unwrap());
+        }
+        if !sql {
+            assert!(session.delete(&a, "k").unwrap());
+            let notices = first.drain().unwrap();
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices, second.drain().unwrap());
+        }
+        session.capabilities(&a, Operation::Subscribe).unwrap();
+    }
+}
+
+#[test]
+fn mount_coverage_kv_invalidates_other_datasets_without_key_precision() {
+    #[derive(Default)]
+    struct CoarseKv(MemoryBackend);
+    impl Backend for CoarseKv {
+        fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+            Some(&mut self.0)
+        }
+        // Use the default Mount observation coverage.
+    }
+    let registry = Registry::new();
+    registry.mount("main", CoarseKv::default()).unwrap();
+    let a = Address::parse("store://main/items").unwrap();
+    let b = Address::parse("store://main/other").unwrap();
+    registry.register(&a, Text.schema()).unwrap();
+    registry.register(&b, Text.schema()).unwrap();
+    let session = registry.session([Grant::new(
+        Scope::Mount("main".into()),
+        [Operation::Write, Operation::Delete, Operation::Subscribe],
+    )]);
+    let mut dataset = session.subscribe(Scope::Dataset(b), 4).unwrap();
+    let mut mount = session.subscribe(Scope::Mount("main".into()), 4).unwrap();
+    session.put(&a, "k", &"v".into(), &Text).unwrap();
+    assert!(session.delete(&a, "k").unwrap());
+    assert!(!session.delete(&a, "missing").unwrap());
+    let notices = dataset.drain().unwrap();
+    assert_eq!(notices.len(), 2);
+    assert_eq!(notices, mount.drain().unwrap());
+    for (index, notice) in notices.iter().enumerate() {
+        let Notice::Changed(event) = notice else {
+            panic!("expected change")
+        };
+        assert_eq!(event.scope, Scope::Mount("main".into()));
+        assert_eq!(event.key, None);
+        assert_eq!(event.observation.coverage, ObservationCoverage::Mount);
+        assert_eq!(event.sequence, index as u64 + 1);
     }
 }
 

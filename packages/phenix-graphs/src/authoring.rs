@@ -67,7 +67,7 @@ impl DeclaredValue {
     }
     pub fn wire<T: ContractValue>() -> Self {
         Self {
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
         }
     }
@@ -585,7 +585,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
                 port: "run".into(),
                 slot: path.into(),
             },
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         }
@@ -626,7 +626,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
                 node: self.name.clone(),
                 output: name.into(),
             },
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         }
@@ -682,7 +682,7 @@ impl ModuleHandle {
             .inputs
             .get(name)
             .ok_or_else(|| format!("module input {name:?} not exported"))?;
-        if *actual != (T::SCHEMA, None) {
+        if *actual != (T::wire_schema(), None) {
             return Err(format!("module input {name:?} type mismatch"));
         }
         Ok(Input {
@@ -691,7 +691,7 @@ impl ModuleHandle {
                 name: self.name.clone(),
                 port: name.into(),
             },
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         })
@@ -701,7 +701,7 @@ impl ModuleHandle {
             .outputs
             .get(name)
             .ok_or_else(|| format!("module output {name:?} not exported"))?;
-        if *actual != (T::SCHEMA, None) {
+        if *actual != (T::wire_schema(), None) {
             return Err(format!("module output {name:?} type mismatch"));
         }
         Ok(OutputRef {
@@ -710,7 +710,7 @@ impl ModuleHandle {
                 name: self.name.clone(),
                 port: name.into(),
             },
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         })
@@ -1161,11 +1161,11 @@ impl GraphBuilder {
                 slot: slot.into(),
             }
         };
-        self.verify_target(&source, TypeIdentity::Wire(T::SCHEMA))?;
+        self.verify_target(&source, TypeIdentity::Wire(T::wire_schema()))?;
         Ok(Input {
             scope: self.module.scope,
             source,
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         })
@@ -1191,11 +1191,11 @@ impl GraphBuilder {
                 output: output.into(),
             }
         };
-        self.verify_source(&source, TypeIdentity::Wire(T::SCHEMA))?;
+        self.verify_source(&source, TypeIdentity::Wire(T::wire_schema()))?;
         Ok(OutputRef {
             scope: self.module.scope,
             source,
-            schema: T::SCHEMA,
+            schema: T::wire_schema(),
             local_type: None,
             _type: PhantomData,
         })

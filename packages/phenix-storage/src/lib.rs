@@ -1,5 +1,5 @@
 //! Synchronous, explicitly authorized storage. See `docs/storage.md` in the repository.
-//! Backends are currently a closed set (memory and SQLite), not a plugin interface.
+//! Hosts can mount external backends through object-safe optional capabilities.
 //! Observations are invalidations, not committed row changes or a durable change log.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -25,6 +25,7 @@ pub enum Error {
     InvalidCapacity,
     TransactionEnded,
     Poisoned,
+    Reentrant,
     Codec(String),
     Sql(rusqlite::Error),
 }
@@ -88,13 +89,7 @@ impl fmt::Display for Address {
 }
 
 /// All four fields are authoritative and compared before decoding or encoding.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Schema {
-    pub name: String,
-    pub revision: u32,
-    pub structure: String,
-    pub codec: String,
-}
+pub use phenix_schema::Schema;
 pub trait Codec {
     type Value;
     fn schema(&self) -> Schema;
@@ -102,12 +97,38 @@ pub trait Codec {
     fn decode(&self, bytes: &[u8]) -> Result<Self::Value>;
 }
 
+/// Bind a codec to a shared, mechanically derived descriptor. Registry admission
+/// compares this descriptor before invoking either codec operation.
+pub struct SchemaCodec<C> {
+    pub codec: C,
+    pub schema: Schema,
+}
+impl<C: Codec> Codec for SchemaCodec<C> {
+    type Value = C::Value;
+    fn schema(&self) -> Schema {
+        self.schema.clone()
+    }
+    fn encode(&self, value: &Self::Value) -> Result<Vec<u8>> {
+        self.codec.encode(value)
+    }
+    fn decode(&self, bytes: &[u8]) -> Result<Self::Value> {
+        self.codec.decode(bytes)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Operation {
     Read,
     Write,
     Delete,
+    /// Legacy full SQL authority, equivalent to SqlAdmin. Mount scope only.
     Sql,
+    /// SELECT and read-only SQL functions. Mount scope only.
+    SqlRead,
+    /// SqlRead plus INSERT, UPDATE and DELETE, including trigger effects.
+    SqlWrite,
+    /// SqlWrite plus DDL. Connection policy and transaction escape remain forbidden.
+    SqlAdmin,
     Subscribe,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,25 +190,70 @@ pub struct Observation {
     pub coverage: ObservationCoverage,
     pub delivery: ObservationDelivery,
 }
-impl Backend {
-    fn observation(&self) -> Observation {
-        Observation {
-            source: ObservationSource::RegistryWrites,
-            coverage: match self {
-                Self::Memory(_) => ObservationCoverage::Key,
-                Self::Sqlite(_) => ObservationCoverage::Mount,
-            },
-            delivery: ObservationDelivery::BoundedNonDurableWithOverflow,
-        }
+fn observation(coverage: ObservationCoverage) -> Observation {
+    Observation {
+        source: ObservationSource::RegistryWrites,
+        coverage,
+        delivery: ObservationDelivery::BoundedNonDurableWithOverflow,
     }
 }
 
-enum Backend {
-    Memory(BTreeMap<(String, String), Vec<u8>>),
-    Sqlite(Connection),
+/// Trusted host extension point. Backends must not expose authority to sessions.
+pub trait Backend: Send {
+    fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+        None
+    }
+    fn sql(&mut self) -> Option<&mut dyn SqlBackend> {
+        None
+    }
+    fn observation(&self) -> Observation {
+        observation(ObservationCoverage::Mount)
+    }
+}
+pub trait TypedKv: Send {
+    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>>;
+    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()>;
+    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool>;
+}
+/// Supplies a SQLite connection; the registry installs authorization and controls transactions.
+pub trait SqlBackend: Send {
+    fn connection(&mut self) -> &mut Connection;
+}
+#[derive(Default)]
+pub struct MemoryBackend(BTreeMap<(String, String), Vec<u8>>);
+impl Backend for MemoryBackend {
+    fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+        Some(self)
+    }
+    fn observation(&self) -> Observation {
+        observation(ObservationCoverage::Key)
+    }
+}
+impl TypedKv for MemoryBackend {
+    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.0.get(&(dataset.into(), key.into())).cloned())
+    }
+    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
+        self.0.insert((dataset.into(), key.into()), value);
+        Ok(())
+    }
+    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
+        Ok(self.0.remove(&(dataset.into(), key.into())).is_some())
+    }
+}
+struct SqliteBackend(Connection);
+impl Backend for SqliteBackend {
+    fn sql(&mut self) -> Option<&mut dyn SqlBackend> {
+        Some(self)
+    }
+}
+impl SqlBackend for SqliteBackend {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.0
+    }
 }
 struct Mount {
-    backend: Backend,
+    backend: Box<dyn Backend>,
     datasets: BTreeMap<String, Schema>,
 }
 struct Watch {
@@ -195,10 +261,11 @@ struct Watch {
     capacity: usize,
     queue: VecDeque<Notice>,
     overflow: Option<u64>,
+    waker: Option<std::task::Waker>,
 }
 #[derive(Default)]
 struct State {
-    mounts: BTreeMap<String, Mount>,
+    mounts: BTreeMap<String, Arc<Mutex<Mount>>>,
     watches: Vec<Weak<Mutex<Watch>>>,
     sequence: u64,
 }
@@ -209,12 +276,35 @@ pub struct Registry {
 fn lock(inner: &Mutex<State>) -> Result<MutexGuard<'_, State>> {
     inner.lock().map_err(|_| Error::Poisoned)
 }
+thread_local! {
+    static ACTIVE: std::cell::RefCell<BTreeSet<usize>> = const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+struct Active(usize);
+impl Active {
+    fn enter(mount: &Arc<Mutex<Mount>>) -> Result<Self> {
+        let id = Arc::as_ptr(mount) as usize;
+        ACTIVE.with(|active| {
+            if active.borrow_mut().insert(id) {
+                Ok(Self(id))
+            } else {
+                Err(Error::Reentrant)
+            }
+        })
+    }
+}
+impl Drop for Active {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| {
+            active.borrow_mut().remove(&self.0);
+        });
+    }
+}
 
 impl Registry {
     pub fn new() -> Self {
         Self::default()
     }
-    fn mount(&self, name: &str, backend: Backend) -> Result<()> {
+    pub fn mount(&self, name: &str, backend: impl Backend + 'static) -> Result<()> {
         if !component(name) {
             return Err(Error::InvalidAddress);
         }
@@ -224,28 +314,30 @@ impl Registry {
         }
         state.mounts.insert(
             name.into(),
-            Mount {
-                backend,
+            Arc::new(Mutex::new(Mount {
+                backend: Box::new(backend),
                 datasets: BTreeMap::new(),
-            },
+            })),
         );
         Ok(())
     }
     pub fn mount_memory(&self, name: &str) -> Result<()> {
-        self.mount(name, Backend::Memory(BTreeMap::new()))
+        self.mount(name, MemoryBackend::default())
     }
     /// The host owns path selection; logical addresses never select files.
     pub fn mount_sqlite(&self, name: &str, path: impl AsRef<std::path::Path>) -> Result<()> {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", true)?;
-        self.mount(name, Backend::Sqlite(connection))
+        self.mount(name, SqliteBackend(connection))
     }
     pub fn register(&self, address: &Address, schema: Schema) -> Result<()> {
-        let mut state = lock(&self.inner)?;
-        let mount = state
+        let mount = lock(&self.inner)?
             .mounts
-            .get_mut(address.mount())
+            .get(address.mount())
+            .cloned()
             .ok_or(Error::UnknownMount)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
         if mount.datasets.contains_key(address.dataset()) {
             return Err(Error::DuplicateDataset);
         }
@@ -271,30 +363,38 @@ impl Session {
         if self.grants.iter().any(|g| {
             g.operations.contains(&operation)
                 && g.scope.covers(address)
-                && (operation != Operation::Sql || matches!(&g.scope, Scope::Mount(_)))
+                && (!matches!(
+                    operation,
+                    Operation::Sql | Operation::SqlRead | Operation::SqlWrite | Operation::SqlAdmin
+                ) || matches!(&g.scope, Scope::Mount(_)))
         }) {
             Ok(())
         } else {
             Err(Error::Denied)
         }
     }
-    fn mount<'a>(state: &'a State, address: &Address) -> Result<&'a Mount> {
-        let mount = state
+    fn mount(&self, address: &Address) -> Result<Arc<Mutex<Mount>>> {
+        let mount = lock(&self.inner)?
             .mounts
             .get(address.mount())
+            .cloned()
             .ok_or(Error::UnknownMount)?;
-        if !mount.datasets.contains_key(address.dataset()) {
+        let _active = Active::enter(&mount)?;
+        let guard = mount.lock().map_err(|_| Error::Poisoned)?;
+        if !guard.datasets.contains_key(address.dataset()) {
             return Err(Error::UnknownDataset);
         }
+        drop(guard);
         Ok(mount)
     }
     pub fn capabilities(&self, address: &Address, operation: Operation) -> Result<Capabilities> {
         self.authorize(address, operation)?;
-        let state = lock(&self.inner)?;
-        let mount = Self::mount(&state, address)?;
+        let mount = self.mount(address)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
         Ok(Capabilities {
-            typed_kv: matches!(mount.backend, Backend::Memory(_)),
-            sql: matches!(mount.backend, Backend::Sqlite(_)),
+            typed_kv: mount.backend.typed_kv().is_some(),
+            sql: mount.backend.sql().is_some(),
             invalidation: true,
             observation: mount.backend.observation(),
         })
@@ -308,17 +408,18 @@ impl Session {
         self.authorize(address, Operation::Read)?;
         let schema = codec.schema();
         let bytes = {
-            let state = lock(&self.inner)?;
-            let mount = Self::mount(&state, address)?;
+            let mount = self.mount(address)?;
+            let _active = Active::enter(&mount)?;
+            let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
             if mount.datasets[address.dataset()] != schema {
                 return Err(Error::SchemaMismatch);
             }
-            let Backend::Memory(values) = &mount.backend else {
+            let Some(values) = mount.backend.typed_kv() else {
                 return Err(Error::UnsupportedCapability {
                     capability: Capability::TypedKv,
                 });
             };
-            values.get(&(address.dataset.clone(), key.into())).cloned()
+            values.get(address.dataset(), key)?
         };
         bytes.map(|b| codec.decode(&b)).transpose()
     }
@@ -333,68 +434,83 @@ impl Session {
         let schema = codec.schema();
         // Validate schema before invoking user code; recheck under the mutation lock.
         {
-            let state = lock(&self.inner)?;
-            let mount = Self::mount(&state, address)?;
+            let mount = self.mount(address)?;
+            let _active = Active::enter(&mount)?;
+            let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
             if mount.datasets[address.dataset()] != schema {
                 return Err(Error::SchemaMismatch);
             }
-            if !matches!(mount.backend, Backend::Memory(_)) {
+            if mount.backend.typed_kv().is_none() {
                 return Err(Error::UnsupportedCapability {
                     capability: Capability::TypedKv,
                 });
             }
         }
         let bytes = codec.encode(value)?;
-        let mut state = lock(&self.inner)?;
-        let mount = state
-            .mounts
-            .get_mut(address.mount())
-            .ok_or(Error::UnknownMount)?;
+        let mount = self.mount(address)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
         if mount.datasets[address.dataset()] != schema {
             return Err(Error::SchemaMismatch);
         }
-        let Backend::Memory(values) = &mut mount.backend else {
+        let Some(values) = mount.backend.typed_kv() else {
             return Err(Error::UnsupportedCapability {
                 capability: Capability::TypedKv,
             });
         };
-        values.insert((address.dataset.clone(), key.into()), bytes);
-        state.emit(Scope::Dataset(address.clone()), Some(key.into()));
+        values.put(address.dataset(), key, bytes)?;
+        lock(&self.inner)?.emit(
+            Scope::Dataset(address.clone()),
+            Some(key.into()),
+            mount.backend.observation(),
+        );
         Ok(())
     }
     pub fn delete(&self, address: &Address, key: &str) -> Result<bool> {
         self.authorize(address, Operation::Delete)?;
-        let mut state = lock(&self.inner)?;
-        Self::mount(&state, address)?;
-        let mount = state.mounts.get_mut(address.mount()).unwrap();
-        let Backend::Memory(values) = &mut mount.backend else {
+        let mount = self.mount(address)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+        let Some(values) = mount.backend.typed_kv() else {
             return Err(Error::UnsupportedCapability {
                 capability: Capability::TypedKv,
             });
         };
-        let removed = values
-            .remove(&(address.dataset.clone(), key.into()))
-            .is_some();
+        let removed = values.delete(address.dataset(), key)?;
         if removed {
-            state.emit(Scope::Dataset(address.clone()), Some(key.into()));
+            lock(&self.inner)?.emit(
+                Scope::Dataset(address.clone()),
+                Some(key.into()),
+                mount.backend.observation(),
+            );
         }
         Ok(removed)
     }
-    /// Closure success commits; error or unwind rolls back. Do not reenter this registry.
+    /// Closure success commits; error or unwind rolls back. Same-mount reentry fails.
+    /// Avoid nested transactions on different mounts in inconsistent lock order,
+    /// or waiting for another thread that needs this mount, to prevent deadlocks.
     pub fn transaction<T>(
         &self,
         address: &Address,
         f: impl FnOnce(&Sql<'_>) -> Result<T>,
     ) -> Result<T> {
-        self.authorize(address, Operation::Sql)?;
-        let mut state = lock(&self.inner)?;
-        Self::mount(&state, address)?;
-        let mount = state.mounts.get_mut(address.mount()).unwrap();
-        let Backend::Sqlite(connection) = &mut mount.backend else {
+        let legacy = self.authorize(address, Operation::Sql).is_ok();
+        let admin = legacy || self.authorize(address, Operation::SqlAdmin).is_ok();
+        let write = admin || self.authorize(address, Operation::SqlWrite).is_ok();
+        let read = write || self.authorize(address, Operation::SqlRead).is_ok();
+        if !read {
+            return Err(Error::Denied);
+        }
+        let mount = self.mount(address)?;
+        let _active = Active::enter(&mount)?;
+        let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+        let observation = mount.backend.observation();
+        let Some(backend) = mount.backend.sql() else {
             return Err(Error::UnsupportedCapability {
                 capability: Capability::Sql,
             });
         };
+        let connection = backend.connection();
         use std::sync::atomic::{AtomicBool, Ordering};
         let internal = Arc::new(AtomicBool::new(true));
         let permission = internal.clone();
@@ -413,7 +529,18 @@ impl Session {
             {
                 Authorization::Deny
             }
-            _ => Authorization::Allow,
+            AuthAction::Select
+            | AuthAction::Read { .. }
+            | AuthAction::Recursive
+            | AuthAction::Function { .. } => Authorization::Allow,
+            AuthAction::Insert { .. } | AuthAction::Update { .. } | AuthAction::Delete { .. }
+                if write =>
+            {
+                Authorization::Allow
+            }
+            AuthAction::Transaction { .. } | AuthAction::Savepoint { .. } => Authorization::Allow,
+            _ if admin => Authorization::Allow,
+            _ => Authorization::Deny,
         }))?;
         let tx = connection.transaction()?;
         internal.store(false, Ordering::Relaxed);
@@ -436,14 +563,14 @@ impl Session {
             Ok(result) => result,
             Err(panic) => {
                 drop(tx);
-                drop(state);
+                drop(mount);
                 std::panic::resume_unwind(panic);
             }
         };
         let value = result?;
         tx.commit()?;
         if dirty {
-            state.emit(Scope::Mount(address.mount.clone()), None);
+            lock(&self.inner)?.emit(Scope::Mount(address.mount.clone()), None, observation);
         }
         Ok(value)
     }
@@ -464,10 +591,13 @@ impl Session {
                 }
             }
         }
+        if let Scope::Dataset(a) = &scope {
+            self.mount(a)?;
+        }
         let mut state = lock(&self.inner)?;
         match &scope {
             Scope::Dataset(a) => {
-                Self::mount(&state, a)?;
+                let _ = a;
             }
             Scope::Mount(m) => {
                 if !state.mounts.contains_key(m) {
@@ -481,6 +611,7 @@ impl Session {
             capacity,
             queue: VecDeque::new(),
             overflow: None,
+            waker: None,
         }));
         state.watches.push(Arc::downgrade(&watch));
         Ok(Subscription {
@@ -522,19 +653,55 @@ impl Sql<'_> {
         params: &[&dyn ToSql],
         mut decode: impl FnMut(&Row<'_, '_>) -> Result<T>,
     ) -> Result<Vec<T>> {
+        let mut result = Vec::new();
+        self.query_each(sql, params, |row| {
+            result.push(decode(row)?);
+            Ok(())
+        })?;
+        Ok(result)
+    }
+    /// Visits rows incrementally without collecting them. Callback errors stop stepping.
+    pub fn query_each(
+        &self,
+        sql: &str,
+        params: &[&dyn ToSql],
+        visit: impl FnMut(&Row<'_, '_>) -> Result<()>,
+    ) -> Result<()> {
+        self.visit(sql, params, false, visit)
+    }
+    /// Executes a mutating RETURNING statement and visits its rows incrementally.
+    /// SQLite may buffer RETURNING internally. Propagate callback errors to roll
+    /// back; catching them in the transaction callback can commit partial effects.
+    pub fn returning(
+        &self,
+        sql: &str,
+        params: &[&dyn ToSql],
+        visit: impl FnMut(&Row<'_, '_>) -> Result<()>,
+    ) -> Result<()> {
+        self.visit(sql, params, true, visit)
+    }
+    fn visit(
+        &self,
+        sql: &str,
+        params: &[&dyn ToSql],
+        returning: bool,
+        mut visit: impl FnMut(&Row<'_, '_>) -> Result<()>,
+    ) -> Result<()> {
         if self.connection.is_autocommit() {
             return Err(Error::TransactionEnded);
         }
         let mut statement = self.connection.prepare(sql)?;
         if !statement.readonly() {
-            return Err(Error::Denied);
+            if !returning {
+                return Err(Error::Denied);
+            }
+            self.dirty.set(true);
         }
         let mut rows = statement.query(params)?;
-        let mut result = Vec::new();
         while let Some(row) = rows.next()? {
-            result.push(decode(&Row(row))?);
+            visit(&Row(row))?;
         }
-        Ok(result)
+        Ok(())
     }
 }
 
@@ -551,12 +718,13 @@ pub enum Notice {
     Overflow { through: u64 },
 }
 impl State {
-    fn emit(&mut self, scope: Scope, key: Option<String>) {
-        let mount = match &scope {
-            Scope::Dataset(a) => a.mount(),
-            Scope::Mount(m) => m,
+    fn emit(&mut self, scope: Scope, key: Option<String>, observation: Observation) {
+        let (scope, key) = match (&scope, observation.coverage) {
+            (Scope::Dataset(address), ObservationCoverage::Mount) => {
+                (Scope::Mount(address.mount.clone()), None)
+            }
+            _ => (scope, key),
         };
-        let observation = self.mounts[mount].backend.observation();
         self.sequence = self
             .sequence
             .checked_add(1)
@@ -588,6 +756,12 @@ impl State {
             } else {
                 watch.queue.push_back(Notice::Changed(event.clone()));
             }
+            if let Some(waker) = &watch.waker {
+                // A faulty subscriber must not poison storage or skip later watches.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    waker.wake_by_ref();
+                }));
+            }
             true
         });
     }
@@ -597,6 +771,23 @@ pub struct Subscription {
     watch: Arc<Mutex<Watch>>,
 }
 impl Subscription {
+    /// Register notification atomically with publication, waking immediately if ready.
+    /// Wakers run under storage locks and must not block or reenter storage.
+    /// Waker panics are isolated so publication continues for other subscribers.
+    pub fn set_waker(&mut self, waker: std::task::Waker) -> Result<()> {
+        let Some(_inner) = self.inner.upgrade() else {
+            return Err(Error::SubscriptionClosed);
+        };
+        let mut watch = self.watch.lock().map_err(|_| Error::Poisoned)?;
+        watch.waker = Some(waker);
+        if watch.overflow.is_some() || !watch.queue.is_empty() {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                watch.waker.as_ref().unwrap().wake_by_ref();
+            }));
+        }
+        Ok(())
+    }
+
     /// Drains without waiting for events or locking the registry. May briefly wait
     /// for the queue mutex. Overflow means rescan the subscribed scope.
     pub fn drain(&mut self) -> Result<Vec<Notice>> {

@@ -9,6 +9,7 @@ impl PluginInstance for Increment {
         registrar.add(Contribution {
             id: "main".into(),
             requires: vec![],
+            routes: vec![],
             compose: Box::new(|graph| {
                 let node = graph
                     .node("increment", |x: i64| x + 1)

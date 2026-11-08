@@ -1,0 +1,12 @@
+[package]
+name = "phenix-storage-graph"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+phenix-storage = { path = "../phenix-storage" }
+phenix-kernel = { path = "../phenix-kernel" }
+phenix-graph = { path = "../phenix-graphs" }
+
+[dev-dependencies]
+phenix-plugin = { path = "../phenix-plugins" }

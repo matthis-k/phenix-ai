@@ -75,6 +75,7 @@ dependencies = [
 name = "phenix-graph"
 version = "0.1.0"
 dependencies = [
+ "phenix-schema",
  "phenix_port_args_derive",
 ]
 
@@ -95,10 +96,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-schema"
+version = "0.1.0"
+
+[[package]]
 name = "phenix-storage"
 version = "0.1.0"
 dependencies = [
+ "phenix-schema",
  "rusqlite",
+]
+
+[[package]]
+name = "phenix-storage-graph"
+version = "0.1.0"
+dependencies = [
+ "phenix-graph",
+ "phenix-kernel",
+ "phenix-plugin",
+ "phenix-storage",
 ]
 
 [[package]]

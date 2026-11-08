@@ -252,8 +252,26 @@ impl PartialEq for Value {
     }
 }
 impl Eq for Value {}
+pub use phenix_schema::Schema;
+
 pub trait ContractValue: Sized + Send + Sync + 'static {
     const SCHEMA: &'static str;
+    /// Manual implementations may supply a structural contract. None preserves
+    /// the shipped, explicitly named legacy wire contract.
+    fn schema_descriptor() -> Option<Schema> {
+        None
+    }
+    fn wire_schema() -> &'static str {
+        Self::schema_descriptor().map_or(Self::SCHEMA, |schema| schema.intern())
+    }
+    fn schema() -> Schema {
+        Self::schema_descriptor().unwrap_or_else(|| Schema {
+            name: Self::SCHEMA.into(),
+            revision: 1,
+            structure: Self::SCHEMA.into(),
+            codec: "phenix-legacy-v1".into(),
+        })
+    }
     fn encode(&self) -> Vec<u8>;
     fn decode(bytes: &[u8]) -> Result<Self, String>;
 }
@@ -323,7 +341,7 @@ impl ContractValue for () {
 }
 fn enc<T: ContractValue>(v: T) -> Value {
     Value {
-        schema: T::SCHEMA,
+        schema: T::wire_schema(),
         bytes: v.encode(),
         local: None,
     }
@@ -390,8 +408,12 @@ impl Value {
         self.local.is_some()
     }
     pub fn get<T: ContractValue>(&self) -> Result<T, String> {
-        if self.schema != T::SCHEMA {
-            return Err(format!("expected {}, got {}", T::SCHEMA, self.schema));
+        if self.schema != T::wire_schema() {
+            return Err(format!(
+                "expected {}, got {}",
+                T::wire_schema(),
+                self.schema
+            ));
         }
         if self.is_local() {
             return Err("local values are not encoded; use borrow/shared".into());
@@ -433,10 +455,10 @@ impl InputSlot {
         slot(id, schema, buffer)
     }
     pub fn immediate<T: ContractValue>(id: u16) -> Self {
-        Self::new(id, T::SCHEMA, BufferMode::Immediate)
+        Self::new(id, T::wire_schema(), BufferMode::Immediate)
     }
     pub fn deferred<T: ContractValue>(id: u16) -> Self {
-        Self::new(id, T::SCHEMA, BufferMode::Deferred)
+        Self::new(id, T::wire_schema(), BufferMode::Deferred)
     }
     pub fn local<T: Send + Sync + 'static>(id: u16) -> Self {
         let mut slot = Self::new(id, type_name::<T>(), BufferMode::Deferred);
@@ -457,7 +479,7 @@ impl OutputSlot {
         out(id, schema)
     }
     pub fn typed<T: ContractValue>(id: u16) -> Self {
-        Self::new(id, T::SCHEMA)
+        Self::new(id, T::wire_schema())
     }
     pub fn local<T: Send + Sync + 'static>(id: u16) -> Self {
         let mut slot = Self::new(id, type_name::<T>());
@@ -736,11 +758,11 @@ impl SelectedValues<'_> {
             .iter()
             .find(|slot| slot.name.as_deref() == Some(name))
             .ok_or_else(|| format!("unknown input name {name:?}"))?;
-        if slot.schema != T::SCHEMA {
+        if slot.schema != T::wire_schema() {
             return Err(format!(
                 "input {name:?} has schema {}, expected {}",
                 slot.schema,
-                T::SCHEMA
+                T::wire_schema()
             ));
         }
         self.selected
@@ -786,11 +808,11 @@ impl SelectedValues<'_> {
             .iter()
             .find(|slot| slot.name.as_deref() == Some(path))
             .ok_or_else(|| format!("unknown input path {path:?}"))?;
-        if slot.schema != T::SCHEMA {
+        if slot.schema != T::wire_schema() {
             return Err(format!(
                 "input {path:?} has schema {}, expected {}",
                 slot.schema,
-                T::SCHEMA
+                T::wire_schema()
             ));
         }
         self.selected
@@ -2643,11 +2665,11 @@ impl NodeTemplate {
             .iter()
             .find(|s| s.id == address.slot)
             .unwrap();
-        if declared.schema != T::SCHEMA {
+        if declared.schema != T::wire_schema() {
             return Err(format!(
                 "input {port}.{slot} schema {} differs from {}",
                 declared.schema,
-                T::SCHEMA
+                T::wire_schema()
             ));
         }
         Ok(InputHandle {
@@ -2658,11 +2680,11 @@ impl NodeTemplate {
     pub fn output_handle<T: ContractValue>(&self, slot: &str) -> Result<OutputHandle<T>, String> {
         let address = self.output(slot)?;
         let declared = self.outputs.iter().find(|s| s.id == address.slot).unwrap();
-        if declared.schema != T::SCHEMA {
+        if declared.schema != T::wire_schema() {
             return Err(format!(
                 "output {slot} schema {} differs from {}",
                 declared.schema,
-                T::SCHEMA
+                T::wire_schema()
             ));
         }
         Ok(OutputHandle {
@@ -3248,7 +3270,7 @@ impl ModuleDefBuilder {
             .find(|slot| slot.id == address.slot)
             .unwrap()
             .schema;
-        if actual != T::SCHEMA {
+        if actual != T::wire_schema() {
             return Err(format!("typed input {:?} schema mismatch", input.slot));
         }
         Ok(())
@@ -3269,7 +3291,7 @@ impl ModuleDefBuilder {
             .find(|slot| slot.id == address.slot)
             .unwrap()
             .schema;
-        if actual != T::SCHEMA {
+        if actual != T::wire_schema() {
             return Err(format!("typed output {:?} schema mismatch", output.output));
         }
         Ok(())
@@ -3313,7 +3335,7 @@ impl ModuleDefBuilder {
         self.input(
             id,
             name,
-            T::SCHEMA,
+            T::wire_schema(),
             targets
                 .into_iter()
                 .map(|target| ModuleInputTarget::NodeNamed {
@@ -3338,7 +3360,7 @@ impl ModuleDefBuilder {
         self.output(
             id,
             name,
-            T::SCHEMA,
+            T::wire_schema(),
             ModuleOutputSource::NodeNamed {
                 node: source.node,
                 output: source.output,

@@ -31,9 +31,9 @@ fn value_identity(value: DeclaredValue) -> TypeIdentity {
 /// explicitly describe each input slot. Graph owns all value identities;
 /// `Local(TypeId)` cannot be wired to a `Wire(schema)` value.
 ///
-/// A schema *name* is not yet a canonical structural schema or codec proof.
-/// Native ABI composition MUST verify canonical schema + codec revisions
-/// before an independently compiled implementation may be invoked.
+/// Derived wire identities include the shared canonical structure and codec
+/// revision. Legacy manual name-only contracts remain trusted declarations;
+/// they are not structural proof for native ABI composition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InterfaceBounds {
     id: String,

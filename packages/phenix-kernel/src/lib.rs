@@ -1,11 +1,11 @@
 //! In-process composition and producer lifecycle around the existing graph engine.
 use phenix_graph::{
-    Deployment, Engine, Executor, GraphBuilder, TriggerSelector, Value, WaveReport,
+    Deployment, Engine, Executor, GraphBuilder, TriggerId, TriggerSelector, Value, WaveReport,
 };
 use phenix_plugin::{ContributionHandle, PluginSnapshot};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, Condvar, Mutex},
 };
 
 /// Globally qualified contribution identity, ordered lexically by owner then id.
@@ -34,6 +34,37 @@ pub struct Notice {
 /// Factories must clean up partially acquired resources if activation fails.
 pub trait Producer: Send {
     fn poll(&mut self) -> Result<Option<Notice>, String>;
+
+    /// Register notification for newly available events. Return false if unsupported.
+    /// Implementations must synchronize registration with event publication.
+    fn set_waker(&mut self, _waker: WakeHandle) -> bool {
+        false
+    }
+}
+
+#[derive(Default)]
+struct WakeState {
+    state: Mutex<(u64, bool)>,
+    ready: Condvar,
+}
+
+/// Cloneable notification and shutdown handle for the optional blocking driver.
+#[derive(Clone, Default)]
+pub struct WakeHandle(Arc<WakeState>);
+
+impl WakeHandle {
+    pub fn wake(&self) {
+        let mut state = self.0.state.lock().unwrap();
+        state.0 = state.0.wrapping_add(1);
+        self.0.ready.notify_all();
+    }
+
+    /// Shutdown is sticky. Use a new handle for a subsequent driver run.
+    pub fn shutdown(&self) {
+        let mut state = self.0.state.lock().unwrap();
+        state.1 = true;
+        self.0.ready.notify_all();
+    }
 }
 
 pub type Compose = dyn Fn(&mut GraphBuilder) -> Result<(), String> + Send + Sync;
@@ -44,6 +75,8 @@ pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, String> + Send + Sync;
 pub struct Contribution {
     pub id: String,
     pub requires: Vec<Key>,
+    /// Public trigger names this contribution's producer may emit.
+    pub routes: Vec<String>,
     pub compose: Box<Compose>,
     pub activate: Option<Box<Activate>>,
 }
@@ -58,7 +91,15 @@ impl phenix_plugin::Contribution for Contribution {
 /// One poll's outcome; admission errors and invocation failures remain distinct.
 pub struct ProducerEvent {
     pub producer: Key,
-    pub result: Result<WaveReport, String>,
+    pub result: Result<WaveReport, ProducerError>,
+}
+
+/// Invocation failures remain inside successful WaveReports, not these errors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProducerError {
+    Poll(String),
+    UndeclaredRoute(String),
+    Admission(String),
 }
 
 pub struct Kernel {
@@ -69,6 +110,7 @@ pub struct Kernel {
     keys: Vec<Key>,
     started: bool,
     next_producer: usize,
+    routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
 }
 
 impl Drop for Kernel {
@@ -130,6 +172,22 @@ impl Kernel {
             (contribution.compose)(&mut graph)?;
         }
         let compiled = graph.compile().map_err(|error| error.to_string())?;
+        let mut routes = BTreeMap::new();
+        for (key, contribution) in keys.iter().zip(&leases) {
+            if contribution.activate.is_none() && !contribution.routes.is_empty() {
+                return Err(format!("routes declared without producer: {key:?}"));
+            }
+            let mut selected = BTreeMap::new();
+            for name in &contribution.routes {
+                let trigger = compiled
+                    .trigger(name)
+                    .ok_or_else(|| format!("unknown producer route for {key:?}: {name:?}"))?;
+                if selected.insert(name.clone(), trigger).is_some() {
+                    return Err(format!("duplicate producer route for {key:?}: {name:?}"));
+                }
+            }
+            routes.insert(key.clone(), selected);
+        }
         let engine = Deployment::new(compiled).executor(executor).build()?;
         Ok(Self {
             engine,
@@ -138,6 +196,7 @@ impl Kernel {
             keys,
             started: false,
             next_producer: 0,
+            routes,
         })
     }
 
@@ -190,8 +249,14 @@ impl Kernel {
             self.next_producer = (self.next_producer + 1) % count;
             let result = match producer.poll() {
                 Ok(None) => continue,
-                Ok(Some(notice)) => self.engine.fire(notice.trigger.as_str(), notice.values),
-                Err(error) => Err(error),
+                Ok(Some(notice)) => match self.routes[key].get(&notice.trigger) {
+                    Some(trigger) => self
+                        .engine
+                        .fire(*trigger, notice.values)
+                        .map_err(ProducerError::Admission),
+                    None => Err(ProducerError::UndeclaredRoute(notice.trigger)),
+                },
+                Err(error) => Err(ProducerError::Poll(error)),
             };
             events.push(ProducerEvent {
                 producer: key.clone(),
@@ -199,5 +264,52 @@ impl Kernel {
             });
         }
         events
+    }
+
+    /// Drive a started kernel until shutdown, delivering events without retaining reports.
+    /// Every producer must support wake registration. Shutdown is checked between waves;
+    /// it does not interrupt a running producer poll, wave, or callback.
+    pub fn run_until(
+        &mut self,
+        wake: &WakeHandle,
+        mut on_event: impl FnMut(ProducerEvent),
+    ) -> Result<(), String> {
+        if !self.started {
+            return Err("kernel not started".into());
+        }
+        for (key, producer) in &mut self.producers {
+            if !producer.set_waker(wake.clone()) {
+                return Err(format!(
+                    "producer does not support wake notifications: {key:?}"
+                ));
+            }
+        }
+        loop {
+            let generation = {
+                let state = wake.0.state.lock().unwrap();
+                if state.1 {
+                    return Ok(());
+                }
+                state.0
+            };
+            let mut active = false;
+            for _ in 0..self.producers.len() {
+                if wake.0.state.lock().unwrap().1 {
+                    return Ok(());
+                }
+                for event in self.drain(1) {
+                    active = true;
+                    on_event(event);
+                }
+            }
+            if !active {
+                let state = wake.0.state.lock().unwrap();
+                let _state = wake
+                    .0
+                    .ready
+                    .wait_while(state, |state| !state.1 && state.0 == generation)
+                    .unwrap();
+            }
+        }
     }
 }

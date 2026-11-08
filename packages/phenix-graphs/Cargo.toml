@@ -8,9 +8,8 @@ default = ["derive"]
 derive = ["dep:phenix_port_args_derive"]
 
 [dependencies]
+phenix-schema = { path = "../phenix-schema" }
 phenix_port_args_derive = { path = "port-args-derive", optional = true }
-
-[dev-dependencies]
 
 [[bench]]
 name = "layout"

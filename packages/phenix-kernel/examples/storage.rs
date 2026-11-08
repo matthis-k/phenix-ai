@@ -99,6 +99,7 @@ impl PluginInstance for CounterPlugin {
         registrar.add(Contribution {
             id: "module".into(),
             requires: vec![],
+            routes: vec![],
             compose: Box::new(move |graph| {
                 let mut module = GraphBuilder::new("counter-module");
                 let writer = counter.clone();
@@ -149,6 +150,7 @@ impl PluginInstance for ObserverPlugin {
         registrar.add(Contribution {
             id: "observer".into(),
             requires: vec![Key::new("counter", "module")],
+            routes: vec!["storage_changed".into()],
             compose: Box::new(move |graph| {
                 let log = observed.clone();
                 let sink = graph
@@ -263,7 +265,12 @@ fn main() -> Result<(), String> {
         assert!(write.success());
         assert_eq!(demo.counter.read()?, Some(42));
         for event in demo.kernel.drain(8) {
-            assert!(event.result?.success());
+            assert!(
+                event
+                    .result
+                    .map_err(|error| format!("{error:?}"))?
+                    .success()
+            );
         }
         assert_eq!(demo.observed.lock().unwrap().len(), 1);
     }

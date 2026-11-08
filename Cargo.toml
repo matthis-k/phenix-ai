@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+  "packages/phenix-schema",
   "packages/phenix-graphs",
   "packages/phenix-graphs/port-args-derive",
   "packages/phenix-plugins",
   "packages/phenix-storage",
+  "packages/phenix-storage-graph",
   "packages/phenix-kernel",
 ]
 

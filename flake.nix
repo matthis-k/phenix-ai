@@ -2,49 +2,176 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/e83c6029afc0140a242ae8240dbff6efe5979725";
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      phenix-flake-ci,
+      ...
+    }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
-      source = pkgs.lib.fileset.toSource {
-        root = ./.;
-        fileset = pkgs.lib.fileset.unions [
-          ./Cargo.toml
-          ./Cargo.lock
-          ./packages
-        ];
-      };
-      foundation = pkgs.rustPlatform.buildRustPackage {
-        pname = "phenix-foundation";
-        version = "0.1.0";
-        src = source;
-        cargoLock.lockFile = ./Cargo.lock;
-        cargoTestFlags = [
-          "--workspace"
-          "--all-targets"
-        ];
-        nativeBuildInputs = [
-          pkgs.rustfmt
-          pkgs.clippy
-        ];
-        preCheck = ''
-          cargo fmt --all --check
-          cargo clippy --locked --offline --workspace --all-targets -- -D warnings
-        '';
-        installPhase = ''
-          mkdir -p "$out/lib"
-          cp target/*/release/libphenix_graph.rlib "$out/lib/"
-          cp target/*/release/libphenix_plugin.rlib "$out/lib/"
-          cp target/*/release/libphenix_storage.rlib "$out/lib/"
-          cp target/*/release/libphenix_kernel.rlib "$out/lib/"
-        '';
-      };
+      inherit (pkgs) lib;
+      workspace = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      members = workspace.workspace.members;
+      manifests = lib.genAttrs members (
+        path: builtins.fromTOML (builtins.readFile (./. + "/${path}/Cargo.toml"))
+      );
+      memberFor =
+        name:
+        lib.findFirst (
+          path: manifests.${path}.package.name == name
+        ) (throw "Missing Cargo package ${name}") members;
+      # Include dev/build dependencies too: semantic tests and examples need both.
+      closure =
+        roots:
+        map (item: item.key) (
+          builtins.genericClosure {
+            startSet = map (key: { inherit key; }) roots;
+            operator =
+              { key }:
+              map (key: { inherit key; }) (
+                lib.concatMap
+                  (
+                    kind:
+                    lib.concatMap (
+                      dep:
+                      lib.optional (builtins.isAttrs dep && dep ? path) (
+                        lib.removePrefix (toString ./. + "/") (toString (./. + "/${key}/${dep.path}"))
+                      )
+                    ) (builtins.attrValues (manifests.${key}.${kind} or { }))
+                  )
+                  [
+                    "dependencies"
+                    "dev-dependencies"
+                    "build-dependencies"
+                  ]
+              );
+          }
+        );
+      sourceFor =
+        paths:
+        lib.cleanSourceWith {
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions ([ ./Cargo.lock ] ++ map (path: ./. + "/${path}") paths);
+          };
+          filter =
+            path: type:
+            !(lib.elem (baseNameOf path) [
+              "target"
+              ".git"
+            ]);
+        };
+      cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = ./Cargo.lock; };
+      mkRust =
+        {
+          name,
+          packages,
+          command,
+          release ? false,
+          installPhase ? "mkdir -p $out; touch $out/passed",
+        }:
+        let
+          paths = closure (map memberFor packages);
+          manifest = (pkgs.formats.toml { }).generate "Cargo.toml" (
+            workspace
+            // {
+              workspace = workspace.workspace // {
+                members = paths;
+              };
+            }
+          );
+        in
+        pkgs.rustPlatform.buildRustPackage {
+          pname = "phenix-${name}";
+          version = "0.1.0";
+          src = sourceFor paths;
+          inherit cargoDeps installPhase;
+          postUnpack = ''cp ${manifest} "$sourceRoot/Cargo.toml"'';
+          nativeBuildInputs = [ pkgs.clippy ];
+          buildType = if release then "release" else "debug";
+          buildPhase = ''
+            runHook preBuild
+            # Prune workspace-only records after narrowing members; registry inputs stay vendored.
+            cargo metadata --offline --format-version 1 > /dev/null
+            ${command}
+            runHook postBuild
+          '';
+          doCheck = false;
+        };
+      test =
+        name: packages: flags:
+        mkRust {
+          inherit name packages;
+          command = "cargo test --locked --offline ${
+            lib.concatMapStringsSep " " (p: "-p ${p}") packages
+          } ${flags}";
+        };
+      allPackages = map (path: manifests.${path}.package.name) members;
+      integrationPackages = lib.filter (
+        name: lib.hasInfix "integration" name || name == "phenix-storage-graph"
+      ) allPackages;
+      checkConfig = import ./ci/flake-check-config.nix;
     in
     {
-      packages.${system}.default = foundation;
-      checks.${system}.foundation = foundation;
+      lib.flakeCiWorkflow = phenix-flake-ci.lib.mkFlakeCiWorkflow {
+        ci = checkConfig.ci;
+        configPath = "ci/flake-check-config.nix";
+        libraryRef = phenix-flake-ci.rev;
+      };
+      packages.${system}.kernel-smoke = mkRust {
+        name = "kernel-smoke";
+        packages = [ "phenix-kernel" ];
+        release = true;
+        command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
+        installPhase = ''
+          mkdir -p "$out/bin"
+          install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
+          "$out/bin/kernel-smoke"
+        '';
+      };
+      checks.${system} = {
+        workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
+          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
+          touch $out
+        '';
+        kernel-smoke = self.packages.${system}.kernel-smoke;
+        format =
+          pkgs.runCommand "phenix-format"
+            {
+              nativeBuildInputs = [
+                pkgs.cargo
+                pkgs.rustfmt
+                pkgs.nixfmt
+              ];
+            }
+            ''
+              cp -r ${sourceFor members} source
+              chmod -R u+w source
+              cp ${./Cargo.toml} source/Cargo.toml
+              cd source
+              cargo fmt --all --check
+              nixfmt --check ${./flake.nix} ${./ci/flake-check-config.nix}
+              touch $out
+            '';
+        clippy = mkRust {
+          name = "clippy";
+          packages = allPackages;
+          command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
+        };
+        storage = test "storage" [ "phenix-storage" "phenix-schema" ] "--all-targets";
+        graph = test "graph" [ "phenix-graph" "phenix-plugin" ] "--all-targets";
+        kernel = test "kernel" [ "phenix-kernel" ] "--lib --test kernel";
+        integration =
+          if integrationPackages == [ ] then
+            test "integration" [ "phenix-kernel" ] "--test storage"
+          else
+            test "integration" ([ "phenix-kernel" ] ++ integrationPackages) "--all-targets";
+      };
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo

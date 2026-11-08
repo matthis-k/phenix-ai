@@ -1,0 +1,21 @@
+name: "Flake CI"
+on:
+  pull_request:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  flake-checks:
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@e83c6029afc0140a242ae8240dbff6efe5979725
+    with:
+      config: "ci/flake-check-config.nix"
+      library_ref: "e83c6029afc0140a242ae8240dbff6efe5979725"
