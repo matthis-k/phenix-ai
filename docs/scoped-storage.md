@@ -119,9 +119,12 @@ SQLite `BLOB` values and a composite `(dataset,key)` primary key. A SQLite
 mount now offers both typed KV and native SQL. Single-statement KV mutations
 complete before the existing bounded invalidation is published.
 
-Dataset schemas remain registry-local and must be registered again at startup.
-Resource bindings likewise remain host configuration, not implicitly durable.
-SQLite records persist in the selected database file; memory records do not.
+The host must register datasets at startup, but SQLite also persists the
+authoritative schema descriptors in `__phenix_schema`; incompatible restarts
+are rejected before stored bytes can be decoded. Resource bindings remain host
+configuration, not implicitly durable. SQLite records persist in the selected
+database file; memory records do not. Explicit schema migration is still a
+separate host operation.
 
 The reserved table is part of the adapter's storage schema. A trusted SQL
 administrator on the same mount can change it; this is one reason untrusted
