@@ -136,20 +136,23 @@ or host-installed adapters.**
 The existing in-process plugin registry already permits non-graph contribution
 types and pins contributions through `PluginSnapshot` leases. Reuse that API.
 
-Recommended next integration (not yet implemented):
+Implemented optional bridge in `phenix-storage-plugin`:
 
 ```rust
-// In a thin phenix-storage-plugin bridge, not the kernel:
-registrar.add(BackendOffer::new("sqlite", SqliteFactory))?;
+// Provider plugin:
+registrar.add(BackendOffer::new("memory", || {
+    Ok(Box::new(MemoryBackend::default()))
+}))?;
 
-// Trusted host, before compiling/activating the graph:
-let backend = selected_backend_offer.create(host_config)?;
-registry.mount("workspace", backend)?;
+// Trusted host, before composing the graph:
+mount_offer(&registry, &provider_snapshot, "memory", "workspace")?;
 ```
 
 The offer is **not authority**. Only the trusted host may select backend
 offers, supply paths or credentials, configure mounts, register resources, and
-issue restricted sessions. Graph contributions capture those sessions. No
+issue restricted sessions. A `LeasedBackend` pins the exact provider snapshot
+until the mounted backend has been dropped; logical plugin unload does not
+invalidate a live mount. Graph contributions capture restricted sessions. No
 Storage -> Kernel or Graph -> Storage dependency is required.
 
 The current `Backend::typed_kv` extension interface is object-safe, so an
@@ -180,9 +183,10 @@ stored as domain data. Storage does not understand either domain.
 
 1. **CAS/revisions**: add an explicitly advertised atomic compare-exchange
    capability for KV (memory and SQLite). Do not emulate CAS using get+put.
-2. **Hosted resource declarations**: implement a small `BackendOffer` and
-   `ResourceOffer` bridge on top of the existing plugin registrar, with stable
-   leases and preflight duplicate/schema/authority checks.
+2. **Hosted resource declarations**: extend the now-implemented
+   `BackendOffer` bridge with a `ResourceOffer` and trusted host preflight
+   for duplicate/schema/authority checks. Backend factory configuration,
+   provisioning and lifecycle rollback remain host responsibilities.
 3. **Blob and index adapters**: provide optional capabilities, not a universal
    database API; document blob durability and index invalidation guarantees.
 4. **Observation ordering**: preserve commit-aware invalidation on KV/SQL,
@@ -200,7 +204,7 @@ correct external backend capability rejection.
 
 The present additive slice implements resource identity, typed KV views, XDG
 path policy and SQLite KV persistence; it does **not** implement CAS, memory
-derivation, backend-offer composition, blob storage or XDG auto-provisioning.
+derivation, resource-offer composition, blob storage or XDG auto-provisioning.
 
 References:
 - https://specifications.freedesktop.org/basedir/0.8/
