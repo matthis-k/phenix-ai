@@ -84,7 +84,7 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(report["criticalPathSecondsColdThroughWarm"], 80)
             self.assertEqual(report["savedBuildEvents"], 12)
             self.assertEqual(report["buildSpeedup"], 11)
-            self.assertIn("100%", (root / "report.md").read_text)
+            self.assertIn("100%", (root / "report.md").read_text())
             changed = metrics("warm")
             changed["graphDigest"] = "wrong"
             bench.save(root / "warm" / "metrics.json", changed)
