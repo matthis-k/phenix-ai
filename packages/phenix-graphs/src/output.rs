@@ -40,12 +40,14 @@ impl Destination {
 pub(crate) enum DestinationTarget {
     Node {
         scope: u64,
+        declaration_id: u64,
         name: String,
         port: String,
         slot: String,
     },
     Module {
         scope: u64,
+        declaration_id: u64,
         name: String,
         port: String,
     },

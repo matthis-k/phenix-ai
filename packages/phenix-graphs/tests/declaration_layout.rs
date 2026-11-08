@@ -158,3 +158,22 @@ fn successful_replacement_revokes_old_declaration_handle() {
         Err(GraphBuildError::Configuration(_))
     ));
 }
+
+#[test]
+fn layout_revision_endpoints_cannot_bind_an_unchanged_clone() {
+    let mut graph = GraphBuilder::new("layout-lineage");
+    let node = graph.node("n", |x: i64| x).unwrap();
+    let old_input = node.inlet();
+    let old_output = node.output();
+    let mut clone = graph.clone();
+    // Even a same-shape reconfiguration creates a new declaration revision.
+    let node = node.input(Layout::atomic()).unwrap();
+    assert!(graph.expose_input("stale", old_input.clone()).is_err());
+    assert!(graph.expose_output("stale", old_output).is_err());
+    assert!(clone.expose_input("divergent", node.inlet()).is_err());
+    assert!(clone.expose_output("divergent", node.output()).is_err());
+    clone.expose_input("inherited", old_input).unwrap();
+    graph.expose_input("current", node.inlet()).unwrap();
+    clone.compile().unwrap();
+    graph.compile().unwrap();
+}
