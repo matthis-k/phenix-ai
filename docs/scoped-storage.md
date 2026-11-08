@@ -166,6 +166,34 @@ A runtime `StorageBroker` with plugin declarations, binding selection and
 resource provisioning is a *future host composition layer*, not a second
 scheduler or database engine. Do not modify the kernel merely to house it.
 
+
+
+### Resource declarations (implemented)
+
+Two independently authored plugins can declare compatible resource requirements:
+
+```rust
+let resource = ResourceId::new(
+    ScopeId::Project("project-uuid".into()),
+    StorageClass::Config,
+    "phenix.agent/settings",
+)?;
+registrar.add(ResourceOffer::new(
+    "agent-settings",
+    resource,
+    AgentConfigCodec::default().schema(),
+))?;
+```
+
+The trusted host calls `ResourceRequirements::collect(selected_snapshots)`
+to obtain one canonical schema per logical resource. A conflict fails before
+provisioning. Duplicate compatible declarations do not themselves share grants:
+each plugin still receives an independently restricted `Session`.
+
+This pure preflight does **not** choose a filesystem path, create a resource,
+issue grants or retain plugin code after the resource declaration is copied.
+Selected backend instances do retain a contribution lease for their lifetime.
+
 ## Domain workload coverage
 
 | Domain | Resource class | Backing capability | Additional behavior owned by plugin |
@@ -183,10 +211,11 @@ stored as domain data. Storage does not understand either domain.
 
 1. **CAS/revisions**: add an explicitly advertised atomic compare-exchange
    capability for KV (memory and SQLite). Do not emulate CAS using get+put.
-2. **Hosted resource declarations**: extend the now-implemented
-   `BackendOffer` bridge with a `ResourceOffer` and trusted host preflight
-   for duplicate/schema/authority checks. Backend factory configuration,
-   provisioning and lifecycle rollback remain host responsibilities.
+2. **Hosted resource provisioning**: `BackendOffer` and `ResourceOffer`
+   now reuse the existing registrar; `ResourceRequirements::collect` accepts
+   repeated declarations only when their schemas match. Add trusted-host
+   resource placement, grant preflight, transactional provisioning and rollback.
+   Backend factory configuration remains host responsibility.
 3. **Blob and index adapters**: provide optional capabilities, not a universal
    database API; document blob durability and index invalidation guarantees.
 4. **Observation ordering**: preserve commit-aware invalidation on KV/SQL,
@@ -203,8 +232,10 @@ denied writes; same-mount reentrancy; no phantom notice on failed writes;
 correct external backend capability rejection.
 
 The present additive slice implements resource identity, typed KV views, XDG
-path policy and SQLite KV persistence; it does **not** implement CAS, memory
-derivation, resource-offer composition, blob storage or XDG auto-provisioning.
+path policy, SQLite KV persistence, backend offers with pinned plugin leases,
+and declarative resource-offer compatibility checks. It does **not** implement
+CAS, memory derivation, automatic resource provisioning, blob storage or
+XDG auto-provisioning.
 
 References:
 - https://specifications.freedesktop.org/basedir/0.8/
