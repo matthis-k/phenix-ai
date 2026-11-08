@@ -118,6 +118,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phenix-storage-plugin"
+version = "0.1.0"
+dependencies = [
+ "phenix-plugin",
+ "phenix-storage",
+]
+
+[[package]]
 name = "phenix_port_args_derive"
 version = "0.1.0"
 dependencies = [
