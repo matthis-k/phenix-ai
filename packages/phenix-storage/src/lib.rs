@@ -202,6 +202,12 @@ fn observation(coverage: ObservationCoverage) -> Observation {
 
 /// Trusted host extension point. Backends must not expose authority to sessions.
 pub trait Backend: Send {
+    /// Validate/provision persistent dataset metadata before registry admission.
+    /// In-memory adapters may use the default; durable adapters should enforce
+    /// schema identity across process restarts.
+    fn register_dataset(&mut self, _dataset: &str, _schema: &Schema) -> Result<()> {
+        Ok(())
+    }
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
         None
     }
@@ -245,6 +251,36 @@ impl TypedKv for MemoryBackend {
 }
 struct SqliteBackend(Connection);
 impl Backend for SqliteBackend {
+    fn register_dataset(&mut self, dataset: &str, schema: &Schema) -> Result<()> {
+        use rusqlite::OptionalExtension;
+        self.reset_sql_authority()?;
+        let existing = self.0.query_row(
+            "SELECT name, revision, structure, codec FROM __phenix_schema WHERE dataset = ?1",
+            rusqlite::params![dataset],
+            |row| {
+                Ok(Schema {
+                    name: row.get(0)?,
+                    revision: row.get(1)?,
+                    structure: row.get(2)?,
+                    codec: row.get(3)?,
+                })
+            },
+        ).optional()?;
+        if let Some(previous) = existing {
+            if previous != *schema {
+                return Err(Error::SchemaMismatch);
+            }
+        } else {
+            self.0.execute(
+                "INSERT INTO __phenix_schema (dataset, name, revision, structure, codec) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    dataset, &schema.name, schema.revision, &schema.structure, &schema.codec
+                ],
+            )?;
+        }
+        Ok(())
+    }
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
         Some(self)
     }
@@ -384,6 +420,13 @@ impl Registry {
                 key TEXT NOT NULL,
                 value BLOB NOT NULL,
                 PRIMARY KEY (dataset, key)
+            );
+            CREATE TABLE IF NOT EXISTS __phenix_schema (
+                dataset TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                structure TEXT NOT NULL,
+                codec TEXT NOT NULL
             )",
         )?;
         self.mount(name, SqliteBackend(connection))
@@ -399,6 +442,9 @@ impl Registry {
         if mount.datasets.contains_key(address.dataset()) {
             return Err(Error::DuplicateDataset);
         }
+        // Persistent backends must verify the existing on-disk schema before
+        // the in-memory dataset declaration becomes visible.
+        mount.backend.register_dataset(address.dataset(), &schema)?;
         mount.datasets.insert(address.dataset.clone(), schema);
         Ok(())
     }
