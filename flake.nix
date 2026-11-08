@@ -113,7 +113,10 @@
         };
       allPackages = map (path: manifests.${path}.package.name) members;
       integrationPackages = lib.filter (
-        name: lib.hasInfix "integration" name || name == "phenix-storage-graph"
+        name:
+        lib.hasInfix "integration" name
+        || name == "phenix-storage-graph"
+        || name == "phenix-storage-plugin"
       ) allPackages;
       checkConfig = import ./ci/flake-check-config.nix;
     in
