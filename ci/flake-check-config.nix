@@ -6,13 +6,10 @@
   strategy = "generic";
   strategyOptions = { };
   checkHints = { };
-  # Same corpus derivations all generated Nix check groups reference.
-  # The matrix backend publishes these two closures once, then its shards
-  # only execute precompiled test binaries without invoking Cargo.
-  prebuildTargets = [
-    ".#packages.x86_64-linux.cargo-tests-default"
-    ".#packages.x86_64-linux.cargo-tests-no-default"
-  ];
+  # Discover ci-prebuild-* packages exported by the shared CI library.
+  # No Cargo-derived installables or check inventory are duplicated here.
+  autoPrebuild = true;
+  prebuildTargets = [ ];
   cache = {
     keyPrefix = "phenix-checks";
     keyFiles = [
