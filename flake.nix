@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/5ca9d5ba929c334c7c745804d3575bb42972f5d2";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/d137a8f67187dbc4a068cad67f736164953ae252";
 
   outputs =
     {
