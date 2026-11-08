@@ -131,3 +131,69 @@ fn conflicting_registered_contract_and_unoffered_graph_claim_fail_closed() {
         "{failure}"
     );
 }
+
+struct HonestOffer;
+
+impl PluginInstance for HonestOffer {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        registrar.add(ContractDefinition {
+            id: "x".into(),
+            contract: contract("example/x@1", DeclaredValue::local::<i64>()),
+        })?;
+        registrar.add(GraphOffer {
+            id: "offer".into(),
+            unit: "service".into(),
+            contract: Key::new("provider", "x"),
+        })?;
+        registrar.add(Contribution {
+            id: "main".into(),
+            requires: Vec::new(),
+            routes: Vec::new(),
+            activate: None,
+            compose: Box::new(|graph| {
+                graph
+                    .node("service", |v: i64| v + 1)
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            }),
+        })
+    }
+}
+
+struct ForeignClaim;
+
+impl PluginInstance for ForeignClaim {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        registrar.add(Contribution {
+            id: "mutate".into(),
+            requires: vec![Key::new("provider", "main")],
+            routes: Vec::new(),
+            activate: None,
+            compose: Box::new(|graph| {
+                graph
+                    .implements(
+                        "service",
+                        &contract("example/x@1", DeclaredValue::local::<i64>()),
+                    )
+                    .map_err(|error| error.to_string())
+            }),
+        })
+    }
+}
+
+#[test]
+fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
+    let mut catalog = PluginCatalog::new();
+    let provider = catalog.register("provider", |_: ()| Ok(HonestOffer)).unwrap();
+    let foreign = catalog.register("foreign", |_: ()| Ok(ForeignClaim)).unwrap();
+    let mut plugins = catalog.instance();
+    plugins.load(&provider, ()).unwrap();
+    plugins.load(&foreign, ()).unwrap();
+    let failure = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
+        .err()
+        .expect("foreign semantic claim mutation must fail");
+    assert!(
+        failure.contains("another contribution generation"),
+        "{failure}"
+    );
+}
