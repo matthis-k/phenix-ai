@@ -755,6 +755,52 @@ impl<'g> BoundUnit<'g> {
     }
 }
 
+/// Check one combined contract namespace, including host-registered definitions,
+/// every Graph definition's claims, and its declared contract requirements.
+/// A compiled graph already checks its own claims; this closes conflicts with
+/// declarations that are registered by the host but never offered or selected.
+impl CompiledGraph {
+    pub fn check_contract_catalog<'a>(
+        &self,
+        registered: impl IntoIterator<Item = &'a GraphContract>,
+    ) -> Result<(), InterfaceError> {
+        let mut seen: BTreeMap<String, GraphContract> = BTreeMap::new();
+        let mut check = |contract: &GraphContract, path: &str| {
+            if let Some(previous) = seen.get(contract.id()) {
+                previous.check_definition(contract).map_err(|error| {
+                    error.context(InterfacePhase::Compiled, path, Some(contract.id()))
+                })?;
+            } else {
+                seen.insert(contract.id().into(), contract.clone());
+            }
+            Ok(())
+        };
+        for contract in registered {
+            check(contract, "<host-registry>")?;
+        }
+        for (definition, entry) in &self.metadata.definitions {
+            for claim in &entry.claims {
+                check(claim, definition)?;
+            }
+            for (path, request) in &entry.contract_requests {
+                check(request, &format!("{definition}/{path}"))?;
+            }
+            for node in &entry.nodes {
+                for claim in &node.claims {
+                    check(
+                        claim,
+                        &format!(
+                            "{definition}/{}",
+                            node.name.as_deref().unwrap_or("<unnamed>")
+                        ),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn validate_metadata(metadata: &CompiledMetadata) -> Result<(), InterfaceError> {
     let mut definitions: BTreeMap<String, GraphContract> = BTreeMap::new();
     let mut check = |unit: UnitSnapshot| -> Result<(), InterfaceError> {
