@@ -13,6 +13,158 @@ mod tests {
     use super::*;
 
     #[test]
+    fn construction_preflights_each_mount_after_all_schemas_without_reading_values() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct Probe {
+            probes: Arc<AtomicUsize>,
+            atomic: Arc<AtomicBool>,
+        }
+        impl Backend for Probe {
+            fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+                self.probes.fetch_add(1, Ordering::SeqCst);
+                Some(self)
+            }
+        }
+        impl TypedKv for Probe {
+            fn get(&mut self, _: &str, _: &str) -> Result<Option<Vec<u8>>> {
+                panic!("preflight must not read values")
+            }
+            fn put(&mut self, _: &str, _: &str, _: Vec<u8>) -> Result<()> {
+                panic!("preflight must not write values")
+            }
+            fn delete(&mut self, _: &str, _: &str) -> Result<bool> {
+                panic!("preflight must not delete values")
+            }
+            fn supports_atomic_read_many(&self) -> bool {
+                self.atomic.load(Ordering::SeqCst)
+            }
+            fn get_revisioned(&mut self, _: &str, _: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
+                panic!("preflight must not read revisioned values")
+            }
+            fn read_many(&mut self, _: &[ReadKey<'_>]) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
+                panic!("preflight must not read batches")
+            }
+        }
+        let registry = Registry::new();
+        let probes = Arc::new(AtomicUsize::new(0));
+        let atomic = Arc::new(AtomicBool::new(false));
+        registry
+            .mount(
+                "main",
+                Probe {
+                    probes: probes.clone(),
+                    atomic: atomic.clone(),
+                },
+            )
+            .unwrap();
+        let address = Address::parse("store://main/values").unwrap();
+        let schema = Schema {
+            name: "bytes".into(),
+            revision: 1,
+            structure: "bytes".into(),
+            codec: "raw".into(),
+        };
+        registry.register(&address, schema.clone()).unwrap();
+        let session = registry.session([Grant::new(
+            Scope::Dataset(address.clone()),
+            [Operation::Read],
+        )]);
+        let source = ReadSource {
+            session,
+            address,
+            schema,
+            key: "value".into(),
+        };
+        let mut denied = source.clone();
+        denied.session = registry.session([]);
+        assert!(matches!(
+            SnapshotReader::new(vec![source.clone(), denied], ReadConsistency::BestEffort),
+            Err(Error::Denied)
+        ));
+        let mut wrong = source.clone();
+        wrong.schema.revision += 1;
+        assert!(matches!(
+            SnapshotReader::new(vec![source.clone(), wrong], ReadConsistency::BestEffort),
+            Err(Error::SchemaMismatch)
+        ));
+        assert_eq!(probes.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            SnapshotReader::new(vec![source.clone()], ReadConsistency::AtomicWithinMount),
+            Err(Error::UnsupportedCapability {
+                capability: Capability::AtomicReadMany
+            })
+        ));
+        probes.store(0, Ordering::SeqCst);
+        SnapshotReader::new(
+            vec![source.clone(), source.clone()],
+            ReadConsistency::BestEffort,
+        )
+        .unwrap();
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
+        atomic.store(true, Ordering::SeqCst);
+        let reader = SnapshotReader::new(vec![source], ReadConsistency::AtomicWithinMount).unwrap();
+        atomic.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            reader.read(),
+            Err(Error::UnsupportedCapability {
+                capability: Capability::AtomicReadMany
+            })
+        ));
+        SnapshotReader::new(vec![], ReadConsistency::AtomicWithinMount)
+            .unwrap()
+            .read()
+            .unwrap();
+    }
+
+    #[test]
+    fn construction_rejects_sql_only_sources_in_both_consistency_modes() {
+        struct SqlOnly(Connection);
+        impl Backend for SqlOnly {
+            fn sql(&mut self) -> Option<&mut dyn SqlBackend> {
+                Some(self)
+            }
+        }
+        impl SqlBackend for SqlOnly {
+            fn connection(&mut self) -> &mut Connection {
+                &mut self.0
+            }
+        }
+        let registry = Registry::new();
+        registry
+            .mount("main", SqlOnly(Connection::open_in_memory().unwrap()))
+            .unwrap();
+        let address = Address::parse("store://main/values").unwrap();
+        let schema = Schema {
+            name: "bytes".into(),
+            revision: 1,
+            structure: "bytes".into(),
+            codec: "raw".into(),
+        };
+        registry.register(&address, schema.clone()).unwrap();
+        let session = registry.session([Grant::new(
+            Scope::Dataset(address.clone()),
+            [Operation::Read],
+        )]);
+        let source = ReadSource {
+            session,
+            address,
+            schema,
+            key: "value".into(),
+        };
+        for consistency in [
+            ReadConsistency::AtomicWithinMount,
+            ReadConsistency::BestEffort,
+        ] {
+            assert!(matches!(
+                SnapshotReader::new(vec![source.clone()], consistency),
+                Err(Error::UnsupportedCapability {
+                    capability: Capability::TypedKv
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn sqlite_commit_between_batch_selects_keeps_original_snapshot() {
         let path = std::env::temp_dir().join(format!(
             "phenix-snapshot-interleave-{}-{}.sqlite",
@@ -266,8 +418,8 @@ impl Session {
 }
 
 /// Empty groups succeed without lookup or IO. Duplicates are retained in order.
-/// Construction validates grants/schema but does not read values. Read rechecks
-/// immutable authority and contracts. BestEffort explicitly permits mixed registries.
+/// Construction validates all grants/schemas before probing mount capabilities,
+/// without reading values. Read repeats these checks. BestEffort permits mixed registries.
 pub struct SnapshotReader {
     sources: Vec<ReadSource>,
     consistency: ReadConsistency,
@@ -303,18 +455,28 @@ impl SnapshotReader {
                 return Err(Error::SchemaMismatch);
             }
         }
+        for group in self.groups() {
+            let first = &self.sources[group[0]];
+            let mount = first.session.mount(&first.address)?;
+            let _active = Active::enter(&mount)?;
+            let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
+            let kv = mount
+                .backend
+                .typed_kv()
+                .ok_or(Error::UnsupportedCapability {
+                    capability: Capability::TypedKv,
+                })?;
+            if self.consistency == ReadConsistency::AtomicWithinMount
+                && !kv.supports_atomic_read_many()
+            {
+                return Err(Error::UnsupportedCapability {
+                    capability: Capability::AtomicReadMany,
+                });
+            }
+        }
         Ok(())
     }
-    pub fn read(&self) -> Result<Snapshot> {
-        self.validate()?;
-        let mut entries: Vec<_> = self
-            .sources
-            .iter()
-            .map(|source| SnapshotEntry {
-                source: source.clone(),
-                value: None,
-            })
-            .collect();
+    fn groups(&self) -> Vec<Vec<usize>> {
         // Group by physical mount without ever combining sessions' grants.
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (index, source) in self.sources.iter().enumerate() {
@@ -327,7 +489,19 @@ impl SnapshotReader {
                 groups.push(vec![index]);
             }
         }
-        for group in groups {
+        groups
+    }
+    pub fn read(&self) -> Result<Snapshot> {
+        self.validate()?;
+        let mut entries: Vec<_> = self
+            .sources
+            .iter()
+            .map(|source| SnapshotEntry {
+                source: source.clone(),
+                value: None,
+            })
+            .collect();
+        for group in self.groups() {
             let first = &self.sources[group[0]];
             let mount = first.session.mount(&first.address)?;
             let _active = Active::enter(&mount)?;

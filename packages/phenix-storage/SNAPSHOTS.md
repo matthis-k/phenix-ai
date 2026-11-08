@@ -85,8 +85,11 @@ unioned. The source exposes no Session, Registry, or grant-issuing authority.
 
 All Read grants across the group are checked before any lookup. Atomic mixed
 mounts or registries fail with `MixedSnapshotSources` before backend IO. Every
-schema is checked before any backend read. Construction performs these checks
-without reading values; `read()` repeats them. Sessions have immutable grants
+schema is checked before any backend read or capability probe. Construction then
+probes each participating mount once for TypedKv and, in atomic mode, atomic
+batch support, without reading values; `read()` repeats these checks. BestEffort
+does not require CAS support; unsupported versioned fallback reads still fail at
+read time. Sessions have immutable grants
 and there is currently no revocation API.
 
 Empty batches succeed with zero entries and no IO. Entries always follow input

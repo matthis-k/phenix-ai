@@ -231,6 +231,23 @@ fn external_backend_must_opt_in_to_atomic_reads() {
         })
     ));
     s.read_many(&keys, ReadConsistency::BestEffort).unwrap();
+    let identity = Identity::user("u").unwrap().project("p").unwrap();
+    let mut catalog = ResourceCatalog::new();
+    catalog
+        .bind(A.resource_spec().resolve(&identity).unwrap(), a)
+        .unwrap();
+    let storage = catalog.freeze().access(s, identity);
+    let (cell,) = storage.bind((A.read(),)).unwrap();
+    assert!(matches!(
+        SnapshotReader::new(vec![cell.source()], ReadConsistency::AtomicWithinMount),
+        Err(phenix_storage::Error::UnsupportedCapability {
+            capability: Capability::AtomicReadMany
+        })
+    ));
+    SnapshotReader::new(vec![cell.source()], ReadConsistency::BestEffort)
+        .unwrap()
+        .read()
+        .unwrap();
 }
 
 const A: CellSpec<Number> = CellSpec::project_state("test.values/a");
