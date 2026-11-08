@@ -490,6 +490,12 @@ mod tests {
         {
             let registry = Registry::new();
             registry.mount_sqlite("main", &path).unwrap();
+            let mut incompatible = TextCodec.schema();
+            incompatible.revision = 2;
+            assert!(matches!(
+                registry.register(&address, incompatible),
+                Err(crate::Error::SchemaMismatch)
+            ));
             registry.register(&address, TextCodec.schema()).unwrap();
             let access = open(&registry);
             let found = access.project().unwrap().config::<Text>("phenix.agent/settings").unwrap()
