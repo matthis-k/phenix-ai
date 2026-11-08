@@ -27,6 +27,11 @@ def metrics(phase):
             "buildEvents": 12 if phase == "cold" else 0,
             "uniqueBuiltDrvs": 11 if phase == "cold" else 0,
             "repeatedBuildEvents": 1 if phase == "cold" else 0,
+            "cachePrimaryHit": phase == "warm",
+            "cargoCompileEvents": 201 if phase == "cold" else 0,
+            "distinctCargoCrateNames": 34 if phase == "cold" else 0,
+            "repeatedCargoNameEvents": 167 if phase == "cold" else 0,
+            "topRepeatedCargoNames": [{"name": "syn", "events": 7}] if phase == "cold" else [],
             "outputCount": 1, "outputIdentitySha256": "same",
             "closurePathCount": 2, "closureSha256": "closure"}
 
@@ -84,11 +89,16 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(report["criticalPathSecondsColdThroughWarm"], 80)
             self.assertEqual(report["savedBuildEvents"], 12)
             self.assertEqual(report["buildSpeedup"], 11)
+            self.assertEqual(report["savedCargoCompileEvents"], 201)
+            self.assertEqual(report["coldTopRepeatedCargoNames"][0]["name"], "syn")
             self.assertIn("100%", (root / "report.md").read_text())
             changed = metrics("warm")
             changed["graphDigest"] = "wrong"
             bench.save(root / "warm" / "metrics.json", changed)
             with self.assertRaisesRegex(ValueError, "graphDigest"):
+                bench.compare(*args)
+            bench.save(root / "warm" / "metrics.json", {**metrics("warm"), "cachePrimaryHit": False})
+            with self.assertRaisesRegex(ValueError, "cache miss"):
                 bench.compare(*args)
             bench.save(root / "warm" / "metrics.json", metrics("warm"))
             retention = bench.read(root / "warm" / "retention.json")

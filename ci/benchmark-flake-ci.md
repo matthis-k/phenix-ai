@@ -19,15 +19,19 @@ consumer's Nix lock, or the consumer's shipping check definitions.
 - Before the warm build, inspect **every Nix store path** in the cold check
   output closure with offline \`nix path-info\`. Record missing paths even when
   a fallback warm rebuild succeeds; acceptance rejects partial retention.
+- Require an actual **primary-key cache miss** on cold and a **primary-key
+  cache hit** on warm, rather than inferring the hit from wall-clock time.
 - Capture per-phase build duration, direct Nix derivation build events,
-  repeated derivations in the same store, and full GitHub job elapsed times.
+  repeated derivations in the same store, Cargo compile events and repeated
+  crate-name compile events, and full GitHub job elapsed times.
   The report includes the cold-to-warm sequential critical path and handoff.
 
 The runner's \`ImageVersion\`, \`nix --version\`, plan digest, graph digest,
 outputs and closure identities must all match before results can be compared.
 The check planner and log reporter come from the same pinned Flake CI commit.
-This measures exact Nix build events, **not** semantically duplicate Cargo
-compile units. No direct Tailscale access, secrets, or cache publication to
+Nix build events are exact derivation identities. The Cargo metrics count
+same-crate-name compilation events; feature sets and profiles can differ,
+so those events do **not** prove identical reusable Cargo artifacts. No direct Tailscale access, secrets, or cache publication to
 production cache keys is used.
 
 This intentionally measures the **native single-store backend**. It must

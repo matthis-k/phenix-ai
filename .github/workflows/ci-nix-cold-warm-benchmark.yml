@@ -50,10 +50,15 @@ jobs:
           python3 .ci-tools/flake-ci/lib/flake-check-dag.py analyze \
             --plan benchmark/plan.json --output benchmark/graph.json
       - name: Start with a unique cold project cache and save for warm
+        id: nix_cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: ${{ env.BENCH_CACHE_KEY }}
           gc-max-store-size-linux: "8G"
+      - name: Prove the cold cache key was not previously present
+        env:
+          CACHE_HIT: ${{ steps.nix_cache.outputs.hit-primary-key }}
+        run: test "$CACHE_HIT" = false
       - name: Time full native Nix DAG (cold project cache)
         shell: bash
         run: |
@@ -78,6 +83,8 @@ jobs:
             --evidence benchmark/evidence.json \
             --directory "${RUNNER_TEMP}/phenix-ci-bench-verified-roots"
       - name: Capture exact derivation events and complete Nix output closure
+        env:
+          BENCH_CACHE_HIT: ${{ steps.nix_cache.outputs.hit-primary-key }}
         run: |
           set -euo pipefail
           python3 .ci-tools/flake-ci/lib/shard-build-report.py \
@@ -127,10 +134,15 @@ jobs:
           cmp benchmark/plan.json reference/cold/plan.json
           cmp benchmark/graph.json reference/cold/graph.json
       - name: Restore only the exact cold-run Nix cache (no publication)
+        id: nix_cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: ${{ env.BENCH_CACHE_KEY }}
           save: false
+      - name: Prove exact primary-key hit before measuring retention
+        env:
+          CACHE_HIT: ${{ steps.nix_cache.outputs.hit-primary-key }}
+        run: test "$CACHE_HIT" = true
       - name: Prove offline retention of all cold Nix closure paths before building
         run: |
           python3 ci/benchmark-flake-ci.py retention \
@@ -150,6 +162,8 @@ jobs:
           printf '%s\n' "$(($(date +%s) - start))" > benchmark/build-seconds.txt
           exit "$status"
       - name: Verify and capture warm native Nix evidence
+        env:
+          BENCH_CACHE_HIT: ${{ steps.nix_cache.outputs.hit-primary-key }}
         run: |
           set -euo pipefail
           python3 .ci-tools/flake-ci/lib/flake-check-dag.py verify \

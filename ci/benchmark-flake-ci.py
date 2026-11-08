@@ -5,6 +5,7 @@ The runner uses the pinned phenix-flake-ci planner/DAG. This module only
 measures results and verifies cache retention; it never schedules builds.
 """
 import argparse
+from collections import Counter
 from datetime import datetime
 import hashlib
 import json
@@ -88,6 +89,14 @@ def capture(phase, directory, library_ref):
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     require(head == plan["commit"], "not the checked-out exact head")
     log = (folder / "build.log").read_bytes()
+    # These are observed Cargo compile events, not proved identical artifacts:
+    # feature sets, target triples and profiles can differ between derivations.
+    cargo = Counter(name.decode("ascii") for name in re.findall(
+        rb"\bCompiling ([A-Za-z0-9_-]+) v[0-9]", log))
+    cache_hit = os.getenv("BENCH_CACHE_HIT", "")
+    expected_hit = "false" if phase == "cold" else "true"
+    require(cache_hit == expected_hit,
+            f"{phase} did not produce the expected exact-key cache hit/miss")
     reports = read(folder / "build-events.json")
     require(isinstance(reports.get("build_events"), int)
             and isinstance(reports.get("distinct_derivation_paths"), int)
@@ -114,6 +123,15 @@ def capture(phase, directory, library_ref):
         "outputCount": len(outputs), "outputIdentitySha256": sha256(outputs),
         "closurePathCount": len(closure), "closureSha256": sha256(closure),
         "buildLogSha256": hashlib.sha256(log).hexdigest(),
+        "cachePrimaryHit": cache_hit == "true",
+        "cargoCompileEvents": sum(cargo.values()),
+        "distinctCargoCrateNames": len(cargo),
+        "repeatedCargoNameEvents": sum(cargo.values()) - len(cargo),
+        "topRepeatedCargoNames": [
+            {"name": name, "events": count}
+            for name, count in sorted(cargo.items(), key=lambda x: (-x[1], x[0]))
+            if count > 1
+        ][:20],
     }
     save(folder / "metrics.json", payload)
     save(folder / "closure.json", {
@@ -122,7 +140,9 @@ def capture(phase, directory, library_ref):
         "outputs": outputs, "paths": closure,
     })
     print(json.dumps({"phase": phase, "buildSeconds": seconds,
-                      "buildEvents": payload["buildEvents"], "closurePaths": len(closure)}))
+                      "buildEvents": payload["buildEvents"],
+                      "cargoCompileEvents": payload["cargoCompileEvents"],
+                      "closurePaths": len(closure)}))
 
 
 def missing_store_paths(paths):
@@ -197,6 +217,14 @@ def compare(cold_dir, warm_dir, jobs_file, report_json, report_md):
               "checkNames", "runnerImage", "runnerVersion", "nixVersion",
               "outputCount", "outputIdentitySha256",
               "closurePathCount", "closureSha256")
+    require(cold.get("cachePrimaryHit") is False
+            and warm.get("cachePrimaryHit") is True,
+            "cold cache miss and exact warm cache hit are required")
+    for phase, data in (("cold", cold), ("warm", warm)):
+        for name in ("cargoCompileEvents", "distinctCargoCrateNames",
+                     "repeatedCargoNameEvents"):
+            require(type(data.get(name)) is int and data[name] >= 0,
+                    f"missing {phase} Cargo compilation accounting")
     for field in fields:
         require(cold.get(field) == warm.get(field),
                 f"cold/warm mismatch: {field}")
@@ -220,15 +248,21 @@ def compare(cold_dir, warm_dir, jobs_file, report_json, report_md):
         "cold": {"buildSeconds": cold["buildSeconds"],
                  "jobSeconds": phases["cold"][0], "buildEvents": cold["buildEvents"],
                  "uniqueBuiltDrvs": cold["uniqueBuiltDrvs"],
-                 "repeatedBuildEvents": cold["repeatedBuildEvents"]},
+                 "repeatedBuildEvents": cold["repeatedBuildEvents"],
+                 "cargoCompileEvents": cold["cargoCompileEvents"],
+                 "repeatedCargoNameEvents": cold["repeatedCargoNameEvents"]},
         "warm": {"buildSeconds": warm["buildSeconds"],
                  "jobSeconds": phases["warm"][0], "buildEvents": warm["buildEvents"],
                  "uniqueBuiltDrvs": warm["uniqueBuiltDrvs"],
-                 "repeatedBuildEvents": warm["repeatedBuildEvents"]},
+                 "repeatedBuildEvents": warm["repeatedBuildEvents"],
+                 "cargoCompileEvents": warm["cargoCompileEvents"],
+                 "repeatedCargoNameEvents": warm["repeatedCargoNameEvents"]},
         "cacheRetention": retained,
         "criticalPathSecondsColdThroughWarm": critical,
         "buildSpeedup": round(cold["buildSeconds"] / max(0.001, warm["buildSeconds"]), 3),
         "savedBuildEvents": cold["buildEvents"] - warm["buildEvents"],
+        "savedCargoCompileEvents": cold["cargoCompileEvents"] - warm["cargoCompileEvents"],
+        "coldTopRepeatedCargoNames": cold["topRepeatedCargoNames"],
     }
     save(report_json, report)
     table = [
@@ -242,7 +276,10 @@ def compare(cold_dir, warm_dir, jobs_file, report_json, report_md):
         f"| Full GitHub job | {phases['cold'][0]:.1f}s | {phases['warm'][0]:.1f}s |",
         f"| Direct Nix build events | {cold['buildEvents']} | {warm['buildEvents']} |",
         f"| Repeated same-derivation events | {cold['repeatedBuildEvents']} | {warm['repeatedBuildEvents']} |",
+        f"| Cargo compilation events | {cold['cargoCompileEvents']} | {warm['cargoCompileEvents']} |",
+        f"| Repeated crate-name compile events | {cold['repeatedCargoNameEvents']} | {warm['repeatedCargoNameEvents']} |",
         "",
+        "**Cache proof:** unique-key miss on cold, exact primary-key hit on warm.",
         f"**Cache retention before warm build:** {retained['retainedPaths']}/{retained['closurePaths']} "
         f"paths ({retained['retentionPercent']}%).",
         f"**Sequential cold → warm critical path:** {critical:.1f}s (including runner startup and handoff).",
