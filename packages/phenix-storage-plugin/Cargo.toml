@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 phenix-plugin = { path = "../phenix-plugins" }
 phenix-storage = { path = "../phenix-storage" }
+libc = "0.2"

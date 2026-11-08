@@ -1,4 +1,7 @@
 use phenix_graph::{GraphBuilder, LocalExecutor, Value};
+#[allow(dead_code)]
+#[path = "scoped_storage.rs"]
+mod scoped_storage;
 use phenix_kernel::{Contribution, Kernel, Key, Notice, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
@@ -274,5 +277,6 @@ fn main() -> Result<(), String> {
         }
         assert_eq!(demo.observed.lock().unwrap().len(), 1);
     }
+    scoped_storage::run()?;
     Ok(())
 }

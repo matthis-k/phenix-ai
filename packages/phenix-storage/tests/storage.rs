@@ -729,9 +729,11 @@ fn sqlite_native_binding_rows_commit_rollback() {
     assert!(session.capabilities(&a, Operation::Read).unwrap().typed_kv);
     assert!(session.get(&a, "k", &Text).unwrap().is_none());
     session.put(&a, "k", &"persisted".into(), &Text).unwrap();
-    assert_eq!(session.get(&a, "k", &Text).unwrap(), Some("persisted".into()));
+    assert_eq!(
+        session.get(&a, "k", &Text).unwrap(),
+        Some("persisted".into())
+    );
 }
-
 
 #[test]
 fn sqlite_kv_authority_is_independent_of_prior_read_only_sql_transaction() {
@@ -740,18 +742,27 @@ fn sqlite_kv_authority_is_independent_of_prior_read_only_sql_transaction() {
         Scope::Mount("main".into()),
         [Operation::SqlRead],
     )]);
-    read_sql.transaction(&address, |sql| {
-        assert_eq!(sql.query("SELECT 1", &[], |row| row.get::<i64>(0))?, vec![1]);
-        Ok(())
-    }).unwrap();
+    read_sql
+        .transaction(&address, |sql| {
+            assert_eq!(
+                sql.query("SELECT 1", &[], |row| row.get::<i64>(0))?,
+                vec![1]
+            );
+            Ok(())
+        })
+        .unwrap();
 
     // The connection's previous SQL authorizer must not leak into the KV path.
     let kv = registry.session([Grant::new(
         Scope::Dataset(address.clone()),
         [Operation::Read, Operation::Write, Operation::Delete],
     )]);
-    kv.put(&address, "key", &"success".to_string(), &Text).unwrap();
-    assert_eq!(kv.get(&address, "key", &Text).unwrap(), Some("success".into()));
+    kv.put(&address, "key", &"success".to_string(), &Text)
+        .unwrap();
+    assert_eq!(
+        kv.get(&address, "key", &Text).unwrap(),
+        Some("success".into())
+    );
     assert!(kv.delete(&address, "key").unwrap());
 }
 

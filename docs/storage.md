@@ -51,19 +51,27 @@ dataset declaration does not create an application SQL table.
 
 Grants pair an exact dataset or mount scope with explicit operations: `Read`,
 `Write`, `Delete`, `SqlRead`, `SqlWrite`, `SqlAdmin`, the legacy
-`Sql` alias for administrator authority, and `Subscribe`. There is no implicit hierarchy among
-operations and no prefix matching. Authorization precedes resource lookup.
-`capabilities(address, operation)` requires the specified grant and reports the
-backend's features, not additional permissions. Memory supports typed KV; SQLite supports typed KV through its reserved
-`__phenix_kv` table **and** native SQL; both support bounded invalidation.
+`Sql` alias for administrator authority, and `Subscribe`. KV operations and
+subscription are independent; SQL transactions interpret administrator as
+read/write/admin and SQL write as read/write. Exact operation capability probes
+still require the requested grant. There is no prefix matching. Authorization
+precedes resource lookup. `capabilities(address, operation)` and
+`capabilities_mount(name, operation)` report backend features, not additional
+permissions. Memory supports typed KV; SQLite supports typed KV through its
+reserved `__phenix_kv` table **and** native SQL; both support bounded invalidation.
 
 **SQL requires mount-scoped authority**, through `SqlRead`, `SqlWrite`,
 `SqlAdmin`, or legacy `Sql` (administrator). Arbitrary SQL crosses logical
 dataset boundaries through joins, DDL, triggers and table names. Dataset-scoped
 SQL grants do not authorize transactions. Read-only SQL authority cannot
 execute mutations; native SQL remains no general hostile-SQL/process sandbox.
-Do not colocate sensitive KV data and untrusted mount-wide SQL readers in one
-database: read-only SQL can also query the reserved typed-KV table.
+The case-insensitive `__phenix_` namespace is reserved: callback SQL cannot read,
+write, create or drop its tables, indexes, triggers or views, even with administrator
+authority. This includes typed KV, schema and revision-clock metadata. Reads of the
+`sql` column in SQLite schema catalogs are denied, as is **all `ALTER TABLE`**, even
+for application tables: SQLite's authorizer omits rename destinations. Nested/temp
+triggers do not bypass these restrictions. Shared application SQL tables remain
+mount-wide; the scoped host planner requires explicit SQL mount-sharing approval.
 Callback transaction controls, savepoints, attachment and detachment are denied by
 SQLite's authorizer. All PRAGMAs, including read-only PRAGMAs, and functions whose
 names start with `pragma_` (case-insensitive) are denied too. Internal transaction
@@ -77,12 +85,12 @@ Errors distinguish invalid addresses, duplicates, missing resources, denial,
 unsupported capabilities, closed subscriptions, schema mismatch, codec errors,
 invalid queue capacity, ended transactions, poisoned state, and underlying
 structured rusqlite errors. `UnsupportedCapability { capability }` identifies
-`TypedKv` or `Sql`; unsupported operations do not silently emulate another backend.
+`TypedKv`, `Sql` or `CompareExchange`; unsupported operations do not silently emulate another backend.
 An empty successful drain means no queued notices; `SubscriptionClosed` means the
 registry state is gone (or the watch is absent), not an empty queue. Sessions keep
 state alive even after the original registry handle is dropped.
 
-`Capabilities` reports `typed_kv`, `sql`, `invalidation`, and `observation`.
+`Capabilities` reports `typed_kv`, `sql`, `atomic_cas`, `invalidation`, and `observation`.
 The closed `Observation` metadata uses `RegistryWrites` as its source,
 `Key` (memory) or `Mount` (SQLite) as coverage, and
 `BoundedNonDurableWithOverflow` as delivery. Every `Invalidation` carries this same
@@ -139,16 +147,16 @@ fn provision() -> Result<()> {
 }
 ```
 
-Native SQLite usage, after trusted `mount_sqlite("db", path)` and registration of
-`store://db/items` with application metadata:
+Native SQLite usage, after trusted `mount_sqlite("db", path)`; native SQL needs no
+dataset registration:
 
 ```rust
 # use phenix_storage::*;
-fn sql_work(registry: &Registry, address: &Address) -> Result<Vec<(i64, String)>> {
+fn sql_work(registry: &Registry) -> Result<Vec<(i64, String)>> {
     let node = registry.session([Grant::new(
-        Scope::Mount("db".into()), [Operation::Sql],
+        Scope::Mount("db".into()), [Operation::SqlAdmin],
     )]);
-    node.transaction(address, |sql| {
+    node.transaction_mount("db", |sql| {
         sql.execute("CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, title TEXT NOT NULL)", &[])?;
         sql.execute("INSERT INTO items(title) VALUES (?)", &[&"bound, not interpolated"])?;
         sql.query("SELECT id, title FROM items WHERE id > ?", &[&0i64], |row| {
@@ -159,7 +167,7 @@ fn sql_work(registry: &Registry, address: &Address) -> Result<Vec<(i64, String)>
 ```
 
 Returning `Ok` commits; returning `Err` rolls back. A callback panic is caught long
-enough to drop/roll back the SQLite transaction and release the registry guard,
+enough to drop/roll back the SQLite transaction and release the mount guard,
 then resumed outside the lock. It does not poison registry state or disable other
 mounts. This is unwind handling, not recovery from process abort. Commit failures return errors
 without notifications. Foreign keys are enabled when mounting. The authorizer
@@ -168,6 +176,36 @@ ends a transaction (for example, `INSERT OR ROLLBACK`), further facade calls fai
 with `TransactionEnded` rather than silently running in autocommit mode. A query
 requires a read-only prepared statement; use execute for writes, not DML RETURNING.
 Keep each call to one SQL statement. Parameters bind values, never identifiers.
+
+The registry removes its callback SQL authorizer before returning the connection
+to a trusted external `SqlBackend`, including error, failed begin/commit, implicit
+rollback and unwind paths. Built-in SQLite adapter operations install their own
+authorizer denying derived trigger/view execution: persisted triggers cannot gain
+internal KV, registration or migration authority.
+
+## Revisions
+
+Low-level `Session::get` still returns `Option<C::Value>`. `get_revisioned` returns
+`Option<Revisioned<C::Value>>`; `compare_exchange(address, key,
+expected: Option<&Revision>, value, codec)` returns a new opaque `Revision`.
+`None` means insert only if absent; conflicts return
+`Error::Conflict { current: Option<Revision> }`. Reads require `Read` and conditional
+writes require `Write`; capabilities never add authority. Unsupported providers
+return `Capability::CompareExchange`, not a get/put approximation.
+
+Memory and SQLite support atomic CAS. Successful puts invalidate prior tokens,
+including delete/recreate. SQLite persists revisions and its clock, serializes CAS
+with an immediate transaction, and transactionally upgrades
+legacy KV metadata. Already-versioned files with missing/regressed clocks fail
+closed rather than risk ABA through token reuse. Tokens are comparable only for
+the same mount/dataset/key, not global sequence numbers, snapshot tokens or grants.
+Absence has no historical token; restoring an old database restores its tokens.
+The public CAS guarantee is local to one backend/mount, not a transaction across
+backend instances or mounts.
+See [Scoped storage](scoped-storage.md#typed-access-and-cas) for the revisioned
+scoped read API and implicit revision-capability planning requirement.
+
+## Graph Binding
 
 The runnable [graph binding example](../packages/phenix-kernel/examples/storage.rs)
 keeps business behavior in `CounterPlugin`: its graph module writes and then reads
@@ -181,8 +219,9 @@ its own rescan/cache invalidation policy rather than treating that log as recove
 
 ## Invalidation Contract
 
-Mutation, successful commit, sequence assignment, and queue insertion occur under
-one registry mutex. Consumers cannot observe an event before its write completes.
+The per-mount mutation lock covers successful mutation/commit through publication;
+the registry mutex covers sequence assignment and queue insertion. Consumers cannot
+observe an event before its write completes. Failed CAS publishes no notice.
 Sequence numbers order this registry's events, not external database activity.
 Memory put emits dataset/key metadata; delete emits only when a key existed.
 SQLite emits one mount-wide event after a successful potentially writing
@@ -245,8 +284,9 @@ can implement the object-safe `Backend` interface and be contributed through
 `phenix-storage-plugin`. Native `SqlBackend` still exposes rusqlite and is
 not PostgreSQL-neutral. Canonical structural schema support exists in
 `phenix-schema`; a hand-written codec may still falsely claim compatible bytes.
-No arbitrary codec is proven correct by the descriptor alone. SQL registration metadata does not type-check SQL rows. No future
-backend or abstraction below should be read as an implemented capability.
+No arbitrary codec is proven correct by the descriptor alone. SQL registration
+metadata does not type-check SQL rows. The [scoped review](scoped-storage-review.md)
+records provider-validation limits and verification status, not a claim of green CI.
 
 ## Public Abstraction Review
 
@@ -259,13 +299,13 @@ it can be replaced. Phase describes current use, not a promised roadmap.
 | `Address` | Host/plugin value | Canonical logical mount/dataset, never a path | Strings and strict byte validation | Stable resource identity | Provisioning and lookup | Grammar is public; parser internals replaceable |
 | `Schema` | Host registers; codec author declares | Four fields must compare equal | Owned strings and revision | Reject declared schema/codec mismatch, not prove structure | Registration and typed access | Descriptor convention is application-owned; no migration |
 | `Codec` | Application author | Typed value/bytes boundary with declared schema | Associated type and byte vectors | Avoid mandatory serialization format | Memory encode/decode | Application can replace implementation if metadata and bytes remain truthful |
-| `Operation` | Host grant policy | No implicit operation hierarchy | Closed enum | Explicit permission vocabulary | Authorization | New operations require API/policy changes |
+| `Operation` | Host grant policy | Independent KV/subscription operations; SQL transaction levels explicitly interpreted | Closed enum | Explicit permission vocabulary | Authorization | New operations require API/policy changes |
 | `Scope` | Host grants; plugin subscriptions | Exact dataset or whole mount, no prefixes | `Address`/mount string | Align authority and invalidation scope | Authorization and delivery | Closed enum; changing scope semantics affects policy |
 | `Grant` | Host declaration, copied into session | Declaration alone conveys no authority | Set of operations | Explicit session provisioning | Host setup | Host policy replaceable; issuance remains trusted |
 | `Registry` | Trusted host; shared handles | Unique mounts/datasets, trusted issuance, per-mount mutation | Registry map plus per-mount `Arc<Mutex<_>>` | Resource and authority root | Provisioning and commit | Object-safe external backend support; plugin bridge optional |
 | `Session` | Host issues; plugin holds/clones | Immutable explicit grants; authorize before lookup | Shared registry and grant vector | Separate use from provisioning authority | Plugin execution | Internal authorization replaceable, public semantics must hold |
-| `Capabilities` | Adapter returns to authorized caller | Features are not permissions | Booleans and `Observation` | Report supported access modes | Binding setup | Closed report; no dynamic backend protocol |
-| `Capability` | Adapter error metadata | Unsupported identifies `TypedKv` or `Sql` | Closed enum | Machine-readable failure | Access failure handling | Additions require API review |
+| `Capabilities` | Adapter returns to authorized caller | Features, including atomic CAS, are not permissions | Booleans and `Observation` | Report supported access modes | Binding setup | Closed report; provider declarations are separate |
+| `Capability` | Adapter error metadata | Unsupported identifies `TypedKv`, `Sql` or `CompareExchange` | Closed enum | Machine-readable failure | Access failure handling | Additions require API review |
 | `Observation` | Adapter constructs; consumer reads | Source, coverage and delivery travel together | Three closed enums | Make invalidation limits explicit | Binding and rescan policy | Representation replaceable only preserving stated guarantees |
 | `ObservationSource` | Adapter metadata | Only `RegistryWrites`, not external changes | Closed enum | Prevent change-capture assumptions | Observation interpretation | New source needs real implementation |
 | `ObservationCoverage` | Backend metadata | `Key` for memory, `Mount` for SQLite | Closed enum | Avoid fake row/table precision | Dependency invalidation | New precision needs evidence and implementation |
@@ -329,9 +369,5 @@ appropriate conversion; there is no built-in SeaQuery adapter. No additional SQL
 parser is required: SQLite parses and the authorizer enforces the connection
 boundary. A builder neither creates authority nor makes identifiers value parameters.
 
-redb is an optional future embedded persistent-KV candidate, not an optional Cargo
-feature or implemented backend today. PostgreSQL is a future network-backend
-possibility only; LISTEN/NOTIFY research does not constitute an adapter, durable
-outbox, replay guarantee or automatic graph binding. Neither is simulated through
-SQLite or advertised by current capabilities. Any addition must implement honest
-transaction, authority and observation semantics before extending the closed set.
+No redb, PostgreSQL or SurrealDB backend is implemented. The research links do not
+imply adapters, durable observation, replay or automatic graph binding.
