@@ -4,6 +4,8 @@ members = [
   "packages/phenix-graphs",
   "packages/phenix-graphs/port-args-derive",
   "packages/phenix-plugins",
+  "packages/phenix-storage",
+  "packages/phenix-kernel",
 ]
 
 [profile.release]

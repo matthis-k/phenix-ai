@@ -1,0 +1,11 @@
+[package]
+name = "phenix-kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+phenix-graph = { path = "../phenix-graphs" }
+phenix-plugin = { path = "../phenix-plugins" }
+
+[dev-dependencies]
+phenix-storage = { path = "../phenix-storage" }

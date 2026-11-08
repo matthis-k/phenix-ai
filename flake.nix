@@ -1,5 +1,5 @@
 {
-  description = "Phenix graph and plugin foundation";
+  description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
 
@@ -37,6 +37,8 @@
           mkdir -p "$out/lib"
           cp target/*/release/libphenix_graph.rlib "$out/lib/"
           cp target/*/release/libphenix_plugin.rlib "$out/lib/"
+          cp target/*/release/libphenix_storage.rlib "$out/lib/"
+          cp target/*/release/libphenix_kernel.rlib "$out/lib/"
         '';
       };
     in
