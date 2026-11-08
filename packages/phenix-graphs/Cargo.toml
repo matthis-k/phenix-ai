@@ -1,0 +1,21 @@
+[package]
+name = "phenix-graph"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["derive"]
+derive = ["dep:phenix_port_args_derive"]
+
+[dependencies]
+phenix_port_args_derive = { path = "port-args-derive", optional = true }
+
+[dev-dependencies]
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "ownership"
+harness = false
