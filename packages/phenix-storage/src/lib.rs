@@ -252,8 +252,19 @@ impl Backend for SqliteBackend {
         Some(self)
     }
 }
+impl SqliteBackend {
+    // The native SQL transaction facade installs a per-session SQLite authorizer.
+    // It remains on the connection after commit/rollback; KV access has its own
+    // explicit Session grants and must not inherit a prior SQL grant's mode.
+    // Per-mount locking prevents concurrent SQL and KV calls on this connection.
+    fn reset_sql_authority(&mut self) -> Result<()> {
+        self.0.authorizer(None::<fn(AuthContext<'_>) -> Authorization>)?;
+        Ok(())
+    }
+}
 impl TypedKv for SqliteBackend {
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        self.reset_sql_authority()?;
         use rusqlite::OptionalExtension;
         Ok(self.0.query_row(
             "SELECT value FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
@@ -262,6 +273,7 @@ impl TypedKv for SqliteBackend {
         ).optional()?)
     }
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
+        self.reset_sql_authority()?;
         self.0.execute(
             "INSERT INTO __phenix_kv (dataset, key, value) VALUES (?1, ?2, ?3) \
              ON CONFLICT(dataset, key) DO UPDATE SET value = excluded.value",
@@ -270,6 +282,7 @@ impl TypedKv for SqliteBackend {
         Ok(())
     }
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
+        self.reset_sql_authority()?;
         Ok(self.0.execute(
             "DELETE FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
             rusqlite::params![dataset, key],
