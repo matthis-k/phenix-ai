@@ -184,8 +184,12 @@ impl PluginInstance for ForeignClaim {
 #[test]
 fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
     let mut catalog = PluginCatalog::new();
-    let provider = catalog.register("provider", |_: ()| Ok(HonestOffer)).unwrap();
-    let foreign = catalog.register("foreign", |_: ()| Ok(ForeignClaim)).unwrap();
+    let provider = catalog
+        .register("provider", |_: ()| Ok(HonestOffer))
+        .unwrap();
+    let foreign = catalog
+        .register("foreign", |_: ()| Ok(ForeignClaim))
+        .unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&provider, ()).unwrap();
     plugins.load(&foreign, ()).unwrap();
