@@ -1,6 +1,8 @@
 //! Synchronous, explicitly authorized storage. See `docs/storage.md` in the repository.
 //! Hosts can mount external backends through object-safe optional capabilities.
 //! Observations are invalidations, not committed row changes or a durable change log.
+
+pub mod scoped;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
