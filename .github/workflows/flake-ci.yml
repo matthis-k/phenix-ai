@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   flake-checks:
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@e83c6029afc0140a242ae8240dbff6efe5979725
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-checks.yml@5ca9d5ba929c334c7c745804d3575bb42972f5d2
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "e83c6029afc0140a242ae8240dbff6efe5979725"
+      library_ref: "5ca9d5ba929c334c7c745804d3575bb42972f5d2"
