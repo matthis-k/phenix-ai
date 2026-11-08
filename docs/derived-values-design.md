@@ -475,7 +475,7 @@ Do not claim durable correctness based solely on current bounded in-process `Sub
 
 ### 11.2 Cross-plugin derivations
 
-A can define the shared `CellSpec<T>` descriptor and B may independently define a matching schema; Storage resolves by canonical resource identity and encoding contract. But **graph local typed endpoints remain Rust `TypeId` based**: unrelated Rust types in different crates cannot be wired as local values merely because their fields look alike. For cross-plugin graph outputs, require the existing `ContractValue` wire contract and `InterfaceBounds`, or a conversion adapter at an explicit boundary. Do not invent a new contract system.
+A can define the shared `CellSpec<T>` descriptor and B may independently define a matching schema; Storage resolves by canonical resource identity and encoding contract. But **graph local typed endpoints remain Rust `TypeId` based**: unrelated Rust types in different crates cannot be wired as local values merely because their fields look alike. For cross-plugin graph outputs, use `ContractValue` with an explicit portable descriptor and `connect_wire`, or a conversion adapter at an explicit boundary. Named requirements use Graph-owned `GraphContract` claims over the actual `InterfaceShape`; see [Graph interface contracts](graph-interface-contracts.md). Do not invent an independent contract runtime.
 
 ### 11.3 Permissions
 

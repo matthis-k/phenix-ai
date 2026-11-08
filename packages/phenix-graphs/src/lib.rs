@@ -33,8 +33,12 @@ use std::marker::PhantomData;
 extern crate self as phenix_graph;
 
 pub mod interface;
-pub use interface::{InterfaceBounds, InterfaceError};
+pub use interface::{
+    BoundInput, BoundOutput, BoundUnit, GraphContract, GraphUnit, InterfaceError, InterfacePhase,
+    InterfaceShape, UnitProvenance, UnitSnapshot,
+};
 pub mod authoring;
+pub use authoring::{AuthoringUnit, BoundAuthoringUnit};
 pub mod deployment;
 pub mod output;
 pub use output::{Destination, Output};
@@ -2259,13 +2263,19 @@ where
     }
 }
 
+mod provenance;
+pub use provenance::GraphOrigin;
+
 type NodeLogic = dyn NodeAction;
 type NodeLogicFactory = dyn Fn() -> Arc<NodeLogic> + Send + Sync;
 #[derive(Clone)]
 pub struct NodeTemplate {
+    composition_origin: Option<GraphOrigin>,
+    pub claims: Vec<GraphContract>,
     id: NodeId,
     name: Option<String>,
     declaring_scope: Option<u64>,
+    declaration_id: u64,
     ports: Vec<Port>,
     outputs: Vec<OutputSlot>,
     grants: Vec<ResourceNeed>,
@@ -2284,9 +2294,12 @@ fn node_action<A: NodeAction + 'static>(
     let action: Arc<NodeLogic> = Arc::new(action);
     let logic_factory: Arc<NodeLogicFactory> = Arc::new(move || Arc::clone(&action));
     NodeTemplate {
+        composition_origin: None,
+        claims: Vec::new(),
         id: NodeId(id),
         name: None,
         declaring_scope: None,
+        declaration_id: 0,
         ports,
         outputs,
         grants,
@@ -2308,9 +2321,12 @@ where
 {
     let logic_factory: Arc<NodeLogicFactory> = Arc::new(move || Arc::new(factory()));
     NodeTemplate {
+        composition_origin: None,
+        claims: Vec::new(),
         id: NodeId(id),
         name: None,
         declaring_scope: None,
+        declaration_id: 0,
         ports,
         outputs,
         grants,
@@ -2350,6 +2366,7 @@ struct PhysicalNode {
     id: NodeId,
     name: Option<String>,
     declaring_scope: Option<u64>,
+    declaration_id: u64,
     ports: Vec<Port>,
     outputs: Vec<OutputSlot>,
     grants: Vec<ResourceNeed>,
@@ -2553,6 +2570,7 @@ impl NodeTemplate {
             id,
             name: self.name.clone(),
             declaring_scope: self.declaring_scope,
+            declaration_id: self.declaration_id,
             ports: self.ports.clone(),
             outputs: self.outputs.clone(),
             grants: self.grants.clone(),
@@ -2597,9 +2615,12 @@ impl NodeTemplate {
     ) -> Self {
         let logic_factory: Arc<NodeLogicFactory> = Arc::new(move || Arc::clone(&action));
         Self {
+            composition_origin: None,
+            claims: Vec::new(),
             id: NodeId(id),
             name: None,
             declaring_scope: None,
+            declaration_id: 0,
             ports,
             outputs,
             grants: vec![],
@@ -2991,7 +3012,10 @@ pub struct ModuleEdge {
 #[derive(Clone, Debug)]
 pub struct ModuleInput {
     pub id: u16,
+    /// Unique flat routing key, independent of public port/slot metadata.
     pub name: String,
+    pub port: String,
+    pub slot: String,
     pub schema: &'static str,
     pub local_type: Option<TypeId>,
     pub targets: Vec<ModuleInputTarget>,
@@ -2999,6 +3023,15 @@ pub struct ModuleInput {
 impl ModuleInput {
     pub fn identity(&self) -> TypeIdentity {
         identity(self.schema, self.local_type)
+    }
+}
+fn module_input_slot_name(port: &str, slot: &str) -> String {
+    // Literal defaults outside this namespace keep their historical routing key.
+    // Escape defaults inside it too, so no literal can alias an encoded pair.
+    if slot == "value" && !port.starts_with("__slot_") {
+        port.to_owned()
+    } else {
+        format!("__slot_{}:{}:{port}{slot}", port.len(), slot.len())
     }
 }
 #[derive(Clone, Debug)]
@@ -3061,6 +3094,11 @@ pub struct ModuleTrigger {
 }
 #[derive(Clone)]
 pub struct ModuleDef {
+    /// Instance-name to authoring declaration identity, retained for typed destinations.
+    /// Low-level definitions without authoring handles may leave this empty.
+    pub declaration_ids: BTreeMap<String, u64>,
+    pub claims: Vec<GraphContract>,
+    pub contract_requests: Vec<(String, GraphContract)>,
     pub id: String,
     pub nodes: Vec<NodeTemplate>,
     pub instances: Vec<ModuleInstance>,
@@ -3081,11 +3119,13 @@ static NEXT_DECLARATION_SCOPE: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NamedNodeHandle {
     scope: u64,
+    declaration_id: u64,
     name: String,
 }
 
 pub struct NamedInput<T: ContractValue> {
     scope: u64,
+    declaration_id: u64,
     node: String,
     port: String,
     slot: String,
@@ -3093,6 +3133,7 @@ pub struct NamedInput<T: ContractValue> {
 }
 pub struct NamedOutput<T: ContractValue> {
     scope: u64,
+    declaration_id: u64,
     node: String,
     output: String,
     _type: PhantomData<fn() -> T>,
@@ -3101,6 +3142,7 @@ impl NamedNodeHandle {
     pub fn input<T: ContractValue>(&self, port: &str, slot: &str) -> NamedInput<T> {
         NamedInput {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             node: self.name.clone(),
             port: port.into(),
             slot: slot.into(),
@@ -3110,6 +3152,7 @@ impl NamedNodeHandle {
     pub fn output<T: ContractValue>(&self, name: &str) -> NamedOutput<T> {
         NamedOutput {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             node: self.name.clone(),
             output: name.into(),
             _type: PhantomData,
@@ -3119,6 +3162,9 @@ impl NamedNodeHandle {
 
 #[derive(Clone)]
 pub struct ModuleDefBuilder {
+    declaration_ids: BTreeMap<String, u64>,
+    claims: Vec<GraphContract>,
+    contract_requests: Vec<(String, GraphContract)>,
     id: String,
     scope: u64,
     nodes: Vec<NodeTemplate>,
@@ -3132,6 +3178,9 @@ pub struct ModuleDefBuilder {
 impl Default for ModuleDefBuilder {
     fn default() -> Self {
         Self {
+            declaration_ids: BTreeMap::new(),
+            claims: Vec::new(),
+            contract_requests: Vec::new(),
             id: String::new(),
             scope: NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
             nodes: vec![],
@@ -3174,6 +3223,7 @@ impl ModuleDefBuilder {
         match node_def.into() {
             NodeDef::Node(mut node) => {
                 node.declaring_scope.get_or_insert(self.scope);
+                node.declaration_id = NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed);
                 if node.id == NodeId(0) {
                     // 0 is the unassigned sentinel used by inference-first NodeTemplate::typed.
                     let used: BTreeSet<u16> = self.nodes.iter().map(|node| node.id.0).collect();
@@ -3192,6 +3242,10 @@ impl ModuleDefBuilder {
             }
             NodeDef::Module(instance) => {
                 check_scope_name(&self.nodes, &self.instances, &instance.name)?;
+                self.declaration_ids.insert(
+                    instance.name.clone(),
+                    NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
+                );
                 self.instances.push(instance);
             }
         }
@@ -3217,6 +3271,7 @@ impl ModuleDefBuilder {
         self.add_named(name.clone(), node)?;
         Ok(NamedNodeHandle {
             scope: self.scope,
+            declaration_id: self.nodes.last().expect("registered node").declaration_id,
             name,
         })
     }
@@ -3260,6 +3315,9 @@ impl ModuleDefBuilder {
             .find(|node| node.name.as_deref() == Some(input.node.as_str()))
             .ok_or_else(|| format!("unknown declaration node {:?}", input.node))?;
         let address = node.input(&input.port, &input.slot)?;
+        if node.declaration_id != input.declaration_id {
+            return Err("input belongs to a stale or divergent declaration".into());
+        }
         let actual = node
             .ports
             .iter()
@@ -3285,6 +3343,9 @@ impl ModuleDefBuilder {
             .find(|node| node.name.as_deref() == Some(output.node.as_str()))
             .ok_or_else(|| format!("unknown declaration node {:?}", output.node))?;
         let address = node.output(&output.output)?;
+        if node.declaration_id != output.declaration_id {
+            return Err("output belongs to a stale or divergent declaration".into());
+        }
         let actual = node
             .outputs
             .iter()
@@ -3322,6 +3383,27 @@ impl ModuleDefBuilder {
         name: impl Into<String>,
         targets: Vec<NamedInput<T>>,
     ) -> Result<(), String> {
+        self.export_input_slot(name, "value", targets)
+    }
+    /// Export an exact public port/slot pair without introducing a runtime join.
+    pub fn export_input_slot<T: ContractValue>(
+        &mut self,
+        port: impl Into<String>,
+        slot: impl Into<String>,
+        targets: Vec<NamedInput<T>>,
+    ) -> Result<(), String> {
+        let port = port.into();
+        let slot = slot.into();
+        validate_name_segment(&port).map_err(|error| error.to_string())?;
+        validate_name_segment(&slot).map_err(|error| error.to_string())?;
+        let name = module_input_slot_name(&port, &slot);
+        if self
+            .inputs
+            .iter()
+            .any(|input| input.name == name || (input.port == port && input.slot == slot))
+        {
+            return Err("duplicate public input".into());
+        }
         if targets.is_empty() {
             return Err("public input needs at least one target".into());
         }
@@ -3332,10 +3414,12 @@ impl ModuleDefBuilder {
         let id = (0..=u16::MAX)
             .find(|id| !used.contains(id))
             .ok_or("public input IDs exhausted")?;
-        self.input(
+        self.input_slot_with_identity(
             id,
-            name,
+            port,
+            slot,
             T::wire_schema(),
+            None,
             targets
                 .into_iter()
                 .map(|target| ModuleInputTarget::NodeNamed {
@@ -3396,9 +3480,22 @@ impl ModuleDefBuilder {
         local_type: Option<TypeId>,
         targets: Vec<ModuleInputTarget>,
     ) {
+        self.input_slot_with_identity(id, name.into(), "value".into(), schema, local_type, targets);
+    }
+    pub(crate) fn input_slot_with_identity(
+        &mut self,
+        id: u16,
+        port: String,
+        slot: String,
+        schema: &'static str,
+        local_type: Option<TypeId>,
+        targets: Vec<ModuleInputTarget>,
+    ) {
         self.inputs.push(ModuleInput {
             id,
-            name: name.into(),
+            name: module_input_slot_name(&port, &slot),
+            port,
+            slot,
             schema,
             local_type,
             targets,
@@ -3566,6 +3663,9 @@ impl ModuleDefBuilder {
     pub fn build(self) -> ModuleEntry {
         ModuleEntry {
             definition: ModuleDef {
+                declaration_ids: self.declaration_ids,
+                claims: self.claims,
+                contract_requests: self.contract_requests,
                 id: self.id,
                 nodes: self.nodes,
                 instances: self.instances,
@@ -3595,6 +3695,7 @@ struct EdgeProvenance {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ModuleInstanceProvenance {
+    declaration_id: Option<u64>,
     definition: String,
     instance_path: Vec<String>,
     inputs: BTreeMap<u16, Vec<InputAddr>>,
@@ -3702,6 +3803,7 @@ impl FlatGraphBuilder {
             triggers: self.triggers,
             order: BTreeMap::new(),
             metadata: Arc::new(self.metadata),
+            composition_origins: BTreeMap::new(),
             structural: OnceLock::new(),
         };
         for n in graph.nodes.values() {
@@ -3988,6 +4090,8 @@ impl ModuleCatalog {
         expander.metadata.root_definition = Some(root.to_owned());
         expander.metadata.inputs = expanded.inputs;
         expander.metadata.outputs = expanded.outputs;
+        interface::validate_metadata(&expander.metadata)
+            .map_err(|error| CompileDiagnostic::at(CompilePhase::Index, root, error.to_string()))?;
         expander.builder.metadata = expander.metadata;
         expander
             .builder
@@ -4135,6 +4239,7 @@ impl ModuleExpander<'_> {
                 }),
             );
             self.metadata.instances.push(ModuleInstanceProvenance {
+                declaration_id: body.declaration_ids.get(&instance.name).copied(),
                 definition: child_id.clone(),
                 instance_path: child_path,
                 inputs: BTreeMap::new(),
@@ -4365,12 +4470,18 @@ impl ModuleExpander<'_> {
         let mut input_ids = BTreeSet::new();
         let mut output_ids = BTreeSet::new();
         let mut input_names = BTreeSet::new();
+        let mut input_slots = BTreeSet::new();
         let mut output_names = BTreeSet::new();
         let mut ordered_inputs: Vec<_> = definition.inputs.iter().collect();
         ordered_inputs.sort_by_key(|input| input.id);
         for input in ordered_inputs {
             validate_name_segment(&input.name).map_err(|error| error.to_string())?;
-            if !input_ids.insert(input.id) || !input_names.insert(input.name.as_str()) {
+            validate_name_segment(&input.port).map_err(|error| error.to_string())?;
+            validate_name_segment(&input.slot).map_err(|error| error.to_string())?;
+            if !input_ids.insert(input.id)
+                || !input_names.insert(input.name.as_str())
+                || !input_slots.insert((&input.port, &input.slot))
+            {
                 return Err(format!("duplicate module public port {}", input.name));
             }
             if input.targets.is_empty() {
@@ -4664,6 +4775,7 @@ impl StructuralIndex {
 }
 
 pub struct CompiledGraph {
+    composition_origins: BTreeMap<u64, GraphOrigin>,
     nodes: BTreeMap<NodeId, Arc<PhysicalNode>>,
     by_output: BTreeMap<OutputAddr, Vec<Edge>>,
     by_node: BTreeMap<NodeId, Vec<Edge>>,
@@ -4689,6 +4801,8 @@ pub struct ModuleRef<'g> {
 pub struct ModulePortInfo<'g> {
     id: u16,
     name: &'g str,
+    port: &'g str,
+    slot: &'g str,
     schema: &'static str,
     local_type: Option<TypeId>,
 }
@@ -4807,6 +4921,8 @@ impl<'g> ModuleRef<'g> {
         self.definition().inputs.iter().map(|port| ModulePortInfo {
             id: port.id,
             name: port.name.as_str(),
+            port: port.port.as_str(),
+            slot: port.slot.as_str(),
             schema: port.schema,
             local_type: port.local_type,
         })
@@ -4815,6 +4931,8 @@ impl<'g> ModuleRef<'g> {
         self.definition().outputs.iter().map(|port| ModulePortInfo {
             id: port.id,
             name: port.name.as_str(),
+            port: port.name.as_str(),
+            slot: "value",
             schema: port.schema,
             local_type: port.local_type,
         })
@@ -4848,6 +4966,12 @@ impl<'g> ModuleRef<'g> {
     }
 }
 impl ModulePortInfo<'_> {
+    pub fn port_name(&self) -> &str {
+        self.port
+    }
+    pub fn slot_name(&self) -> &str {
+        self.slot
+    }
     pub fn id(&self) -> u16 {
         self.id
     }
@@ -4968,27 +5092,47 @@ impl CompiledGraph {
             }
             let addresses: Vec<InputAddr> = match target {
                 output::DestinationTarget::Node {
-                    name, port, slot, ..
+                    name,
+                    port,
+                    slot,
+                    declaration_id,
+                    ..
                 } => {
                     let key = qualify(name);
                     match self.find(&key) {
                         Some(FindResult::Node(node)) => {
+                            if self.nodes[&NodeId(node.id())].declaration_id != *declaration_id {
+                                return Err(
+                                    "selected destination is stale or from a divergent declaration"
+                                        .into(),
+                                );
+                            }
                             node.input(port, slot).into_iter().collect()
                         }
                         _ => Vec::new(),
                     }
                 }
-                output::DestinationTarget::Module { name, port, .. } => {
+                output::DestinationTarget::Module {
+                    name,
+                    port,
+                    declaration_id,
+                    ..
+                } => {
                     let key = qualify(name);
                     match self.find(&key) {
-                        Some(FindResult::Module(module)) => module
-                            .definition()
-                            .inputs
-                            .iter()
-                            .find(|input| input.name == *port)
-                            .and_then(|input| module.instance_metadata().inputs.get(&input.id))
-                            .cloned()
-                            .unwrap_or_default(),
+                        Some(FindResult::Module(module)) => {
+                            if module.instance_metadata().declaration_id != Some(*declaration_id) {
+                                return Err("selected module destination is stale or from a divergent declaration".into());
+                            }
+                            module
+                                .definition()
+                                .inputs
+                                .iter()
+                                .find(|input| input.name == *port)
+                                .and_then(|input| module.instance_metadata().inputs.get(&input.id))
+                                .cloned()
+                                .unwrap_or_default()
+                        }
                         _ => Vec::new(),
                     }
                 }

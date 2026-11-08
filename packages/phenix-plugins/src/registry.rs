@@ -1,15 +1,14 @@
 //! Graph-independent, typed in-process contribution staging.
 //! Identity is host-supplied provenance, never a permission or ABI guarantee.
 use crate::{Code, Failure, identifier};
-use phenix_graph::InterfaceBounds;
 use std::{any::Any, collections::BTreeSet};
 
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
     fn id(&self) -> &str;
-    /// Graph-facing contributions declare graph-owned input/output bounds.
-    /// Non-graph resources may omit these.
-    fn graph_bounds(&self) -> Option<&InterfaceBounds> {
+    /// Logical path of the actual graph unit offered by this contribution.
+    /// This locator is not a shape declaration, membership claim or permission.
+    fn graph_unit(&self) -> Option<&str> {
         None
     }
 }
@@ -19,7 +18,6 @@ struct Entry {
     kind: &'static str,
     id: String,
     value: Box<dyn Any + Send + Sync>,
-    bounds: Option<InterfaceBounds>,
 }
 
 pub struct Registrar {
@@ -62,7 +60,6 @@ impl Registrar {
             owner: self.owner.clone(),
             kind: C::KIND,
             id,
-            bounds: value.graph_bounds().cloned(),
             value: Box::new(value),
         });
         Ok(())
@@ -106,13 +103,6 @@ impl Contributions {
         self.entries
             .iter()
             .map(|e| (e.owner.as_str(), e.kind, e.id.as_str()))
-    }
-    pub(crate) fn bounds(&self, kind: &str, id: &str) -> Option<&InterfaceBounds> {
-        self.entries
-            .iter()
-            .find(|e| e.kind == kind && e.id == id)?
-            .bounds
-            .as_ref()
     }
     pub(crate) fn find_index<C: Contribution>(&self, id: &str) -> Option<usize> {
         self.entries

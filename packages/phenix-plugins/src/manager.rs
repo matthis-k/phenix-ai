@@ -5,7 +5,7 @@
 //! Dynamically linked cdylibs require a separate ABI adapter (not Rust Any).
 use crate::{Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
-use phenix_graph::InterfaceBounds;
+use phenix_graph::{CompiledGraph, GraphContract, GraphOrigin};
 use std::{any::Any, collections::BTreeMap, marker::PhantomData, ops::Deref, sync::Arc};
 
 type Configuration = Box<dyn Any + Send>;
@@ -118,6 +118,7 @@ impl PluginCatalog {
 // Field drop order is deliberate: contributions (which may contain plugin code)
 // are dropped before implementation state, and both before the factory/code lease.
 struct Loaded {
+    graph_origin: GraphOrigin,
     contributions: Contributions,
     _implementation: Box<dyn PluginInstance>,
     _factory: Arc<Factory>,
@@ -141,33 +142,60 @@ impl PluginSnapshot {
         self.loaded.revision
     }
 
+    /// Trusted hosts use this exact revision's token when composing its units.
+    /// A token does not itself retain plugin executable code or grant authority.
+    pub fn graph_origin(&self) -> &GraphOrigin {
+        &self.loaded.graph_origin
+    }
+
     pub fn keys(&self) -> impl Iterator<Item = (&str, &str, &str)> {
         self.loaded.contributions.keys()
     }
 
-    /// Check graph-facing bounds without requiring the provider's Rust type.
-    pub fn check_bounds(
-        &self,
-        kind: &str,
-        id: &str,
-        requested: &InterfaceBounds,
-    ) -> Result<(), Failure> {
-        let offered = self.loaded.contributions.bounds(kind, id).ok_or_else(|| {
-            Failure::new(Code::MissingBinding, "missing graph-bound contribution")
-        })?;
-        requested
-            .check_implementation(offered)
-            .map_err(|err| Failure::new(Code::SchemaRejected, err.to_string()))
-    }
-    /// Bind a typed in-process contribution after graph interface validation.
+    /// Bind against the actual immutable compiled unit, requiring its explicit
+    /// graph-owned claim and this exact revision's composition origin.
+    /// The handle pins this plugin revision, not the graph;
+    /// callers must not reuse this validation for a different compiled graph.
     pub fn bind<C: Contribution>(
         &self,
         id: &str,
-        requested: &InterfaceBounds,
+        requested: &GraphContract,
+        graph: &CompiledGraph,
     ) -> Result<ContributionHandle<C>, Failure> {
-        self.check_bounds(C::KIND, id, requested)?;
-        self.get::<C>(id)
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "contribution type mismatch"))
+        let handle = self.get::<C>(id).ok_or_else(|| {
+            Failure::new(
+                Code::MissingBinding,
+                "missing contribution or type mismatch",
+            )
+        })?;
+        let path = handle.graph_unit().ok_or_else(|| {
+            Failure::new(
+                Code::MissingBinding,
+                "contribution has no graph unit locator",
+            )
+        })?;
+        let unit = graph.find(path).ok_or_else(|| {
+            Failure::new(
+                Code::MissingBinding,
+                format!(
+                    "compiled graph unit not found: {path}, contract {}",
+                    requested.id()
+                ),
+            )
+        })?;
+        if unit.origin() != Some(self.graph_origin()) {
+            return Err(Failure::new(
+                Code::Denied,
+                format!("compiled unit {path}: contribution generation origin mismatch"),
+            ));
+        }
+        requested.check_implementation(&unit).map_err(|error| {
+            Failure::new(
+                Code::SchemaRejected,
+                format!("compiled unit {path}: {error}"),
+            )
+        })?;
+        Ok(handle)
     }
     /// Return a contribution with the plugin's lifetime attached. Graph
     /// adapters should retain these handles inside their compiled actions.
@@ -195,6 +223,13 @@ impl<C: Contribution> Clone for ContributionHandle<C> {
             index: self.index,
             _value: PhantomData,
         }
+    }
+}
+
+impl<C: Contribution> ContributionHandle<C> {
+    /// Composition provenance for the exact leased plugin revision.
+    pub fn graph_origin(&self) -> &GraphOrigin {
+        &self.loaded.graph_origin
     }
 }
 
@@ -268,6 +303,7 @@ impl PluginSet {
         let mut registrar = Registrar::new(key.name())?;
         instance.contribute(&mut registrar)?;
         Ok(Arc::new(Loaded {
+            graph_origin: GraphOrigin::default(),
             contributions: registrar.finish(),
             _implementation: instance,
             _factory: factory,

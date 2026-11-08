@@ -150,6 +150,9 @@ fn direct_module_struct_literal_compiles_without_builder() {
     .unwrap();
     let entry = ModuleEntry {
         definition: ModuleDef {
+            declaration_ids: Default::default(),
+            claims: vec![],
+            contract_requests: vec![],
             id: "raw-def".to_owned(),
             nodes: vec![node],
             instances: vec![],
@@ -157,6 +160,8 @@ fn direct_module_struct_literal_compiles_without_builder() {
             inputs: vec![ModuleInput {
                 id: 0,
                 name: "request".into(),
+                port: "request".into(),
+                slot: "value".into(),
                 schema: i64::SCHEMA,
                 local_type: None,
                 targets: vec![ModuleInputTarget::Node(input(1, 0, 0))],

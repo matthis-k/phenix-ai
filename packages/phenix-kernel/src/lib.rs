@@ -1,6 +1,7 @@
 //! In-process composition and producer lifecycle around the existing graph engine.
 use phenix_graph::{
-    Deployment, Engine, Executor, GraphBuilder, TriggerId, TriggerSelector, Value, WaveReport,
+    Deployment, Engine, Executor, GraphBuilder, GraphContract, TriggerId, TriggerSelector, Value,
+    WaveReport,
 };
 use phenix_plugin::{ContributionHandle, PluginSnapshot};
 use std::{
@@ -88,6 +89,55 @@ impl phenix_plugin::Contribution for Contribution {
     }
 }
 
+/// A reusable graph-owned contract definition. The registration id is local to
+/// the defining plugin; the contract itself owns its semantic identity.
+pub struct ContractDefinition {
+    pub id: String,
+    pub contract: GraphContract,
+}
+
+impl phenix_plugin::Contribution for ContractDefinition {
+    const KIND: &'static str = "graph.contract";
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// An offer names an actual unit, never a purported implementation shape.
+/// Every offer is checked after all composition, including unused offers.
+pub struct GraphOffer {
+    pub id: String,
+    pub unit: String,
+    pub contract: Key,
+}
+
+impl phenix_plugin::Contribution for GraphOffer {
+    const KIND: &'static str = "graph.offer";
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn graph_unit(&self) -> Option<&str> {
+        Some(&self.unit)
+    }
+}
+
+/// An explicit host-selected offer. This validates the selected target; it does
+/// not discover providers, authorize access or insert edges. The consumer's
+/// compose closure must wire this offer's path and declare composition ordering
+/// through `Contribution::requires` when needed.
+pub struct ContractRequirement {
+    pub id: String,
+    pub contract: Key,
+    pub offer: Key,
+}
+
+impl phenix_plugin::Contribution for ContractRequirement {
+    const KIND: &'static str = "graph.requirement";
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 /// One poll's outcome; admission errors and invocation failures remain distinct.
 pub struct ProducerEvent {
     pub producer: Key,
@@ -111,6 +161,8 @@ pub struct Kernel {
     started: bool,
     next_producer: usize,
     routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
+    // Keep definition/offer/consumer code alive after engine and action teardown.
+    _snapshots: Vec<PluginSnapshot>,
 }
 
 impl Drop for Kernel {
@@ -127,19 +179,73 @@ impl Kernel {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         executor: Arc<dyn Executor>,
     ) -> Result<Self, String> {
+        let snapshots: Vec<_> = snapshots.into_iter().collect();
+        let mut definitions = BTreeMap::new();
+        let mut offers = BTreeMap::new();
+        let mut requirements = BTreeMap::new();
         let mut pending = BTreeMap::new();
-        for snapshot in snapshots {
+        for snapshot in &snapshots {
             for (_, kind, id) in snapshot.keys() {
+                let key = Key::new(snapshot.name(), id);
+                macro_rules! collect {
+                    ($ty:ty, $map:ident) => {
+                        if kind == <$ty as phenix_plugin::Contribution>::KIND {
+                            let handle = snapshot
+                                .get::<$ty>(id)
+                                .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
+                            if $map.insert(key.clone(), handle).is_some() {
+                                return Err(format!("duplicate contribution: {key:?}"));
+                            }
+                            continue;
+                        }
+                    };
+                }
+                collect!(ContractDefinition, definitions);
+                collect!(GraphOffer, offers);
+                collect!(ContractRequirement, requirements);
                 if kind != <Contribution as phenix_plugin::Contribution>::KIND {
                     continue;
                 }
-                let key = Key::new(snapshot.name(), id);
                 let handle = snapshot
                     .get::<Contribution>(id)
                     .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
                 if pending.insert(key.clone(), handle).is_some() {
                     return Err(format!("duplicate contribution: {key:?}"));
                 }
+            }
+        }
+        let mut identities = BTreeMap::new();
+        for (key, definition) in &definitions {
+            if let Some(previous) =
+                identities.insert(definition.contract.id(), &definition.contract)
+                && previous != &definition.contract
+            {
+                return Err(format!(
+                    "conflicting contract definition at {key:?}: {}",
+                    definition.contract.id()
+                ));
+            }
+        }
+        for (key, offer) in &offers {
+            if !definitions.contains_key(&offer.contract) {
+                return Err(format!(
+                    "missing contract definition for offer {key:?}: {:?}",
+                    offer.contract
+                ));
+            }
+        }
+        for (key, requirement) in &requirements {
+            if !definitions.contains_key(&requirement.contract) {
+                return Err(format!(
+                    "missing contract definition for requirement {key:?}: {:?}",
+                    requirement.contract
+                ));
+            }
+            if !offers.contains_key(&requirement.offer) {
+                return Err(format!(
+                    "missing selected offer for requirement {key:?}: {:?}",
+                    requirement.offer
+                ));
             }
         }
         for (key, contribution) in &pending {
@@ -169,9 +275,50 @@ impl Kernel {
         // The builder is dropped before leases on composition/compile failure.
         let mut graph = GraphBuilder::new(name);
         for contribution in &leases {
-            (contribution.compose)(&mut graph)?;
+            graph.with_origin(contribution.graph_origin(), |graph| {
+                (contribution.compose)(graph)
+            })?;
+        }
+        for (key, offer) in &offers {
+            graph
+                .require_contract(&offer.unit, &definitions[&offer.contract].contract)
+                .map_err(|error| format!("offer {key:?} at {}: {error}", offer.unit))?;
+        }
+        for (key, requirement) in &requirements {
+            let offer = &offers[&requirement.offer];
+            graph
+                .require_contract(&offer.unit, &definitions[&requirement.contract].contract)
+                .map_err(|error| format!("requirement {key:?} at {}: {error}", offer.unit))?;
         }
         let compiled = graph.compile().map_err(|error| error.to_string())?;
+        for (key, offer) in &offers {
+            let contract = &definitions[&offer.contract].contract;
+            let unit = compiled.find(&offer.unit).ok_or_else(|| {
+                format!("compiled unit not found for offer {key:?}: {}", offer.unit)
+            })?;
+            if unit.origin() != Some(offer.graph_origin()) {
+                return Err(format!(
+                    "compiled offer {key:?} at {}: contribution generation origin mismatch",
+                    offer.unit
+                ));
+            }
+            contract
+                .check_implementation(&unit)
+                .map_err(|error| format!("compiled offer {key:?} at {}: {error}", offer.unit))?;
+        }
+        for (key, requirement) in &requirements {
+            let offer = &offers[&requirement.offer];
+            let contract = &definitions[&requirement.contract].contract;
+            let unit = compiled.find(&offer.unit).ok_or_else(|| {
+                format!(
+                    "compiled unit not found for requirement {key:?}: {}",
+                    offer.unit
+                )
+            })?;
+            contract.check_implementation(&unit).map_err(|error| {
+                format!("compiled requirement {key:?} at {}: {error}", offer.unit)
+            })?;
+        }
         let mut routes = BTreeMap::new();
         for (key, contribution) in keys.iter().zip(&leases) {
             if contribution.activate.is_none() && !contribution.routes.is_empty() {
@@ -197,6 +344,7 @@ impl Kernel {
             started: false,
             next_producer: 0,
             routes,
+            _snapshots: snapshots,
         })
     }
 

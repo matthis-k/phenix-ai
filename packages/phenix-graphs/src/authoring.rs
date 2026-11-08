@@ -4,6 +4,8 @@
 use super::*;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
+mod interfaces;
+pub use interfaces::{AuthoringUnit, BoundAuthoringUnit};
 
 /// Choose how a domain input is presented as slots without changing its type.
 pub struct Layout<T>(PhantomData<fn() -> T>);
@@ -405,6 +407,7 @@ enum Target {
 #[derive(Clone)]
 pub struct Input<T: Send + Sync + 'static> {
     scope: u64,
+    declaration_id: u64,
     source: Target,
     schema: &'static str,
     local_type: Option<TypeId>,
@@ -413,6 +416,7 @@ pub struct Input<T: Send + Sync + 'static> {
 #[derive(Clone)]
 pub struct OutputRef<T: Send + Sync + 'static> {
     scope: u64,
+    declaration_id: u64,
     source: Source,
     schema: &'static str,
     local_type: Option<TypeId>,
@@ -426,12 +430,14 @@ impl<T: Send + Sync + 'static> Input<T> {
         match &self.source {
             Target::Node { node, port, slot } => crate::output::DestinationTarget::Node {
                 scope: self.scope,
+                declaration_id: self.declaration_id,
                 name: node.clone(),
                 port: port.clone(),
                 slot: slot.clone(),
             },
             Target::Instance { name, port } => crate::output::DestinationTarget::Module {
                 scope: self.scope,
+                declaration_id: self.declaration_id,
                 name: name.clone(),
                 port: port.clone(),
             },
@@ -452,6 +458,7 @@ pub struct NodeHandle<
     Mode = BroadcastReturn,
 > {
     scope: u64,
+    declaration_id: u64,
     name: String,
     input_schema: &'static str,
     output_schema: &'static str,
@@ -487,6 +494,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     fn atomic_inlet(&self) -> Input<A> {
         Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Node {
                 node: self.name.clone(),
                 port: "run".into(),
@@ -539,15 +547,25 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
         let slot = pending.get_mut(&self.name).ok_or_else(|| {
             GraphBuildError::Configuration("node declaration has been replaced or removed".into())
         })?;
-        // Preserve physical declaration identity and output interface.
+        if slot.declaration_id != self.declaration_id {
+            return Err(GraphBuildError::Configuration(
+                "node declaration has been replaced or reconfigured".into(),
+            ));
+        }
+        // Preserve physical addresses, but revoke endpoints from the prior revision.
         let mut replacement = replacement;
         replacement.id = slot.id;
         replacement.name = slot.name.clone();
         replacement.declaring_scope = slot.declaring_scope;
+        replacement.declaration_id = NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed);
+        let declaration_id = replacement.declaration_id;
+        replacement.claims = slot.claims.clone();
+        replacement.composition_origin = slot.composition_origin.clone();
         *slot = replacement;
         drop(pending);
         Ok(NodeHandle {
             scope: self.scope,
+            declaration_id,
             name: self.name,
             input_schema: self.input_schema,
             output_schema: self.output_schema,
@@ -566,6 +584,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn output(&self) -> OutputRef<O> {
         OutputRef {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Source::Node {
                 node: self.name.clone(),
                 output: "value".into(),
@@ -580,6 +599,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn slot<T: ContractValue>(&self, path: &str) -> Input<T> {
         Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Node {
                 node: self.name.clone(),
                 port: "run".into(),
@@ -594,6 +614,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn local_slot<T: Send + Sync + 'static>(&self, path: &str) -> Input<T> {
         Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Node {
                 node: self.name.clone(),
                 port: "run".into(),
@@ -608,6 +629,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn field<T: Send + Sync + 'static, K: FieldSelector<A, T>>(&self, key: K) -> Input<T> {
         Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Node {
                 node: self.name.clone(),
                 port: "run".into(),
@@ -622,6 +644,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn output_named<T: ContractValue>(&self, name: &str) -> OutputRef<T> {
         OutputRef {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Source::Node {
                 node: self.name.clone(),
                 output: name.into(),
@@ -637,6 +660,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
     pub fn local_output<T: Send + Sync + 'static>(&self, name: &str) -> OutputRef<T> {
         OutputRef {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Source::Node {
                 node: self.name.clone(),
                 output: name.into(),
@@ -651,6 +675,7 @@ impl<A: Send + Sync + 'static, O: Send + Sync + 'static, State, D, Mode>
 #[derive(Clone)]
 pub struct PublicInput {
     scope: u64,
+    declaration_id: u64,
     id: u16,
     name: String,
     schema: &'static str,
@@ -672,12 +697,35 @@ impl PublicInput {
 /// Internal nodes and slots are not accessible from the instance handle.
 pub struct ModuleHandle {
     scope: u64,
+    declaration_id: u64,
     name: String,
     inputs: BTreeMap<String, (&'static str, Option<TypeId>)>,
+    input_slots: BTreeMap<(String, String), String>,
     outputs: BTreeMap<String, (&'static str, Option<TypeId>)>,
 }
 impl ModuleHandle {
+    pub fn input_slot<T: ContractValue>(&self, port: &str, slot: &str) -> Result<Input<T>, String> {
+        let name = self
+            .input_slots
+            .get(&(port.into(), slot.into()))
+            .ok_or_else(|| format!("module input ({port:?}, {slot:?}) not exported"))?;
+        self.routed_input(name)
+    }
+    pub fn local_input_slot<T: Send + Sync + 'static>(
+        &self,
+        port: &str,
+        slot: &str,
+    ) -> Result<Input<T>, String> {
+        let name = self
+            .input_slots
+            .get(&(port.into(), slot.into()))
+            .ok_or_else(|| format!("module input ({port:?}, {slot:?}) not exported"))?;
+        self.routed_local_input(name)
+    }
     pub fn input<T: ContractValue>(&self, name: &str) -> Result<Input<T>, String> {
+        self.input_slot(name, "value")
+    }
+    fn routed_input<T: ContractValue>(&self, name: &str) -> Result<Input<T>, String> {
         let actual = self
             .inputs
             .get(name)
@@ -687,6 +735,7 @@ impl ModuleHandle {
         }
         Ok(Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Instance {
                 name: self.name.clone(),
                 port: name.into(),
@@ -706,6 +755,7 @@ impl ModuleHandle {
         }
         Ok(OutputRef {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Source::Instance {
                 name: self.name.clone(),
                 port: name.into(),
@@ -716,6 +766,9 @@ impl ModuleHandle {
         })
     }
     pub fn local_input<T: Send + Sync + 'static>(&self, name: &str) -> Result<Input<T>, String> {
+        self.local_input_slot(name, "value")
+    }
+    fn routed_local_input<T: Send + Sync + 'static>(&self, name: &str) -> Result<Input<T>, String> {
         let actual = self
             .inputs
             .get(name)
@@ -725,6 +778,7 @@ impl ModuleHandle {
         }
         Ok(Input {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Target::Instance {
                 name: self.name.clone(),
                 port: name.into(),
@@ -747,6 +801,7 @@ impl ModuleHandle {
         }
         Ok(OutputRef {
             scope: self.scope,
+            declaration_id: self.declaration_id,
             source: Source::Instance {
                 name: self.name.clone(),
                 port: name.into(),
@@ -761,6 +816,7 @@ impl ModuleHandle {
 /// A reusable module plus its transitive definitions. Its public type signature
 /// is precisely its declared public ports, not a separate Contract object.
 pub struct ModulePackage {
+    composition_origins: BTreeMap<u64, GraphOrigin>,
     root: ModuleEntry,
     dependencies: Vec<ModuleEntry>,
     identities: BTreeMap<String, u64>,
@@ -794,7 +850,11 @@ impl ModulePackage {
                 definition: root.clone(),
                 message,
             })?;
-        catalog.compile(&root)
+        let mut graph = catalog.compile(&root)?;
+        Arc::get_mut(&mut graph)
+            .expect("newly compiled graph is uniquely owned")
+            .composition_origins = self.composition_origins;
+        Ok(graph)
     }
 }
 fn copy_entry(entry: &ModuleEntry) -> ModuleEntry {
@@ -807,6 +867,8 @@ fn copy_entry(entry: &ModuleEntry) -> ModuleEntry {
 /// One declarative builder for functions, nested modules and low-level nodes.
 /// Internal IDs and macro-generated sugar remain optional implementation details.
 pub struct GraphBuilder {
+    active_origin: Option<GraphOrigin>,
+    composition_origins: BTreeMap<u64, GraphOrigin>,
     module: ModuleDefBuilder,
     // Typed declaration handles stage validated replacement templates here.
     // GraphBuilder owns the strong reference. Handles only hold Weak access,
@@ -815,6 +877,7 @@ pub struct GraphBuilder {
     dependencies: BTreeMap<String, ModuleEntry>,
     identities: BTreeMap<String, u64>,
     definition_id: u64,
+    public_input_ids: BTreeMap<String, u64>,
     trigger_names: BTreeMap<String, u16>,
     compile_limits: CompileLimits,
 }
@@ -822,13 +885,18 @@ pub struct GraphBuilder {
 impl Clone for GraphBuilder {
     fn clone(&self) -> Self {
         Self {
+            active_origin: self.active_origin.clone(),
+            composition_origins: self.composition_origins.clone(),
+            // Scope and inherited declaration tokens permit staged preflight replay.
             module: self.module.clone(),
             // Patch transactions get an isolated snapshot, not a shared
             // mutable configuration map from the original graph builder.
             pending: Rc::new(RefCell::new(self.pending.borrow().clone())),
             dependencies: self.dependencies.clone(),
             identities: self.identities.clone(),
-            definition_id: self.definition_id,
+            // Packages from separate builders must never alias by definition name.
+            definition_id: NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
+            public_input_ids: self.public_input_ids.clone(),
             trigger_names: self.trigger_names.clone(),
             compile_limits: self.compile_limits,
         }
@@ -893,7 +961,18 @@ pub trait ConnectEndpoints: private_endpoints::Sealed {
 /// The one public-input API accepts a typed handle or a symbolic path.
 #[allow(private_bounds)] // Intentionally sealed: only validated endpoints can enter the graph.
 pub trait InputEndpoint: private_endpoints::Sealed {
-    fn expose(self, graph: &mut GraphBuilder, name: String) -> Result<PublicInput, String>;
+    fn expose(self, graph: &mut GraphBuilder, name: String) -> Result<PublicInput, String>
+    where
+        Self: Sized,
+    {
+        self.expose_slot(graph, name, "value".into())
+    }
+    fn expose_slot(
+        self,
+        graph: &mut GraphBuilder,
+        port: String,
+        slot: String,
+    ) -> Result<PublicInput, String>;
 }
 /// The one public-output API accepts a typed handle or a symbolic path.
 #[allow(private_bounds)] // Intentionally sealed: only validated endpoints can enter the graph.
@@ -933,13 +1012,23 @@ impl ConnectEndpoints for (&str, &str) {
     }
 }
 impl<T: Send + Sync + 'static> InputEndpoint for Input<T> {
-    fn expose(self, graph: &mut GraphBuilder, name: String) -> Result<PublicInput, String> {
-        graph.expose_input_typed(name, self)
+    fn expose_slot(
+        self,
+        graph: &mut GraphBuilder,
+        port: String,
+        slot: String,
+    ) -> Result<PublicInput, String> {
+        graph.expose_input_typed(port, slot, self)
     }
 }
 impl InputEndpoint for &str {
-    fn expose(self, graph: &mut GraphBuilder, name: String) -> Result<PublicInput, String> {
-        graph.expose_input_symbolic(&name, self)
+    fn expose_slot(
+        self,
+        graph: &mut GraphBuilder,
+        port: String,
+        slot: String,
+    ) -> Result<PublicInput, String> {
+        graph.expose_input_symbolic(port, slot, self)
     }
 }
 impl<T: Send + Sync + 'static> OutputEndpoint for OutputRef<T> {
@@ -972,6 +1061,53 @@ impl GraphBuilder {
     {
         (from, to).connect(self)
     }
+    /// Deliberately connect independently defined portable Rust values.
+    ///
+    /// Both endpoints must actually be wire encoded and declare the same full
+    /// schema and codec. Legacy name-only identities cannot certify this path.
+    /// Delivery uses ordinary encoded bytes and the receiver's checked decoder,
+    /// never a Rust cast or a claim of native ABI compatibility.
+    pub fn connect_wire<T: ContractValue, U: ContractValue>(
+        &mut self,
+        from: OutputRef<T>,
+        to: Input<U>,
+    ) -> Result<&mut Self, String> {
+        let expected = T::schema_descriptor()
+            .ok_or("portable connection requires an explicit source schema descriptor")?;
+        let actual = U::schema_descriptor()
+            .ok_or("portable connection requires an explicit destination schema descriptor")?;
+        if expected != actual
+            || expected.name.is_empty()
+            || expected.structure.is_empty()
+            || expected.codec.is_empty()
+            || expected.codec == "phenix-legacy-v1"
+        {
+            return Err(format!(
+                "portable connection schema mismatch or non-portable descriptor: {expected:?} != {actual:?}"
+            ));
+        }
+        let canonical = expected.canonical();
+        if from.local_type.is_some()
+            || to.local_type.is_some()
+            || from.schema != canonical
+            || to.schema != canonical
+        {
+            return Err("portable connection requires canonical wire endpoints, not local or nominal identities".into());
+        }
+        // Only the phantom Rust parameter changes. Scope, declaration revision,
+        // and physical endpoint validation remain in the ordinary connect path.
+        self.connect_typed(
+            OutputRef::<U> {
+                scope: from.scope,
+                declaration_id: from.declaration_id,
+                source: from.source,
+                schema: from.schema,
+                local_type: None,
+                _type: PhantomData,
+            },
+            to,
+        )
+    }
     pub fn disconnect<A, B>(&mut self, from: A, to: B) -> Result<&mut Self, String>
     where
         (A, B): ConnectEndpoints,
@@ -985,6 +1121,27 @@ impl GraphBuilder {
     ) -> Result<PublicInput, String> {
         to.expose(self, name.into())
     }
+    /// Export one exact public slot. Slots sharing a port do not create a barrier.
+    pub fn expose_input_slot<E: InputEndpoint>(
+        &mut self,
+        port: impl Into<String>,
+        slot: impl Into<String>,
+        to: E,
+    ) -> Result<PublicInput, String> {
+        let port = port.into();
+        let slot = slot.into();
+        validate_name_segment(&port).map_err(|error| error.to_string())?;
+        validate_name_segment(&slot).map_err(|error| error.to_string())?;
+        if self
+            .module
+            .inputs
+            .iter()
+            .any(|input| input.port == port && input.slot == slot)
+        {
+            return Err("duplicate public input".into());
+        }
+        to.expose_slot(self, port, slot)
+    }
     pub fn expose_output<E: OutputEndpoint>(
         &mut self,
         name: impl Into<String>,
@@ -994,11 +1151,14 @@ impl GraphBuilder {
     }
     pub fn new(name: impl Into<String>) -> Self {
         Self {
+            active_origin: None,
+            composition_origins: BTreeMap::new(),
             module: ModuleDefBuilder::new(name),
             pending: Rc::new(RefCell::new(BTreeMap::new())),
             dependencies: BTreeMap::new(),
             identities: BTreeMap::new(),
             definition_id: NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
+            public_input_ids: BTreeMap::new(),
             trigger_names: BTreeMap::new(),
             compile_limits: CompileLimits::default(),
         }
@@ -1022,7 +1182,8 @@ impl GraphBuilder {
     {
         let signature = D::signature();
         let definition = Arc::new(definition);
-        let template = Arc::clone(&definition).template()?;
+        let mut template = Arc::clone(&definition).template()?;
+        template.composition_origin = self.active_origin.clone();
         let named = self.module.register(name, template)?;
         // Registration assigns the physical authoring ID and declaring scope.
         // The pending copy must retain those canonical identities.
@@ -1038,6 +1199,7 @@ impl GraphBuilder {
             .insert(named.name.clone(), registered);
         Ok(NodeHandle {
             scope: named.scope,
+            declaration_id: named.declaration_id,
             name: named.name,
             input_schema: signature.input.schema,
             output_schema: signature.output.schema,
@@ -1054,8 +1216,9 @@ impl GraphBuilder {
     pub fn add(
         &mut self,
         name: impl Into<String>,
-        template: NodeTemplate,
+        mut template: NodeTemplate,
     ) -> Result<NamedNodeHandle, ModuleNameError> {
+        template.composition_origin = self.active_origin.clone();
         self.module.register(name, template)
     }
 
@@ -1074,14 +1237,9 @@ impl GraphBuilder {
             .iter()
             .any(|i| i.name == node_or_instance)
         {
-            if !slot.is_empty() {
-                return Err(
-                    "a module public input has no nested slot; pass an empty slot name".into(),
-                );
-            }
             Target::Instance {
                 name: node_or_instance.into(),
-                port: port.into(),
+                port: self.module_input_key(node_or_instance, port, slot)?,
             }
         } else {
             Target::Node {
@@ -1094,6 +1252,7 @@ impl GraphBuilder {
         self.verify_target(&source, expected)?;
         Ok(Input {
             scope: self.module.scope,
+            declaration_id: self.target_declaration_id(&source)?,
             source,
             schema: type_name::<T>(),
             local_type: Some(TypeId::of::<T>()),
@@ -1125,6 +1284,7 @@ impl GraphBuilder {
         self.verify_source(&source, expected)?;
         Ok(OutputRef {
             scope: self.module.scope,
+            declaration_id: self.source_declaration_id(&source)?,
             source,
             schema: type_name::<T>(),
             local_type: Some(TypeId::of::<T>()),
@@ -1145,14 +1305,9 @@ impl GraphBuilder {
             .iter()
             .any(|i| i.name == node_or_instance)
         {
-            if !slot.is_empty() {
-                return Err(
-                    "a module public input has no nested slot; pass an empty slot name".into(),
-                );
-            }
             Target::Instance {
                 name: node_or_instance.into(),
-                port: port.into(),
+                port: self.module_input_key(node_or_instance, port, slot)?,
             }
         } else {
             Target::Node {
@@ -1164,6 +1319,7 @@ impl GraphBuilder {
         self.verify_target(&source, TypeIdentity::Wire(T::wire_schema()))?;
         Ok(Input {
             scope: self.module.scope,
+            declaration_id: self.target_declaration_id(&source)?,
             source,
             schema: T::wire_schema(),
             local_type: None,
@@ -1194,6 +1350,7 @@ impl GraphBuilder {
         self.verify_source(&source, TypeIdentity::Wire(T::wire_schema()))?;
         Ok(OutputRef {
             scope: self.module.scope,
+            declaration_id: self.source_declaration_id(&source)?,
             source,
             schema: T::wire_schema(),
             local_type: None,
@@ -1211,6 +1368,7 @@ impl GraphBuilder {
         if from.scope != self.module.scope || to.scope != self.module.scope {
             return Err("connection endpoints belong to another graph builder".into());
         }
+        self.validate_endpoint_ids(&from, &to)?;
         let expected = identity(from.schema, from.local_type);
         if expected != identity(to.schema, to.local_type) {
             return Err("connection type identity mismatch".into());
@@ -1278,8 +1436,11 @@ impl GraphBuilder {
             ));
         }
         replacement.id = old.id;
+        interfaces::validate_node_replacement(old, &replacement)?;
         replacement.declaring_scope = old.declaring_scope;
+        replacement.declaration_id = NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed);
         replacement.name = old.name.clone();
+        replacement.composition_origin = self.active_origin.clone();
         self.module.nodes[idx] = replacement;
         // Only a successful replacement revokes earlier layout handles.
         self.pending.borrow_mut().remove(name);
@@ -1297,13 +1458,19 @@ impl GraphBuilder {
             .position(|i| i.name == name)
             .ok_or_else(|| format!("unknown module instance {name:?}"))?;
         let existing = self.dependency_for_instance(name)?;
+        interfaces::validate_module_replacement(&existing.definition, &module.root.definition)?;
         let compatible = |a: &ModuleEntry, b: &ModuleEntry| {
             let inputs = |entry: &ModuleEntry| {
                 entry
                     .definition
                     .inputs
                     .iter()
-                    .map(|p| (p.name.clone(), p.identity()))
+                    .map(|p| {
+                        (
+                            p.name.clone(),
+                            (p.port.clone(), p.slot.clone(), p.identity()),
+                        )
+                    })
                     .collect::<BTreeMap<_, _>>()
             };
             let outputs = |entry: &ModuleEntry| {
@@ -1340,6 +1507,59 @@ impl GraphBuilder {
         }
         self.identities
             .extend(module.identities.iter().map(|(id, key)| (id.clone(), *key)));
+        self.module.declaration_ids.insert(
+            name.into(),
+            NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
+        );
+        self.composition_origins
+            .extend(module.composition_origins.clone());
+        self.record_origin(self.declaration_id(name, true)?);
+        Ok(())
+    }
+
+    fn declaration_id(&self, name: &str, instance: bool) -> Result<u64, String> {
+        if instance {
+            self.module.declaration_ids.get(name).copied()
+        } else {
+            self.pending
+                .borrow()
+                .get(name)
+                .map(|n| n.declaration_id)
+                .or_else(|| {
+                    self.module
+                        .nodes
+                        .iter()
+                        .find(|n| n.name.as_deref() == Some(name))
+                        .map(|n| n.declaration_id)
+                })
+        }
+        .ok_or_else(|| format!("unknown declaration {name:?}"))
+    }
+
+    fn source_declaration_id(&self, source: &Source) -> Result<u64, String> {
+        match source {
+            Source::Node { node, .. } => self.declaration_id(node, false),
+            Source::Instance { name, .. } => self.declaration_id(name, true),
+        }
+    }
+
+    fn target_declaration_id(&self, target: &Target) -> Result<u64, String> {
+        match target {
+            Target::Node { node, .. } => self.declaration_id(node, false),
+            Target::Instance { name, .. } => self.declaration_id(name, true),
+        }
+    }
+
+    fn validate_endpoint_ids<T: Send + Sync + 'static>(
+        &self,
+        from: &OutputRef<T>,
+        to: &Input<T>,
+    ) -> Result<(), String> {
+        if self.source_declaration_id(&from.source)? != from.declaration_id
+            || self.target_declaration_id(&to.source)? != to.declaration_id
+        {
+            return Err("endpoint belongs to a stale or divergent declaration".into());
+        }
         Ok(())
     }
 
@@ -1395,6 +1615,22 @@ impl GraphBuilder {
                 })
             }
         }
+    }
+    fn module_input_key(&self, instance: &str, port: &str, slot: &str) -> Result<String, String> {
+        let entry = self.dependency_for_instance(instance)?;
+        let input = entry
+            .definition
+            .inputs
+            .iter()
+            .find(|input| {
+                if slot.is_empty() {
+                    input.port == port && input.slot == "value"
+                } else {
+                    input.port == port && input.slot == slot
+                }
+            })
+            .ok_or_else(|| format!("unknown exported input {instance} ({port:?}, {slot:?})"))?;
+        Ok(input.name.clone())
     }
     fn dependency_for_instance(&self, name: &str) -> Result<&ModuleEntry, String> {
         let instance = self
@@ -1482,6 +1718,7 @@ impl GraphBuilder {
         if from.scope != self.module.scope || to.scope != self.module.scope {
             return Err("connection endpoints belong to another graph builder".into());
         }
+        self.validate_endpoint_ids(&from, &to)?;
         let from_id = identity(from.schema, from.local_type);
         let to_id = identity(to.schema, to.local_type);
         if from_id != to_id {
@@ -1504,24 +1741,38 @@ impl GraphBuilder {
     }
     fn expose_input_typed<T: Send + Sync + 'static>(
         &mut self,
-        name: impl Into<String>,
+        port: String,
+        slot: String,
         to: Input<T>,
     ) -> Result<PublicInput, String> {
         if to.scope != self.module.scope {
             return Err("input belongs to another graph builder".into());
         }
+        if self.target_declaration_id(&to.source)? != to.declaration_id {
+            return Err("input belongs to a stale or divergent declaration".into());
+        }
         let target = self.verify_target(&to.source, identity(to.schema, to.local_type))?;
-        let name = name.into();
-        validate_name_segment(&name).map_err(|error| error.to_string())?;
+        validate_name_segment(&port).map_err(|error| error.to_string())?;
+        validate_name_segment(&slot).map_err(|error| error.to_string())?;
+        let name = module_input_slot_name(&port, &slot);
         if self.module.inputs.iter().any(|x| x.name == name) {
             return Err("duplicate public input".into());
         }
         let id =
             u16::try_from(self.module.inputs.len()).map_err(|_| "public input limit exceeded")?;
-        self.module
-            .input_with_identity(id, &name, to.schema, to.local_type, vec![target]);
+        self.module.input_slot_with_identity(
+            id,
+            port,
+            slot,
+            to.schema,
+            to.local_type,
+            vec![target],
+        );
+        let declaration_id = NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed);
+        self.public_input_ids.insert(name.clone(), declaration_id);
         Ok(PublicInput {
             scope: self.module.scope,
+            declaration_id,
             id,
             name,
             schema: to.schema,
@@ -1535,6 +1786,9 @@ impl GraphBuilder {
     ) -> Result<(), String> {
         if from.scope != self.module.scope {
             return Err("output belongs to another graph builder".into());
+        }
+        if self.source_declaration_id(&from.source)? != from.declaration_id {
+            return Err("output belongs to a stale or divergent declaration".into());
         }
         let source = self.verify_source(&from.source, identity(from.schema, from.local_type))?;
         let name = name.into();
@@ -1568,6 +1822,7 @@ impl GraphBuilder {
             .into_iter()
             .map(|input| {
                 if input.scope == self.module.scope
+                    && self.public_input_ids.get(&input.name) == Some(&input.declaration_id)
                     && self.module.inputs.iter().any(|port| {
                         port.id == input.id
                             && port.name == input.name
@@ -1596,6 +1851,34 @@ impl GraphBuilder {
         self.module.trigger_named(id, name.clone(), targets);
         self.trigger_names.insert(name, id);
         Ok(TriggerId(id))
+    }
+    fn refresh_dependency_identities(&mut self, definition: &str) {
+        let mut changed = BTreeSet::from([definition.to_owned()]);
+        loop {
+            let parents = self
+                .dependencies
+                .iter()
+                .filter(|(id, entry)| {
+                    !changed.contains(*id)
+                        && entry
+                            .definition
+                            .instances
+                            .iter()
+                            .any(|instance| changed.contains(&instance.definition))
+                })
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            if parents.is_empty() {
+                break;
+            }
+            changed.extend(parents);
+        }
+        // Imports deduplicate whole transitive definitions by these identities.
+        // Claim edits change package contents, not endpoint declaration tokens.
+        for id in changed {
+            self.identities
+                .insert(id, NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed));
+        }
     }
     pub fn instance(
         &mut self,
@@ -1631,9 +1914,18 @@ impl GraphBuilder {
         for (definition, identity) in &module.identities {
             self.identities.insert(definition.clone(), *identity);
         }
+        self.composition_origins
+            .extend(module.composition_origins.clone());
+        self.record_origin(self.declaration_id(&name, true)?);
         Ok(ModuleHandle {
             scope: self.module.scope,
+            declaration_id: self.declaration_id(&name, true)?,
             name,
+            input_slots: module
+                .inputs()
+                .iter()
+                .map(|p| ((p.port.clone(), p.slot.clone()), p.name.clone()))
+                .collect(),
             inputs: module
                 .inputs()
                 .iter()
@@ -1665,6 +1957,7 @@ impl GraphBuilder {
         let mut identities = self.identities;
         identities.insert(self.module.id.clone(), self.definition_id);
         ModulePackage {
+            composition_origins: self.composition_origins,
             root: self.module.build(),
             dependencies: self.dependencies.into_values().collect(),
             identities,
@@ -1743,12 +2036,15 @@ fn patch_connection_key(from: &ModuleOutputSource, to: &ModuleInputTarget) -> St
 }
 
 fn assembly_changes(before: &GraphBuilder, after: &GraphBuilder) -> Vec<AssemblyChange> {
-    let mut changes = Vec::new();
+    let mut changes = interfaces::claim_changes(before, after);
     for n in &after.module.nodes {
         let name = n.name.as_deref().unwrap_or("<unnamed>");
         match before.module.nodes.iter().find(|old| old.name == n.name) {
             None => changes.push(AssemblyChange::NodeAdded(name.into())),
-            Some(old) if !Arc::ptr_eq(&old.logic_factory, &n.logic_factory) => {
+            Some(old)
+                if old.declaration_id != n.declaration_id
+                    || !Arc::ptr_eq(&old.logic_factory, &n.logic_factory) =>
+            {
                 changes.push(AssemblyChange::NodeReplaced(name.into()))
             }
             _ => {}
@@ -1762,7 +2058,11 @@ fn assembly_changes(before: &GraphBuilder, after: &GraphBuilder) -> Vec<Assembly
             .find(|old| old.name == n.name)
         {
             None => changes.push(AssemblyChange::InstanceAdded(n.name.clone())),
-            Some(old) if old.definition != n.definition => {
+            Some(old)
+                if old.definition != n.definition
+                    || before.module.declaration_ids.get(&n.name)
+                        != after.module.declaration_ids.get(&n.name) =>
+            {
                 changes.push(AssemblyChange::InstanceRebound(n.name.clone()))
             }
             _ => {}
@@ -1896,6 +2196,7 @@ impl GraphAssembly {
 
 mod addresses;
 mod patching;
+mod provenance;
 pub use patching::{
     ConnectionRoute, PatchAnchor, PatchBuilder, PatchDestination, PatchError, PatchPlanner,
     PatchResolution, PatchSource, PatchSpec, PatchTarget, PlannedSplice, PortSelector,

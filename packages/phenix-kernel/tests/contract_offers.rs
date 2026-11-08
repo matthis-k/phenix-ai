@@ -1,0 +1,232 @@
+use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
+use phenix_kernel::{
+    ContractDefinition, ContractRequirement, Contribution, GraphOffer, Kernel, Key,
+};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+use std::sync::Arc;
+
+fn contract() -> GraphContract {
+    GraphContract::new(
+        "example/service@1",
+        InterfaceShape::new()
+            .input_slot("run", "value", DeclaredValue::local::<i64>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<i64>())
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Copy)]
+struct Plugin {
+    module: bool,
+    claim: bool,
+    missing_path: bool,
+    missing_selection: bool,
+    late_edit: bool,
+}
+impl PluginInstance for Plugin {
+    fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+        into.add(ContractDefinition {
+            id: "definition".into(),
+            contract: contract(),
+        })?;
+        into.add(GraphOffer {
+            id: "offer".into(),
+            unit: if self.missing_path {
+                "absent"
+            } else {
+                "service"
+            }
+            .into(),
+            contract: Key::new("provider", "definition"),
+        })?;
+        into.add(ContractRequirement {
+            id: "request".into(),
+            contract: Key::new("provider", "definition"),
+            offer: Key::new(
+                "provider",
+                if self.missing_selection {
+                    "absent"
+                } else {
+                    "offer"
+                },
+            ),
+        })?;
+        let config = *self;
+        into.add(Contribution {
+            id: "main".into(),
+            requires: vec![],
+            routes: vec![],
+            activate: None,
+            compose: Box::new(move |graph| {
+                if config.module {
+                    let mut module = GraphBuilder::new("implementation");
+                    let node = module
+                        .node("private", |x: i64| x + 1)
+                        .map_err(|e| e.to_string())?;
+                    module.expose_input_slot("run", "value", node.inlet())?;
+                    module.expose_output("value", node.output())?;
+                    if config.claim {
+                        module
+                            .implements_public(&contract())
+                            .map_err(|e| e.to_string())?;
+                    }
+                    graph.instance("service", &module.module())?;
+                } else {
+                    graph
+                        .node("service", |x: i64| x + 1)
+                        .map_err(|e| e.to_string())?;
+                    if config.claim {
+                        graph
+                            .implements("service", &contract())
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(())
+            }),
+        })?;
+        if self.late_edit {
+            into.add(Contribution {
+                id: "late".into(),
+                requires: vec![Key::new("provider", "main")],
+                routes: vec![],
+                activate: None,
+                compose: Box::new(|graph| {
+                    *graph = GraphBuilder::new("late");
+                    graph
+                        .node("service", |x: i64| x + 2)
+                        .map_err(|e| e.to_string())?;
+                    Ok(())
+                }),
+            })?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn node_and_module_offers_require_final_claimed_units_and_explicit_selection() {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog
+        .register("provider", |config: Plugin| Ok(config))
+        .unwrap();
+    for module in [false, true] {
+        for failure in [
+            None,
+            Some("claim"),
+            Some("path"),
+            Some("selection"),
+            Some("late"),
+        ] {
+            let mut plugins = catalog.instance();
+            let snapshot = plugins
+                .load(
+                    &key,
+                    Plugin {
+                        module,
+                        claim: failure != Some("claim"),
+                        missing_path: failure == Some("path"),
+                        missing_selection: failure == Some("selection"),
+                        late_edit: failure == Some("late"),
+                    },
+                )
+                .unwrap();
+            let result = Kernel::build("host", [snapshot], Arc::new(LocalExecutor));
+            if let Some(failure) = failure {
+                let error = result.err().expect("invalid offer must fail");
+                let expected = match failure {
+                    "path" | "selection" => "absent",
+                    _ => "claim",
+                };
+                assert!(
+                    error.contains(expected),
+                    "module={module}, case={failure}: {error}"
+                );
+            } else {
+                result.unwrap();
+            }
+        }
+    }
+}
+
+struct ForeignPlugin {
+    module: bool,
+    replace: bool,
+}
+impl PluginInstance for ForeignPlugin {
+    fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+        if !self.replace {
+            return into.add(GraphOffer {
+                id: "stolen".into(),
+                unit: "service".into(),
+                contract: Key::new("provider", "definition"),
+            });
+        }
+        let module = self.module;
+        into.add(Contribution {
+            id: "patch".into(),
+            requires: vec![Key::new("provider", "main")],
+            routes: vec![],
+            activate: None,
+            compose: Box::new(move |graph| {
+                if module {
+                    let mut child = GraphBuilder::new("replacement");
+                    let node = child
+                        .node("private", |x: i64| x + 10)
+                        .map_err(|e| e.to_string())?;
+                    child.expose_input_slot("run", "value", node.inlet())?;
+                    child.expose_output("value", node.output())?;
+                    child
+                        .implements_public(&contract())
+                        .map_err(|e| e.to_string())?;
+                    graph.replace("service", child.module())?;
+                } else {
+                    let mut replacement =
+                        phenix_graph::NodeTemplate::local_function(|x: i64| x + 10);
+                    replacement.claims.push(contract());
+                    graph.replace("service", replacement)?;
+                }
+                Ok(())
+            }),
+        })
+    }
+}
+
+#[test]
+fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
+    let mut catalog = PluginCatalog::new();
+    let provider = catalog
+        .register("provider", |config: Plugin| Ok(config))
+        .unwrap();
+    let foreign = catalog
+        .register("foreign", |config: ForeignPlugin| Ok(config))
+        .unwrap();
+    for module in [false, true] {
+        for replace in [false, true] {
+            let mut plugins = catalog.instance();
+            plugins
+                .load(
+                    &provider,
+                    Plugin {
+                        module,
+                        claim: true,
+                        missing_path: false,
+                        missing_selection: false,
+                        late_edit: false,
+                    },
+                )
+                .unwrap();
+            plugins
+                .load(&foreign, ForeignPlugin { module, replace })
+                .unwrap();
+            let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
+                .err()
+                .unwrap();
+            assert!(
+                error.contains("origin mismatch"),
+                "module={module}, replace={replace}: {error}"
+            );
+        }
+    }
+}
