@@ -55,19 +55,11 @@ impl PluginInstance for Fixture {
                 consumer: Key::new("provider", "consumer"),
                 contract: Key::new("provider", "y"),
             })?;
-            registrar.add(Contribution {
-                id: "consumer".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(|_| Ok(())),
-            })?;
+            Contribution::new("consumer", |_| Ok(()))
+.register(registrar)?;
         }
         let case = self.0;
-        registrar.add(Contribution {
-            id: "compose".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(move |context| {
+        Contribution::new("compose", move |context| {
                 let graph = &mut *context.graph;
                 match case {
                     Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
@@ -86,8 +78,10 @@ impl PluginInstance for Fixture {
                     }
                 }
                 Ok(())
-            }),
-        })
+            })
+.after(Vec::new())
+.route(Vec::new())
+.register(registrar)
     }
 }
 
@@ -159,16 +153,14 @@ impl PluginInstance for HonestOffer {
             unit: "service".into(),
             contract: Key::new("provider", "x"),
         })?;
-        registrar.add(Contribution {
-            id: "main".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(|context| {
+        Contribution::new("main", |context| {
                 let graph = &mut *context.graph;
                 graph.node("service", |v: i64| v + 1)?;
                 Ok(())
-            }),
-        })
+            })
+.after(Vec::new())
+.route(Vec::new())
+.register(registrar)
     }
 }
 
@@ -176,11 +168,7 @@ struct ForeignClaim;
 
 impl PluginInstance for ForeignClaim {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "mutate".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: Vec::new(),
-            compose: Box::new(|context| {
+        Contribution::new("mutate", |context| {
                 let graph = &mut *context.graph;
                 graph
                     .implements(
@@ -188,8 +176,10 @@ impl PluginInstance for ForeignClaim {
                         &contract("example/x@1", DeclaredValue::local::<i64>()),
                     )
                     .map_err(Into::into)
-            }),
-        })
+            })
+.after(vec![Key::new("provider", "main")])
+.route(Vec::new())
+.register(registrar)
     }
 }
 
