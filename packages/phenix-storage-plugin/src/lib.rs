@@ -1879,7 +1879,7 @@ mod tests {
         assert!(matches!(
             kv.get_revisioned("missing"),
             Err(phenix_storage::Error::UnsupportedCapability {
-                capability: Capability::CompareExchange
+                capability: Capability::RevisionedRead
             })
         ));
     }
