@@ -108,24 +108,19 @@ impl ResourceSpec {
 pub struct ResourceRequest {
     pub spec: ResourceSpec,
     pub operations: std::collections::BTreeSet<Operation>,
-    pub atomic_cas: bool,
+    /// Operational guarantees, independent of the granted operations.
+    pub required: std::collections::BTreeSet<crate::Capability>,
 }
 impl ResourceRequest {
-    /// Scoped reads return revision tokens even when no CAS write was requested.
-    pub fn requires_atomic_cas(&self) -> bool {
-        self.atomic_cas
-            || (matches!(self.spec.kind, ResourceKind::TypedKv(_))
-                && self.operations.contains(&Operation::Read))
-    }
     pub fn new(spec: ResourceSpec, operations: impl IntoIterator<Item = Operation>) -> Self {
         Self {
             spec,
             operations: operations.into_iter().collect(),
-            atomic_cas: false,
+            required: Default::default(),
         }
     }
-    pub fn with_atomic_cas(mut self) -> Self {
-        self.atomic_cas = true;
+    pub fn require(mut self, capability: crate::Capability) -> Self {
+        self.required.insert(capability);
         self
     }
 }
@@ -407,6 +402,11 @@ impl<T: Stored> CellSpec<T> {
             kind: ResourceKind::TypedKv(T::Format::default().schema()),
         }
     }
+    /// Declare exactly the snapshot guarantee that bound cells consume.
+    pub fn request(&self, operations: impl IntoIterator<Item = Operation>) -> ResourceRequest {
+        ResourceRequest::new(self.resource_spec(), operations)
+            .require(crate::Capability::AtomicReadMany)
+    }
 }
 pub struct CellRead<T>(CellSpec<T>);
 
@@ -533,7 +533,12 @@ pub struct Kv<T: Stored> {
     _value: PhantomData<fn() -> T>,
 }
 impl<T: Stored> Kv<T> {
-    pub fn get(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
+    /// Ordinary typed retrieval does not require revision or conditional-write support.
+    pub fn get(&self, key: &str) -> crate::Result<Option<T>> {
+        self.session.get(&self.address, key, &self.format)
+    }
+    /// Opt into a backend-supported revision token when an update needs one.
+    pub fn get_revisioned(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
         self.session
             .get_revisioned(&self.address, key, &self.format)
     }
