@@ -188,16 +188,21 @@ impl Grant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub typed_kv: bool,
-    /// Revisioned reads and atomic conditional writes, not additional authority.
+    /// Support for opaque per-key revision tokens, independently of conditional writes.
+    pub revisioned_read: bool,
+    /// A coherent versioned read batch, independently of conditional writes.
+    pub atomic_read_many: bool,
+    /// Atomic conditional writes, not additional authority.
     pub compare_exchange: bool,
     pub sql: bool,
     pub invalidation: bool,
     pub observation: Observation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Capability {
     TypedKv,
+    RevisionedRead,
     CompareExchange,
     AtomicReadMany,
     Sql,
@@ -249,6 +254,10 @@ pub trait Backend: Send {
     }
 }
 pub trait TypedKv: Send {
+    /// Opt in only when get_revisioned returns meaningful per-key tokens.
+    fn supports_revisioned_reads(&self) -> bool {
+        false
+    }
     /// Opt in only for a coherent, versioned snapshot over the entire batch.
     fn supports_atomic_read_many(&self) -> bool {
         false
@@ -321,6 +330,9 @@ impl Backend for MemoryBackend {
     }
 }
 impl TypedKv for MemoryBackend {
+    fn supports_revisioned_reads(&self) -> bool {
+        true
+    }
     fn supports_atomic_read_many(&self) -> bool {
         true
     }
@@ -475,6 +487,9 @@ impl SqliteBackend {
     }
 }
 impl TypedKv for SqliteBackend {
+    fn supports_revisioned_reads(&self) -> bool {
+        true
+    }
     fn supports_atomic_read_many(&self) -> bool {
         true
     }
@@ -850,12 +865,20 @@ impl Session {
     fn mount_capabilities(&self, mount: Arc<Mutex<Mount>>) -> Result<Capabilities> {
         let _active = Active::enter(&mount)?;
         let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
-        let (typed_kv, compare_exchange) = match mount.backend.typed_kv() {
-            Some(kv) => (true, kv.supports_compare_exchange()),
-            None => (false, false),
-        };
+        let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
+            match mount.backend.typed_kv() {
+                Some(kv) => (
+                    true,
+                    kv.supports_revisioned_reads(),
+                    kv.supports_atomic_read_many(),
+                    kv.supports_compare_exchange(),
+                ),
+                None => (false, false, false, false),
+            };
         Ok(Capabilities {
             typed_kv,
+            revisioned_read,
+            atomic_read_many,
             compare_exchange,
             sql: mount.backend.sql().is_some(),
             invalidation: true,
