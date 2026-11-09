@@ -7,7 +7,7 @@ use phenix_graph::{
     emit,
 };
 use phenix_kernel::host::{Generation, KernelHost, LifecycleError};
-use phenix_kernel::{ContractDefinition, Contribution, GraphOffer, ImportPolicy, Key};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -135,12 +135,7 @@ mod provider {
 
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(GraphOffer {
-                id: "service".into(),
-                producer: Key::new(into.owner(), "main"),
-                unit: self.path.into(),
-                contract: Key::new("definition", "transform"),
-            })?;
+            
             let config = self.clone();
             Contribution::new("main", move |context| {
                     let graph = &mut *context.graph;
@@ -169,6 +164,7 @@ mod provider {
                     }
                     Ok(())
                 })
+.offer("service", self.path, Key::new("definition", "transform"))
 .register(into)
         }
     }
