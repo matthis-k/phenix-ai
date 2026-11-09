@@ -1977,7 +1977,12 @@ mod tests {
                 "reader",
                 request([Operation::Read]).require(Capability::RevisionedRead),
             )]);
-            assert!(requirements.requests()["reader"][0].1.required.contains(&Capability::RevisionedRead));
+            assert!(
+                requirements.requests()["reader"][0]
+                    .1
+                    .required
+                    .contains(&Capability::RevisionedRead)
+            );
             let policy = policy(
                 &requirements,
                 BackendPlacement::Offer {
