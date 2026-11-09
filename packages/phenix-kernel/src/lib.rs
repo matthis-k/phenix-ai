@@ -176,8 +176,8 @@ impl Contribution {
     }
 
     /// Trigger names this composer's optional producer may emit.
-    pub fn route<S: Into<String>>(mut self, routes: impl IntoIterator<Item = S>) -> Self {
-        self.routes.extend(routes.into_iter().map(Into::into));
+    pub fn route(mut self, routes: impl IntoIterator<Item = String>) -> Self {
+        self.routes.extend(routes);
         self
     }
 
