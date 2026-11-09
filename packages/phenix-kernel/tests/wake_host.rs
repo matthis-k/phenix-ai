@@ -169,7 +169,8 @@ fn failed_wake_registration_keeps_old_generation_active() {
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
     let original = Channel::new();
     let stage = host.plugins().prepare_load(&key, original.clone()).unwrap();
-    let old = host.publish(prepare(&host, vec![stage]).unwrap()).unwrap();
+    let candidate = prepare(&host, vec![stage]).unwrap();
+    let old = host.publish(candidate).unwrap();
 
     let mut unsupported = Channel::new();
     unsupported.accepts_wake = false;
@@ -188,7 +189,7 @@ fn failed_wake_registration_keeps_old_generation_active() {
 
     let shutdown = WakeHandle::default();
     shutdown.shutdown();
-    let mut other = KernelHost::with_wake(catalog.instance(), shutdown);
+    let other = KernelHost::with_wake(catalog.instance(), shutdown);
     let stage = other.plugins().prepare_load(&key, Channel::new()).unwrap();
     assert!(matches!(
         prepare(&other, vec![stage]),
@@ -205,13 +206,15 @@ fn reload_wakes_a_driver_that_previously_observed_the_old_generation() {
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
     let original = Channel::new();
     let stage = host.plugins().prepare_load(&key, original.clone()).unwrap();
-    let old = host.publish(prepare(&host, vec![stage]).unwrap()).unwrap();
+    let candidate = prepare(&host, vec![stage]).unwrap();
+    let old = host.publish(candidate).unwrap();
     let token = wake.version();
     let observed = host.active().unwrap();
 
     let replacement = Channel::new();
     let stage = host.plugins().prepare_reload(&key, replacement.clone()).unwrap();
-    let new = host.publish(prepare(&host, vec![stage]).unwrap()).unwrap();
+    let candidate = prepare(&host, vec![stage]).unwrap();
+    let new = host.publish(candidate).unwrap();
 
     assert!(wake.wait_since(token)); // Cannot sleep on a stale active pointer.
     assert!(observed.drain(8).is_empty());
@@ -234,7 +237,8 @@ fn publication_signal_precedes_stalled_old_producer_destruction() {
     let mut old_channel = Channel::new();
     old_channel.drop_gate = Some(gate.clone());
     let stage = host.plugins().prepare_load(&key, old_channel).unwrap();
-    let _old = host.publish(prepare(&host, vec![stage]).unwrap()).unwrap();
+    let candidate = prepare(&host, vec![stage]).unwrap();
+    let _old = host.publish(candidate).unwrap();
     let token = wake.version();
 
     let host = Arc::new(Mutex::new(host));
