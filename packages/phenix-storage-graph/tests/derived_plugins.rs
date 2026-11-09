@@ -2,7 +2,15 @@
 mod example;
 
 use example::*;
+use phenix_graph::LocalExecutor;
+use phenix_kernel::{Contribution, Kernel, Key};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{Operation, scoped};
+use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, QuerySpec};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 #[test]
 fn canonical_example() {
@@ -112,5 +120,201 @@ fn sqlite_reopen_preserves_values_and_revisions_then_advances_only_written_cell(
     assert_eq!(
         build(root.path(), "one").unwrap().values().unwrap(),
         updated
+    );
+}
+
+#[test]
+fn reader_snapshots_rebuild_and_failed_candidate_does_not_poison_exports() {
+    let root = TempRoot::new().unwrap();
+    let mut demo = build(root.path(), "one").unwrap();
+    demo.runtime.start().unwrap();
+    demo.write(true, 0).unwrap();
+    demo.write(false, 0).unwrap();
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog
+        .register("derive", |p: reader::Plugin| Ok(p))
+        .unwrap();
+    let failure_kind = catalog
+        .register("failure", |p: FailCandidate| Ok(p))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    plugins
+        .load(
+            &kind,
+            reader::Plugin {
+                name: "derive",
+                storage: Arc::new(OnceLock::from(demo.readers[0].clone())),
+                state: Arc::default(),
+            },
+        )
+        .unwrap();
+    let fail = Arc::new(AtomicBool::new(true));
+    plugins
+        .load(&failure_kind, FailCandidate(fail.clone()))
+        .unwrap();
+    let snapshots: Vec<_> = plugins.snapshots().collect();
+    // This failure occurs after the reader has registered both candidate artifacts.
+    assert!(DerivedRuntime::build("failed", snapshots.clone(), Arc::new(LocalExecutor)).is_err());
+    fail.store(false, Ordering::SeqCst);
+    let mut a = DerivedRuntime::build("a", snapshots.clone(), Arc::new(LocalExecutor)).unwrap();
+    let mut b = DerivedRuntime::build("b", snapshots, Arc::new(LocalExecutor)).unwrap();
+    let key = Key::new("derive", "derive");
+    let qa = a.kernel().export::<reader::Queries>(&key).unwrap().clone();
+    let qb = b.kernel().export::<reader::Queries>(&key).unwrap().clone();
+    assert!(a.bind_query(&qa.sum).is_ok());
+    assert!(b.bind_query(&qb.sum).is_ok());
+    assert!(a.bind_query(&qb.sum).is_err());
+    assert!(b.bind_query(&qa.sum).is_err());
+    assert!(a.kernel().export::<u64>(&key).is_none());
+    assert!(
+        a.kernel()
+            .export::<reader::Queries>(&Key::new("missing", "derive"))
+            .is_none()
+    );
+    b.start().unwrap();
+    a.start().unwrap();
+    assert_eq!(a.bind_query(&qa.sum).unwrap().query().unwrap(), 0);
+    assert_eq!(b.bind_query(&qb.sum).unwrap().query().unwrap(), 0);
+}
+
+struct FailCandidate(Arc<AtomicBool>);
+impl PluginInstance for FailCandidate {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        let fail = self.0.clone();
+        registrar.add(Contribution {
+            id: "fail".into(),
+            requires: vec![Key::new("derive", "derive")],
+            routes: vec![],
+            compose: Box::new(move |_| {
+                if fail.load(Ordering::SeqCst) {
+                    Err("candidate rejected".into())
+                } else {
+                    Ok(())
+                }
+            }),
+        })
+    }
+}
+
+// Change the composition input between builds of the exact same snapshot. A
+// mutable shared activation slot would subscribe A to B's storage in this test.
+struct SelectedReader(Arc<Mutex<Arc<scoped::Storage>>>);
+impl PluginInstance for SelectedReader {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        let selected = self.0.clone();
+        registrar.add(Contribution {
+            id: "reader".into(),
+            requires: vec![],
+            routes: vec!["values.refresh".into()],
+            compose: Box::new(move |context| {
+                let (a, b) = selected
+                    .lock()
+                    .unwrap()
+                    .bind((A.read(), B.read()))
+                    .map_err(|e| e.to_string())?;
+                let graph = &mut *context.graph;
+                let group = graph
+                    .sources("values", (&a, &b))
+                    .map_err(|e| e.to_string())?;
+                let sum = graph
+                    .derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)
+                    .map_err(|e| e.to_string())?;
+                let query = graph.query_spec("query", &sum).map_err(|e| e.to_string())?;
+                let observation = group.observation(16);
+                context.export(query)?;
+                context.activate(move || observation.activate().map_err(|e| e.to_string()))
+            }),
+        })
+    }
+}
+
+#[test]
+fn starting_a_after_b_uses_as_exact_observation() {
+    let root = TempRoot::new().unwrap();
+    let mut first = build(root.path(), "first").unwrap();
+    let mut second = build(root.path(), "second").unwrap();
+    first.runtime.start().unwrap();
+    second.runtime.start().unwrap();
+    for demo in [&first, &second] {
+        demo.write(true, 0).unwrap();
+        demo.write(false, 0).unwrap();
+    }
+    let selected = Arc::new(Mutex::new(first.readers[0].clone()));
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog
+        .register("selected", |p: SelectedReader| Ok(p))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    plugins
+        .load(&kind, SelectedReader(selected.clone()))
+        .unwrap();
+    let snapshots: Vec<_> = plugins.snapshots().collect();
+    let mut a = DerivedRuntime::build("a", snapshots.clone(), Arc::new(LocalExecutor)).unwrap();
+    *selected.lock().unwrap() = second.readers[0].clone();
+    let mut b = DerivedRuntime::build("b", snapshots, Arc::new(LocalExecutor)).unwrap();
+    b.start().unwrap();
+    a.start().unwrap();
+    for runtime in [&mut a, &mut b] {
+        assert_eq!(runtime.drain(64).len(), 1); // Bootstrap only.
+    }
+    first.write(true, 7).unwrap();
+    let events = a.drain(64);
+    assert!(!events.is_empty());
+    assert!(
+        events
+            .into_iter()
+            .all(|event| event.result.unwrap().success())
+    );
+    assert!(b.drain(64).is_empty());
+    second.write(false, 11).unwrap();
+    assert!(a.drain(64).is_empty());
+    let events = b.drain(64);
+    assert!(!events.is_empty());
+    assert!(
+        events
+            .into_iter()
+            .all(|event| event.result.unwrap().success())
+    );
+    for (runtime, expected) in [(&a, 7), (&b, 11)] {
+        let query = runtime
+            .kernel()
+            .export::<QuerySpec<i64>>(&Key::new("selected", "reader"))
+            .unwrap();
+        assert_eq!(
+            runtime.bind_query(query).unwrap().query().unwrap(),
+            expected
+        );
+    }
+}
+
+struct CompetingFactories;
+impl PluginInstance for CompetingFactories {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        registrar.add(Contribution {
+            id: "competing".into(),
+            requires: vec![],
+            routes: vec![],
+            compose: Box::new(|context| {
+                context.activate(|| panic!("must not activate"))?;
+                context.activate(|| panic!("must not activate"))
+            }),
+        })
+    }
+}
+
+#[test]
+fn duplicate_candidate_factories_are_rejected_not_silently_overridden() {
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog
+        .register("competing", |p: CompetingFactories| Ok(p))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    plugins.load(&kind, CompetingFactories).unwrap();
+    let error = Kernel::build("competing", plugins.snapshots(), Arc::new(LocalExecutor))
+        .err()
+        .unwrap();
+    assert!(
+        error.contains("candidate activation already registered"),
+        "{error}"
     );
 }

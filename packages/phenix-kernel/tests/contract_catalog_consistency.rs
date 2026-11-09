@@ -1,6 +1,6 @@
-use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
+use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, Kernel, Key,
+    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
@@ -46,13 +46,20 @@ impl PluginInstance for Fixture {
             })?;
             registrar.add(GraphOffer {
                 id: "offer".into(),
+                producer: Key::new("provider", "compose"),
                 unit: "service".into(),
                 contract: Key::new("provider", "x"),
             })?;
             registrar.add(ContractRequirement {
                 id: "request".into(),
+                consumer: Key::new("provider", "consumer"),
                 contract: Key::new("provider", "y"),
-                offer: Key::new("provider", "offer"),
+            })?;
+            registrar.add(Contribution {
+                id: "consumer".into(),
+                requires: vec![],
+                routes: vec![],
+                compose: Box::new(|_| Ok(())),
             })?;
         }
         let case = self.0;
@@ -60,8 +67,8 @@ impl PluginInstance for Fixture {
             id: "compose".into(),
             requires: Vec::new(),
             routes: Vec::new(),
-            activate: None,
-            compose: Box::new(move |graph: &mut GraphBuilder| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 match case {
                     Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
                         graph
@@ -101,7 +108,15 @@ fn build(case: Case) -> Result<Kernel, String> {
         .unwrap();
     let mut plugins = catalog.instance();
     let provider = plugins.load(&key, case).unwrap();
-    Kernel::build("host", [provider], Arc::new(LocalExecutor))
+    let mut policy = ImportPolicy::default();
+    if !matches!(case, Case::UnofferedGraphConflict) {
+        policy.selections.insert(
+            Key::new("provider", "request"),
+            Key::new("provider", "offer"),
+        );
+    }
+    Kernel::build_with_policy("host", [provider], Arc::new(LocalExecutor), &policy)
+        .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -142,6 +157,7 @@ impl PluginInstance for HonestOffer {
         })?;
         registrar.add(GraphOffer {
             id: "offer".into(),
+            producer: Key::new("provider", "main"),
             unit: "service".into(),
             contract: Key::new("provider", "x"),
         })?;
@@ -149,8 +165,8 @@ impl PluginInstance for HonestOffer {
             id: "main".into(),
             requires: Vec::new(),
             routes: Vec::new(),
-            activate: None,
-            compose: Box::new(|graph| {
+            compose: Box::new(|context| {
+                let graph = &mut *context.graph;
                 graph
                     .node("service", |v: i64| v + 1)
                     .map_err(|error| error.to_string())?;
@@ -168,8 +184,8 @@ impl PluginInstance for ForeignClaim {
             id: "mutate".into(),
             requires: vec![Key::new("provider", "main")],
             routes: Vec::new(),
-            activate: None,
-            compose: Box::new(|graph| {
+            compose: Box::new(|context| {
+                let graph = &mut *context.graph;
                 graph
                     .implements(
                         "service",

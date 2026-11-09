@@ -55,7 +55,6 @@ impl PluginInstance for SubscriptionPlugin {
             let observed = self.observed.clone();
             let probe = self.probe.clone();
             let fail_first = self.fail_first;
-            let attempts = AtomicUsize::new(0);
             registrar.add(Contribution {
                 id: if later { "later" } else { "subscription" }.into(),
                 routes: vec!["observed".into()],
@@ -64,7 +63,8 @@ impl PluginInstance for SubscriptionPlugin {
                 } else {
                     vec![]
                 },
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     if !later {
                         let observed = observed.clone();
                         let sink = graph
@@ -75,24 +75,26 @@ impl PluginInstance for SubscriptionPlugin {
                         let input = graph.expose_input("notice", sink.inlet())?;
                         graph.trigger("observed", [input])?;
                     }
-                    Ok(())
+                    let attempts = AtomicUsize::new(0);
+                    let counter = counter.clone();
+                    let probe = probe.clone();
+                    context.activate(move || {
+                        if later && fail_first && attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return Err("later activation failed".into());
+                        }
+                        let subscription = counter
+                            .session
+                            .subscribe(Scope::Dataset(counter.address.clone()), 1)
+                            .map_err(|e| e.to_string())?;
+                        let marker = Arc::new(());
+                        probe.markers.lock().unwrap().push(Arc::downgrade(&marker));
+                        Ok(Box::new(ProbedSubscription {
+                            subscription,
+                            _marker: marker,
+                            drops: probe.drops.clone(),
+                        }))
+                    })
                 }),
-                activate: Some(Box::new(move || {
-                    if later && fail_first && attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                        return Err("later activation failed".into());
-                    }
-                    let subscription = counter
-                        .session
-                        .subscribe(Scope::Dataset(counter.address.clone()), 1)
-                        .map_err(|e| e.to_string())?;
-                    let marker = Arc::new(());
-                    probe.markers.lock().unwrap().push(Arc::downgrade(&marker));
-                    Ok(Box::new(ProbedSubscription {
-                        subscription,
-                        _marker: marker,
-                        drops: probe.drops.clone(),
-                    }))
-                })),
             })?;
         }
         Ok(())

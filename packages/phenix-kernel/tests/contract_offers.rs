@@ -1,6 +1,6 @@
 use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, Kernel, Key,
+    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
@@ -22,7 +22,6 @@ struct Plugin {
     module: bool,
     claim: bool,
     missing_path: bool,
-    missing_selection: bool,
     late_edit: bool,
 }
 impl PluginInstance for Plugin {
@@ -33,6 +32,7 @@ impl PluginInstance for Plugin {
         })?;
         into.add(GraphOffer {
             id: "offer".into(),
+            producer: Key::new("provider", "main"),
             unit: if self.missing_path {
                 "absent"
             } else {
@@ -43,23 +43,22 @@ impl PluginInstance for Plugin {
         })?;
         into.add(ContractRequirement {
             id: "request".into(),
+            consumer: Key::new("provider", "consumer"),
             contract: Key::new("provider", "definition"),
-            offer: Key::new(
-                "provider",
-                if self.missing_selection {
-                    "absent"
-                } else {
-                    "offer"
-                },
-            ),
+        })?;
+        into.add(Contribution {
+            id: "consumer".into(),
+            requires: vec![],
+            routes: vec![],
+            compose: Box::new(|_| Ok(())),
         })?;
         let config = *self;
         into.add(Contribution {
             id: "main".into(),
             requires: vec![],
             routes: vec![],
-            activate: None,
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 if config.module {
                     let mut module = GraphBuilder::new("implementation");
                     let node = module
@@ -91,8 +90,8 @@ impl PluginInstance for Plugin {
                 id: "late".into(),
                 requires: vec![Key::new("provider", "main")],
                 routes: vec![],
-                activate: None,
-                compose: Box::new(|graph| {
+                compose: Box::new(|context| {
+                    let graph = &mut *context.graph;
                     *graph = GraphBuilder::new("late");
                     graph
                         .node("service", |x: i64| x + 2)
@@ -106,7 +105,7 @@ impl PluginInstance for Plugin {
 }
 
 #[test]
-fn node_and_module_offers_require_final_claimed_units_and_explicit_selection() {
+fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection() {
     let mut catalog = PluginCatalog::new();
     let key = catalog
         .register("provider", |config: Plugin| Ok(config))
@@ -127,12 +126,20 @@ fn node_and_module_offers_require_final_claimed_units_and_explicit_selection() {
                         module,
                         claim: failure != Some("claim"),
                         missing_path: failure == Some("path"),
-                        missing_selection: failure == Some("selection"),
                         late_edit: failure == Some("late"),
                     },
                 )
                 .unwrap();
-            let result = Kernel::build("host", [snapshot], Arc::new(LocalExecutor));
+            let mut policy = ImportPolicy::default();
+            if failure == Some("selection") {
+                policy.selections.insert(
+                    Key::new("provider", "request"),
+                    Key::new("provider", "absent"),
+                );
+            }
+            let result =
+                Kernel::build_with_policy("host", [snapshot], Arc::new(LocalExecutor), &policy)
+                    .map_err(|error| error.to_string());
             if let Some(failure) = failure {
                 let error = result.err().expect("invalid offer must fail");
                 let expected = match failure {
@@ -159,6 +166,7 @@ impl PluginInstance for ForeignPlugin {
         if !self.replace {
             return into.add(GraphOffer {
                 id: "stolen".into(),
+                producer: Key::new("provider", "main"),
                 unit: "service".into(),
                 contract: Key::new("provider", "definition"),
             });
@@ -168,8 +176,8 @@ impl PluginInstance for ForeignPlugin {
             id: "patch".into(),
             requires: vec![Key::new("provider", "main")],
             routes: vec![],
-            activate: None,
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 if module {
                     let mut child = GraphBuilder::new("replacement");
                     let node = child
@@ -212,7 +220,6 @@ fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
                         module,
                         claim: true,
                         missing_path: false,
-                        missing_selection: false,
                         late_edit: false,
                     },
                 )

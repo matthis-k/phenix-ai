@@ -103,7 +103,8 @@ impl PluginInstance for CounterPlugin {
             id: "module".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 let mut module = GraphBuilder::new("counter-module");
                 let writer = counter.clone();
                 let write = module
@@ -134,7 +135,6 @@ impl PluginInstance for CounterPlugin {
                 graph.trigger("write_counter", [input])?;
                 Ok(())
             }),
-            activate: None,
         })
     }
 }
@@ -154,7 +154,8 @@ impl PluginInstance for ObserverPlugin {
             id: "observer".into(),
             requires: vec![Key::new("counter", "module")],
             routes: vec!["storage_changed".into()],
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 let log = observed.clone();
                 let sink = graph
                     .node("observe", move |notice: phenix_storage::Notice| {
@@ -163,16 +164,17 @@ impl PluginInstance for ObserverPlugin {
                     .map_err(|e| e.to_string())?;
                 let input = graph.expose_input("storage_notice", sink.inlet())?;
                 graph.trigger("storage_changed", [input])?;
-                Ok(())
+                let session = session.clone();
+                let scope = scope.clone();
+                context.activate(move || {
+                    Ok(Box::new(StorageProducer {
+                        subscription: session
+                            .subscribe(scope.clone(), capacity)
+                            .map_err(|e| e.to_string())?,
+                        pending: VecDeque::new(),
+                    }))
+                })
             }),
-            activate: Some(Box::new(move || {
-                Ok(Box::new(StorageProducer {
-                    subscription: session
-                        .subscribe(scope.clone(), capacity)
-                        .map_err(|e| e.to_string())?,
-                    pending: VecDeque::new(),
-                }))
-            })),
         })
     }
 }

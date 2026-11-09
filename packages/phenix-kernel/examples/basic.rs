@@ -10,7 +10,8 @@ impl PluginInstance for Increment {
             id: "main".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(|graph| {
+            compose: Box::new(|context| {
+                let graph = &mut *context.graph;
                 let node = graph
                     .node("increment", |x: i64| x + 1)
                     .map_err(|e| e.to_string())?;
@@ -19,7 +20,6 @@ impl PluginInstance for Increment {
                 graph.trigger("run", [input])?;
                 Ok(())
             }),
-            activate: None, // Event sources can supply a zero-argument producer factory.
         })
     }
 }
