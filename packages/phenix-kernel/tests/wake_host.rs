@@ -206,6 +206,18 @@ fn failed_wake_registration_keeps_old_generation_active() {
     original.push(7);
     assert_eq!(old.drain(8).len(), 1);
 
+    // A source can stop the host wake during registration. The private
+    // candidate must be rejected without changing the published inventory.
+    let mut stopped = Channel::new();
+    stopped.shutdown_on_register = true;
+    let stage = host.plugins().prepare_reload(&key, stopped).unwrap();
+    assert!(matches!(
+        prepare(&host, vec![stage]),
+        Err(LifecycleError::Driver(DriverError::WakeShutdown))
+    ));
+    assert!(Arc::ptr_eq(&old, &host.active().unwrap()));
+    assert_eq!(host.plugins().snapshot(&key).unwrap().revision(), 1);
+
     let shutdown = WakeHandle::default();
     shutdown.shutdown();
     let other = KernelHost::with_wake(catalog.instance(), shutdown);
