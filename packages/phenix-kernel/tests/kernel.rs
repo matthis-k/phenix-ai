@@ -45,11 +45,7 @@ impl PluginInstance for Plugin {
         let start_name = name.clone();
         let start_log = log.clone();
         let start_fail = self.start_fail;
-        r.add(Contribution {
-            id: "main".into(),
-            requires: self.requires.clone(),
-            routes: vec![name.clone()],
-            compose: Box::new(move |context| {
+        Contribution::new("main", move |context| {
                 let g = &mut *context.graph;
                 log.lock().unwrap().push(format!("compose:{name}"));
                 if compile_fail {
@@ -90,8 +86,10 @@ impl PluginInstance for Plugin {
                         ]),
                     }))
                 })
-            }),
-        })
+            })
+.after(self.requires.clone())
+.route(vec![name.clone()])
+.register(r)
     }
 }
 fn snapshots(
@@ -349,11 +347,7 @@ impl Producer for WakeSource {
 impl PluginInstance for DriverPlugin {
     fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
         let polls = self.polls.clone();
-        r.add(Contribution {
-            id: "driver".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            compose: Box::new(move |context| {
+        Contribution::new("driver", move |context| {
                 let g = &mut *context.graph;
                 let n = g.node("sink", |_: i64| ())?;
                 let input = g.expose_input("in", n.inlet())?;
@@ -365,8 +359,9 @@ impl PluginInstance for DriverPlugin {
                         wake: None,
                     }))
                 })
-            }),
-        })
+            })
+.route(self.routes.clone())
+.register(r)
     }
 }
 fn driver_kernel(
@@ -481,15 +476,11 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     impl PluginInstance for Broken {
         fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
             let polls = self.0.clone();
-            r.add(Contribution {
-                id: "broken".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |c| {
+            Contribution::new("broken", move |c| {
                     let polls = polls.clone();
                     c.activate(move || Ok(Box::new(Broken(polls.clone()))))
-                }),
-            })
+                })
+.register(r)
         }
     }
     let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
