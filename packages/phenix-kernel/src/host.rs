@@ -194,9 +194,15 @@ impl KernelHost {
         bind(&Binding { kernel: &kernel }).map_err(LifecycleError::Binding)?;
         kernel.start().map_err(LifecycleError::Start)?;
         if let Some(wake) = &self.wake {
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
             kernel
                 .register_wake(wake.clone())
                 .map_err(LifecycleError::Driver)?;
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
         }
         Ok(Candidate {
             host: self.identity.clone(),
