@@ -38,3 +38,11 @@ The stronger existing-abstraction alternative (`Generation::run_until`) is real 
 ## Evidence needed before acceptance
 
 Run on exact final head: fmt; all workspace tests (default and no-default); strict Clippy; Nix flake check; count and inspect affected `run_until`, `set_waker`, `KernelHost`, `LifecycleError`, `WakeHandle` call sites; look for compatibility/parallel paths; compare static/manual execution before and after; verify candidate nonadmission, wake token races, unsupported and shutdown failure isolation, stale generation, stalled producer teardown, and storage bridge observations. No independent review is claimed by this file.
+
+## Second critique — revision required (shutdown starvation)
+
+The separate diff pass found that the representative host loop never calls `wait_since` under continuous load. No public shutdown query existed, so sticky shutdown was not observable without blocking a busy reactor. The revise-first correction adds the already-existing internal `is_shutdown()` as a public observation, and updates the consumer example. It is not a new kernel mechanism. The static driver also regressed from graceful shutdown to `WakeShutdown` error when the handle was shut down during registration; it must retain the old `Ok(())` behavior. Both require explicit regression tests.
+
+The stalled-destructor signal test proves notification precedes destructor entry, **not** that a reactor can acquire an application-level `Mutex<KernelHost>` during a destructor. That cannot be claimed as nonblocking activation. A requirement to make progress before destructor exit is not accepted by protocol default and needs its own Phase 1 redesign; the scoped requirement remains eventual wake after a publication.
+
+**Review independence remains unmet:** separate critique passes were made by the implementer. This follows the protocol's allowed fallback but does not claim independent approval.
