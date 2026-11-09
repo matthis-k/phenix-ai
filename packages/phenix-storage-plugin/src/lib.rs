@@ -2,8 +2,8 @@
 //! in-process plugin Registrar. No second loader, database engine or kernel API.
 use phenix_plugin::{Contribution, ContributionHandle, PluginSnapshot};
 use phenix_storage::{
-    Address, Backend, Codec, Error as StorageError, Grant, Observation, Operation, Registry,
-    Schema, Scope, SqlBackend, TypedKv,
+    Address, Backend, Capability, Codec, Error as StorageError, Grant, Observation, Operation,
+    Registry, Schema, Scope, SqlBackend, TypedKv,
     scoped::{
         self, BindingTarget, Identity, ResourceCatalog, ResourceId, ResourceKind, ResourceRequest,
         ResourceSpec, ScopeKind, Storage, StorageClass, Stored, XdgPaths,
@@ -245,8 +245,16 @@ impl ResourceRequirements {
                         Operation::Read | Operation::Write | Operation::Delete => sql,
                         Operation::Subscribe => false,
                     })
-                    || (offer.request.atomic_cas
-                        && (sql || !offer.request.operations.contains(&Operation::Write)))
+                    || offer.request.required.iter().any(|capability| match capability {
+                        Capability::TypedKv => sql,
+                        Capability::Sql => !sql,
+                        Capability::RevisionedRead | Capability::AtomicReadMany => {
+                            sql || !offer.request.operations.contains(&Operation::Read)
+                        }
+                        Capability::CompareExchange => {
+                            sql || !offer.request.operations.contains(&Operation::Write)
+                        }
+                    })
                 {
                     return Err(Error::InvalidRequest);
                 }
@@ -274,21 +282,34 @@ impl ResourceRequirements {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackendFeatures {
     pub typed_kv: bool,
+    pub revisioned_read: bool,
+    pub atomic_read_many: bool,
+    pub compare_exchange: bool,
     pub sql: bool,
-    pub atomic_cas: bool,
     pub invalidation: bool,
 }
 impl BackendFeatures {
     pub const MEMORY: Self = Self {
         typed_kv: true,
+        revisioned_read: true,
+        atomic_read_many: true,
+        compare_exchange: true,
         sql: false,
-        atomic_cas: true,
         invalidation: true,
     };
     pub const SQLITE: Self = Self {
         sql: true,
         ..Self::MEMORY
     };
+    fn supports(self, capability: Capability) -> bool {
+        match capability {
+            Capability::TypedKv => self.typed_kv,
+            Capability::RevisionedRead => self.revisioned_read,
+            Capability::AtomicReadMany => self.atomic_read_many,
+            Capability::CompareExchange => self.compare_exchange,
+            Capability::Sql => self.sql,
+        }
+    }
 }
 
 pub enum BackendPlacement {
@@ -656,7 +677,7 @@ impl PreparedStorage {
                 if !request.operations.is_subset(&binding.allowed) {
                     return Err(Error::Denied);
                 }
-                if (request.requires_atomic_cas() && !caps.atomic_cas)
+                if request.required.iter().any(|cap| !caps.supports(*cap))
                     || (request.operations.contains(&Operation::Subscribe) && !caps.invalidation)
                 {
                     return Err(Error::UnsupportedCapability);
@@ -787,11 +808,25 @@ impl PreparedStorage {
                     let mut backend = (lease.open)().map_err(Error::Open)?;
                     // Probe the provider before mounting it or issuing sessions.
                     // Built-in memory/SQLite capabilities are fixed.
-                    let (typed_kv, atomic_cas) = match backend.typed_kv() {
-                        Some(kv) => (true, kv.supports_compare_exchange()),
-                        None => (false, false),
-                    };
+                    let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
+                        match backend.typed_kv() {
+                            Some(kv) => (
+                                true,
+                                kv.supports_revisioned_reads(),
+                                kv.supports_atomic_read_many(),
+                                kv.supports_compare_exchange(),
+                            ),
+                            None => (false, false, false, false),
+                        };
                     let sql = backend.sql().is_some();
+                    let actual = BackendFeatures {
+                        typed_kv,
+                        revisioned_read,
+                        atomic_read_many,
+                        compare_exchange,
+                        sql,
+                        invalidation: true, // Registry writes always publish notices.
+                    };
                     for (id, request) in self.requirements.requests.values().flatten() {
                         let target_mount = match &self.resources[id].target {
                             BindingTarget::Dataset(address) => address.mount(),
@@ -804,7 +839,7 @@ impl PreparedStorage {
                             ResourceKind::TypedKv(_) => typed_kv,
                             ResourceKind::Sql => sql,
                         };
-                        if !supported || (request.requires_atomic_cas() && !atomic_cas) {
+                        if !supported || request.required.iter().any(|cap| !actual.supports(*cap)) {
                             return Err(Error::UnsupportedCapability);
                         }
                     }
