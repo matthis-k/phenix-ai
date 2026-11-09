@@ -80,9 +80,9 @@ pub struct AmountPlugin {
 impl PluginInstance for AmountPlugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         for (id, spec) in [("a", A), ("b", B)] {
-            registrar.add(ResourceOffer::new(id, ResourceRequest::new(
-                spec.resource_spec(), [Operation::Read, Operation::Subscribe],
-            )))?;
+            registrar.add(ResourceOffer::new(id,
+                spec.request([Operation::Read, Operation::Subscribe]),
+            ))?;
         }
         let storage = self.storage.clone();
         // Declarations precede host provisioning; resolve the slot during compose.
@@ -150,7 +150,7 @@ Values and tuple arities 1-4 use `Clone + Send + Sync + 'static`; stored formats
 
 | Type | Ownership and invariant |
 |---|---|
-| `CellSpec<T>`, `CellRead<T>` | Logical declaration and read request, not a grant, backend or scheduler. Singleton key is `value`. |
+| `CellSpec<T>`, `CellRead<T>` | Logical declaration and read request, not a grant, backend or scheduler. `CellSpec::request` requires atomic batch reads. Singleton key is `value`. |
 | `ReadCell<T>`, `OptionalReadCell<T>` | Resolved `ReadSource` and shared domain codec. Optional changes absence policy only. |
 | `ReadSource`, `SnapshotReader` | Original session authority and registry/address/key/schema identity; every source is authorized separately, never by unioning grants. |
 | `SnapshotEntry` | Ordered optional revisioned bytes plus source identity; decoding with the wrong cell fails. Decoding occurs outside backend locks. |
