@@ -48,11 +48,7 @@ impl PluginInstance for Reader {
         let starts = self.starts.clone();
         let admissions = self.admissions.clone();
         let nested = self.nested.clone();
-        registrar.add(Contribution {
-            id: "reader".into(),
-            requires: vec![],
-            routes: vec!["sum.sources.refresh".into()],
-            compose: Box::new(move |context| {
+        Contribution::new("reader", move |context| {
                 let (a, b) = storage.bind((A.read(), B.read()))?;
                 let graph = &mut *context.graph;
                 let sum = graph.derive("sum", (&a, &b), |a: Amount, b: Amount| a.0 + b.0)?;
@@ -73,8 +69,9 @@ impl PluginInstance for Reader {
                     starts.fetch_add(1, Ordering::SeqCst);
                     observation.activate().map_err(Into::into)
                 })
-            }),
-        })
+            })
+.route(vec!["sum.sources.refresh".into()])
+.register(registrar)
     }
 }
 
