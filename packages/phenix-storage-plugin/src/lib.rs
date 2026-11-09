@@ -245,16 +245,20 @@ impl ResourceRequirements {
                         Operation::Read | Operation::Write | Operation::Delete => sql,
                         Operation::Subscribe => false,
                     })
-                    || offer.request.required.iter().any(|capability| match capability {
-                        Capability::TypedKv => sql,
-                        Capability::Sql => !sql,
-                        Capability::RevisionedRead | Capability::AtomicReadMany => {
-                            sql || !offer.request.operations.contains(&Operation::Read)
-                        }
-                        Capability::CompareExchange => {
-                            sql || !offer.request.operations.contains(&Operation::Write)
-                        }
-                    })
+                    || offer
+                        .request
+                        .required
+                        .iter()
+                        .any(|capability| match capability {
+                            Capability::TypedKv => sql,
+                            Capability::Sql => !sql,
+                            Capability::RevisionedRead | Capability::AtomicReadMany => {
+                                sql || !offer.request.operations.contains(&Operation::Read)
+                            }
+                            Capability::CompareExchange => {
+                                sql || !offer.request.operations.contains(&Operation::Write)
+                            }
+                        })
                 {
                     return Err(Error::InvalidRequest);
                 }
@@ -1392,7 +1396,12 @@ mod tests {
             prepared.requirements().iter().collect::<Vec<_>>(),
             vec![(&id, &ResourceKind::TypedKv(TextCodec.schema()))]
         );
-        assert!(prepared.requirements().requests()["writer"][0].1.required.contains(&Capability::CompareExchange));
+        assert!(
+            prepared.requirements().requests()["writer"][0]
+                .1
+                .required
+                .contains(&Capability::CompareExchange)
+        );
         let address = Address::parse("store://main/settings").unwrap();
         assert_eq!(
             prepared.bindings()[&id].target,
@@ -1475,7 +1484,10 @@ mod tests {
     #[test]
     fn activation_has_independent_views_and_cas_delegates() {
         let requirements = requirements(vec![
-            ("writer", request([Operation::Write]).require(Capability::CompareExchange)),
+            (
+                "writer",
+                request([Operation::Write]).require(Capability::CompareExchange),
+            ),
             ("reader", request([Operation::Read])),
         ]);
         assert_eq!(requirements.iter().count(), 1);
@@ -1782,15 +1794,17 @@ mod tests {
     impl PluginInstance for BatchReaderProvider {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
             registrar.add(
-                BackendOffer::new("read-only-batch", || Ok(Box::new(BatchReadBackend::default())))
-                    .with_features(BackendFeatures {
-                        typed_kv: true,
-                        revisioned_read: true,
-                        atomic_read_many: true,
-                        compare_exchange: false,
-                        sql: false,
-                        invalidation: true,
-                    }),
+                BackendOffer::new("read-only-batch", || {
+                    Ok(Box::new(BatchReadBackend::default()))
+                })
+                .with_features(BackendFeatures {
+                    typed_kv: true,
+                    revisioned_read: true,
+                    atomic_read_many: true,
+                    compare_exchange: false,
+                    sql: false,
+                    invalidation: true,
+                }),
             )
         }
     }
@@ -1820,14 +1834,11 @@ mod tests {
                 id: "read-only-batch".into(),
             },
         );
-        let active = PreparedStorage::prepare(
-            requirements,
-            Identity::user("alice").unwrap(),
-            policy,
-        )
-        .unwrap()
-        .activate()
-        .unwrap();
+        let active =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap()
+                .activate()
+                .unwrap();
         let cell = active.views["reader"].bind(spec.read()).unwrap();
         assert!(cell.optional().get().unwrap().is_none());
         let kv = active.views["reader"]
@@ -1863,14 +1874,11 @@ mod tests {
                 id: "tracked".into(),
             },
         );
-        let active = PreparedStorage::prepare(
-            requirements,
-            Identity::user("alice").unwrap(),
-            policy,
-        )
-        .unwrap()
-        .activate()
-        .unwrap();
+        let active =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap()
+                .activate()
+                .unwrap();
         let kv = active.views["reader"]
             .user()
             .config::<Text>("phenix.test/settings")
@@ -1922,11 +1930,7 @@ mod tests {
             },
         );
         assert!(matches!(
-            PreparedStorage::prepare(
-                requirements,
-                Identity::user("alice").unwrap(),
-                policy
-            ),
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy),
             Err(Error::UnsupportedCapability)
         ));
         assert_eq!(declared.opens.load(SeqCst), 0);
@@ -1945,13 +1949,13 @@ mod tests {
                 id: "tracked".into(),
             },
         );
-        let prepared = PreparedStorage::prepare(
-            requirements,
-            Identity::user("alice").unwrap(),
-            policy,
-        )
-        .unwrap();
-        assert!(matches!(prepared.activate(), Err(Error::UnsupportedCapability)));
+        let prepared =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap();
+        assert!(matches!(
+            prepared.activate(),
+            Err(Error::UnsupportedCapability)
+        ));
         assert_eq!(dishonest.opens.load(SeqCst), 1);
         assert_eq!(dishonest.backend_drops.load(SeqCst), 1);
     }
@@ -2263,7 +2267,10 @@ mod tests {
         assert_eq!(found.value.0, "retained");
         kv.compare_exchange("key", Some(&found.revision), &Text("after unload".into()))
             .unwrap();
-        assert_eq!(kv.get_revisioned("key").unwrap().unwrap().value.0, "after unload");
+        assert_eq!(
+            kv.get_revisioned("key").unwrap().unwrap().value.0,
+            "after unload"
+        );
         // TrackedBackend::drop asserts its provider is still alive at this point.
         drop(kv);
         assert_eq!(config.backend_drops.load(SeqCst), 1);
