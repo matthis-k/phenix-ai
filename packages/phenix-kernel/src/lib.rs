@@ -60,6 +60,27 @@ struct WakeState {
 pub struct WakeHandle(Arc<WakeState>);
 
 impl WakeHandle {
+    /// Take a scheduling token before looking up the active generation.
+    pub fn version(&self) -> u64 {
+        self.0.state.lock().unwrap().0
+    }
+
+    /// Sleep until a later wake or sticky shutdown. A previous wake is not lost.
+    /// Returns false on shutdown, true on a changed notification token.
+    pub fn wait_since(&self, version: u64) -> bool {
+        let state = self.0.state.lock().unwrap();
+        let state = self
+            .0
+            .ready
+            .wait_while(state, |state| !state.1 && state.0 == version)
+            .unwrap();
+        !state.1
+    }
+
+    fn is_shutdown(&self) -> bool {
+        self.0.state.lock().unwrap().1
+    }
+
     pub fn wake(&self) {
         let mut state = self.0.state.lock().unwrap();
         state.0 = state.0.wrapping_add(1);
@@ -399,6 +420,7 @@ impl std::error::Error for ProducerError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DriverError {
     NotStarted,
+    WakeShutdown,
     UnsupportedWake { producer: Key },
 }
 
@@ -406,6 +428,7 @@ impl std::fmt::Display for DriverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotStarted => f.write_str("kernel not started"),
+            Self::WakeShutdown => f.write_str("wake handle was shut down"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -904,16 +927,14 @@ impl Kernel {
         events
     }
 
-    /// Drive a started kernel until shutdown, delivering events without retaining reports.
-    /// Every producer must support wake registration. Shutdown is checked between waves;
-    /// it does not interrupt a running producer poll, wave, or callback.
-    pub fn run_until(
-        &mut self,
-        wake: &WakeHandle,
-        mut on_event: impl FnMut(ProducerEvent),
-    ) -> Result<(), DriverError> {
+    /// Register producer notifications once on an exclusive, unpublished kernel.
+    /// No producer lock is held while invoking user set_waker callbacks.
+    fn register_wake(&mut self, wake: WakeHandle) -> Result<(), DriverError> {
         if !self.started {
             return Err(DriverError::NotStarted);
+        }
+        if wake.is_shutdown() {
+            return Err(DriverError::WakeShutdown);
         }
         let state = self
             .producers
@@ -926,14 +947,25 @@ impl Kernel {
                 });
             }
         }
+        if wake.is_shutdown() {
+            return Err(DriverError::WakeShutdown);
+        }
+        Ok(())
+    }
+
+    /// Drive a single static kernel until shutdown. Reloadable hosts use
+    /// WakeHandle::version/wait_since and read KernelHost::active on every pass.
+    pub fn run_until(
+        &mut self,
+        wake: &WakeHandle,
+        mut on_event: impl FnMut(ProducerEvent),
+    ) -> Result<(), DriverError> {
+        self.register_wake(wake.clone())?;
         loop {
-            let generation = {
-                let state = wake.0.state.lock().unwrap();
-                if state.1 {
-                    return Ok(());
-                }
-                state.0
-            };
+            let version = wake.version();
+            if wake.is_shutdown() {
+                return Ok(());
+            }
             let mut active = false;
             let count = self
                 .producers
@@ -942,7 +974,7 @@ impl Kernel {
                 .producers
                 .len();
             for _ in 0..count {
-                if wake.0.state.lock().unwrap().1 {
+                if wake.is_shutdown() {
                     return Ok(());
                 }
                 for event in self.drain(1) {
@@ -950,13 +982,8 @@ impl Kernel {
                     on_event(event);
                 }
             }
-            if !active {
-                let state = wake.0.state.lock().unwrap();
-                let _state = wake
-                    .0
-                    .ready
-                    .wait_while(state, |state| !state.1 && state.0 == generation)
-                    .unwrap();
+            if !active && !wake.wait_since(version) {
+                return Ok(());
             }
         }
     }
