@@ -221,7 +221,10 @@ mod tests {
         assert!(target.merge(candidate.finish()).is_err());
         target.add(Patch("foreign")).unwrap();
         let inventory = target.finish();
-        assert_eq!(inventory.keys().collect::<Vec<_>>(), [("alpha", "graph.patch", "foreign")]);
+        assert_eq!(
+            inventory.keys().collect::<Vec<_>>(),
+            [("alpha", "graph.patch", "foreign")]
+        );
     }
 
     #[test]

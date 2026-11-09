@@ -46,50 +46,50 @@ impl PluginInstance for Plugin {
         let start_log = log.clone();
         let start_fail = self.start_fail;
         Contribution::new("main", move |context| {
-                let g = &mut *context.graph;
-                log.lock().unwrap().push(format!("compose:{name}"));
-                if compile_fail {
-                    *g = GraphBuilder::new("invalid").limits(CompileLimits {
-                        max_work: 0,
-                        ..Default::default()
-                    });
+            let g = &mut *context.graph;
+            log.lock().unwrap().push(format!("compose:{name}"));
+            if compile_fail {
+                *g = GraphBuilder::new("invalid").limits(CompileLimits {
+                    max_work: 0,
+                    ..Default::default()
+                });
+            }
+            let mark = Mark(format!("engine:{name}"), log.clone());
+            let n = g.node(&name, move |x: i64| {
+                mark.1.lock().unwrap().push(format!("execute:{}", mark.0));
+                x + 1
+            })?;
+            let input = g.expose_input(format!("input_{name}"), n.inlet())?;
+            g.trigger(&name, [input])?;
+            let start_log = start_log.clone();
+            let start_name = start_name.clone();
+            context.activate(move || {
+                start_log
+                    .lock()
+                    .unwrap()
+                    .push(format!("start:{start_name}"));
+                if start_fail {
+                    return Err("startup failed".into());
                 }
-                let mark = Mark(format!("engine:{name}"), log.clone());
-                let n = g.node(&name, move |x: i64| {
-                    mark.1.lock().unwrap().push(format!("execute:{}", mark.0));
-                    x + 1
-                })?;
-                let input = g.expose_input(format!("input_{name}"), n.inlet())?;
-                g.trigger(&name, [input])?;
-                let start_log = start_log.clone();
-                let start_name = start_name.clone();
-                context.activate(move || {
-                    start_log
-                        .lock()
-                        .unwrap()
-                        .push(format!("start:{start_name}"));
-                    if start_fail {
-                        return Err("startup failed".into());
-                    }
-                    Ok(Box::new(Source {
-                        _mark: Mark(format!("producer:{start_name}"), start_log.clone()),
-                        notices: VecDeque::from([
-                            Ok(Notice {
-                                trigger: start_name.clone(),
-                                values: vec![Value::local(1_i64)],
-                            }),
-                            Ok(Notice {
-                                trigger: "missing".into(),
-                                values: vec![],
-                            }),
-                            Err("poll failed".into()),
-                        ]),
-                    }))
-                })
+                Ok(Box::new(Source {
+                    _mark: Mark(format!("producer:{start_name}"), start_log.clone()),
+                    notices: VecDeque::from([
+                        Ok(Notice {
+                            trigger: start_name.clone(),
+                            values: vec![Value::local(1_i64)],
+                        }),
+                        Ok(Notice {
+                            trigger: "missing".into(),
+                            values: vec![],
+                        }),
+                        Err("poll failed".into()),
+                    ]),
+                }))
             })
-.after(self.requires.clone())
-.route(vec![name.clone()])
-.register(r)
+        })
+        .after(self.requires.clone())
+        .route(vec![name.clone()])
+        .register(r)
     }
 }
 fn snapshots(
@@ -348,20 +348,20 @@ impl PluginInstance for DriverPlugin {
     fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
         let polls = self.polls.clone();
         Contribution::new("driver", move |context| {
-                let g = &mut *context.graph;
-                let n = g.node("sink", |_: i64| ())?;
-                let input = g.expose_input("in", n.inlet())?;
-                g.trigger("run", [input])?;
-                let polls = polls.clone();
-                context.activate(move || {
-                    Ok(Box::new(WakeSource {
-                        polls: polls.clone(),
-                        wake: None,
-                    }))
-                })
+            let g = &mut *context.graph;
+            let n = g.node("sink", |_: i64| ())?;
+            let input = g.expose_input("in", n.inlet())?;
+            g.trigger("run", [input])?;
+            let polls = polls.clone();
+            context.activate(move || {
+                Ok(Box::new(WakeSource {
+                    polls: polls.clone(),
+                    wake: None,
+                }))
             })
-.route(self.routes.clone())
-.register(r)
+        })
+        .route(self.routes.clone())
+        .register(r)
     }
 }
 fn driver_kernel(
@@ -477,10 +477,10 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
         fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
             let polls = self.0.clone();
             Contribution::new("broken", move |c| {
-                    let polls = polls.clone();
-                    c.activate(move || Ok(Box::new(Broken(polls.clone()))))
-                })
-.register(r)
+                let polls = polls.clone();
+                c.activate(move || Ok(Box::new(Broken(polls.clone()))))
+            })
+            .register(r)
         }
     }
     let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));

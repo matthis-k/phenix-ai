@@ -1,7 +1,5 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor, Node, Value};
-use phenix_kernel::{
-    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
-};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Kernel, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{
     Arc, Mutex,
@@ -77,7 +75,6 @@ mod provider {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            
             let increment = self.increment;
             let claim = self.claim;
             let activations = self.activations.clone();
@@ -87,22 +84,26 @@ mod provider {
                 self.path.clone()
             };
             Contribution::new("main", move |context| {
-                    let graph = &mut *context.graph;
-                    graph.node(
-                        &path,
-                        Node::wire(move |request: Request| Response(request.0 + increment)),
-                    )?;
-                    if claim {
-                        graph.implements(&path, &definition::contract())?;
-                    }
-                    let activations = activations.clone();
-                    context.activate(move || {
-                        activations.fetch_add(1, Ordering::SeqCst);
-                        Ok(Box::new(Idle))
-                    })
+                let graph = &mut *context.graph;
+                graph.node(
+                    &path,
+                    Node::wire(move |request: Request| Response(request.0 + increment)),
+                )?;
+                if claim {
+                    graph.implements(&path, &definition::contract())?;
+                }
+                let activations = activations.clone();
+                context.activate(move || {
+                    activations.fetch_add(1, Ordering::SeqCst);
+                    Ok(Box::new(Idle))
                 })
-.offer("service", self.path.clone(), Key::new("definition", "transform"))
-.register(into)
+            })
+            .offer(
+                "service",
+                self.path.clone(),
+                Key::new("definition", "transform"),
+            )
+            .register(into)
         }
     }
     struct Idle;
@@ -122,39 +123,38 @@ mod consumer {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            
             let observed = self.observed.clone();
             Contribution::new("main", move |context| {
-                    let selected = context.import("transform")?;
-                    let graph = &mut *context.graph;
-                    let source = graph.node("source", Node::wire(|request: Request| request))?;
-                    let sink = graph.node(
-                        "sink",
-                        Node::wire({
-                            let observed = observed.clone();
-                            move |response: Response| {
-                                observed.lock().unwrap().push(response.0);
-                                response
-                            }
-                        }),
-                    )?;
-                    // Lookup uses A's contract types, never B's implementation types.
-                    // C's independently defined types cross both portable edges.
-                    let (input, output) = {
-                        let bound = selected.bind(graph)?;
-                        (
-                            bound.wire_input::<definition::Request>("run", "value")?,
-                            bound.wire_output::<definition::Response>("value")?,
-                        )
-                    };
-                    graph.connect_wire(source.output(), input)?;
-                    graph.connect_wire(output, sink.inlet())?;
-                    let input = graph.expose_input("request", source.inlet())?;
-                    graph.trigger("run", [input])?;
-                    Ok(())
-                })
-.import("transform", Key::new("definition", "transform"))
-.register(into)
+                let selected = context.import("transform")?;
+                let graph = &mut *context.graph;
+                let source = graph.node("source", Node::wire(|request: Request| request))?;
+                let sink = graph.node(
+                    "sink",
+                    Node::wire({
+                        let observed = observed.clone();
+                        move |response: Response| {
+                            observed.lock().unwrap().push(response.0);
+                            response
+                        }
+                    }),
+                )?;
+                // Lookup uses A's contract types, never B's implementation types.
+                // C's independently defined types cross both portable edges.
+                let (input, output) = {
+                    let bound = selected.bind(graph)?;
+                    (
+                        bound.wire_input::<definition::Request>("run", "value")?,
+                        bound.wire_output::<definition::Response>("value")?,
+                    )
+                };
+                graph.connect_wire(source.output(), input)?;
+                graph.connect_wire(output, sink.inlet())?;
+                let input = graph.expose_input("request", source.inlet())?;
+                graph.trigger("run", [input])?;
+                Ok(())
+            })
+            .import("transform", Key::new("definition", "transform"))
+            .register(into)
         }
     }
 }
@@ -319,10 +319,10 @@ impl PluginInstance for RequirementPlugin {
             id: "requested".into(),
             contract: self.contract.clone(),
         })?;
-        
+
         Contribution::new("main", |_| Ok(()))
-.import("request", Key::new(into.owner(), "requested"))
-.register(into)
+            .import("request", Key::new(into.owner(), "requested"))
+            .register(into)
     }
 }
 
@@ -419,18 +419,18 @@ struct LateEdit;
 impl PluginInstance for LateEdit {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         Contribution::new("main", |context| {
-                let graph = &mut *context.graph;
-                // A later contributor can replace the entire builder. An early
-                // successful claim/inspection must not certify this final unit.
-                *graph = phenix_graph::GraphBuilder::new("late-edit");
-                graph.node(
-                    "service",
-                    Node::wire(|request: definition::Request| definition::Response(request.0)),
-                )?;
-                Ok(())
-            })
-.after(vec![Key::new("provider", "main")])
-.register(into)
+            let graph = &mut *context.graph;
+            // A later contributor can replace the entire builder. An early
+            // successful claim/inspection must not certify this final unit.
+            *graph = phenix_graph::GraphBuilder::new("late-edit");
+            graph.node(
+                "service",
+                Node::wire(|request: definition::Request| definition::Response(request.0)),
+            )?;
+            Ok(())
+        })
+        .after(vec![Key::new("provider", "main")])
+        .register(into)
     }
 }
 

@@ -77,57 +77,57 @@ impl PluginInstance for Plugin {
         let start_name = name.clone();
         let gate = self.gate.clone();
         Contribution::new("main", move |context| {
-                log.lock()
+            log.lock()
+                .unwrap()
+                .push(format!("compose:{name}:{revision}"));
+            context.export(Artifact(format!("export:{name}:{revision}"), log.clone()))?;
+            let action_guard = Artifact(format!("action:{name}:{revision}"), log.clone());
+            let factory_guard = Artifact(format!("factory:{name}:{revision}"), log.clone());
+            let graph = &mut *context.graph;
+            if compile_fail {
+                *graph = GraphBuilder::new("invalid").limits(CompileLimits {
+                    max_work: 0,
+                    ..Default::default()
+                });
+            }
+            let action_log = log.clone();
+            let action_name = name.clone();
+            let action_gate = gate.clone();
+            let node = graph.node(&name, move |x: i64| {
+                let _ = &action_guard;
+                if let Some(gate) = &action_gate {
+                    gate.0.wait();
+                    gate.1.wait();
+                }
+                action_log
+                    .lock()
                     .unwrap()
-                    .push(format!("compose:{name}:{revision}"));
-                context.export(Artifact(format!("export:{name}:{revision}"), log.clone()))?;
-                let action_guard = Artifact(format!("action:{name}:{revision}"), log.clone());
-                let factory_guard = Artifact(format!("factory:{name}:{revision}"), log.clone());
-                let graph = &mut *context.graph;
-                if compile_fail {
-                    *graph = GraphBuilder::new("invalid").limits(CompileLimits {
-                        max_work: 0,
-                        ..Default::default()
-                    });
+                    .push(format!("fire:{action_name}:{revision}"));
+                x + revision as i64
+            })?;
+            let input = graph.expose_input(format!("input_{name}"), node.inlet())?;
+            graph.trigger(&name, [input])?;
+            let start_log = start_log.clone();
+            let start_name = start_name.clone();
+            context.activate(move || {
+                let _ = &factory_guard;
+                start_log
+                    .lock()
+                    .unwrap()
+                    .push(format!("start:{start_name}:{revision}"));
+                if start_fail {
+                    return Err("activation failed".into());
                 }
-                let action_log = log.clone();
-                let action_name = name.clone();
-                let action_gate = gate.clone();
-                let node = graph.node(&name, move |x: i64| {
-                    let _ = &action_guard;
-                    if let Some(gate) = &action_gate {
-                        gate.0.wait();
-                        gate.1.wait();
-                    }
-                    action_log
-                        .lock()
-                        .unwrap()
-                        .push(format!("fire:{action_name}:{revision}"));
-                    x + revision as i64
-                })?;
-                let input = graph.expose_input(format!("input_{name}"), node.inlet())?;
-                graph.trigger(&name, [input])?;
-                let start_log = start_log.clone();
-                let start_name = start_name.clone();
-                context.activate(move || {
-                    let _ = &factory_guard;
-                    start_log
-                        .lock()
-                        .unwrap()
-                        .push(format!("start:{start_name}:{revision}"));
-                    if start_fail {
-                        return Err("activation failed".into());
-                    }
-                    Ok(Box::new(Source(start_name.clone(), start_log.clone())))
-                })?;
-                if compose_fail {
-                    return Err("composition failed".into());
-                }
-                Ok(())
-            })
-.after(self.requires.clone())
-.route(vec![name.clone()])
-.register(into)
+                Ok(Box::new(Source(start_name.clone(), start_log.clone())))
+            })?;
+            if compose_fail {
+                return Err("composition failed".into());
+            }
+            Ok(())
+        })
+        .after(self.requires.clone())
+        .route(vec![name.clone()])
+        .register(into)
     }
 }
 

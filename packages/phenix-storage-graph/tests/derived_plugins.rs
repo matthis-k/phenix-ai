@@ -182,14 +182,14 @@ impl PluginInstance for FailCandidate {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let fail = self.0.clone();
         Contribution::new("fail", move |_| {
-                if fail.load(Ordering::SeqCst) {
-                    Err("candidate rejected".into())
-                } else {
-                    Ok(())
-                }
-            })
-.after(vec![Key::new("derive", "derive")])
-.register(registrar)
+            if fail.load(Ordering::SeqCst) {
+                Err("candidate rejected".into())
+            } else {
+                Ok(())
+            }
+        })
+        .after(vec![Key::new("derive", "derive")])
+        .register(registrar)
     }
 }
 
@@ -200,17 +200,17 @@ impl PluginInstance for SelectedReader {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let selected = self.0.clone();
         Contribution::new("reader", move |context| {
-                let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
-                let graph = &mut *context.graph;
-                let group = graph.sources("values", (&a, &b))?;
-                let sum = graph.derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)?;
-                let query = graph.query_spec("query", &sum)?;
-                let observation = group.observation(16);
-                context.export(query)?;
-                context.activate(move || observation.activate().map_err(Into::into))
-            })
-.route(vec!["values.refresh".into()])
-.register(registrar)
+            let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
+            let graph = &mut *context.graph;
+            let group = graph.sources("values", (&a, &b))?;
+            let sum = graph.derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)?;
+            let query = graph.query_spec("query", &sum)?;
+            let observation = group.observation(16);
+            context.export(query)?;
+            context.activate(move || observation.activate().map_err(Into::into))
+        })
+        .route(vec!["values.refresh".into()])
+        .register(registrar)
     }
 }
 
@@ -277,10 +277,10 @@ struct CompetingFactories;
 impl PluginInstance for CompetingFactories {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         Contribution::new("competing", |context| {
-                context.activate(|| panic!("must not activate"))?;
-                context.activate(|| panic!("must not activate"))
-            })
-.register(registrar)
+            context.activate(|| panic!("must not activate"))?;
+            context.activate(|| panic!("must not activate"))
+        })
+        .register(registrar)
     }
 }
 

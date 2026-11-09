@@ -50,7 +50,9 @@ impl PluginInstance for Provider {
                 .register(into)?;
         }
         let config = self.clone();
-        let composer = Contribution::new(if self.sibling { "sibling" } else { "main" }, move |context| {
+        let composer = Contribution::new(
+            if self.sibling { "sibling" } else { "main" },
+            move |context| {
                 let graph = &mut *context.graph;
                 if config.module {
                     let mut child = GraphBuilder::new("implementation");
@@ -67,7 +69,8 @@ impl PluginInstance for Provider {
                 // declarations and kernel-assigned provenance for Plugin API binding.
                 *config.compiled.lock().unwrap() = Some(graph.clone().compile()?);
                 Ok(())
-            });
+            },
+        );
         let composer = if self.sibling {
             composer
         } else {

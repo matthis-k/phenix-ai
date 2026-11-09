@@ -49,29 +49,29 @@ impl PluginInstance for Reader {
         let admissions = self.admissions.clone();
         let nested = self.nested.clone();
         Contribution::new("reader", move |context| {
-                let (a, b) = storage.bind((A.read(), B.read()))?;
-                let graph = &mut *context.graph;
-                let sum = graph.derive("sum", (&a, &b), |a: Amount, b: Amount| a.0 + b.0)?;
-                let admissions = admissions.clone();
-                let nested = nested.clone();
-                let consumer = graph.node("consumer", move |_: i64| {
-                    admissions.fetch_add(1, Ordering::SeqCst);
-                    if let Some(nested) = &nested {
-                        nested();
-                    }
-                })?;
-                graph.connect(sum.output(), consumer.inlet())?;
-                let queries = Queries(graph.query_spec("query", &sum)?);
-                let observation = sum.observation(16);
-                context.export(queries)?;
-                let starts = starts.clone();
-                context.activate(move || {
-                    starts.fetch_add(1, Ordering::SeqCst);
-                    observation.activate().map_err(Into::into)
-                })
+            let (a, b) = storage.bind((A.read(), B.read()))?;
+            let graph = &mut *context.graph;
+            let sum = graph.derive("sum", (&a, &b), |a: Amount, b: Amount| a.0 + b.0)?;
+            let admissions = admissions.clone();
+            let nested = nested.clone();
+            let consumer = graph.node("consumer", move |_: i64| {
+                admissions.fetch_add(1, Ordering::SeqCst);
+                if let Some(nested) = &nested {
+                    nested();
+                }
+            })?;
+            graph.connect(sum.output(), consumer.inlet())?;
+            let queries = Queries(graph.query_spec("query", &sum)?);
+            let observation = sum.observation(16);
+            context.export(queries)?;
+            let starts = starts.clone();
+            context.activate(move || {
+                starts.fetch_add(1, Ordering::SeqCst);
+                observation.activate().map_err(Into::into)
             })
-.route(vec!["sum.sources.refresh".into()])
-.register(registrar)
+        })
+        .route(vec!["sum.sources.refresh".into()])
+        .register(registrar)
     }
 }
 

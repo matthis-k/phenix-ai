@@ -85,26 +85,26 @@ pub mod writer {
             let storage = self.storage.clone();
             let writes = self.writes.clone();
             Contribution::new("writer", move |context| {
-                    let graph = &mut *context.graph;
-                    let project = storage
-                        .get()
-                        .ok_or("writer storage not injected")?
-                        .project()?;
-                    let a = project.state::<Amount>("demo.values/a")?;
-                    let b = project.state::<Amount>("demo.values/b")?;
-                    let writes = writes.clone();
-                    let node = graph.node("write", move |update: Update| {
-                        let target = if update.a { &a } else { &b };
-                        writes
-                            .lock()
-                            .unwrap()
-                            .push(target.put("value", &update.value).map_err(text));
-                    })?;
-                    let input = graph.expose_input("update", node.inlet())?;
-                    graph.trigger("write", [input])?;
-                    Ok(())
-                })
-.register(registrar)
+                let graph = &mut *context.graph;
+                let project = storage
+                    .get()
+                    .ok_or("writer storage not injected")?
+                    .project()?;
+                let a = project.state::<Amount>("demo.values/a")?;
+                let b = project.state::<Amount>("demo.values/b")?;
+                let writes = writes.clone();
+                let node = graph.node("write", move |update: Update| {
+                    let target = if update.a { &a } else { &b };
+                    writes
+                        .lock()
+                        .unwrap()
+                        .push(target.put("value", &update.value).map_err(text));
+                })?;
+                let input = graph.expose_input("update", node.inlet())?;
+                graph.trigger("write", [input])?;
+                Ok(())
+            })
+            .register(registrar)
         }
     }
 }
@@ -136,45 +136,43 @@ pub mod reader {
             let storage = self.storage.clone();
             let state = self.state.clone();
             Contribution::new(name, move |context| {
-                    let graph = &mut *context.graph;
-                    let (a, b) = storage
-                        .get()
-                        .ok_or("reader storage not injected")?
-                        .bind((A.read(), B.read()))?;
-                    let group = graph.sources(&format!("{name}.values"), (&a, &b))?;
-                    let sum = graph.derive_from(
-                        &format!("{name}.sum"),
-                        &group,
-                        |a: Amount, b: Amount| a.0 + b.0,
-                    )?;
-                    let diff = graph.derive_from(
-                        &format!("{name}.diff"),
-                        &group,
-                        |a: Amount, b: Amount| a.0 - b.0,
-                    )?;
-                    let both =
-                        graph.derive(&format!("{name}.both"), (&sum, &diff), |sum, diff| {
-                            sum * diff
-                        })?;
-                    let twice = graph.derive(&format!("{name}.twice"), (&sum,), |sum| sum * 2)?;
-                    let consumed = state.consumed.clone();
-                    let consumer = graph.node(format!("{name}.consumer"), move |value: i64| {
-                        consumed.lock().unwrap().push(value);
+                let graph = &mut *context.graph;
+                let (a, b) = storage
+                    .get()
+                    .ok_or("reader storage not injected")?
+                    .bind((A.read(), B.read()))?;
+                let group = graph.sources(&format!("{name}.values"), (&a, &b))?;
+                let sum =
+                    graph.derive_from(&format!("{name}.sum"), &group, |a: Amount, b: Amount| {
+                        a.0 + b.0
                     })?;
-                    graph.connect(twice.output(), consumer.inlet())?;
-                    let queries = Queries {
-                        sum: graph.query_spec(&format!("{name}.qsum"), &sum)?,
-                        diff: graph.query_spec(&format!("{name}.qdiff"), &diff)?,
-                        both: graph.query_spec(&format!("{name}.qboth"), &both)?,
-                        twice: graph.query_spec(&format!("{name}.qtwice"), &twice)?,
-                    };
-                    let observation = group.observation(16);
-                    context.export(queries)?;
-                    context.activate(move || observation.activate().map_err(Into::into))?;
-                    Ok(())
-                })
-.route(vec![format!("{name}.values.refresh")])
-.register(registrar)
+                let diff = graph.derive_from(
+                    &format!("{name}.diff"),
+                    &group,
+                    |a: Amount, b: Amount| a.0 - b.0,
+                )?;
+                let both = graph.derive(&format!("{name}.both"), (&sum, &diff), |sum, diff| {
+                    sum * diff
+                })?;
+                let twice = graph.derive(&format!("{name}.twice"), (&sum,), |sum| sum * 2)?;
+                let consumed = state.consumed.clone();
+                let consumer = graph.node(format!("{name}.consumer"), move |value: i64| {
+                    consumed.lock().unwrap().push(value);
+                })?;
+                graph.connect(twice.output(), consumer.inlet())?;
+                let queries = Queries {
+                    sum: graph.query_spec(&format!("{name}.qsum"), &sum)?,
+                    diff: graph.query_spec(&format!("{name}.qdiff"), &diff)?,
+                    both: graph.query_spec(&format!("{name}.qboth"), &both)?,
+                    twice: graph.query_spec(&format!("{name}.qtwice"), &twice)?,
+                };
+                let observation = group.observation(16);
+                context.export(queries)?;
+                context.activate(move || observation.activate().map_err(Into::into))?;
+                Ok(())
+            })
+            .route(vec![format!("{name}.values.refresh")])
+            .register(registrar)
         }
     }
 }
