@@ -78,7 +78,7 @@ Registration happens on a private, exclusively mutable candidate after startup b
 
 ## Subtraction / complexity budget
 
-`Kernel::run_until` and host preparation now share one *private* wake-registration helper. No `GenerationDriver`, `EventBus`, `KernelRuntime`, new scheduling queue, implicit timer, registration framework, or duplicate contract/persistence mechanism. Static `Kernel::build/start/fire` and manual `KernelHost::new` remain unchanged. The new API is one opt-in constructor, two wake-token methods, one shutdown predicate, and one typed error variant. No bounded migration coexistence is needed: direct and published drivers have distinct lifecycles rather than duplicate execution engines.
+`Kernel::run_until` and host preparation now share one *private* wake-registration helper. No `GenerationDriver`, `EventBus`, `KernelRuntime`, new scheduling queue, implicit timer, registration framework, or duplicate contract/persistence mechanism. Static `Kernel::build/start/fire` and manual `KernelHost::new` remain unchanged. The new API is one kernel opt-in constructor (plus a thin existing storage-derived adapter), two wake-token methods, one shutdown predicate, and one typed error variant. No bounded migration coexistence is needed: direct and published drivers have distinct lifecycles rather than duplicate execution engines.
 
 The accepted tradeoffs and a separate reject-list audit are in [kernel-published-wake-critique.md](kernel-published-wake-critique.md).
 
