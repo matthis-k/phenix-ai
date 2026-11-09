@@ -34,6 +34,7 @@ Required sleeping, reloadable host (**new API**):
 let wake = WakeHandle::default();
 let host = Arc::new(Mutex::new(KernelHost::with_wake(plugins, wake.clone())));
 loop {
+    if wake.is_shutdown() { break; } // includes continuously busy producers
     let token = wake.version(); // before active lookup
     let generation = host.lock().unwrap().active(); // unlock immediately
     let mut busy = false;
@@ -57,7 +58,7 @@ The falsifying race is publication between reading `active` and waiting: token c
 | Plugin and its revision/code lease | Existing Plugin; Kernel pins exact chosen handles |
 | Active generation/published pointer | Existing `KernelHost` and `Generation` |
 | Admission, producer routing and retirement | Existing `Kernel` |
-| Wake token, wake wait, sticky shutdown | Existing `WakeHandle` (two small public methods) |
+| Wake token, wake wait, sticky shutdown | Existing `WakeHandle` (three small public methods) |
 | Driver thread/loop | Embedding application, **not** a new kernel type |
 | Storage notice | Existing `StorageBinding` -> `Producer` optional bridge |
 
@@ -77,6 +78,14 @@ Registration happens on a private, exclusively mutable candidate after startup b
 
 ## Subtraction / complexity budget
 
-`Kernel::run_until` and host preparation now share one *private* wake-registration helper. No `GenerationDriver`, `EventBus`, `KernelRuntime`, new scheduling queue, implicit timer, registration framework, or duplicate contract/persistence mechanism. Static `Kernel::build/start/fire` and manual `KernelHost::new` remain unchanged. The new API is one opt-in constructor, two wake-token methods, and one typed error variant. No bounded migration coexistence is needed: direct and published drivers have distinct lifecycles rather than duplicate execution engines.
+`Kernel::run_until` and host preparation now share one *private* wake-registration helper. No `GenerationDriver`, `EventBus`, `KernelRuntime`, new scheduling queue, implicit timer, registration framework, or duplicate contract/persistence mechanism. Static `Kernel::build/start/fire` and manual `KernelHost::new` remain unchanged. The new API is one opt-in constructor, two wake-token methods, one shutdown predicate, and one typed error variant. No bounded migration coexistence is needed: direct and published drivers have distinct lifecycles rather than duplicate execution engines.
 
 The accepted tradeoffs and a separate reject-list audit are in [kernel-published-wake-critique.md](kernel-published-wake-critique.md).
+
+## Phase 1 revision after diff pressure test
+
+A continuously ready source means the caller never reaches `wait_since`; without a public read of sticky shutdown, the canonical host loop cannot stop. Expose the existing internal `WakeHandle::is_shutdown()` predicate publicly, used at the top of each host iteration. Do **not** add a reactor service or a second event channel. `wait_since` still returns false if shutdown happens while idle. This is one shared semantic cause (termination independent of idleness), not source-specific exception handling.
+
+The pre-existing static `Kernel::run_until()` returned `Ok(())` if shutdown was already set or happened during `set_waker`. The shared registration helper newly reports `WakeShutdown` for candidate rejection; the static driver must translate precisely that case back to `Ok(())`, preserving `NotStarted` and `UnsupportedWake` errors. Add regressions for both static cases. Candidate preparation continues to fail closed on shutdown.
+
+**Important liveness limit:** publication signals before old-producer teardown, but applications holding `Mutex<KernelHost>` while calling `publish` still block other threads from reading `active()` until that mutex is released. Do not claim the event loop can make progress while the destructor is stalled; this change guarantees notification ordering and eventual wake when the mutex is released, not nonblocking publication. Achieving independent access to the active pointer would require a separate design note/host ownership redesign.
