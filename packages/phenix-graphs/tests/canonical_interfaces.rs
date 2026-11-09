@@ -925,6 +925,37 @@ fn inspection_reads_pending_layout_and_final_compile_rechecks_claim() {
     );
 }
 
+#[cfg(feature = "derive")]
+#[test]
+fn retained_authoring_binding_rechecks_full_contract_after_layout_change() {
+    use phenix_graph::{Layout, LocalPortLayout};
+    #[derive(Clone, LocalPortLayout)]
+    struct Pair {
+        left: i64,
+        right: i64,
+    }
+    let mut graph = GraphBuilder::new("root");
+    let node = graph.node("worker", |x: Pair| x.left + x.right).unwrap();
+    let contract =
+        GraphContract::new("pair@1", inspect(&graph.inspect("worker").unwrap()).shape).unwrap();
+    graph.implements("worker", &contract).unwrap();
+    let view = graph.inspect("worker").unwrap();
+    let bound = graph.bind_contract("worker", &contract).unwrap();
+    assert!(bound.local_input::<Pair>("run", "value").is_ok());
+    assert!(bound.local_output::<i64>("value").is_ok());
+
+    let _node = node.input(Layout::fields()).unwrap();
+    assert_eq!(inspect(&view).shape.inputs().count(), 2);
+    // The output itself still exists, but the complete input contract is broken.
+    let error = bound.local_output::<i64>("value").err().unwrap();
+    assert_eq!(error.phase, InterfacePhase::Authoring);
+    assert_eq!(error.path.as_ref(), "worker");
+    assert_eq!(error.contract.as_deref(), Some("pair@1"));
+    assert!(bound.local_input::<Pair>("run", "value").is_err());
+    assert!(graph.bind_contract("worker", &contract).is_err());
+    assert!(view.bind_contract(&contract).is_err());
+}
+
 #[test]
 fn same_shape_node_replacement_requires_author_claim_without_mutating_on_failure() {
     let mut graph = GraphBuilder::new("root");

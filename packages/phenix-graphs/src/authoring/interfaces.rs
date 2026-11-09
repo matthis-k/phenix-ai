@@ -146,6 +146,17 @@ impl BoundAuthoringUnit<'_> {
         name: &str,
         requested: TypeIdentity,
     ) -> Result<(), InterfaceError> {
+        // Pending node layouts can change while this binding still borrows the graph.
+        self.unit
+            .inspect()
+            .and_then(|snapshot| snapshot.check_contract(&self.contract))
+            .map_err(|e| {
+                e.context(
+                    InterfacePhase::Authoring,
+                    &self.unit.path,
+                    Some(self.contract.id()),
+                )
+            })?;
         let required = self.contract.required();
         let promised = match port {
             Some(port) => required
@@ -244,9 +255,11 @@ impl GraphBuilder {
         path: &str,
         contract: &GraphContract,
     ) -> Result<BoundAuthoringUnit<'_>, InterfaceError> {
-        self.inspect(path)
-            .map_err(|e| e.context(InterfacePhase::Authoring, path, Some(contract.id())))?
-            .bind_contract(contract)
+        AuthoringUnit {
+            graph: self,
+            path: path.into(),
+        }
+        .bind_contract(contract)
     }
     fn validate_inspected_boundary(&self, def: &ModuleDef) -> Result<(), InterfaceError> {
         let mut catalog = ModuleCatalog::new().limits(self.compile_limits);
@@ -401,7 +414,9 @@ impl GraphBuilder {
         contract: &GraphContract,
     ) -> Result<(), InterfaceError> {
         self.check_claim_owner(path)?;
-        let snapshot = self.inspect(path)?.inspect()?;
+        let snapshot = self
+            .inspect_snapshot(path)
+            .map_err(|e| e.context(InterfacePhase::Authoring, path, Some(contract.id())))?;
         contract
             .required()
             .check_shape(&snapshot.shape)
