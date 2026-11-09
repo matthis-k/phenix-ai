@@ -77,7 +77,8 @@ impl WakeHandle {
         !state.1
     }
 
-    fn is_shutdown(&self) -> bool {
+    /// Test whether sticky shutdown was requested, including during busy driving.
+    pub fn is_shutdown(&self) -> bool {
         self.0.state.lock().unwrap().1
     }
 
@@ -960,7 +961,15 @@ impl Kernel {
         wake: &WakeHandle,
         mut on_event: impl FnMut(ProducerEvent),
     ) -> Result<(), DriverError> {
-        self.register_wake(wake.clone())?;
+        // The static driver historically returns success for shutdown during
+        // registration; candidate preparation instead rejects that candidate.
+        match self.register_wake(wake.clone()) {
+            Ok(()) | Err(DriverError::WakeShutdown) => {}
+            Err(error) => return Err(error),
+        }
+        if wake.is_shutdown() {
+            return Ok(());
+        }
         loop {
             let version = wake.version();
             if wake.is_shutdown() {
