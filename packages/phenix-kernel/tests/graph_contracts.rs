@@ -1,6 +1,6 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor, Node, Value};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{
@@ -77,12 +77,7 @@ mod provider {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(GraphOffer {
-                id: "service".into(),
-                producer: Key::new(into.owner(), "main"),
-                unit: self.path.clone(),
-                contract: Key::new("definition", "transform"),
-            })?;
+            
             let increment = self.increment;
             let claim = self.claim;
             let activations = self.activations.clone();
@@ -106,6 +101,7 @@ mod provider {
                         Ok(Box::new(Idle))
                     })
                 })
+.offer("service", self.path.clone(), Key::new("definition", "transform"))
 .register(into)
         }
     }
@@ -126,11 +122,7 @@ mod consumer {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(ContractRequirement {
-                id: "transform".into(),
-                consumer: Key::new("consumer", "main"),
-                contract: Key::new("definition", "transform"),
-            })?;
+            
             let observed = self.observed.clone();
             Contribution::new("main", move |context| {
                     let selected = context.import("transform")?;
@@ -161,6 +153,7 @@ mod consumer {
                     graph.trigger("run", [input])?;
                     Ok(())
                 })
+.import("transform", Key::new("definition", "transform"))
 .register(into)
         }
     }
@@ -326,12 +319,9 @@ impl PluginInstance for RequirementPlugin {
             id: "requested".into(),
             contract: self.contract.clone(),
         })?;
-        into.add(ContractRequirement {
-            id: "request".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new(into.owner(), "requested"),
-        })?;
+        
         Contribution::new("main", |_| Ok(()))
+.import("request", Key::new(into.owner(), "requested"))
 .register(into)
     }
 }
