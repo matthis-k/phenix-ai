@@ -53,11 +53,7 @@ impl PluginInstance for Case {
             })?;
         }
         let case = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| match case {
+        Contribution::new("main", move |context| match case {
                 Self::Composition => Err("composer failed".into()),
                 Self::Compilation => context
                     .graph
@@ -80,8 +76,8 @@ impl PluginInstance for Case {
                         .map_err(Into::into)
                 }
                 _ => Ok(()),
-            }),
-        })
+            })
+.register(into)
     }
 }
 
