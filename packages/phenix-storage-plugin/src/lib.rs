@@ -1876,6 +1876,19 @@ mod tests {
             .config::<Text>("phenix.test/settings")
             .unwrap();
         assert!(kv.get("missing").unwrap().is_none());
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        assert!(matches!(
+            active.views["reader"].bind(spec.read()),
+            Err(scoped::Error::Storage(
+                phenix_storage::Error::UnsupportedCapability {
+                    capability: Capability::AtomicReadMany
+                }
+            ))
+        ));
         assert!(matches!(
             kv.get_revisioned("missing"),
             Err(phenix_storage::Error::UnsupportedCapability {
