@@ -934,9 +934,6 @@ impl Kernel {
         if !self.started {
             return Err(DriverError::NotStarted);
         }
-        if wake.is_shutdown() {
-            return Err(DriverError::WakeShutdown);
-        }
         let state = self
             .producers
             .get_mut()
@@ -948,9 +945,6 @@ impl Kernel {
                 });
             }
         }
-        if wake.is_shutdown() {
-            return Err(DriverError::WakeShutdown);
-        }
         Ok(())
     }
 
@@ -961,15 +955,7 @@ impl Kernel {
         wake: &WakeHandle,
         mut on_event: impl FnMut(ProducerEvent),
     ) -> Result<(), DriverError> {
-        // The static driver historically returns success for shutdown during
-        // registration; candidate preparation instead rejects that candidate.
-        match self.register_wake(wake.clone()) {
-            Ok(()) | Err(DriverError::WakeShutdown) => {}
-            Err(error) => return Err(error),
-        }
-        if wake.is_shutdown() {
-            return Ok(());
-        }
+        self.register_wake(wake.clone())?;
         loop {
             let version = wake.version();
             if wake.is_shutdown() {
