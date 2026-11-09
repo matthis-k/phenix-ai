@@ -155,10 +155,9 @@ impl KernelHost {
     /// Opt in to a wake-driven published-generation host. Producers must support
     /// wake registration; the embedding application owns the event loop and thread.
     pub fn with_wake(plugins: PluginSet, wake: WakeHandle) -> Self {
-        Self {
-            wake: Some(wake),
-            ..Self::new(plugins)
-        }
+        let mut host = Self::new(plugins);
+        host.wake = Some(wake);
+        host
     }
 
     /// Shared access permits staging, never committing the host's inventory.
