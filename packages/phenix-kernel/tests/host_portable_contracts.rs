@@ -142,11 +142,7 @@ mod provider {
                 contract: Key::new("definition", "transform"),
             })?;
             let config = self.clone();
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("main", move |context| {
                     let graph = &mut *context.graph;
                     let extra = matches!(config.fault, Fault::ExtraInput);
                     let template = if matches!(config.fault, Fault::Codec) {
@@ -172,8 +168,8 @@ mod provider {
                         }
                     }
                     Ok(())
-                }),
-            })
+                })
+.register(into)
         }
     }
 }
