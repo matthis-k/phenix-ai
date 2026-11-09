@@ -283,3 +283,66 @@ fn publication_signal_precedes_stalled_old_producer_destruction() {
     let new = worker.join().unwrap();
     assert!(Arc::ptr_eq(&new, &host.lock().unwrap().active().unwrap()));
 }
+
+#[test]
+fn host_mutex_is_released_while_driver_waits_drains_and_handles_events() {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
+    let wake = WakeHandle::default();
+    let mut initial = KernelHost::with_wake(catalog.instance(), wake.clone());
+    let stage = initial
+        .plugins()
+        .prepare_load(&key, Channel::new())
+        .unwrap();
+    let candidate = prepare(&initial, vec![stage]).unwrap();
+    initial.publish(candidate).unwrap();
+    let host = Arc::new(Mutex::new(initial));
+
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    let worker_host = host.clone();
+    let worker_wake = wake.clone();
+    let driver = thread::spawn(move || {
+        let mut announced = false;
+        loop {
+            let token = worker_wake.version();
+            let current = worker_host.lock().unwrap().active();
+            let mut busy = false;
+            if let Some(current) = current {
+                for event in current.drain(8) {
+                    busy = true;
+                    event_tx
+                        .send((current.epoch(), event.result.unwrap().success()))
+                        .unwrap();
+                }
+            }
+            if !announced {
+                ready_tx.send(()).unwrap();
+                announced = true;
+            }
+            if !busy && !worker_wake.wait_since(token) {
+                break;
+            }
+        }
+    });
+    // The driver has observed the old pointer; it may not hold the host mutex
+    // across wait_since, or the publisher would block indefinitely.
+    ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let replacement = Channel::new();
+    let next = {
+        let mut locked = host.lock().unwrap();
+        let stage = locked
+            .plugins()
+            .prepare_reload(&key, replacement.clone())
+            .unwrap();
+        let candidate = prepare(&locked, vec![stage]).unwrap();
+        locked.publish(candidate).unwrap()
+    };
+    replacement.push(27);
+    let outcome = event_rx.recv_timeout(Duration::from_secs(2));
+    wake.shutdown();
+    driver.join().unwrap();
+    assert_eq!(outcome.unwrap(), (next.epoch(), true));
+}
