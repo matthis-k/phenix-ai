@@ -2170,8 +2170,14 @@ mod tests {
         let old_config = provider_config(false);
         let snapshot = plugins.load(&handle, old_config.clone()).unwrap();
         let declarations = snapshots(vec![
-            ("writer", request([Operation::Write])),
-            ("reader", request([Operation::Read])),
+            (
+                "writer",
+                request([Operation::Write]).require(Capability::CompareExchange),
+            ),
+            (
+                "reader",
+                request([Operation::Read]).require(Capability::RevisionedRead),
+            ),
         ]);
         let identity = Identity::user("alice").unwrap();
         let requirements = ResourceRequirements::collect(declarations.clone(), &identity).unwrap();
