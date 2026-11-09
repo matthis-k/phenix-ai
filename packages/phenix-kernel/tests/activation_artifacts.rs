@@ -56,19 +56,7 @@ impl PluginInstance for Plugin {
             let composed = self.composed.clone();
             let activations = self.activations.clone();
             let failure = self.failure;
-            registrar.add(Contribution {
-                id: name.into(),
-                requires: if name == "b" {
-                    vec![Key::new("plugin", "a")]
-                } else {
-                    vec![]
-                },
-                routes: if failure == "route" {
-                    vec!["missing".into()]
-                } else {
-                    vec![]
-                },
-                compose: Box::new(move |context| {
+            Contribution::new(name, move |context| {
                     if failure == "compile" && name == "a" {
                         *context.graph = GraphBuilder::new("invalid").limits(CompileLimits {
                             max_work: 0,
@@ -104,8 +92,18 @@ impl PluginInstance for Plugin {
                         return Err("composition failed".into());
                     }
                     Ok(())
-                }),
-            })?;
+                })
+.after(if name == "b" {
+                    vec![Key::new("plugin", "a")]
+                } else {
+                    vec![]
+                })
+.route(if failure == "route" {
+                    vec!["missing".into()]
+                } else {
+                    vec![]
+                })
+.register(registrar)?;
         }
         Ok(())
     }
