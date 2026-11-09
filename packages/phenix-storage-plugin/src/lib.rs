@@ -1740,6 +1740,209 @@ mod tests {
         }
     }
 
+    /// Provider whose backend supports coherent snapshots without conditional writes.
+    #[derive(Default)]
+    struct BatchReadBackend(MemoryBackend);
+    impl Backend for BatchReadBackend {
+        fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+            Some(self)
+        }
+    }
+    impl TypedKv for BatchReadBackend {
+        fn supports_revisioned_reads(&self) -> bool {
+            true
+        }
+        fn supports_atomic_read_many(&self) -> bool {
+            true
+        }
+        fn read_many(
+            &mut self,
+            keys: &[phenix_storage::snapshot::ReadKey<'_>],
+        ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
+            self.0.read_many(keys)
+        }
+        fn get_revisioned(
+            &mut self,
+            dataset: &str,
+            key: &str,
+        ) -> phenix_storage::Result<Option<phenix_storage::Revisioned<Vec<u8>>>> {
+            self.0.get_revisioned(dataset, key)
+        }
+        fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
+            self.0.get(dataset, key)
+        }
+        fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> phenix_storage::Result<()> {
+            self.0.put(dataset, key, value)
+        }
+        fn delete(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<bool> {
+            self.0.delete(dataset, key)
+        }
+    }
+    struct BatchReaderProvider;
+    impl PluginInstance for BatchReaderProvider {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            registrar.add(
+                BackendOffer::new("read-only-batch", || Ok(Box::new(BatchReadBackend::default())))
+                    .with_features(BackendFeatures {
+                        typed_kv: true,
+                        revisioned_read: true,
+                        atomic_read_many: true,
+                        compare_exchange: false,
+                        sql: false,
+                        invalidation: true,
+                    }),
+            )
+        }
+    }
+
+    #[test]
+    fn read_only_atomic_batch_provider_works_without_compare_exchange() {
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("batch", |_: ()| Ok(BatchReaderProvider))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let snapshot = plugins.load(&handle, ()).unwrap();
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        assert_eq!(
+            requirements.requests()["reader"][0].1.required,
+            [Capability::AtomicReadMany].into()
+        );
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "read-only-batch".into(),
+            },
+        );
+        let active = PreparedStorage::prepare(
+            requirements,
+            Identity::user("alice").unwrap(),
+            policy,
+        )
+        .unwrap()
+        .activate()
+        .unwrap();
+        let cell = active.views["reader"].bind(spec.read()).unwrap();
+        assert!(cell.optional().get().unwrap().is_none());
+        let kv = active.views["reader"]
+            .user()
+            .config::<Text>("phenix.test/settings")
+            .unwrap();
+        assert!(kv.get("value").unwrap().is_none());
+        assert!(kv.get_revisioned("value").unwrap().is_none());
+        assert!(matches!(
+            kv.compare_exchange("value", None, &Text("denied".into())),
+            Err(phenix_storage::Error::Denied)
+        ));
+    }
+
+    #[test]
+    fn plain_scoped_reads_need_neither_revision_nor_cas() {
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("legacy", |config: ProviderConfig| Ok(Provider(config)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let mut config = provider_config(false);
+        config.legacy = true;
+        config.features.revisioned_read = false;
+        config.features.atomic_read_many = false;
+        config.features.compare_exchange = false;
+        let snapshot = plugins.load(&handle, config).unwrap();
+        let requirements = requirements(vec![("reader", request([Operation::Read]))]);
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        let active = PreparedStorage::prepare(
+            requirements,
+            Identity::user("alice").unwrap(),
+            policy,
+        )
+        .unwrap()
+        .activate()
+        .unwrap();
+        let kv = active.views["reader"]
+            .user()
+            .config::<Text>("phenix.test/settings")
+            .unwrap();
+        assert!(kv.get("missing").unwrap().is_none());
+        assert!(matches!(
+            kv.get_revisioned("missing"),
+            Err(phenix_storage::Error::UnsupportedCapability {
+                capability: Capability::CompareExchange
+            })
+        ));
+    }
+
+    #[test]
+    fn snapshot_requirement_rejects_cas_only_and_false_batch_offers() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("provider", |config: ProviderConfig| Ok(Provider(config)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        let mut declared = provider_config(false);
+        declared.features.atomic_read_many = false;
+        let snapshot = plugins.load(&handle, declared.clone()).unwrap();
+        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        assert!(matches!(
+            PreparedStorage::prepare(
+                requirements,
+                Identity::user("alice").unwrap(),
+                policy
+            ),
+            Err(Error::UnsupportedCapability)
+        ));
+        assert_eq!(declared.opens.load(SeqCst), 0);
+
+        let mut dishonest = provider_config(false);
+        dishonest.legacy = true; // Implements plain KV only.
+        dishonest.features.revisioned_read = false;
+        dishonest.features.atomic_read_many = true; // Incorrect declaration.
+        dishonest.features.compare_exchange = false;
+        let snapshot = plugins.reload(&handle, dishonest.clone()).unwrap();
+        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        let prepared = PreparedStorage::prepare(
+            requirements,
+            Identity::user("alice").unwrap(),
+            policy,
+        )
+        .unwrap();
+        assert!(matches!(prepared.activate(), Err(Error::UnsupportedCapability)));
+        assert_eq!(dishonest.opens.load(SeqCst), 1);
+        assert_eq!(dishonest.backend_drops.load(SeqCst), 1);
+    }
+
     #[test]
     fn explicitly_revisioned_reads_require_backend_support_in_prepare_and_activate() {
         use std::sync::atomic::Ordering::SeqCst;
