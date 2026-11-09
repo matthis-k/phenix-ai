@@ -237,17 +237,16 @@ fn external_backend_must_opt_in_to_atomic_reads() {
         .bind(A.resource_spec().resolve(&identity).unwrap(), a)
         .unwrap();
     let storage = catalog.freeze().access(s, identity);
-    let (cell,) = storage.bind((A.read(),)).unwrap();
+    // Typed cells promise atomic reads; reject an incapable provider at bind.
+    // BestEffort remains available through the explicit low-level Session API.
     assert!(matches!(
-        SnapshotReader::new(vec![cell.source()], ReadConsistency::AtomicWithinMount),
-        Err(phenix_storage::Error::UnsupportedCapability {
-            capability: Capability::AtomicReadMany
-        })
+        storage.bind((A.read(),)),
+        Err(phenix_storage::scoped::Error::Storage(
+            phenix_storage::Error::UnsupportedCapability {
+                capability: Capability::AtomicReadMany
+            }
+        ))
     ));
-    SnapshotReader::new(vec![cell.source()], ReadConsistency::BestEffort)
-        .unwrap()
-        .read()
-        .unwrap();
 }
 
 const A: CellSpec<Number> = CellSpec::project_state("test.values/a");
