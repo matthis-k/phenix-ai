@@ -1376,7 +1376,7 @@ mod tests {
     fn prepared_plan_exposes_existing_data_without_opening_or_granting() {
         let requirements = requirements(vec![(
             "writer",
-            request([Operation::Write]).with_atomic_cas(),
+            request([Operation::Write]).require(Capability::CompareExchange),
         )]);
         let id = requirements.iter().next().unwrap().0.clone();
         let mut policy = policy(&requirements, BackendPlacement::Memory);
@@ -1475,7 +1475,7 @@ mod tests {
     #[test]
     fn activation_has_independent_views_and_cas_delegates() {
         let requirements = requirements(vec![
-            ("writer", request([Operation::Write]).with_atomic_cas()),
+            ("writer", request([Operation::Write]).require(Capability::CompareExchange)),
             ("reader", request([Operation::Read])),
         ]);
         assert_eq!(requirements.iter().count(), 1);
@@ -1500,7 +1500,7 @@ mod tests {
         let revision = writer
             .compare_exchange("key", None, &Text("one".into()))
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "one");
         assert_eq!(found.revision, revision);
         assert!(reader.put("key", &Text("denied".into())).is_err());
@@ -1741,25 +1741,27 @@ mod tests {
     }
 
     #[test]
-    fn read_only_kv_requests_require_revision_support_in_prepare_and_activate() {
+    fn explicitly_revisioned_reads_require_backend_support_in_prepare_and_activate() {
         use std::sync::atomic::Ordering::SeqCst;
         let mut catalog = PluginCatalog::new();
         let handle = catalog
             .register("legacy", |config: ProviderConfig| Ok(Provider(config)))
             .unwrap();
         let mut plugins = catalog.instance();
-        for declared_cas in [false, true] {
+        for declared_revisioned in [false, true] {
             let mut config = provider_config(false);
             config.legacy = true;
-            config.features.atomic_cas = declared_cas;
-            let snapshot = if declared_cas {
+            config.features.revisioned_read = declared_revisioned;
+            let snapshot = if declared_revisioned {
                 plugins.reload(&handle, config.clone()).unwrap()
             } else {
                 plugins.load(&handle, config.clone()).unwrap()
             };
-            let requirements = requirements(vec![("reader", request([Operation::Read]))]);
-            assert!(!requirements.requests()["reader"][0].1.atomic_cas);
-            assert!(requirements.requests()["reader"][0].1.requires_atomic_cas());
+            let requirements = requirements(vec![(
+                "reader",
+                request([Operation::Read]).require(Capability::RevisionedRead),
+            )]);
+            assert!(requirements.requests()["reader"][0].1.required.contains(&Capability::RevisionedRead));
             let policy = policy(
                 &requirements,
                 BackendPlacement::Offer {
@@ -1770,7 +1772,7 @@ mod tests {
             let prepared =
                 PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy);
             assert_eq!(config.opens.load(SeqCst), 0);
-            if declared_cas {
+            if declared_revisioned {
                 assert!(matches!(
                     prepared.unwrap().activate(),
                     Err(Error::UnsupportedCapability)
@@ -1792,11 +1794,11 @@ mod tests {
             .unwrap();
         let mut plugins = catalog.instance();
         let mut config = provider_config(false);
-        config.features.atomic_cas = false;
+        config.features.compare_exchange = false;
         let snapshot = plugins.load(&handle, config.clone()).unwrap();
         let requirements = requirements(vec![(
             "writer",
-            request([Operation::Write]).with_atomic_cas(),
+            request([Operation::Write]).require(Capability::CompareExchange),
         )]);
         let policy = policy(
             &requirements,
@@ -1990,13 +1992,13 @@ mod tests {
             .user()
             .config::<Text>("phenix.test/settings")
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "original");
         assert_eq!(found.revision, revision);
         let updated = writer
             .compare_exchange("key", Some(&revision), &Text("still active".into()))
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "still active");
         assert_eq!(found.revision, updated);
     }
@@ -2036,11 +2038,11 @@ mod tests {
         plugins.unload(&handle).unwrap();
         assert_eq!(config.backend_drops.load(SeqCst), 0);
         assert_eq!(config.provider_drops.load(SeqCst), 0);
-        let found = kv.get("key").unwrap().unwrap();
+        let found = kv.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "retained");
         kv.compare_exchange("key", Some(&found.revision), &Text("after unload".into()))
             .unwrap();
-        assert_eq!(kv.get("key").unwrap().unwrap().value.0, "after unload");
+        assert_eq!(kv.get_revisioned("key").unwrap().unwrap().value.0, "after unload");
         // TrackedBackend::drop asserts its provider is still alive at this point.
         drop(kv);
         assert_eq!(config.backend_drops.load(SeqCst), 1);
