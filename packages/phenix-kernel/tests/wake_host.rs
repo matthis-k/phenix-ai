@@ -130,7 +130,7 @@ fn wake_token_does_not_lose_prior_wake_and_shutdown_is_sticky() {
     let thread = thread::spawn(move || tx.send(waiter.wait_since(token)).unwrap());
     assert!(rx.recv_timeout(Duration::from_millis(40)).is_err()); // Does not spin.
     wake.shutdown();
-    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), false);
+    assert!(!rx.recv_timeout(Duration::from_secs(2)).unwrap());
     thread.join().unwrap();
     wake.wake();
     assert!(!wake.wait_since(token)); // Shutdown wins even after a further wake.
