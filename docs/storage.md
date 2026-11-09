@@ -85,12 +85,15 @@ Errors distinguish invalid addresses, duplicates, missing resources, denial,
 unsupported capabilities, closed subscriptions, schema mismatch, codec errors,
 invalid queue capacity, ended transactions, poisoned state, and underlying
 structured rusqlite errors. `UnsupportedCapability { capability }` identifies
-`TypedKv`, `Sql` or `CompareExchange`; unsupported operations do not silently emulate another backend.
+`TypedKv`, `Sql`, `RevisionedRead`, `AtomicReadMany` or `CompareExchange`; unsupported operations do not silently emulate another backend.
 An empty successful drain means no queued notices; `SubscriptionClosed` means the
 registry state is gone (or the watch is absent), not an empty queue. Sessions keep
 state alive even after the original registry handle is dropped.
 
-`Capabilities` reports `typed_kv`, `sql`, `atomic_cas`, `invalidation`, and `observation`.
+`Capabilities` reports independent `typed_kv`, `revisioned_read`,
+`atomic_read_many`, `compare_exchange`, `sql`, `invalidation` and
+`observation`. Versioned single-key reads and batch atomicity never imply
+conditional write support.
 The closed `Observation` metadata uses `RegistryWrites` as its source,
 `Key` (memory) or `Mount` (SQLite) as coverage, and
 `BoundedNonDurableWithOverflow` as delivery. Every `Invalidation` carries this same
