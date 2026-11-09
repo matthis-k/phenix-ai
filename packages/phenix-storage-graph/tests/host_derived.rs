@@ -369,3 +369,22 @@ fn host_dispatch_rejects_cross_runtime_queries_on_local_and_worker_threads() {
         assert_eq!(demo.lock().unwrap().query_all(0).unwrap(), [9, -3, -27, 18]);
     }
 }
+
+#[test]
+fn wake_enabled_derived_host_publishes_without_changing_its_guarded_path() {
+    let wake = phenix_kernel::WakeHandle::default();
+    let mut host = DerivedHost::with_wake(PluginCatalog::new().instance(), wake.clone());
+    let token = wake.version();
+    let candidate = host
+        .prepare(
+            vec![],
+            BuildOptions::default(),
+            Arc::new(LocalExecutor),
+            "derived-wake",
+            |_| Ok(()),
+        )
+        .unwrap();
+    let generation = host.publish(candidate).unwrap();
+    assert_eq!(generation.epoch(), 1);
+    assert!(wake.wait_since(token));
+}
