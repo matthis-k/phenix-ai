@@ -143,12 +143,11 @@ struct ForeignPlugin {
 impl PluginInstance for ForeignPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         if !self.replace {
-            return into.add(GraphOffer {
-                id: "stolen".into(),
-                producer: Key::new("provider", "main"),
-                unit: "service".into(),
-                contract: Key::new("provider", "definition"),
-            });
+            // This plugin cannot forge a provider key: it can only offer a
+            // foreign unit from its own composer, which final origin checks reject.
+            return Contribution::new("fraud", |_| Ok(()))
+                .offer("stolen", "service", Key::new("provider", "definition"))
+                .register(into);
         }
         let module = self.module;
         Contribution::new("patch", move |context| {
