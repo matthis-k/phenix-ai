@@ -46,18 +46,10 @@ impl PluginInstance for Plugin {
             consumer: Key::new("provider", "consumer"),
             contract: Key::new("provider", "definition"),
         })?;
-        into.add(Contribution {
-            id: "consumer".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|_| Ok(())),
-        })?;
+        Contribution::new("consumer", |_| Ok(()))
+.register(into)?;
         let config = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("main", move |context| {
                 let graph = &mut *context.graph;
                 if config.module {
                     let mut module = GraphBuilder::new("implementation");
@@ -75,20 +67,17 @@ impl PluginInstance for Plugin {
                     }
                 }
                 Ok(())
-            }),
-        })?;
+            })
+.register(into)?;
         if self.late_edit {
-            into.add(Contribution {
-                id: "late".into(),
-                requires: vec![Key::new("provider", "main")],
-                routes: vec![],
-                compose: Box::new(|context| {
+            Contribution::new("late", |context| {
                     let graph = &mut *context.graph;
                     *graph = GraphBuilder::new("late");
                     graph.node("service", |x: i64| x + 2)?;
                     Ok(())
-                }),
-            })?;
+                })
+.after(vec![Key::new("provider", "main")])
+.register(into)?;
         }
         Ok(())
     }
@@ -169,11 +158,7 @@ impl PluginInstance for ForeignPlugin {
             });
         }
         let module = self.module;
-        into.add(Contribution {
-            id: "patch".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("patch", move |context| {
                 let graph = &mut *context.graph;
                 if module {
                     let mut child = GraphBuilder::new("replacement");
@@ -189,8 +174,9 @@ impl PluginInstance for ForeignPlugin {
                     graph.replace("service", replacement)?;
                 }
                 Ok(())
-            }),
-        })
+            })
+.after(vec![Key::new("provider", "main")])
+.register(into)
     }
 }
 
