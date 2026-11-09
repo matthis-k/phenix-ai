@@ -67,11 +67,7 @@ impl PluginInstance for Plugin {
         let log = self.log.clone();
         let polls = self.polls.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "source".into(),
-            requires: vec![],
-            routes: vec!["tick".into()],
-            compose: Box::new(move |context| {
+        Contribution::new("source", move |context| {
                 context.export(Guard("export", id, log.clone()))?;
                 let action = Guard("action", id, log.clone());
                 let action_log = log.clone();
@@ -95,8 +91,9 @@ impl PluginInstance for Plugin {
                         _guard: Guard("producer", id, log.clone()),
                     }))
                 })
-            }),
-        })
+            })
+.route(vec!["tick".into()])
+.register(into)
     }
 }
 
