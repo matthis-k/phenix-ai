@@ -46,3 +46,7 @@ The separate diff pass found that the representative host loop never calls `wait
 The stalled-destructor signal test proves notification precedes destructor entry, **not** that a reactor can acquire an application-level `Mutex<KernelHost>` during a destructor. That cannot be claimed as nonblocking activation. A requirement to make progress before destructor exit is not accepted by protocol default and needs its own Phase 1 redesign; the scoped requirement remains eventual wake after a publication.
 
 **Review independence remains unmet:** separate critique passes were made by the implementer. This follows the protocol's allowed fallback but does not claim independent approval.
+
+## Derived host critique — accepted narrowly
+
+The initial design did not include `DerivedHost`, which already wraps the host to enforce storage query executor guards. Omitting its opt-in wake constructor forces storage-derived consumers to abandon that guard to use the new host feature — a foreseeable primary use case and unacceptable tradeoff. One constructor delegating to the existing host avoids the failure while preserving mandatory guarding. No alternative scheduler or storage subscription layer is added. This is one existing integration boundary, not a new abstraction.
