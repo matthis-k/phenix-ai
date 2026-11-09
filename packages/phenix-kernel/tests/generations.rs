@@ -76,11 +76,7 @@ impl PluginInstance for Plugin {
         let start_log = log.clone();
         let start_name = name.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: self.requires.clone(),
-            routes: vec![name.clone()],
-            compose: Box::new(move |context| {
+        Contribution::new("main", move |context| {
                 log.lock()
                     .unwrap()
                     .push(format!("compose:{name}:{revision}"));
@@ -128,8 +124,10 @@ impl PluginInstance for Plugin {
                     return Err("composition failed".into());
                 }
                 Ok(())
-            }),
-        })
+            })
+.after(self.requires.clone())
+.route(vec![name.clone()])
+.register(into)
     }
 }
 
