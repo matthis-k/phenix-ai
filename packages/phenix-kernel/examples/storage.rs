@@ -98,11 +98,7 @@ impl PluginInstance for CounterPlugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let counter = self.counter.clone();
         let reads = self.reads.clone();
-        registrar.add(Contribution {
-            id: "module".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("module", move |context| {
                 let graph = &mut *context.graph;
                 let mut module = GraphBuilder::new("counter-module");
                 let writer = counter.clone();
@@ -128,8 +124,8 @@ impl PluginInstance for CounterPlugin {
                     graph.expose_input("counter_value", instance.local_input::<i64>("value")?)?;
                 graph.trigger("write_counter", [input])?;
                 Ok(())
-            }),
-        })
+            })
+.register(registrar)
     }
 }
 struct ObserverPlugin {
@@ -144,11 +140,7 @@ impl PluginInstance for ObserverPlugin {
         let session = self.session.clone();
         let scope = self.scope.clone();
         let capacity = self.capacity;
-        registrar.add(Contribution {
-            id: "observer".into(),
-            requires: vec![Key::new("counter", "module")],
-            routes: vec!["storage_changed".into()],
-            compose: Box::new(move |context| {
+        Contribution::new("observer", move |context| {
                 let graph = &mut *context.graph;
                 let log = observed.clone();
                 let sink = graph.node("observe", move |notice: phenix_storage::Notice| {
@@ -164,8 +156,10 @@ impl PluginInstance for ObserverPlugin {
                         pending: VecDeque::new(),
                     }))
                 })
-            }),
-        })
+            })
+.after(vec![Key::new("counter", "module")])
+.route(vec!["storage_changed".into()])
+.register(registrar)
     }
 }
 
