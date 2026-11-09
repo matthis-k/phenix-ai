@@ -253,19 +253,15 @@ mod tests {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             self.0.fetch_add(1, Ordering::SeqCst);
             let calls = self.0.clone();
-            into.add(Contribution {
-                id: "source".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("source", move |context| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let calls = calls.clone();
                     context.activate(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
                         Ok(Box::new(Source))
                     })
-                }),
-            })
+                })
+.register(into)
         }
     }
 
