@@ -2,7 +2,7 @@ use phenix_graph::{
     DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor, Value,
 };
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
     ResolutionError,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
@@ -31,7 +31,7 @@ struct Provider {
     increment: i64,
     semantic: &'static str,
     requires: Vec<Key>,
-    producer: Option<Key>,
+    misattribute_offer: bool,
     actual_composer: &'static str,
     compositions: Arc<AtomicUsize>,
 }
@@ -44,7 +44,7 @@ impl Provider {
             increment,
             semantic: "service@1",
             requires: vec![],
-            producer: None,
+            misattribute_offer: false,
             actual_composer: "main",
             compositions: compositions.clone(),
         }
@@ -58,17 +58,8 @@ impl PluginInstance for Provider {
             id: "definition".into(),
             contract: contract(self.semantic),
         })?;
-        into.add(GraphOffer {
-            id: "offer".into(),
-            unit: self.path.clone(),
-            producer: self
-                .producer
-                .clone()
-                .unwrap_or_else(|| Key::new(&owner, "main")),
-            contract: Key::new(&owner, "definition"),
-        })?;
         let config = self.clone();
-        Contribution::new(self.actual_composer, move |context| {
+        let implementation = Contribution::new(self.actual_composer, move |context| {
                 config.compositions.fetch_add(1, Ordering::SeqCst);
                 let graph = &mut *context.graph;
                 let increment = config.increment;
@@ -85,12 +76,22 @@ impl PluginInstance for Provider {
                 }
                 Ok(())
             })
-.after(self.requires.clone())
-.register(into)?;
+.after(self.requires.clone());
+        let implementation = if self.misattribute_offer {
+            implementation
+        } else {
+            implementation.offer("offer", self.path.clone(), Key::new(&owner, "definition"))
+        };
+        implementation.register(into)?;
         if self.actual_composer != "main" {
-            Contribution::new("main", |_| Ok(()))
-.after(vec![Key::new(&owner, self.actual_composer)])
-.register(into)?;
+            let main = Contribution::new("main", |_| Ok(()))
+                .after([Key::new(&owner, self.actual_composer)]);
+            let main = if self.misattribute_offer {
+                main.offer("offer", self.path.clone(), Key::new(&owner, "definition"))
+            } else {
+                main
+            };
+            main.register(into)?;
         }
         Ok(())
     }
@@ -104,11 +105,6 @@ struct Consumer {
 
 impl PluginInstance for Consumer {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(ContractRequirement {
-            id: "service".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new("z-provider", "definition"),
-        })?;
         let config = self.clone();
         Contribution::new("main", move |context| {
                 let selected = context.import("service")?;
@@ -130,6 +126,7 @@ impl PluginInstance for Consumer {
                 graph.trigger("run", [public])?;
                 Ok(())
             })
+.import("service", Key::new("z-provider", "definition"))
 .register(into)
     }
 }
@@ -351,24 +348,21 @@ fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
         Err(ResolutionError::Cycle(_))
     ));
     assert_eq!(count.load(Ordering::SeqCst), before);
-    let mut foreign = Provider::new("first", false, 10, &count);
-    foreign.producer = Some(Key::new("y-provider", "main"));
-    plugins.reload(&z, foreign).unwrap();
-    assert!(
-        build(plugins.snapshots().collect(), &policy)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("ownership")
-    );
-    let mut sibling = Provider::new("first", false, 10, &count);
-    sibling.actual_composer = "sibling";
-    plugins.reload(&z, sibling).unwrap();
+    // A wrong composer cannot advertise a sibling's actual graph unit.
+    let mut wrong = Provider::new("first", false, 10, &count);
+    wrong.actual_composer = "sibling";
+    wrong.misattribute_offer = true;
+    plugins.reload(&z, wrong).unwrap();
     let error = build(plugins.snapshots().collect(), &policy)
         .err()
         .unwrap()
         .to_string();
     assert!(error.contains("origin mismatch"), "{error}");
+    // The sibling composer may legitimately own and advertise its own unit.
+    let mut sibling = Provider::new("first", false, 10, &count);
+    sibling.actual_composer = "sibling";
+    plugins.reload(&z, sibling).unwrap();
+    build(plugins.snapshots().collect(), &policy).unwrap();
 }
 
 #[test]
@@ -399,17 +393,6 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 id: "definition".into(),
                 contract: contract("service@1"),
             })?;
-            into.add(GraphOffer {
-                id: "offer".into(),
-                producer: Key::new("combined", "main"),
-                unit: "provider".into(),
-                contract: Key::new("combined", "definition"),
-            })?;
-            into.add(ContractRequirement {
-                id: "service".into(),
-                consumer: Key::new("combined", "main"),
-                contract: Key::new("combined", "definition"),
-            })?;
             Contribution::new("main", |cx| {
                     let selected = cx.import("service")?;
                     cx.graph.node("provider", |v: i64| v + 1)?;
@@ -421,6 +404,8 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                     cx.graph.trigger("run", [public])?;
                     Ok(())
                 })
+.offer("offer", "provider", Key::new("combined", "definition"))
+.import("service", Key::new("combined", "definition"))
 .register(into)
         }
     }
