@@ -13,14 +13,13 @@ macro_rules! portable {
     ($name:ident, $schema:literal) => {
         pub struct $name(pub i64);
         impl phenix_graph::ContractValue for $name {
-            const SCHEMA: &'static str = $schema;
-            fn schema_descriptor() -> Option<phenix_graph::Schema> {
-                Some(phenix_graph::Schema {
+            fn schema() -> phenix_graph::Schema {
+                phenix_graph::Schema {
                     name: $schema.into(),
                     revision: 1,
                     structure: "record{value:i64}".into(),
                     codec: "i64-le-v1".into(),
-                })
+                }
             }
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
@@ -98,16 +97,12 @@ mod provider {
                 routes: vec![],
                 compose: Box::new(move |context| {
                     let graph = &mut *context.graph;
-                    graph
-                        .node(
-                            &path,
-                            Node::wire(move |request: Request| Response(request.0 + increment)),
-                        )
-                        .map_err(|e| e.to_string())?;
+                    graph.node(
+                        &path,
+                        Node::wire(move |request: Request| Response(request.0 + increment)),
+                    )?;
                     if claim {
-                        graph
-                            .implements(&path, &definition::contract())
-                            .map_err(|e| e.to_string())?;
+                        graph.implements(&path, &definition::contract())?;
                     }
                     let activations = activations.clone();
                     context.activate(move || {
@@ -120,7 +115,7 @@ mod provider {
     }
     struct Idle;
     impl phenix_kernel::Producer for Idle {
-        fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, String> {
+        fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, phenix_kernel::CallbackError> {
             Ok(None)
         }
     }
@@ -148,40 +143,28 @@ mod consumer {
                 compose: Box::new(move |context| {
                     let selected = context.import("transform")?;
                     let graph = &mut *context.graph;
-                    let source = graph
-                        .node("source", Node::wire(|request: Request| request))
-                        .map_err(|e| e.to_string())?;
-                    let sink = graph
-                        .node(
-                            "sink",
-                            Node::wire({
-                                let observed = observed.clone();
-                                move |response: Response| {
-                                    observed.lock().unwrap().push(response.0);
-                                    response
-                                }
-                            }),
-                        )
-                        .map_err(|e| e.to_string())?;
+                    let source = graph.node("source", Node::wire(|request: Request| request))?;
+                    let sink = graph.node(
+                        "sink",
+                        Node::wire({
+                            let observed = observed.clone();
+                            move |response: Response| {
+                                observed.lock().unwrap().push(response.0);
+                                response
+                            }
+                        }),
+                    )?;
                     // Lookup uses A's contract types, never B's implementation types.
                     // C's independently defined types cross both portable edges.
                     let (input, output) = {
-                        let bound = selected.bind(graph).map_err(|e| e.to_string())?;
+                        let bound = selected.bind(graph)?;
                         (
-                            bound
-                                .wire_input::<definition::Request>("run", "value")
-                                .map_err(|e| e.to_string())?,
-                            bound
-                                .wire_output::<definition::Response>("value")
-                                .map_err(|e| e.to_string())?,
+                            bound.wire_input::<definition::Request>("run", "value")?,
+                            bound.wire_output::<definition::Response>("value")?,
                         )
                     };
-                    graph
-                        .connect_wire(source.output(), input)
-                        .map_err(|e| e.to_string())?;
-                    graph
-                        .connect_wire(output, sink.inlet())
-                        .map_err(|e| e.to_string())?;
+                    graph.connect_wire(source.output(), input)?;
+                    graph.connect_wire(output, sink.inlet())?;
                     let input = graph.expose_input("request", source.inlet())?;
                     graph.trigger("run", [input])?;
                     Ok(())
@@ -257,7 +240,7 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
         .err()
         .unwrap();
     assert!(
-        error.contains("service") && error.contains("claim"),
+        error.to_string().contains("service") && error.to_string().contains("claim"),
         "{error}"
     );
     assert_eq!(activations.load(Ordering::SeqCst), 1);
@@ -330,12 +313,15 @@ fn missing_paths_and_definitions_fail_closed() {
     let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
         .err()
         .unwrap();
-    assert!(error.contains("missing contract definition"), "{error}");
+    assert!(
+        error.to_string().contains("missing contract definition"),
+        "{error}"
+    );
     plugins.load(&a, ()).unwrap();
     let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
         .err()
         .unwrap();
-    assert!(error.contains("does-not-exist"), "{error}");
+    assert!(error.to_string().contains("does-not-exist"), "{error}");
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }
 
@@ -394,16 +380,19 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
         Key::new("consumer", "request"),
         Key::new("provider", "absent"),
     );
-    let error = Kernel::build_with_policy(
+    let error = Kernel::build_with_options(
         "host",
         plugins.snapshots(),
         Arc::new(LocalExecutor),
-        &policy,
+        phenix_kernel::BuildOptions {
+            imports: policy,
+            ..Default::default()
+        },
     )
     .err()
     .unwrap()
     .to_string();
-    assert!(error.contains("missing selected offer"), "{error}");
+    assert!(error.contains("unknown offer"), "{error}");
 
     let unrelated = GraphContract::new(
         "example/unrelated@1",
@@ -421,7 +410,10 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
     let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
         .err()
         .unwrap();
-    assert!(error.contains("missing eligible offer"), "{error}");
+    assert!(
+        error.to_string().contains("missing eligible offer"),
+        "{error}"
+    );
 
     let conflicting =
         GraphContract::new(definition::contract().id(), InterfaceShape::new()).unwrap();
@@ -436,7 +428,12 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
     let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
         .err()
         .unwrap();
-    assert!(error.contains("conflicting contract definition"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("conflicting contract definition"),
+        "{error}"
+    );
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }
 
@@ -452,12 +449,10 @@ impl PluginInstance for LateEdit {
                 // A later contributor can replace the entire builder. An early
                 // successful claim/inspection must not certify this final unit.
                 *graph = phenix_graph::GraphBuilder::new("late-edit");
-                graph
-                    .node(
-                        "service",
-                        Node::wire(|request: definition::Request| definition::Response(request.0)),
-                    )
-                    .map_err(|e| e.to_string())?;
+                graph.node(
+                    "service",
+                    Node::wire(|request: definition::Request| definition::Response(request.0)),
+                )?;
                 Ok(())
             }),
         })
@@ -486,7 +481,7 @@ fn plugin_request_checks_final_selected_unit_after_late_composition() {
         .err()
         .unwrap();
     assert!(
-        error.contains("service") && error.contains("claim"),
+        error.to_string().contains("service") && error.to_string().contains("claim"),
         "{error}"
     );
     assert_eq!(activations.load(Ordering::SeqCst), 0);

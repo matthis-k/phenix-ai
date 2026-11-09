@@ -9,14 +9,13 @@ pub struct Response(pub i64);
 macro_rules! wire_value {
     ($ty:ident, $schema:literal) => {
         impl ContractValue for $ty {
-            const SCHEMA: &'static str = $schema;
-            fn schema_descriptor() -> Option<Schema> {
-                Some(Schema {
+            fn schema() -> Schema {
+                Schema {
                     name: $schema.into(),
                     revision: 1,
                     structure: "record{value:i64}".into(),
                     codec: "i64-le-v1".into(),
-                })
+                }
             }
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
@@ -49,42 +48,29 @@ impl PluginInstance for Plugin {
             compose: Box::new(move |context| {
                 let selected = context.import("transform")?;
                 let graph = &mut *context.graph;
-                let bound = selected.bind(graph).map_err(|e| e.to_string())?;
+                let bound = selected.bind(graph)?;
                 // Only contract-visible names and C's own Rust types are used.
                 assert!(bound.wire_output::<Response>("diagnostic").is_err());
                 assert!(bound.wire_input::<Request>("run", "extra").is_err());
-                let left = bound
-                    .wire_input::<Request>("run", "left")
-                    .map_err(|e| e.to_string())?;
-                let right = bound
-                    .wire_input::<Request>("run", "right")
-                    .map_err(|e| e.to_string())?;
-                let output = bound
-                    .wire_output::<Response>("value")
-                    .map_err(|e| e.to_string())?;
-                let sink = graph
-                    .node(
-                        "consumer-sink",
-                        Node::wire({
-                            let observed = observed.clone();
-                            move |response: Response| {
-                                observed.lock().unwrap().push(response.0);
-                                response
-                            }
-                        }),
-                    )
-                    .map_err(|e| e.to_string())?;
-                graph
-                    .connect_wire(output, sink.inlet())
-                    .map_err(|e| e.to_string())?;
+                let left = bound.wire_input::<Request>("run", "left")?;
+                let right = bound.wire_input::<Request>("run", "right")?;
+                let output = bound.wire_output::<Response>("value")?;
+                let sink = graph.node(
+                    "consumer-sink",
+                    Node::wire({
+                        let observed = observed.clone();
+                        move |response: Response| {
+                            observed.lock().unwrap().push(response.0);
+                            response
+                        }
+                    }),
+                )?;
+                graph.connect_wire(output, sink.inlet())?;
                 let mut inputs = Vec::new();
                 for (name, target) in [("left", left), ("right", right)] {
-                    let source = graph
-                        .node(format!("consumer-{name}"), Node::wire(|v: Request| v))
-                        .map_err(|e| e.to_string())?;
-                    graph
-                        .connect_wire(source.output(), target)
-                        .map_err(|e| e.to_string())?;
+                    let source =
+                        graph.node(format!("consumer-{name}"), Node::wire(|v: Request| v))?;
+                    graph.connect_wire(source.output(), target)?;
                     inputs.push(graph.expose_input(name, source.inlet())?);
                 }
                 graph.trigger("run", inputs)?;

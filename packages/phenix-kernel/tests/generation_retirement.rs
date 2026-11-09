@@ -1,6 +1,6 @@
 use phenix_graph::{LocalExecutor, Value};
 use phenix_kernel::host::{Candidate, Generation, KernelHost, LifecycleError};
-use phenix_kernel::{Contribution, ImportPolicy, Notice, Producer};
+use phenix_kernel::{BuildOptions, Contribution, Notice, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::sync::{
     Arc, Barrier, Mutex,
@@ -46,7 +46,7 @@ struct Source {
 }
 
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         let tick = self.polls.fetch_add(1, Ordering::SeqCst) + 1;
         if tick == 1
             && let Some(gate) = &self.gate
@@ -75,14 +75,11 @@ impl PluginInstance for Plugin {
                 context.export(Guard("export", id, log.clone()))?;
                 let action = Guard("action", id, log.clone());
                 let action_log = log.clone();
-                let node = context
-                    .graph
-                    .node("clock", move |tick: i64| {
-                        action.touch();
-                        action_log.lock().unwrap().push(format!("tick:{id}:{tick}"));
-                        tick
-                    })
-                    .map_err(|error| error.to_string())?;
+                let node = context.graph.node("clock", move |tick: i64| {
+                    action.touch();
+                    action_log.lock().unwrap().push(format!("tick:{id}:{tick}"));
+                    tick
+                })?;
                 let input = context.graph.expose_input("clock", node.inlet())?;
                 context.graph.trigger("tick", [input])?;
                 let factory = Guard("factory", id, log.clone());
@@ -106,9 +103,10 @@ impl PluginInstance for Plugin {
 fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
     host.prepare(
         stages,
-        &ImportPolicy::default(),
+        BuildOptions::default(),
         Arc::new(LocalExecutor),
         "retirement",
+        |_| Ok(()),
     )
     .unwrap()
 }

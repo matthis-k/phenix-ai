@@ -2,6 +2,13 @@
 
 ## Scope And Status
 
+R01 supersedes this report's schema-interning limitation: canonical identities now
+use reclaimable `Arc<str>` ownership throughout Graph, with no global strong cache
+or static-string compatibility API. Manual wire values require complete descriptors,
+including codec. See the [Schema contract](../packages/phenix-schema/README.md) for
+ownership regressions and exact before/after release harness measurements. The
+older lifecycle rows and measurements below remain historical evidence.
+
 Evidence snapshot: 2026-11-09, branch `impl/resolved-contract-imports-20261108`,
 exact starting commit `e91fdd3e096ba40f6adb0b4775ae83734a8ebcc8`.
 This integrated report accompanies implementation and regression tests. The final
@@ -59,8 +66,8 @@ introduce a scheduler, grant storage access, or make native Rust plugins a sandb
 5. Register activation and typed exports in candidate-local artifacts while composing.
    Validate all offers, compile once, validate the full contract catalog and exact
    producer origins, preflight routes, and construct the deployment without starting it.
-6. `KernelHost::prepare_with` builds the exact staged inventory, runs the trusted
-   binding hook, then starts producers without polling them. It returns an opaque
+6. `KernelHost::prepare` builds the exact staged inventory, runs the nonadmitting
+   `Binding` hook, then starts producers without polling them. It returns an opaque
    host/epoch-bound candidate, not an admission handle.
 7. `publish` rejects stale/foreign candidates, locks the old generation, atomically
    commits the validated plugin batch, retires old producers and replaces the active
@@ -204,7 +211,7 @@ they rely on; it does not create new authorities alongside Graph or Storage.
 | KernelHost, Candidate, LifecycleError | Host inventory and publication epoch | Opaque prepared state; no mutable inventory getter; coherent active generation | Trusted binding hook can cause external effects; publication is not panic-proof transactionality. |
 | Generation::with_kernel/with_engine/fire/drain | Arc generation with serialized access | Old explicit engines survive; retired producer drains return empty | Callbacks must not reenter same generation; old explicit fire is intentionally allowed. |
 | QuerySpec::bind_engine, QueryHandle | Derived adapter / borrowed exact engine | Exact source/tap uniqueness and refresh target validation; binding fires no wave | Low-level engine path bypasses startup guard; query only after publication. |
-| DerivedRuntime::guard_executor | Host-selected executor wrapper | Guard dispatch and execution threads against nested queries | Opt-in for KernelHost; detached threads/unrelated unguarded engines excluded. |
+| DerivedHost / DerivedGeneration::query | Store-owned host adapter and pinned published generation | Always guard dispatch and execution threads against nested queries; validate via nonadmitting Binding | Detached threads/unrelated unguarded engines and arbitrary external effects excluded. |
 
 ## Mutation Audit
 
@@ -230,9 +237,9 @@ declaration combination. `GraphBuilder` remains intentionally mutable and truste
 | with_origin | Restores previous scope on normal return/error/unwind; no relabel of existing units | authoring/provenance.rs; trusted host may explicitly create scopes. |
 | Context activate/export | Duplicate registration rejects, artifacts local to build; build error drops artifacts before leases | K/X/E; no mutable snapshot slot for candidate products. |
 | Plugin load/reload/unload/commit/commit_batch | Stages tied to set identity/epoch; duplicate names and stale revisions reject whole batch; nonempty batch advances epoch once | P; empty batch changes no plugin epoch, host publication still advances host epoch. |
-| Host prepare/prepare_with/publish/drop | Bind/start before publish; stale candidate rejected; old drain serialized/retired; producers dropped before old leases | H/T; no arbitrary external-effect rollback. |
+| Host prepare/publish/drop | Nonadmitting bind/start before publish; stale candidate rejected; old drain serialized/retired; producers dropped before old leases | H/T; no arbitrary external-effect rollback. |
 | Kernel start/fire/drain/run_until | Successful start only once; failed start retries same artifacts; declared routes only; poll and wave errors preserved | K; `engine()` deliberately bypasses start guard. |
-| Generation scoped access / query bind | Shared read-only Kernel, no mutable producer escape; exact engine adapter; old explicit queries supported | H/D/Q; no same-generation reentrancy; guarded executor explicitly selected. |
+| Generation scoped access / query bind | Shared read-only Kernel, no mutable producer escape; exact engine adapter; old explicit queries supported | H/D/Q; DerivedHost always installs the store-owned executor guard. |
 
 ## F08-F16 Investigation
 
@@ -314,8 +321,8 @@ Remaining limitations, ranked by acceptance impact:
 3. Structured diagnostics are partial. CompileDiagnostic and InterfaceError are now
    preserved, with typed composition/origin/unit failures and error sources. Generic
    invalid metadata and native binding/start callbacks still contain String causes.
-4. Host-only derived dispatch protection requires `DerivedRuntime::guard_executor`
-   for KernelHost. Low-level `bind_engine`/`engine()` bypass startup guards. Old
+4. `DerivedHost` enforces host-only derived dispatch protection. Explicit low-level
+   `bind_engine`/`engine()` bypass startup guards; arbitrary engines may be unguarded. Old
    explicit handles remain executable by design; retirement stops producers, not queries.
 5. Inspection has no cache and can approach compilation cost. Publication waits for
    old in-flight scoped work; callbacks must not reenter the same generation mutex.
@@ -325,9 +332,10 @@ Remaining limitations, ranked by acceptance impact:
 7. The existing blocking driver treats poll errors as activity. A permanently
    closed producer can repeatedly report errors; host shutdown/backoff or a future
    terminal-source protocol is still needed. Bounded drain remains bounded.
-8. String-based symbolic module selectors still cannot explicitly address every
-   grouped slot. Typed module handles and resolved import projections support them
-   correctly; no ambiguous dot-splitting grammar was introduced.
+8. String-based symbolic module selectors intentionally remain shorthand, not a
+   grammar for arbitrary grouped slots. R12/R14 provide complete typed field-path
+   export/module/contract projection and exact public-slot trigger lookup using
+   the existing endpoint identities. See [before/after authoring examples](grouped-authoring.md).
 
 ## Weighted Assessment
 
@@ -361,9 +369,9 @@ scores do not assert arbitrary effect rollback.
 | Composed outputs passed via shared mutable slots | `context.export(value)` and `kernel.export::<T>(&key)` are candidate-owned. |
 | PluginSnapshot.bind requires equal origin | Accepts exact revision ancestry; Kernel still checks exact composer origin. |
 | PluginSet commits one stage | Batch validation, exact candidate snapshots and atomic batch commit; single commit delegates. |
-| Host manually commits/starts/swaps | KernelHost prepare/prepare_with/publish with opaque Candidate and pinned Generation. |
+| Host manually commits/starts/swaps | KernelHost prepare/publish with nonadmitting Binding, opaque Candidate and pinned Generation. |
 | Generation engine-only access | `with_kernel` also exposes read-only generation-owned exports; `with_engine` remains a convenience. |
-| Derived query bound through DerivedRuntime | QuerySpec.bind_engine supports scoped host adapters; guard_executor is explicit for KernelHost. |
+| Derived query bound through DerivedRuntime | DerivedHost always guards host preparation; validate_binding before start, DerivedGeneration::query after publication; bind_engine remains explicitly low-level. |
 | Authoring bound projection checks promised endpoint | Also revalidates entire effective shape/claim on each projection. |
 
 ## Grouped File Changes

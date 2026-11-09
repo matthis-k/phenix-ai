@@ -293,7 +293,10 @@ fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
         let error = Kernel::build("not-injected", snapshots.clone(), Arc::new(LocalExecutor))
             .err()
             .expect("composition must require storage injection");
-        assert!(error.contains("storage not injected"), "{error}");
+        assert!(
+            error.to_string().contains("storage not injected"),
+            "{error}"
+        );
         let requirements = ResourceRequirements::collect(snapshots, &identity).unwrap();
         assert_eq!(requirements.iter().count(), 2);
         let policy = example::host_policy(&storage_root, &identity).unwrap();

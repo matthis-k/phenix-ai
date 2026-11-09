@@ -1,4 +1,5 @@
 use super::*;
+use crate::*;
 use std::sync::atomic::AtomicUsize;
 
 struct Noop(Arc<AtomicUsize>);
@@ -98,7 +99,7 @@ fn trigger_inspection_preserves_value_arity_and_physical_fanout_without_admissio
         root.input_with_identity(
             id as u16,
             format!("input{id}"),
-            type_name::<u64>(),
+            type_name::<u64>().into(),
             Some(TypeId::of::<u64>()),
             targets.into_iter().map(ModuleInputTarget::Node).collect(),
         );

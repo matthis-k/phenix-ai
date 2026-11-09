@@ -44,7 +44,8 @@ These are runnable entry points, not a claim that these commands were rerun here
 - Register `ContractDefinition { id, contract }`, `GraphOffer { id, producer,
   unit, contract }`, and `ContractRequirement { id, consumer, contract }` as ordinary
   typed contributions. Producer/consumer keys must belong to the registering plugin.
-- `Kernel::build_with_policy` applies trusted `ImportPolicy` selections and optional
+- `Kernel::build_with_options` applies `BuildOptions.imports`, the trusted
+  `ImportPolicy` selections and optional
   allow/deny pairs. Denial wins. A unique eligible compatible offer is selected
   automatically; missing, ambiguous or invalid selections fail closed.
 - Selected providers become dependencies of their consumers. A consumer calls
@@ -60,8 +61,12 @@ These are runnable entry points, not a claim that these commands were rerun here
 - Build validates all offers, including unused offers, all registered contract
   definitions against compiled claims/requests, exact contribution origins, and
   declared routes before constructing one Deployment with the supplied Executor.
-  `Kernel::build` uses default policy and converts errors to strings;
-  `build_with_policy` returns `ResolutionError`.
+   `Kernel::build` uses default options; both builders return `ResolutionError`.
+   `BuildOptions.execution` holds Graph-owned `ExecutionLimits`, for example
+   `ExecutionLimits { max_activations: 4096 }`. Kernel retains ownership of the
+   validated deployment: options cannot build/fire, substitute graphs, or install
+   per-node executors that bypass the supplied executor's guard.
+   The same options pass through `KernelHost::prepare` and `DerivedHost::prepare`.
 
 Graph owns actual shape and semantic matching. Kernel does not copy purported
 implementation shapes into offers. Per-composer origin children distinguish
@@ -80,11 +85,15 @@ producers must stop/release resources on drop. Producers die before graph/action
 artifacts and contribution/snapshot code leases; shutdown is not reverse dependency order.
 
 `Producer::poll` must not wait for events. It returns at most one `Notice`, idle,
-or an error. Routes are preflighted before activation and notices to undeclared
+or a terminal error. A poll error is reported once and retires that producer;
+transient unavailability must return `Ok(None)` and wake when ready to retry.
+Detached producers are dropped outside the producer-state lock. Routes are
+preflighted before activation and notices to undeclared
 routes reject. `drain(max_polls)` polls round-robin across calls; idle polls count
 toward the bound. Each notice fires a separate Engine wave. `ProducerError`
 distinguishes poll, undeclared-route and admission errors; invocation failures
-remain inside ordinary WaveReports. Errors do not stop remaining bounded polls.
+remain inside ordinary WaveReports. Errors do not stop remaining bounded polls
+of surviving producers.
 
 `fire` rejects before successful start; `drain` produces no events before start.
 `engine()` deliberately bypasses that startup guard. The optional blocking
@@ -98,30 +107,33 @@ running polls, waves or callbacks; queue/overflow policy belongs to producers.
 
 `host::KernelHost` owns the mutable PluginSet and active generation pointer.
 `plugins()` permits staging through shared access, not committing the host's set.
-`prepare`/`prepare_with` validates the entire staged batch and exact post-commit
-snapshot inventory, builds a Kernel, optionally binds host adapters, then starts
+`prepare` validates the entire staged batch and exact post-commit
+snapshot inventory, builds a Kernel, runs the binding callback, then starts
 producers without polling them. `Candidate` is opaque and bound to host identity
 and expected epoch; it exposes no engine or generation admission handle.
 
-The trusted binding hook receives `&Kernel` before producer startup. It may bind
-generation-owned exports and query/store adapters, but must not fire waves or
-leak admission handles. Kernel remains independent of Storage. For derived queries,
-use `QuerySpec::bind_engine(kernel.engine())`; prepare with
-`DerivedRuntime::guard_executor(executor)` to preserve host-only nested-query checks.
-That wrapper is explicitly opt-in for KernelHost.
+The binding hook receives `&Binding` before producer startup. This phase-specific
+capability exposes typed exports, action node identities and trigger targets, but
+no Kernel, Engine, query handle or admission API. Kernel remains independent of
+Storage. For derived queries use storage-graph's `DerivedHost`: it always installs
+the store-owned nested-query guard on dispatch and worker threads. Validate with
+`QuerySpec::validate_binding(binding)` during preparation, then call
+`DerivedGeneration::query(&spec)` after publication. Arbitrary native callbacks
+and exported application values can still cause external effects; those are not
+sandboxed or rolled back.
 
-`publish` rejects stale/foreign candidates, locks the old generation against
-in-flight scoped work, commits the validated plugin batch, marks old producers
+`publish` rejects stale/foreign candidates, serializes with old producer drains,
+commits the validated plugin batch, marks old producers
 retired, and replaces the active pointer. A retained `Arc<Generation>` pins its
 old engine, exports and leases; explicit old waves/queries remain valid, but
 retired `drain` calls return empty. Host drop also retires active producers.
 Producer destructors complete before old leases are released.
 
 `Generation::with_kernel` gives scoped read-only access to engine and exports;
-`with_engine` is the engine-only convenience. Access is mutex-serialized with
-publication. Do not reenter the same generation from a callback. A query adapter
-may bind/query within `with_kernel` after publication; low-level `bind_engine`
-bypasses Kernel's startup guard and must not execute in the preparation hook.
+`with_engine` is the engine-only convenience. Explicit reads and waves do not
+hold the producer lock or block publication. The supported derived adapter queries
+within this scope. Explicit low-level `bind_engine` bypasses Kernel's startup guard
+and cannot ensure host-only dispatch on an arbitrary unguarded engine.
 
 ## Limits
 
@@ -133,8 +145,16 @@ atomicity. Native callbacks, partial-acquisition cleanup and destructors are tru
 
 There is no automatic retry, durable delivery, distributed transaction, native
 ABI guarantee or live permission revocation. Claims establish declared semantic
-membership, not behavioral correctness, scheduling or authorization. Resolution
-and lifecycle errors have typed stage envelopes but still contain string errors
-on several paths. Schema interning still retains distinct identities for process
-lifetime. The graph deployment defaults to its existing in-memory resource store;
+membership, not behavioral correctness, scheduling or authorization. Composition,
+activation, producer polling and host binding accept `CallbackError` (an owned
+`Box<dyn Error + Send + Sync>`). Their phase envelopes retain contribution identity
+where applicable and expose the original cause through `Error::source`, without
+a string-only activation wrapper. Plugin failures support owned sources and record
+the plugin and construct/contribute/bind phase; binding also records the contribution
+id. Staging rejects a replaced registrar owner before accepting its inventory.
+Driver setup errors distinguish not-started from unsupported wake registration and
+retain the exact producer key. Invalid metadata, graph admission and wave diagnostics
+still have string-based paths; callback errors do not reconstruct types already lost
+by a caller. Schema identities use reclaimable `Arc<str>` ownership with no
+global interner. The graph deployment defaults to its existing in-memory resource store;
 storage authorization and backend lifetimes remain external adapter responsibilities.

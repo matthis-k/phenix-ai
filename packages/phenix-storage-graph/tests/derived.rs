@@ -216,7 +216,8 @@ fn invalid_producer_route_preflight_never_activates() {
     );
     assert_eq!(activated.load(Ordering::SeqCst), 0);
 }
-type ComposeGraph = dyn Fn(&mut GraphBuilder) -> Result<(), String> + Send + Sync;
+type ComposeGraph =
+    dyn Fn(&mut GraphBuilder) -> Result<(), phenix_kernel::CallbackError> + Send + Sync;
 
 #[derive(Clone)]
 struct Plugin {
@@ -252,7 +253,10 @@ fn build(plugin: Plugin, executor: Arc<dyn Executor>) -> DerivedRuntime {
     DerivedRuntime::build("derived", plugins.snapshots(), executor).unwrap()
 }
 fn demand(
-    compose: impl Fn(&mut GraphBuilder) -> Result<(), String> + Send + Sync + 'static,
+    compose: impl Fn(&mut GraphBuilder) -> Result<(), phenix_kernel::CallbackError>
+    + Send
+    + Sync
+    + 'static,
 ) -> Plugin {
     Plugin {
         compose: Arc::new(compose),
@@ -266,10 +270,8 @@ fn sum_plugin(f: &Fixture) -> (Plugin, Arc<Mutex<Option<QuerySpec<i64>>>>) {
     let saved = spec.clone();
     (
         demand(move |g| {
-            let sum = g
-                .derive("sum", (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            *saved.lock().unwrap() = Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+            *saved.lock().unwrap() = Some(g.query_spec("query", &sum)?);
             Ok(())
         }),
         spec,
@@ -395,14 +397,11 @@ fn query_returns_its_snapshot_not_a_commit_after_the_source_read() {
         let mut runtime = build(
             demand(move |g| {
                 let committed = computed_after_commit.clone();
-                let pair = g
-                    .derive("pair", (&a, &b), move |a: Number, b: Number| {
-                        assert_eq!(committed.load(Ordering::SeqCst), 1);
-                        (a.0, b.0)
-                    })
-                    .map_err(|e| e.to_string())?;
-                *specs.lock().unwrap() =
-                    Some(g.query_spec("query", &pair).map_err(|e| e.to_string())?);
+                let pair = g.derive("pair", (&a, &b), move |a: Number, b: Number| {
+                    assert_eq!(committed.load(Ordering::SeqCst), 1);
+                    (a.0, b.0)
+                })?;
+                *specs.lock().unwrap() = Some(g.query_spec("query", &pair)?);
                 Ok(())
             }),
             executor,
@@ -474,11 +473,9 @@ fn same_mount_sources_keep_separate_dataset_session_authority() {
     let request = observation.clone();
     let mut runtime = build(
         demand(move |g| {
-            let group = g.sources("values", (&a, &b)).map_err(|e| e.to_string())?;
-            let sum = g
-                .derive_from("sum", &group, |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+            let group = g.sources("values", (&a, &b))?;
+            let sum = g.derive_from("sum", &group, |a, b| a + b)?;
+            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
             *request.lock().unwrap() = Some(sum.observation(1));
             Ok(())
         }),
@@ -565,7 +562,7 @@ fn shared_siblings_chain_diamond_arity_and_terminal_tap_with_fanout() {
                 }
                 Ok(())
             })();
-            result.map_err(|e| e.to_string())
+            result.map_err(Into::into)
         }),
         Arc::new(LocalExecutor),
     );
@@ -585,12 +582,10 @@ fn optional_and_codec_failures_are_native_wave_failures_not_result_values() {
     let specs = saved.clone();
     let mut runtime = build(
         demand(move |g| {
-            let sum = g
-                .derive("optional", (&a, &b), |a: Option<Number>, b: Number| {
-                    a.map_or(0, |a| a.0) + b.0
-                })
-                .map_err(|e| e.to_string())?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+            let sum = g.derive("optional", (&a, &b), |a: Option<Number>, b: Number| {
+                a.map_or(0, |a| a.0) + b.0
+            })?;
+            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
             Ok(())
         }),
         Arc::new(LocalExecutor),
@@ -653,6 +648,74 @@ fn rejected_roots_foreign_handles_and_collisions_do_not_mutate_or_revoke_user_ha
     assert!(foreign.derive("foreign", (&sum,), |s| s).is_err());
     foreign.node("foreign", |s: i64| s).unwrap();
     graph.compile().unwrap();
+}
+
+#[test]
+fn late_derived_failures_discard_edges_inputs_triggers_and_taps() {
+    let f = Fixture::new(true);
+    let mut graph = GraphBuilder::new("late-failures");
+    let user = graph.node("user", |v: (i64, i64)| v.0 + v.1).unwrap();
+    let reserved = graph.node("reserved", |v: i64| v).unwrap();
+    let input = graph.expose_input("reserved", reserved.inlet()).unwrap();
+    graph.trigger("group.refresh", [input]).unwrap();
+    // The source node and public input are added before trigger registration fails.
+    assert!(graph.sources("group", (&f.a,)).is_err());
+    let replacement = graph.node("group", |v: i64| v).unwrap();
+    graph
+        .expose_input("group.refresh", replacement.inlet())
+        .unwrap();
+
+    let sum = graph.derive("sum", (&f.a,), |a: Number| a.0).unwrap();
+    let mut fork = graph.clone();
+    let absent = fork.derive("absent", (&sum,), |v| v).unwrap();
+    // The join's first input edge succeeds; the second belongs to the fork only.
+    assert!(graph.derive("pair", (&sum, &absent), |a, b| a + b).is_err());
+    graph.node("pair.join", |v: i64| v).unwrap();
+    graph.node("pair", |v: i64| v).unwrap();
+    let absent_group = fork.derive("absent-group", (&sum,), |v| (v,)).unwrap();
+    assert!(graph.derive_from("from", &absent_group, |v| v).is_err());
+    graph.node("from", |v: i64| v).unwrap();
+    assert!(graph.query_spec("tap", &absent).is_err());
+    let spec = graph.query_spec("tap", &sum).unwrap();
+    user.input(Layout::fields()).unwrap();
+    let engine = phenix_graph::Deployment::new(graph.compile().unwrap())
+        .build()
+        .unwrap();
+    f.put(&f.a, 7);
+    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 7);
+}
+
+#[test]
+#[ignore = "manual builder scaling benchmark; timings are diagnostic, not CI assertions"]
+fn builder_scaling_repeated_derived_additions() {
+    let f = Fixture::new(false);
+    // One source node plus N-1 derived nodes. Exclude fixture setup, compilation,
+    // execution and graph destruction; measure only incremental authoring.
+    // Transactions do not snapshot prior declarations, but registration, ID
+    // allocation and connection validation still scan growing node/edge lists.
+    // This measures that combined cost, not allocations or isolated rollback.
+    for nodes in [10usize, 100, 1000] {
+        let mut samples = Vec::new();
+        for _ in 0..21 {
+            let mut graph = GraphBuilder::new("scaling");
+            let group = graph.sources("root", (&f.a,)).unwrap();
+            let names: Vec<_> = (1..nodes).map(|i| format!("derived-{i}")).collect();
+            let start = std::time::Instant::now();
+            for name in &names {
+                std::hint::black_box(graph.derive_from(name, &group, |v: Number| v.0).unwrap());
+            }
+            samples.push(start.elapsed());
+            std::hint::black_box(&graph);
+        }
+        samples.sort_unstable();
+        let median = samples[samples.len() / 2];
+        eprintln!(
+            "builder scaling: nodes={nodes}, additions={}, samples={}, median={median:?}, ns/addition={:.0}",
+            nodes - 1,
+            samples.len(),
+            median.as_nanos() as f64 / (nodes - 1) as f64,
+        );
+    }
 }
 
 #[test]
@@ -824,11 +887,8 @@ fn terminal_multiple_cohorts_and_single_wrong_cohort_fail_validation() {
         let specs = saved.clone();
         let mut runtime = build(
             demand(move |g| {
-                let sum = g
-                    .derive("sum", (&a, &b), |a, b| a + b)
-                    .map_err(|e| e.to_string())?;
-                *specs.lock().unwrap() =
-                    Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+                let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+                *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
                 if !keep_direct {
                     g.disconnect(sum.output(), g.local_input::<i64>("query", "run", "value")?)?;
                 }
@@ -838,8 +898,7 @@ fn terminal_multiple_cohorts_and_single_wrong_cohort_fail_validation() {
                     "fresh",
                     phenix_graph::NodeTemplate::local_function::<i64, i64, i64, _>(|v| v)
                         .with_fresh_cohort(),
-                )
-                .map_err(|e| e.to_string())?;
+                )?;
                 g.connect(sum.output(), g.local_input::<i64>("fresh", "run", "value")?)?;
                 g.connect(
                     g.local_output::<i64>("fresh", "value")?,
@@ -878,16 +937,12 @@ fn observer_named(f: &Fixture, log: Arc<Mutex<Vec<i64>>>, capacity: usize, name:
     Plugin {
         routes: vec![route],
         compose: Arc::new(move |g| {
-            let sum = g
-                .derive(&name, (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
+            let sum = g.derive(&name, (&a, &b), |a, b| a + b)?;
             *request.lock().unwrap() = Some(sum.observation(capacity));
             let log = log.clone();
-            let sink = g
-                .node(format!("{name}.sink"), move |v: i64| {
-                    log.lock().unwrap().push(v)
-                })
-                .map_err(|e| e.to_string())?;
+            let sink = g.node(format!("{name}.sink"), move |v: i64| {
+                log.lock().unwrap().push(v)
+            })?;
             g.connect(sum.output(), sink.inlet())?;
             Ok(())
         }),
@@ -898,7 +953,7 @@ fn observer_named(f: &Fixture, log: Arc<Mutex<Vec<i64>>>, capacity: usize, name:
                 .as_ref()
                 .unwrap()
                 .activate()
-                .map_err(|e| e.to_string())
+                .map_err(Into::into)
         })),
     }
 }
@@ -1024,19 +1079,12 @@ fn binding_uses_final_engine_not_temporary_or_discarded_deployments() {
     let mut runtime = build(
         demand(move |g| {
             let mut discarded = GraphBuilder::new("derived");
-            let fake = discarded
-                .derive("sum", (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            let fake = discarded
-                .query_spec("query", &fake)
-                .map_err(|e| e.to_string())?;
-            let _temporary =
-                Deployment::new(discarded.compile().map_err(|e| e.to_string())?).build()?;
-            let sum = g
-                .derive("sum", (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            let real = g.query_spec("query", &sum).map_err(|e| e.to_string())?;
-            let compiled = g.clone().compile().map_err(|e| e.to_string())?;
+            let fake = discarded.derive("sum", (&a, &b), |a, b| a + b)?;
+            let fake = discarded.query_spec("query", &fake)?;
+            let _temporary = Deployment::new(discarded.compile()?).build()?;
+            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+            let real = g.query_spec("query", &sum)?;
+            let compiled = g.clone().compile()?;
             // Both temporary deployments share the real stateless actions. Neither
             // should add registration counts or affect final deployment membership.
             let _first = Deployment::new(compiled.clone()).build()?;
@@ -1066,15 +1114,9 @@ fn failed_and_nested_builds_have_no_ambient_membership_state() {
     let specs = saved.clone();
     let plugin = demand(move |g| {
         let _nested = build(demand(|_| Ok(())), Arc::new(LocalExecutor));
-        let sum = g
-            .derive("sum", (&a, &b), |a, b| a + b)
-            .map_err(|e| e.to_string())?;
-        specs
-            .lock()
-            .unwrap()
-            .push(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
-        let _temporary =
-            Deployment::new(g.clone().compile().map_err(|e| e.to_string())?).build()?;
+        let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+        specs.lock().unwrap().push(g.query_spec("query", &sum)?);
+        let _temporary = Deployment::new(g.clone().compile()?).build()?;
         if first.swap(false, Ordering::SeqCst) {
             return Err("composition failed after temporary deployment".into());
         }
@@ -1105,11 +1147,8 @@ fn shared_actions_in_two_module_instances_are_ambiguous() {
     let runtime = build(
         demand(move |g| {
             let mut child = GraphBuilder::new("child");
-            let sum = child
-                .derive("sum", (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            *specs.lock().unwrap() =
-                Some(child.query_spec("query", &sum).map_err(|e| e.to_string())?);
+            let sum = child.derive("sum", (&a, &b), |a, b| a + b)?;
+            *specs.lock().unwrap() = Some(child.query_spec("query", &sum)?);
             let module = child.module();
             g.instance("one", &module)?;
             g.instance("two", &module)?;
@@ -1174,26 +1213,21 @@ fn demand_and_observer_nodes_cannot_query_another_runtime_even_when_offloaded() 
             Plugin {
                 routes: vec!["sum.sources.refresh".into()],
                 compose: Arc::new(move |g| {
-                    let sum = g
-                        .derive("sum", (&a, &b), |a, b| a + b)
-                        .map_err(|e| e.to_string())?;
+                    let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
                     *request.lock().unwrap() = Some(sum.observation(1));
-                    *specs.lock().unwrap() =
-                        Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+                    *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
                     let target = nested_target.clone();
                     let spec = nested_spec.clone();
                     let calls = calls.clone();
-                    let probe = g
-                        .node("probe", move |_: i64| {
-                            // The independent target has no recursive consumer, so this
-                            // regression would perform a real nested read without the guard.
-                            assert!(matches!(
-                                target.lock().unwrap().bind_query(&spec).unwrap().query(),
-                                Err(Error::NestedQuery)
-                            ));
-                            calls.fetch_add(1, Ordering::SeqCst);
-                        })
-                        .map_err(|e| e.to_string())?;
+                    let probe = g.node("probe", move |_: i64| {
+                        // The independent target has no recursive consumer, so this
+                        // regression would perform a real nested read without the guard.
+                        assert!(matches!(
+                            target.lock().unwrap().bind_query(&spec).unwrap().query(),
+                            Err(Error::NestedQuery)
+                        ));
+                        calls.fetch_add(1, Ordering::SeqCst);
+                    })?;
                     g.connect(sum.output(), probe.inlet())?;
                     Ok(())
                 }),
@@ -1204,7 +1238,7 @@ fn demand_and_observer_nodes_cannot_query_another_runtime_even_when_offloaded() 
                         .as_ref()
                         .unwrap()
                         .activate()
-                        .map_err(|e| e.to_string())
+                        .map_err(Into::into)
                 })),
             },
             executor,
@@ -1251,21 +1285,17 @@ fn demand_node_cannot_recursively_query_its_own_runtime() {
     let calls = attempts.clone();
     let mut runtime = build(
         demand(move |g| {
-            let sum = g
-                .derive("sum", (&a, &b), |a, b| a + b)
-                .map_err(|e| e.to_string())?;
-            let spec = g.query_spec("query", &sum).map_err(|e| e.to_string())?;
+            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+            let spec = g.query_spec("query", &sum)?;
             *specs.lock().unwrap() = Some(spec.clone());
             let calls = calls.clone();
-            let node = g
-                .node("probe", move |_: i64| {
-                    // Bound recursion even on a regressed implementation, rather than
-                    // overflowing the stack or deadlocking the test process.
-                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                        assert!(SELF_QUERY.with(|slot| slot.borrow().as_ref().unwrap()()));
-                    }
-                })
-                .map_err(|e| e.to_string())?;
+            let node = g.node("probe", move |_: i64| {
+                // Bound recursion even on a regressed implementation, rather than
+                // overflowing the stack or deadlocking the test process.
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    assert!(SELF_QUERY.with(|slot| slot.borrow().as_ref().unwrap()()));
+                }
+            })?;
             g.connect(sum.output(), node.inlet())?;
             Ok(())
         }),
@@ -1342,13 +1372,11 @@ fn dispatch_guard_restores_after_node_panic() {
     let mut runtime = build(
         demand(move |g| {
             let first = first.clone();
-            let sum = g
-                .derive("sum", (&a, &b), move |a, b| {
-                    assert!(!first.swap(false, Ordering::SeqCst), "node panic fixture");
-                    a + b
-                })
-                .map_err(|e| e.to_string())?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+            let sum = g.derive("sum", (&a, &b), move |a, b| {
+                assert!(!first.swap(false, Ordering::SeqCst), "node panic fixture");
+                a + b
+            })?;
+            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
             Ok(())
         }),
         Arc::new(LocalExecutor),
@@ -1418,18 +1446,14 @@ fn query_binding_preflights_missing_misdirected_and_multi_target_module_routes()
                 }
                 let calls = calls.clone();
                 let unrelated = if mode == "wrong_type" {
-                    let node = g
-                        .node("unrelated", move |_: String| {
-                            calls.fetch_add(1, Ordering::SeqCst);
-                        })
-                        .map_err(|e| e.to_string())?;
+                    let node = g.node("unrelated", move |_: String| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                    })?;
                     g.expose_input("unrelated", node.inlet())?
                 } else {
-                    let node = g
-                        .node("unrelated", move |_: RefreshCause| {
-                            calls.fetch_add(1, Ordering::SeqCst);
-                        })
-                        .map_err(|e| e.to_string())?;
+                    let node = g.node("unrelated", move |_: RefreshCause| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                    })?;
                     g.expose_input("unrelated", node.inlet())?
                 };
                 let root = g.expose_input("root", instance.local_input::<RefreshCause>(&route)?)?;
@@ -1520,12 +1544,9 @@ fn backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order()
             Plugin {
                 routes: vec!["sum.sources.refresh".into()],
                 compose: Arc::new(move |g| {
-                    let sum = g
-                        .derive("sum", (&a, &b), |a, b| a + b)
-                        .map_err(|e| e.to_string())?;
+                    let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
                     *observation.lock().unwrap() = Some(sum.observation(1));
-                    *specs.lock().unwrap() =
-                        Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+                    *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
                     Ok(())
                 }),
                 activate: Some(Arc::new(move || {
@@ -1535,7 +1556,7 @@ fn backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order()
                         .as_ref()
                         .unwrap()
                         .activate()
-                        .map_err(|e| e.to_string())
+                        .map_err(Into::into)
                 })),
             },
             Arc::new(LocalExecutor),
@@ -1621,18 +1642,11 @@ fn same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected() {
         });
         let mut runtime = build(
             demand(move |g| {
-                let sum = g
-                    .derive("sum", (&a, &b), |a, b| a + b)
-                    .map_err(|e| e.to_string())?;
-                *specs.lock().unwrap() =
-                    Some(g.query_spec("query", &sum).map_err(|e| e.to_string())?);
+                let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+                *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
                 if root {
-                    let other = g
-                        .derive("other", (&a, &b), |a, b| a + b)
-                        .map_err(|e| e.to_string())?;
-                    let gate = g
-                        .node("gate", |_: (Number, Number)| RefreshCause::Demand)
-                        .map_err(|e| e.to_string())?;
+                    let other = g.derive("other", (&a, &b), |a, b| a + b)?;
+                    let gate = g.node("gate", |_: (Number, Number)| RefreshCause::Demand)?;
                     g.connect(
                         g.local_output::<(Number, Number)>("sum.sources", "value")?,
                         gate.inlet(),
@@ -1644,7 +1658,7 @@ fn same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected() {
                     // Keep the second computation ordinary, without a second tap.
                     let _ = other;
                 } else {
-                    g.query_spec("decoy", &sum).map_err(|e| e.to_string())?;
+                    g.query_spec("decoy", &sum)?;
                 }
                 Ok(())
             }),

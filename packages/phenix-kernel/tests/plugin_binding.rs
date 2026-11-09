@@ -53,27 +53,18 @@ impl PluginInstance for Provider {
                 let graph = &mut *context.graph;
                 if config.module {
                     let mut child = GraphBuilder::new("implementation");
-                    let node = child
-                        .node("private", |x: i64| x + 1)
-                        .map_err(|e| e.to_string())?;
+                    let node = child.node("private", |x: i64| x + 1)?;
                     child.expose_input_slot("run", "value", node.inlet())?;
                     child.expose_output("value", node.output())?;
-                    child
-                        .implements_public(&contract())
-                        .map_err(|e| e.to_string())?;
+                    child.implements_public(&contract())?;
                     graph.instance("service", &child.module())?;
                 } else {
-                    graph
-                        .node("service", |x: i64| x + 1)
-                        .map_err(|e| e.to_string())?;
-                    graph
-                        .implements("service", &contract())
-                        .map_err(|e| e.to_string())?;
+                    graph.node("service", |x: i64| x + 1)?;
+                    graph.implements("service", &contract())?;
                 }
                 // Engine does not expose its compiled graph. Preserve the same
                 // declarations and kernel-assigned provenance for Plugin API binding.
-                *config.compiled.lock().unwrap() =
-                    Some(graph.clone().compile().map_err(|e| e.to_string())?);
+                *config.compiled.lock().unwrap() = Some(graph.clone().compile()?);
                 Ok(())
             }),
         })
@@ -135,6 +126,6 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         let error = Kernel::build("host", [sibling], Arc::new(LocalExecutor))
             .err()
             .unwrap();
-        assert!(error.contains("origin mismatch"), "{error}");
+        assert!(error.to_string().contains("origin mismatch"), "{error}");
     }
 }

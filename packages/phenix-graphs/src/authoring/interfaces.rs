@@ -123,9 +123,7 @@ impl<'g> AuthoringUnit<'g> {
         self,
         contract: &GraphContract,
     ) -> Result<BoundAuthoringUnit<'g>, InterfaceError> {
-        self.inspect()?
-            .check_contract(contract)
-            .map_err(|e| e.context(InterfacePhase::Authoring, &self.path, Some(contract.id())))?;
+        self.check_interface(contract, true)?;
         Ok(BoundAuthoringUnit {
             unit: self,
             contract: contract.clone(),
@@ -140,6 +138,24 @@ pub struct BoundAuthoringUnit<'g> {
     contract: GraphContract,
 }
 impl BoundAuthoringUnit<'_> {
+    /// Project a promised wire field using the same selector as node/module authoring.
+    pub fn wire_field<Owner, T: ContractValue>(
+        &self,
+        port: &str,
+        key: impl FieldSelector<Owner, T>,
+    ) -> Result<Input<T>, InterfaceError> {
+        self.wire_input(port, key.path())
+    }
+
+    /// Project a promised local field without exposing implementation-only endpoints.
+    pub fn local_field<Owner, T: Send + Sync + 'static>(
+        &self,
+        port: &str,
+        key: impl FieldSelector<Owner, T>,
+    ) -> Result<Input<T>, InterfaceError> {
+        self.local_input(port, key.path())
+    }
+
     fn check_endpoint(
         &self,
         port: Option<&str>,
@@ -148,8 +164,7 @@ impl BoundAuthoringUnit<'_> {
     ) -> Result<(), InterfaceError> {
         // Pending node layouts can change while this binding still borrows the graph.
         self.unit
-            .inspect()
-            .and_then(|snapshot| snapshot.check_contract(&self.contract))
+            .check_interface(&self.contract, true)
             .map_err(|e| {
                 e.context(
                     InterfacePhase::Authoring,
@@ -166,7 +181,7 @@ impl BoundAuthoringUnit<'_> {
             None => required.outputs().find(|(n, _)| *n == name).map(|(_, v)| v),
         };
         let actual = promised.map(interface::value_identity);
-        if actual == Some(requested) {
+        if actual.as_ref() == Some(&requested) {
             return Ok(());
         }
         let mut error = self.lookup_error(if actual.is_some() {
@@ -247,6 +262,18 @@ impl GraphUnit for AuthoringUnit<'_> {
             .inspect_snapshot(&self.path)
             .map_err(|e| e.context(InterfacePhase::Authoring, &self.path, None))
     }
+
+    fn check_interface(
+        &self,
+        contract: &GraphContract,
+        membership: bool,
+    ) -> Result<(), InterfaceError> {
+        self.graph
+            .with_inspected(&self.path, |shape, claims, _, _| {
+                interface::check_interface(&shape, claims, contract, membership)
+            })
+            .map_err(|e| e.context(InterfacePhase::Authoring, &self.path, Some(contract.id())))
+    }
 }
 impl GraphBuilder {
     /// Bind a claimed authoring interface without exposing implementation extensions.
@@ -261,7 +288,8 @@ impl GraphBuilder {
         }
         .bind_contract(contract)
     }
-    fn validate_inspected_boundary(&self, def: &ModuleDef) -> Result<(), InterfaceError> {
+    fn validate_inspected_boundary(&self, def: ModuleDef) -> Result<(), InterfaceError> {
+        let id = def.id.clone();
         let mut catalog = ModuleCatalog::new().limits(self.compile_limits);
         for entry in self.dependencies.values() {
             if entry.definition.id != def.id {
@@ -272,12 +300,12 @@ impl GraphBuilder {
         }
         catalog
             .add(ModuleEntry {
-                definition: def.clone(),
+                definition: def,
                 triggers: Vec::new(),
             })
             .map_err(InterfaceError::new)?;
         catalog
-            .validate(&def.id)
+            .validate(&id)
             .map_err(|e| InterfaceError::new(e.to_string()))?;
         let mut expander = ModuleExpander {
             catalog: &catalog,
@@ -290,7 +318,7 @@ impl GraphBuilder {
             limits: self.compile_limits,
         };
         expander
-            .expand_scope(&def.id, &mut Vec::new(), &mut Vec::new())
+            .expand_scope(&id, &mut Vec::new(), &mut Vec::new())
             .map_err(InterfaceError::new)?;
         Ok(())
     }
@@ -314,56 +342,117 @@ impl GraphBuilder {
             graph: self,
             path: path.into(),
         };
-        unit.inspect()?;
+        self.with_inspected(path, |_, _, _, _| Ok(()))
+            .map_err(|e| e.context(InterfacePhase::Authoring, path, None))?;
         Ok(unit)
     }
     fn inspect_snapshot(&self, path: &str) -> Result<UnitSnapshot, InterfaceError> {
-        let mut root = self.module.clone().build().definition;
-        for node in &mut root.nodes {
-            if let Some(pending) = node
-                .name
-                .as_ref()
-                .and_then(|n| self.pending.borrow().get(n).cloned())
-            {
-                *node = pending;
-            }
-        }
+        self.with_inspected(path, |shape, claims, definition, instances| {
+            Ok(UnitSnapshot {
+                shape,
+                claims: claims.to_vec(),
+                provenance: interface::UnitProvenance {
+                    phase: InterfacePhase::Authoring,
+                    definition: definition.into(),
+                    path: path.into(),
+                    instance_path: instances.to_vec(),
+                },
+            })
+        })
+    }
+
+    // Resolve afresh on every call: retained NodeHandles can mutate pending layouts
+    // even while an AuthoringUnit or BoundAuthoringUnit borrows this graph.
+    fn with_inspected<T>(
+        &self,
+        path: &str,
+        inspect: impl FnOnce(
+            InterfaceShape,
+            &[GraphContract],
+            &str,
+            &[String],
+        ) -> Result<T, InterfaceError>,
+    ) -> Result<T, InterfaceError> {
         if path.is_empty() {
-            self.validate_inspected_boundary(&root)?;
-            return interface::declaration_snapshot(&root, path, InterfacePhase::Authoring);
+            let pending = self.pending.borrow();
+            // The existing boundary validator owns its catalog. Copy only the
+            // effective declaration, not triggers or superseded node layouts.
+            let root = ModuleDef {
+                declaration_ids: self.module.declaration_ids.clone(),
+                claims: self.module.claims.clone(),
+                contract_requests: self.module.contract_requests.clone(),
+                id: self.module.id.clone(),
+                nodes: self
+                    .module
+                    .nodes
+                    .iter()
+                    .map(|node| {
+                        node.name
+                            .as_ref()
+                            .and_then(|n| pending.get(n))
+                            .unwrap_or(node)
+                            .clone()
+                    })
+                    .collect(),
+                instances: self.module.instances.clone(),
+                edges: self.module.edges.clone(),
+                inputs: self.module.inputs.clone(),
+                outputs: self.module.outputs.clone(),
+            };
+            self.validate_inspected_boundary(root)?;
+            return inspect(
+                InterfaceShape::module_ports(&self.module.inputs, &self.module.outputs)?,
+                &self.module.claims,
+                &self.module.id,
+                &[],
+            );
         }
         let parts =
             parse_name_path(path).ok_or_else(|| InterfaceError::new("invalid unit path"))?;
-        let mut def = &root;
+        let mut def: Option<&ModuleDef> = None;
         let mut instances = Vec::new();
         for (index, part) in parts.iter().enumerate() {
+            let (nodes, children, id) = match def {
+                Some(def) => (&def.nodes, &def.instances, &def.id),
+                None => (&self.module.nodes, &self.module.instances, &self.module.id),
+            };
             if index + 1 == parts.len()
-                && let Some(node) = def.nodes.iter().find(|n| n.name.as_deref() == Some(*part))
+                && let Some(node) = nodes.iter().find(|n| n.name.as_deref() == Some(*part))
             {
-                return interface::node_snapshot(
-                    node,
-                    &def.id,
-                    path,
-                    InterfacePhase::Authoring,
+                let pending = self.pending.borrow();
+                let node = if def.is_none() {
+                    pending.get(*part).unwrap_or(node)
+                } else {
+                    node
+                };
+                return inspect(
+                    InterfaceShape::node_ports(&node.ports, &node.outputs)?,
+                    &node.claims,
+                    id,
                     &instances,
                 );
             }
-            let instance = def
-                .instances
+            let instance = children
                 .iter()
                 .find(|i| i.name == *part)
                 .ok_or_else(|| InterfaceError::new("unknown unit path"))?;
-            def = &self
-                .dependencies
-                .get(&instance.definition)
-                .ok_or_else(|| InterfaceError::new("missing module definition"))?
-                .definition;
+            def = Some(
+                &self
+                    .dependencies
+                    .get(&instance.definition)
+                    .ok_or_else(|| InterfaceError::new("missing module definition"))?
+                    .definition,
+            );
             instances.push((*part).into());
         }
-        self.validate_inspected_boundary(def)?;
-        let mut snapshot = interface::declaration_snapshot(def, path, InterfacePhase::Authoring)?;
-        snapshot.provenance.instance_path = instances;
-        Ok(snapshot)
+        let def = def.ok_or_else(|| InterfaceError::new("unknown unit path"))?;
+        self.validate_inspected_boundary(def.clone())?;
+        inspect(
+            InterfaceShape::module_ports(&def.inputs, &def.outputs)?,
+            &def.claims,
+            &def.id,
+            &instances,
+        )
     }
     /// A scoped plugin may make claims on its own direct nodes only. Claims on
     /// imported module definitions are shared across every alias, and must be
@@ -414,15 +503,18 @@ impl GraphBuilder {
         contract: &GraphContract,
     ) -> Result<(), InterfaceError> {
         self.check_claim_owner(path)?;
-        let snapshot = self
-            .inspect_snapshot(path)
+        let already_claimed = self
+            .with_inspected(path, |shape, claims, _, _| {
+                contract.required().check_shape(&shape)?;
+                let claimed = claims.iter().any(|c| c.id() == contract.id());
+                if claimed {
+                    interface::check_interface(&shape, claims, contract, true)?;
+                }
+                Ok(claimed)
+            })
             .map_err(|e| e.context(InterfacePhase::Authoring, path, Some(contract.id())))?;
-        contract
-            .required()
-            .check_shape(&snapshot.shape)
-            .map_err(|e| e.context(InterfacePhase::Authoring, path, Some(contract.id())))?;
-        if snapshot.claims.iter().any(|c| c.id() == contract.id()) {
-            return snapshot.check_contract(contract);
+        if already_claimed {
+            return Ok(());
         }
         if path.is_empty() {
             self.module.claims.push(contract.clone());

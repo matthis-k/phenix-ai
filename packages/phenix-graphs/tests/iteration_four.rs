@@ -110,7 +110,7 @@ fn unnamed_slot_manifest(target_slot: u16) -> String {
     module.input(
         0,
         "request",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(input(1, 0, target_slot))],
     );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);

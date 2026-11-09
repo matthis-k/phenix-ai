@@ -55,8 +55,8 @@ fn structural_identity_is_used_by_graph_slots_and_values() {
     let value = Value::of(Item { value: 42 });
     assert_eq!(value.get::<Independent>().unwrap().value, 42);
     assert!(value.get::<Incompatible>().is_err());
-    // Existing raw primitive envelopes retain their shipped identity.
-    assert_eq!(Value::of(42i64).schema(), i64::SCHEMA);
+    // Primitive envelopes use the same complete descriptor as their typed slots.
+    assert_eq!(*Value::of(42i64).schema(), i64::wire_schema());
 }
 
 #[test]

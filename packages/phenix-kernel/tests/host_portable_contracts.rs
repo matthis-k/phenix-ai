@@ -22,14 +22,13 @@ macro_rules! portable {
     ($name:ident, $schema:literal, $codec:literal) => {
         struct $name(i64);
         impl ContractValue for $name {
-            const SCHEMA: &'static str = $schema;
-            fn schema_descriptor() -> Option<Schema> {
-                Some(Schema {
+            fn schema() -> Schema {
+                Schema {
                     name: $schema.into(),
                     revision: 1,
                     structure: "record{value:i64}".into(),
                     codec: $codec.into(),
-                })
+                }
             }
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
@@ -157,25 +156,19 @@ mod provider {
                     };
                     if config.nested {
                         let mut child = GraphBuilder::new("private-module");
-                        child.add("worker", template).map_err(|e| e.to_string())?;
+                        child.add("worker", template)?;
                         expose(&mut child, "worker", extra)?;
                         let mut wrapper = GraphBuilder::new("wrapper");
                         wrapper.instance("inside", &child.module())?;
                         expose(&mut wrapper, "inside", extra)?;
                         if !matches!(config.fault, Fault::MissingClaim) {
-                            wrapper
-                                .implements_public(&definition::contract())
-                                .map_err(|e| e.to_string())?;
+                            wrapper.implements_public(&definition::contract())?;
                         }
                         graph.instance(config.path, &wrapper.module())?;
                     } else {
-                        graph
-                            .add(config.path, template)
-                            .map_err(|e| e.to_string())?;
+                        graph.add(config.path, template)?;
                         if !matches!(config.fault, Fault::MissingClaim) {
-                            graph
-                                .implements(config.path, &definition::contract())
-                                .map_err(|e| e.to_string())?;
+                            graph.implements(config.path, &definition::contract())?;
                         }
                     }
                     Ok(())
@@ -247,9 +240,13 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
     let candidate = host
         .prepare(
             stages,
-            &policy("node-provider"),
+            phenix_kernel::BuildOptions {
+                imports: policy("node-provider"),
+                ..Default::default()
+            },
             Arc::new(LocalExecutor),
             "initial",
+            |_| Ok(()),
         )
         .unwrap();
     assert!(host.active().is_none());
@@ -261,9 +258,13 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
     let candidate = host
         .prepare(
             vec![],
-            &policy("module-provider"),
+            phenix_kernel::BuildOptions {
+                imports: policy("module-provider"),
+                ..Default::default()
+            },
             Arc::new(LocalExecutor),
             "switch",
+            |_| Ok(()),
         )
         .unwrap();
     assert!(Arc::ptr_eq(&original, &host.active().unwrap()));
@@ -278,7 +279,16 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         (&b2, "module-provider", module),
     ] {
         let candidate = host
-            .prepare(vec![], &policy(owner), Arc::new(LocalExecutor), "select")
+            .prepare(
+                vec![],
+                phenix_kernel::BuildOptions {
+                    imports: policy(owner),
+                    ..Default::default()
+                },
+                Arc::new(LocalExecutor),
+                "select",
+                |_| Ok(()),
+            )
             .unwrap();
         host.publish(candidate).unwrap();
         let active = host.active().unwrap();
@@ -296,9 +306,13 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
             let error = host
                 .prepare(
                     vec![staged],
-                    &policy(owner),
+                    phenix_kernel::BuildOptions {
+                        imports: policy(owner),
+                        ..Default::default()
+                    },
                     Arc::new(LocalExecutor),
                     "rejected",
+                    |_| Ok(()),
                 )
                 .err()
                 .unwrap();
@@ -340,9 +354,13 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         let candidate = host
             .prepare(
                 vec![stage],
-                &policy(owner),
+                phenix_kernel::BuildOptions {
+                    imports: policy(owner),
+                    ..Default::default()
+                },
                 Arc::new(LocalExecutor),
                 "renamed",
+                |_| Ok(()),
             )
             .unwrap();
         assert!(Arc::ptr_eq(&active, &host.active().unwrap()));

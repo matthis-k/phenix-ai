@@ -23,7 +23,9 @@ Mission acceptance is **incomplete**, despite passing implementation checks. All
 requested commands passed on implementation commit
 `2a95b8519ff162caa68fee8b844df6ca42e1e515`, including the full Nix check and
 [exact-head CI 42503290164](https://github.com/matthis-k/phenix-ai/actions/runs/42503290164).
-Q04 remains PARTIAL because schema interning is not bounded by the implementation.
+At that revision Q04 remained PARTIAL because schema interning was unbounded.
+R01 now uses reclaimable owned identities; see the current
+[Schema contract and measurements](../packages/phenix-schema/README.md).
 At that revision Kernel validated host-selected offers; it did not discover
 providers or wire consumers automatically and had no plugin/kernel activation coordinator.
 The weighted implementation assessment is **8.3/10**, not 9+ and not an override
@@ -223,9 +225,8 @@ Explicitly extracted raw addresses have no provenance and are not validated hand
 
 ### Portable Connections
 
-`connect_wire<T, U>` requires both `schema_descriptor()` results to be `Some`,
-equal full descriptors (name, revision, structure and codec), nonempty name,
-structure and codec, and a codec other than `phenix-legacy-v1`. Both actual
+`connect_wire<T, U>` requires equal `schema()` descriptors (name, revision,
+structure and codec) and nonempty name, structure and codec. Both actual
 endpoints must be canonical Wire endpoints matching that descriptor. It then
 delegates to ordinary typed connection validation, preserving scope, declaration
 revision, endpoint existence, identity and duplicate-edge checks before insertion.
@@ -239,27 +240,27 @@ and [`fixtures/portable_consumer.rs`](../packages/phenix-graphs/tests/fixtures/p
 separately as `libportable_provider.rlib` and `libportable_consumer.rlib`, then
 links and runs
 [`fixtures/portable_execution.rs`](../packages/phenix-graphs/tests/fixtures/portable_execution.rs).
-The harness asserts distinct Rust `TypeId`s and SCHEMA constants but equal full
+The harness asserts distinct Rust `TypeId`s but equal full
 descriptors, connects the independently defined types with `connect_wire`, and
 executes six value vectors through the real deployment, checking both invocations
 and the consumer's decoded publication. This is separate-compilation execution
 evidence, not just two declarations within one test crate or a native ABI claim.
 
-`ContractValue::SCHEMA` remains a required associated constant. The default
-`schema_descriptor()` is `None`; `wire_schema()` and `schema()` retain legacy
-nominal behavior. Ordinary **same-type** connection remains the supported baseline;
-portable cross-type validation rejects legacy name-only values even when their
-SCHEMA strings agree. The typed ordinary connector does not become a cross-type
-escape hatch. This report does not claim a retrofit of all legacy primitives to
-structural descriptors.
+R01 removes `ContractValue::SCHEMA`, `schema_descriptor()` and nominal fallback.
+Manual implementations must provide `schema()`; primitives also provide complete
+descriptors. `wire_schema()` returns the descriptor's canonical `Arc<str>` identity.
+Ordinary typed connections still require the same Rust endpoint type; portable
+cross-type connections explicitly validate complete descriptors.
 
-Schema interning is explicitly **not fixed** by this work. `Schema::intern` still
-retains each distinct canonical string for process lifetime using `Box::leak` and
-a global set. Stable canonical names/descriptors across reloads and a finite
-expected schema vocabulary bound practical growth; dynamically inventing schemas
-can grow it indefinitely. The new connector calls `canonical()`, not `intern()`;
-existing wire endpoint/type construction still uses `wire_schema()` and can
-intern. There is no new per-connection intern call and no per-wave contract matcher.
+R01 replaces process-lifetime interning with reclaimable `Arc<str>` identities
+throughout graph declarations, values, interfaces, diagnostics and compiled
+metadata. There is no global strong cache or static-string compatibility API.
+Clones share ownership; independently allocated equal descriptors compare by
+content, including codec. Local `TypeId` identities remain a distinct variant.
+Weak-reference regression tests cover repeated graph/deployment unloads, retained
+reports, derived contracts, diagnostics and cheap clones. Earlier review tables
+below describing nominal compatibility or unbounded interning are historical and
+superseded by R01. No per-wave semantic contract matcher is added.
 The existing directed destination lineage check does run when selections resolve.
 
 ## Actual API

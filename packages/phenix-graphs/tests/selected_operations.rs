@@ -35,8 +35,8 @@ fn join() -> NodeTemplate {
     let input = Port::all(
         0,
         vec![
-            InputSlot::new(0, i64::SCHEMA, BufferMode::Deferred).named("left"),
-            InputSlot::new(1, i64::SCHEMA, BufferMode::Deferred).named("right"),
+            InputSlot::new(0, i64::wire_schema(), BufferMode::Deferred).named("left"),
+            InputSlot::new(1, i64::wire_schema(), BufferMode::Deferred).named("right"),
         ],
     )
     .named("run");

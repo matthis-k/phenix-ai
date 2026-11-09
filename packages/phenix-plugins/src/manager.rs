@@ -3,7 +3,7 @@
 //! Construction is typed at the call site; implementations are erased only
 //! inside the manager. Contributions are retained through leased handles.
 //! Dynamically linked cdylibs require a separate ABI adapter (not Rust Any).
-use crate::{Code, Failure, identifier};
+use crate::{CallbackPhase, Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
 use phenix_graph::{CompiledGraph, GraphContract, GraphOrigin};
 use std::{
@@ -168,43 +168,58 @@ impl PluginSnapshot {
         requested: &GraphContract,
         graph: &CompiledGraph,
     ) -> Result<ContributionHandle<C>, Failure> {
-        let handle = self.get::<C>(id).ok_or_else(|| {
-            Failure::new(
-                Code::MissingBinding,
-                "missing contribution or type mismatch",
-            )
-        })?;
-        let path = handle.graph_unit().ok_or_else(|| {
-            Failure::new(
-                Code::MissingBinding,
-                "contribution has no graph unit locator",
-            )
-        })?;
-        let unit = graph.find(path).ok_or_else(|| {
-            Failure::new(
-                Code::MissingBinding,
-                format!(
-                    "compiled graph unit not found: {path}, contract {}",
-                    requested.id()
-                ),
-            )
-        })?;
-        if !unit
-            .origin()
-            .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
-        {
-            return Err(Failure::new(
-                Code::Denied,
-                format!("compiled unit {path}: contribution generation origin mismatch"),
-            ));
-        }
-        requested.check_implementation(&unit).map_err(|error| {
-            Failure::new(
-                Code::SchemaRejected,
-                format!("compiled unit {path}: {error}"),
-            )
-        })?;
-        Ok(handle)
+        (|| {
+            let handle = self.get::<C>(id).ok_or_else(|| {
+                Failure::new(
+                    Code::MissingBinding,
+                    "missing contribution or type mismatch",
+                )
+            })?;
+            let path = handle.graph_unit().ok_or_else(|| {
+                Failure::new(
+                    Code::MissingBinding,
+                    "contribution has no graph unit locator",
+                )
+            })?;
+            let unit = graph.find(path).ok_or_else(|| {
+                Failure::new(
+                    Code::MissingBinding,
+                    format!(
+                        "compiled graph unit not found: {path}, contract {}",
+                        requested.id()
+                    ),
+                )
+            })?;
+            if !unit
+                .origin()
+                .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
+            {
+                return Err(Failure::new(
+                    Code::Denied,
+                    format!("compiled unit {path}: contribution generation origin mismatch"),
+                ));
+            }
+            requested.check_implementation(&unit).map_err(|error| {
+                Failure::with_source(
+                    Code::SchemaRejected,
+                    format!(
+                        "compiled unit {path}, contribution {id}, contract {}",
+                        requested.id()
+                    ),
+                    Box::new(error),
+                )
+            })?;
+            Ok(handle)
+        })()
+        .map_err(|error: Failure| {
+            let mut error = error.at(self.name(), CallbackPhase::Bind);
+            error
+                .context
+                .as_mut()
+                .expect("binding context")
+                .contribution = Some(id.into());
+            error
+        })
     }
     /// Return a contribution with the plugin's lifetime attached. Graph
     /// adapters should retain these handles inside their compiled actions.
@@ -308,9 +323,18 @@ impl PluginSet {
         let revision = self.next_revision.checked_add(1).ok_or_else(|| {
             Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
         })?;
-        let instance = (factory.make)(Box::new(configuration))?;
+        let instance = (factory.make)(Box::new(configuration))
+            .map_err(|error| error.at(key.name(), CallbackPhase::Construct))?;
         let mut registrar = Registrar::new(key.name())?;
-        instance.contribute(&mut registrar)?;
+        instance
+            .contribute(&mut registrar)
+            .map_err(|error| error.at(key.name(), CallbackPhase::Contribute))?;
+        if registrar.owner() != key.name() {
+            return Err(
+                Failure::new(Code::Denied, "plugin replaced registrar owner")
+                    .at(key.name(), CallbackPhase::Contribute),
+            );
+        }
         Ok(Arc::new(Loaded {
             graph_origin: GraphOrigin::default(),
             contributions: registrar.finish(),
@@ -533,6 +557,96 @@ impl PluginSet {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn replaced_registrar_owner_is_rejected_before_load_or_reload() {
+        struct Replace(bool, bool);
+        impl PluginInstance for Replace {
+            fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+                if self.0 {
+                    *into = Registrar::new("forged")?;
+                }
+                if self.1 {
+                    into.add(ResourceOffer("offer".into()))?;
+                }
+                Ok(())
+            }
+        }
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("trusted", |(replace, add)| Ok(Replace(replace, add)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        for add in [false, true] {
+            let error = plugins.prepare_load(&key, (true, add)).err().unwrap();
+            assert_eq!(error.code, Code::Denied);
+            let context = error.context.unwrap();
+            assert_eq!(context.plugin, "trusted");
+            assert_eq!(context.phase, CallbackPhase::Contribute);
+            assert_eq!(plugins.snapshots().count(), 0);
+        }
+        let original = plugins.load(&key, (false, true)).unwrap();
+        for add in [false, true] {
+            assert!(plugins.prepare_reload(&key, (true, add)).is_err());
+            assert!(Arc::ptr_eq(
+                &original.loaded,
+                &plugins.snapshot(&key).unwrap().loaded
+            ));
+        }
+        assert_eq!(
+            original.keys().collect::<Vec<_>>(),
+            [("trusted", "resource.offer", "offer")]
+        );
+    }
+
+    #[test]
+    fn plugin_callback_failures_preserve_phase_identity_and_typed_source() {
+        use std::error::Error;
+        struct Broken;
+        impl PluginInstance for Broken {
+            fn contribute(&self, _: &mut Registrar) -> Result<(), Failure> {
+                Err(Failure::with_source(
+                    Code::PluginFailed,
+                    "contribution failed",
+                    Box::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+                ))
+            }
+        }
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("broken", |construct: bool| {
+                if construct {
+                    Err(Failure::with_source(
+                        Code::PluginFailed,
+                        "construction failed",
+                        Box::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+                    ))
+                } else {
+                    Ok(Broken)
+                }
+            })
+            .unwrap();
+        let plugins = catalog.instance();
+        for (construct, phase) in [
+            (true, CallbackPhase::Construct),
+            (false, CallbackPhase::Contribute),
+        ] {
+            let error = plugins.prepare_load(&key, construct).err().unwrap();
+            let context = error.context.as_ref().unwrap();
+            assert_eq!(context.plugin, "broken");
+            assert_eq!(context.phase, phase);
+            let source = error.source().unwrap().downcast_ref::<Failure>().unwrap();
+            assert_eq!(
+                source
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+    }
 
     #[test]
     fn exhausted_revision_rejects_factories_and_commits_without_mutation() {

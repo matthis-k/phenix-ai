@@ -137,16 +137,19 @@ fn local_type_id_cannot_be_forged_with_a_matching_schema_string() {
         Value::local(3_i64).identity(),
         TypeIdentity::Local(TypeId::of::<i64>())
     );
-    let wire = Value::from_wire_parts(type_name::<i64>(), vec![]);
-    assert_eq!(wire.identity(), TypeIdentity::Wire(type_name::<i64>()));
+    let wire = Value::from_wire_parts(type_name::<i64>().into(), vec![]);
+    assert_eq!(
+        wire.identity(),
+        TypeIdentity::Wire(type_name::<i64>().into())
+    );
     assert_ne!(wire.identity(), Value::local(3_i64).identity());
     assert_ne!(
         InputSlot::local::<i64>(0).identity(),
-        InputSlot::new(0, type_name::<i64>(), BufferMode::Deferred).identity()
+        InputSlot::new(0, type_name::<i64>().into(), BufferMode::Deferred).identity()
     );
     assert_ne!(
         OutputSlot::local::<i64>(0).identity(),
-        OutputSlot::new(0, type_name::<i64>()).identity()
+        OutputSlot::new(0, type_name::<i64>().into()).identity()
     );
 
     let mut graph = GraphBuilder::new("local-input");

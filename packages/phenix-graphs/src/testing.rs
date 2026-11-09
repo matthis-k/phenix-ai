@@ -25,6 +25,8 @@ use crate::{
 use std::fmt::Debug;
 use std::sync::Arc;
 
+pub mod portable;
+
 /// A reusable per-test engine. It preserves store and action instance state
 /// across waves, allowing isolation and cancellation regressions to be tested.
 /// It delegates to the real `Deployment` / `Engine`; no scheduler is copied.

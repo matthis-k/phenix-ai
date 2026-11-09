@@ -3,7 +3,7 @@ mod error;
 mod manager;
 mod registry;
 pub(crate) use error::identifier;
-pub use error::{Code, Failure};
+pub use error::{CallbackContext, CallbackError, CallbackPhase, Code, Failure};
 pub use manager::{
     ContributionHandle, PluginCatalog, PluginKey, PluginSet, PluginSnapshot, StagedPlugin,
 };

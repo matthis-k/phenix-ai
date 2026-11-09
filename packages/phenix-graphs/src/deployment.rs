@@ -2,6 +2,21 @@
 //! to *physical compiled endpoints*, without changing the logical graph.
 use super::*;
 
+/// Execution limits without graph ownership or execution/admission capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionLimits {
+    /// Maximum execution tickets per wave; zero prevents all dispatches.
+    pub max_activations: usize,
+}
+
+impl Default for ExecutionLimits {
+    fn default() -> Self {
+        Self {
+            max_activations: DEFAULT_MAX_ACTIVATIONS,
+        }
+    }
+}
+
 pub struct Deployment {
     graph: Arc<CompiledGraph>,
     store: Store,
@@ -9,6 +24,7 @@ pub struct Deployment {
     node_executors: Vec<(u16, Arc<dyn Executor>)>,
     adapters: Vec<(OutputAddr, InputAddr, Arc<dyn EdgeAdapter>)>,
     retention: Option<ReportRetention>,
+    max_activations: usize,
 }
 impl Deployment {
     pub fn new(graph: Arc<CompiledGraph>) -> Self {
@@ -19,6 +35,7 @@ impl Deployment {
             node_executors: vec![],
             adapters: vec![],
             retention: Some(ReportRetention::TerminalOutputs),
+            max_activations: DEFAULT_MAX_ACTIVATIONS,
         }
     }
     pub(crate) fn compiled_graph(&self) -> Arc<CompiledGraph> {
@@ -36,6 +53,12 @@ impl Deployment {
     }
     pub fn executor(mut self, executor: Arc<dyn Executor>) -> Self {
         self.default_executor = Some(executor);
+        self
+    }
+    /// Maximum execution tickets per wave, not a timeout or preemption policy.
+    /// Defaults to `DEFAULT_MAX_ACTIVATIONS`; zero prevents all dispatches.
+    pub fn max_activations(mut self, max_activations: usize) -> Self {
+        self.max_activations = max_activations;
         self
     }
     /// Configure one physical node, by a compiler-resolved hierarchical path.
@@ -107,7 +130,8 @@ impl Deployment {
         Ok(self)
     }
     pub fn build(self) -> Result<Engine, String> {
-        let mut engine = Engine::new(self.graph, self.store);
+        let mut engine =
+            Engine::new(self.graph, self.store).with_max_activations(self.max_activations);
         if let Some(executor) = self.default_executor {
             engine = engine.with_executor(executor);
         }

@@ -574,11 +574,12 @@ struct Watch {
     capacity: usize,
     queue: VecDeque<Notice>,
     overflow: Option<u64>,
-    waker: Option<std::task::Waker>,
+    waker: Option<Arc<std::task::Waker>>,
 }
 #[derive(Default)]
 struct State {
     mounts: BTreeMap<String, Arc<Mutex<Mount>>>,
+    reservations: BTreeSet<String>,
     watches: Vec<Weak<Mutex<Watch>>>,
     sequence: u64,
 }
@@ -589,8 +590,23 @@ pub struct Registry {
 fn lock(inner: &Mutex<State>) -> Result<MutexGuard<'_, State>> {
     inner.lock().map_err(|_| Error::Poisoned)
 }
+struct MountReservation<'a> {
+    registry: &'a Registry,
+    name: &'a str,
+}
+impl Drop for MountReservation<'_> {
+    fn drop(&mut self) {
+        self.registry
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .reservations
+            .remove(self.name);
+    }
+}
 thread_local! {
     static ACTIVE: std::cell::RefCell<BTreeSet<usize>> = const { std::cell::RefCell::new(BTreeSet::new()) };
+    static PENDING_WAKES: std::cell::RefCell<Vec<WakerAction>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 struct Active(usize);
 impl Active {
@@ -607,9 +623,15 @@ impl Active {
 }
 impl Drop for Active {
     fn drop(&mut self) {
-        ACTIVE.with(|active| {
-            active.borrow_mut().remove(&self.0);
+        let idle = ACTIVE.with(|active| {
+            let mut active = active.borrow_mut();
+            active.remove(&self.0);
+            active.is_empty()
         });
+        if idle {
+            let wakes = PENDING_WAKES.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+            run_wakers(wakes);
+        }
     }
 }
 
@@ -624,13 +646,31 @@ impl Registry {
     /// contribution. The host must retain the provider's code/instance lease
     /// until after the backend is dropped (see phenix-storage-plugin).
     pub fn mount_boxed(&self, name: &str, backend: Box<dyn Backend>) -> Result<()> {
+        self.mount_with(name, || Ok(backend))
+    }
+    /// Reserve a valid, unused name before invoking a trusted backend factory.
+    /// The factory runs without storage locks. Error or unwind releases the name;
+    /// concurrent attempts at the same name fail with DuplicateMount.
+    pub fn mount_with<E: From<Error>>(
+        &self,
+        name: &str,
+        open: impl FnOnce() -> std::result::Result<Box<dyn Backend>, E>,
+    ) -> std::result::Result<(), E> {
         if !component(name) {
-            return Err(Error::InvalidAddress);
+            return Err(Error::InvalidAddress.into());
         }
+        {
+            let mut state = lock(&self.inner)?;
+            if state.mounts.contains_key(name) || !state.reservations.insert(name.into()) {
+                return Err(Error::DuplicateMount.into());
+            }
+        }
+        let _reservation = MountReservation {
+            registry: self,
+            name,
+        };
+        let backend = open()?;
         let mut state = lock(&self.inner)?;
-        if state.mounts.contains_key(name) {
-            return Err(Error::DuplicateMount);
-        }
         state.mounts.insert(
             name.into(),
             Arc::new(Mutex::new(Mount {
@@ -695,15 +735,17 @@ impl Registry {
     }
     /// The host owns path selection; logical addresses never select files.
     pub fn mount_sqlite(&self, name: &str, path: impl AsRef<std::path::Path>) -> Result<()> {
-        let mut connection = Connection::open(path)?;
-        connection.busy_timeout(std::time::Duration::from_secs(5))?;
-        connection.pragma_update(None, "foreign_keys", true)?;
-        connection.authorizer(Some(adapter_authorizer))?;
-        // Migrate adapter metadata under the same cross-connection write lock
-        // used by CAS. Publication always follows a successful commit.
-        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS __phenix_kv (
+        self.mount_with(name, || {
+            let mut connection = Connection::open(path)?;
+            connection.busy_timeout(std::time::Duration::from_secs(5))?;
+            connection.pragma_update(None, "foreign_keys", true)?;
+            connection.authorizer(Some(adapter_authorizer))?;
+            // Migrate adapter metadata under the same cross-connection write lock
+            // used by CAS. Publication always follows a successful commit.
+            let tx =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS __phenix_kv (
                 dataset TEXT NOT NULL,
                 key TEXT NOT NULL,
                 value BLOB NOT NULL,
@@ -720,43 +762,44 @@ impl Registry {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 sequence INTEGER NOT NULL
             )",
-        )?;
-        let has_revision = {
-            let mut statement = tx.prepare("PRAGMA table_info(__phenix_kv)")?;
-            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-            columns
-                .collect::<std::result::Result<Vec<_>, _>>()?
-                .iter()
-                .any(|name| name == "revision")
-        };
-        if !has_revision {
-            // Legacy rows predate revision tokens. Zero is never allocated again.
-            tx.execute_batch(
-                "ALTER TABLE __phenix_kv ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
             )?;
-            tx.execute("INSERT INTO __phenix_revision_clock VALUES (1, 0)", [])?;
-        } else {
-            use rusqlite::OptionalExtension;
-            let clock: Option<i64> = tx
-                .query_row(
-                    "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
+            let has_revision = {
+                let mut statement = tx.prepare("PRAGMA table_info(__phenix_kv)")?;
+                let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+                columns
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|name| name == "revision")
+            };
+            if !has_revision {
+                // Legacy rows predate revision tokens. Zero is never allocated again.
+                tx.execute_batch(
+                    "ALTER TABLE __phenix_kv ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
+                )?;
+                tx.execute("INSERT INTO __phenix_revision_clock VALUES (1, 0)", [])?;
+            } else {
+                use rusqlite::OptionalExtension;
+                let clock: Option<i64> = tx
+                    .query_row(
+                        "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let maximum: i64 = tx.query_row(
+                    "SELECT coalesce(max(revision), 0) FROM __phenix_kv",
                     [],
                     |r| r.get(0),
-                )
-                .optional()?;
-            let maximum: i64 = tx.query_row(
-                "SELECT coalesce(max(revision), 0) FROM __phenix_kv",
-                [],
-                |r| r.get(0),
-            )?;
-            // Never reconstruct a clock from live rows: deleted rows may have
-            // issued larger tokens. Missing metadata must fail closed.
-            if clock.is_none_or(|clock| clock < maximum || clock < 0) {
-                return Err(Error::SchemaMismatch);
+                )?;
+                // Never reconstruct a clock from live rows: deleted rows may have
+                // issued larger tokens. Missing metadata must fail closed.
+                if clock.is_none_or(|clock| clock < maximum || clock < 0) {
+                    return Err(Error::SchemaMismatch);
+                }
             }
-        }
-        tx.commit()?;
-        self.mount(name, SqliteBackend(connection))
+            tx.commit()?;
+            Ok(Box::new(SqliteBackend(connection)))
+        })
     }
     pub fn register(&self, address: &Address, schema: Schema) -> Result<()> {
         let mount = lock(&self.inner)?
@@ -964,11 +1007,14 @@ impl Session {
                 capability: Capability::TypedKv,
             })?;
         let revision = values.compare_exchange(address.dataset(), key, expected, bytes)?;
-        lock(&self.inner)?.emit(
+        let wakes = lock(&self.inner)?.emit(
             Scope::Dataset(address.clone()),
             Some(key.into()),
             mount.backend.observation(),
         );
+        drop(mount);
+        drop(_active);
+        wake_all(wakes);
         Ok(revision)
     }
     pub fn put<C: Codec>(
@@ -1007,11 +1053,14 @@ impl Session {
             });
         };
         values.put(address.dataset(), key, bytes)?;
-        lock(&self.inner)?.emit(
+        let wakes = lock(&self.inner)?.emit(
             Scope::Dataset(address.clone()),
             Some(key.into()),
             mount.backend.observation(),
         );
+        drop(mount);
+        drop(_active);
+        wake_all(wakes);
         Ok(())
     }
     pub fn delete(&self, address: &Address, key: &str) -> Result<bool> {
@@ -1025,13 +1074,18 @@ impl Session {
             });
         };
         let removed = values.delete(address.dataset(), key)?;
-        if removed {
+        let wakes = if removed {
             lock(&self.inner)?.emit(
                 Scope::Dataset(address.clone()),
                 Some(key.into()),
                 mount.backend.observation(),
-            );
-        }
+            )
+        } else {
+            Vec::new()
+        };
+        drop(mount);
+        drop(_active);
+        wake_all(wakes);
         Ok(removed)
     }
     /// Closure success commits; error or unwind rolls back. Same-mount reentry fails.
@@ -1157,9 +1211,14 @@ impl Session {
         };
         restored?;
         let (value, dirty) = result?;
-        if dirty {
-            lock(&self.inner)?.emit(Scope::Mount(name.into()), None, observation);
-        }
+        let wakes = if dirty {
+            lock(&self.inner)?.emit(Scope::Mount(name.into()), None, observation)
+        } else {
+            Vec::new()
+        };
+        drop(mount);
+        drop(_active);
+        wake_all(wakes);
         Ok(value)
     }
     pub fn subscribe(&self, scope: Scope, capacity: usize) -> Result<Subscription> {
@@ -1384,7 +1443,13 @@ pub enum Notice {
     Overflow { through: u64 },
 }
 impl State {
-    fn emit(&mut self, scope: Scope, key: Option<String>, observation: Observation) {
+    fn emit(
+        &mut self,
+        scope: Scope,
+        key: Option<String>,
+        observation: Observation,
+    ) -> Vec<Arc<std::task::Waker>> {
+        let mut wakes = Vec::new();
         let (scope, key) = match (&scope, observation.coverage) {
             (Scope::Dataset(address), ObservationCoverage::Mount) => {
                 (Scope::Mount(address.mount.clone()), None)
@@ -1423,13 +1488,50 @@ impl State {
                 watch.queue.push_back(Notice::Changed(event.clone()));
             }
             if let Some(waker) = &watch.waker {
-                // A faulty subscriber must not poison storage or skip later watches.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    waker.wake_by_ref();
-                }));
+                wakes.push(waker.clone());
             }
             true
         });
+        wakes
+    }
+}
+impl Drop for State {
+    fn drop(&mut self) {
+        let mut wakes = Vec::new();
+        for watch in &self.watches {
+            if let Some(watch) = watch.upgrade() {
+                let mut watch = watch.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(waker) = watch.waker.take() {
+                    wakes.push(waker);
+                }
+            }
+        }
+        wake_all(wakes);
+    }
+}
+enum WakerAction {
+    Wake(Arc<std::task::Waker>),
+    Drop(Arc<std::task::Waker>),
+}
+fn wake_all(wakes: Vec<Arc<std::task::Waker>>) {
+    run_wakers(wakes.into_iter().map(WakerAction::Wake));
+}
+fn run_wakers(actions: impl IntoIterator<Item = WakerAction>) {
+    // Nested operations may still be inside another mount's transaction or
+    // backend callback. Defer ownership release as well as wake callbacks.
+    if ACTIVE
+        .try_with(|active| !active.borrow().is_empty())
+        .unwrap_or(false)
+    {
+        PENDING_WAKES.with(|pending| pending.borrow_mut().extend(actions));
+        return;
+    }
+    for action in actions {
+        // A faulty subscriber must not interrupt publication or teardown.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || match action {
+            WakerAction::Wake(waker) => waker.wake_by_ref(),
+            WakerAction::Drop(waker) => drop(waker),
+        }));
     }
 }
 pub struct Subscription {
@@ -1437,19 +1539,24 @@ pub struct Subscription {
     watch: Arc<Mutex<Watch>>,
 }
 impl Subscription {
-    /// Register notification atomically with publication, waking immediately if ready.
-    /// Wakers run under storage locks and must not block or reenter storage.
+    /// Register notification atomically with publication, scheduling a wake if ready.
+    /// Wakers run after storage locks and mutation reentrancy guards are released.
+    /// Replaced wakers are also released only after enclosing mount operations end.
     /// Waker panics are isolated so publication continues for other subscribers.
+    /// Final registry/session teardown also wakes subscribers, which then report closed.
     pub fn set_waker(&mut self, waker: std::task::Waker) -> Result<()> {
         let Some(_inner) = self.inner.upgrade() else {
             return Err(Error::SubscriptionClosed);
         };
+        // Arc clones never invoke a custom RawWaker clone callback under locks.
+        let waker = Arc::new(waker);
         let mut watch = self.watch.lock().map_err(|_| Error::Poisoned)?;
-        watch.waker = Some(waker);
-        if watch.overflow.is_some() || !watch.queue.is_empty() {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                watch.waker.as_ref().unwrap().wake_by_ref();
-            }));
+        let ready = watch.overflow.is_some() || !watch.queue.is_empty();
+        let old = watch.waker.replace(waker.clone());
+        drop(watch);
+        run_wakers(old.into_iter().map(WakerAction::Drop));
+        if ready {
+            wake_all(vec![waker]);
         }
         Ok(())
     }
@@ -1471,6 +1578,252 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct WakeFn(Box<dyn Fn() + Send + Sync>);
+    impl std::task::Wake for WakeFn {
+        fn wake(self: Arc<Self>) {
+            (self.0)();
+        }
+    }
+
+    #[test]
+    fn replaced_waker_destructor_reenters_after_nested_error_unwind_and_teardown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct DropWake(Box<dyn Fn() + Send + Sync>);
+        impl std::task::Wake for DropWake {
+            fn wake(self: Arc<Self>) {
+                panic!("replaced waker must not be woken");
+            }
+        }
+        impl Drop for DropWake {
+            fn drop(&mut self) {
+                (self.0)();
+            }
+        }
+
+        for outcome in ["success", "error", "unwind"] {
+            let registry = Registry::new();
+            for name in ["outer", "inner"] {
+                registry.mount_sqlite(name, ":memory:").unwrap();
+            }
+            let session = registry.session(
+                ["outer", "inner"]
+                    .map(|name| Grant::new(Scope::Mount(name.into()), [Operation::SqlRead])),
+            );
+            let observed = Registry::new();
+            observed.mount_memory("main").unwrap();
+            let subscriber = observed.session([Grant::new(
+                Scope::Mount("main".into()),
+                [Operation::Subscribe],
+            )]);
+            let mut sub = subscriber
+                .subscribe(Scope::Mount("main".into()), 1)
+                .unwrap();
+            let state = Arc::downgrade(&observed.inner);
+            let watch = Arc::downgrade(&sub.watch);
+            let drops = Arc::new(AtomicUsize::new(0));
+            let released = drops.clone();
+            let reentrant = session.clone();
+            sub.set_waker(
+                Arc::new(DropWake(Box::new(move || {
+                    // Record failures instead of panicking: callback panics are isolated.
+                    let unlocked = watch.upgrade().unwrap().try_lock().is_ok();
+                    let idle = ACTIVE.with(|active| active.borrow().is_empty());
+                    let outer = reentrant.transaction_mount("outer", |_| Ok(()));
+                    let inner = reentrant.transaction_mount("inner", |_| Ok(()));
+                    if unlocked
+                        && idle
+                        && state.upgrade().is_none()
+                        && outer.is_ok()
+                        && inner.is_ok()
+                    {
+                        released.fetch_add(1, Ordering::SeqCst);
+                    }
+                })))
+                .into(),
+            )
+            .unwrap();
+            let wakes = Arc::new(AtomicUsize::new(0));
+            let notified = wakes.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.transaction_mount("outer", |_| -> Result<()> {
+                    session.transaction_mount("inner", |_| {
+                        sub.set_waker(
+                            Arc::new(WakeFn(Box::new(move || {
+                                notified.fetch_add(1, Ordering::SeqCst);
+                            })))
+                            .into(),
+                        )?;
+                        drop(subscriber);
+                        drop(observed);
+                        assert_eq!(drops.load(Ordering::SeqCst), 0);
+                        assert_eq!(wakes.load(Ordering::SeqCst), 0);
+                        Ok(())
+                    })?;
+                    assert_eq!(drops.load(Ordering::SeqCst), 0);
+                    assert_eq!(wakes.load(Ordering::SeqCst), 0);
+                    match outcome {
+                        "error" => Err(Error::Codec("abort".into())),
+                        "unwind" => panic!("abort"),
+                        _ => Ok(()),
+                    }
+                })
+            }));
+            match outcome {
+                "error" => assert!(matches!(result, Ok(Err(Error::Codec(_))))),
+                "unwind" => assert!(result.is_err()),
+                _ => result.unwrap().unwrap(),
+            }
+            assert_eq!(drops.load(Ordering::SeqCst), 1, "{outcome}");
+            assert_eq!(wakes.load(Ordering::SeqCst), 1, "{outcome}");
+            assert!(matches!(sub.drain(), Err(Error::SubscriptionClosed)));
+        }
+    }
+
+    #[test]
+    fn teardown_wakes_all_subscriptions_outside_watch_locks_despite_panics() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let registry = Registry::new();
+        registry.mount_memory("main").unwrap();
+        let session = registry.session([Grant::new(
+            Scope::Mount("main".into()),
+            [Operation::Subscribe],
+        )]);
+        let mut first = session.subscribe(Scope::Mount("main".into()), 1).unwrap();
+        let mut second = session.subscribe(Scope::Mount("main".into()), 1).unwrap();
+        first
+            .set_waker(Arc::new(WakeFn(Box::new(|| panic!("bad subscriber")))).into())
+            .unwrap();
+        let watches = [Arc::downgrade(&first.watch), Arc::downgrade(&second.watch)];
+        let mount = Arc::downgrade(&lock(&registry.inner).unwrap().mounts["main"]);
+        let state = Arc::downgrade(&registry.inner);
+        let woke = Arc::new(AtomicBool::new(false));
+        let result = woke.clone();
+        second
+            .set_waker(
+                Arc::new(WakeFn(Box::new(move || {
+                    result.store(
+                        state.upgrade().is_none()
+                            && mount.upgrade().unwrap().try_lock().is_ok()
+                            && watches
+                                .iter()
+                                .all(|w| w.upgrade().unwrap().try_lock().is_ok()),
+                        Ordering::SeqCst,
+                    );
+                })))
+                .into(),
+            )
+            .unwrap();
+        drop(registry);
+        assert!(!woke.load(Ordering::SeqCst));
+        drop(session);
+        assert!(woke.load(Ordering::SeqCst));
+        assert!(matches!(first.drain(), Err(Error::SubscriptionClosed)));
+        assert!(matches!(second.drain(), Err(Error::SubscriptionClosed)));
+    }
+
+    #[test]
+    fn publication_and_ready_registration_wake_outside_all_storage_locks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Bytes;
+        impl Codec for Bytes {
+            type Value = Vec<u8>;
+            fn schema(&self) -> Schema {
+                Schema {
+                    name: "bytes".into(),
+                    revision: 1,
+                    structure: "bytes".into(),
+                    codec: "bytes".into(),
+                }
+            }
+            fn encode(&self, v: &Vec<u8>) -> Result<Vec<u8>> {
+                Ok(v.clone())
+            }
+            fn decode(&self, v: &[u8]) -> Result<Vec<u8>> {
+                Ok(v.to_vec())
+            }
+        }
+        let registry = Registry::new();
+        registry.mount_sqlite("main", ":memory:").unwrap();
+        registry.mount_sqlite("outer", ":memory:").unwrap();
+        let address = Address::parse("store://main/values").unwrap();
+        registry.register(&address, Bytes.schema()).unwrap();
+        let session = registry.session([Grant::new(
+            Scope::Mount("main".into()),
+            [
+                Operation::Write,
+                Operation::Delete,
+                Operation::Subscribe,
+                Operation::SqlAdmin,
+            ],
+        )]);
+        let mut sub = session.subscribe(Scope::Mount("main".into()), 8).unwrap();
+        let state = Arc::downgrade(&registry.inner);
+        let mount = Arc::downgrade(&lock(&registry.inner).unwrap().mounts["main"]);
+        let watch = Arc::downgrade(&sub.watch);
+        let outer = Arc::downgrade(&lock(&registry.inner).unwrap().mounts["outer"]);
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let count = wakes.clone();
+        let waker: std::task::Waker = Arc::new(WakeFn(Box::new(move || {
+            let Some(state) = state.upgrade() else { return };
+            let mount = mount.upgrade().unwrap();
+            let watch = watch.upgrade().unwrap();
+            let outer = outer.upgrade().unwrap();
+            if state.try_lock().is_ok()
+                && mount.try_lock().is_ok()
+                && watch.try_lock().is_ok()
+                && outer.try_lock().is_ok()
+                && Active::enter(&mount).is_ok()
+            {
+                count.fetch_add(1, Ordering::SeqCst);
+            }
+        })))
+        .into();
+        sub.set_waker(waker.clone()).unwrap();
+        session.put(&address, "a", &vec![1], &Bytes).unwrap();
+        session
+            .compare_exchange(&address, "b", None, &vec![2], &Bytes)
+            .unwrap();
+        session.delete(&address, "a").unwrap();
+        session
+            .transaction_mount("main", |sql| {
+                sql.execute("CREATE TABLE example (value)", &[])?;
+                Ok(())
+            })
+            .unwrap();
+        sub.set_waker(waker.clone()).unwrap();
+        assert_eq!(wakes.load(Ordering::SeqCst), 5);
+        assert_eq!(sub.drain().unwrap().len(), 4);
+        let outer_session = registry.session([Grant::new(
+            Scope::Mount("outer".into()),
+            [Operation::SqlAdmin],
+        )]);
+        outer_session
+            .transaction_mount("outer", |_| {
+                session.put(&address, "nested", &vec![3], &Bytes)?;
+                sub.set_waker(waker)?;
+                assert_eq!(wakes.load(Ordering::SeqCst), 5);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(wakes.load(Ordering::SeqCst), 7);
+        let result = outer_session.transaction_mount("outer", |_| -> Result<()> {
+            session.put(&address, "error", &vec![4], &Bytes)?;
+            Err(Error::Codec("abort outer transaction".into()))
+        });
+        assert!(matches!(result, Err(Error::Codec(_))));
+        assert_eq!(wakes.load(Ordering::SeqCst), 8);
+        assert!(
+            std::panic::catch_unwind(|| {
+                let _ = outer_session.transaction_mount("outer", |_| -> Result<()> {
+                    session.put(&address, "panic", &vec![5], &Bytes)?;
+                    panic!("abort outer transaction")
+                });
+            })
+            .is_err()
+        );
+        assert_eq!(wakes.load(Ordering::SeqCst), 9);
+    }
 
     #[test]
     fn cancellation_removes_queue_even_after_poison() {

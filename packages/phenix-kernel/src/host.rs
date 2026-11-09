@@ -3,17 +3,17 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
-use crate::{ImportPolicy, Kernel, ProducerEvent, ResolutionError};
-use phenix_graph::{Engine, Executor, TriggerSelector, Value, WaveReport};
+use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
+use phenix_graph::{Engine, Executor, InputAddr, NodeAction, TriggerSelector, Value, WaveReport};
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum LifecycleError {
     Plugins(Failure),
     Build(Box<ResolutionError>),
-    Start(String),
-    Binding(String),
+    Start(StartError),
+    Binding(CallbackError),
     StaleCandidate,
     EpochExhausted,
 }
@@ -36,22 +36,19 @@ impl std::error::Error for LifecycleError {
         match self {
             Self::Plugins(error) => Some(error),
             Self::Build(error) => Some(error.as_ref()),
+            Self::Start(error) => Some(error),
+            Self::Binding(error) => Some(error.as_ref()),
             _ => None,
         }
     }
 }
 
-struct State {
-    kernel: Kernel,
-    retired: bool,
-}
-
-/// An immutable generation identity with serialized kernel access. No mutable
+/// An immutable generation identity with serialized producer access. No mutable
 /// kernel or producer access escapes. Explicit engine calls remain valid after
 /// replacement, but retired producers can never admit another notice.
 pub struct Generation {
     epoch: u64,
-    state: Mutex<State>,
+    kernel: Kernel,
 }
 
 impl Generation {
@@ -60,14 +57,12 @@ impl Generation {
     }
 
     /// Scoped read-only access includes generation-owned exports and the engine.
-    /// Do not reenter this generation from the callback.
-    /// The lock also serializes publication with an in-flight call.
+    /// Explicit reads and engine calls do not acquire the producer lock.
     pub fn with_kernel<R>(&self, read: impl FnOnce(&Kernel) -> R) -> R {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        read(&state.kernel)
+        read(&self.kernel)
     }
 
-    /// Engine-only convenience view over the same serialized kernel.
+    /// Engine-only view, independent of producer polling and retirement.
     pub fn with_engine<R>(&self, read: impl FnOnce(&Engine) -> R) -> R {
         self.with_kernel(|kernel| read(kernel.engine()))
     }
@@ -81,11 +76,7 @@ impl Generation {
     }
 
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.retired {
-            return Vec::new();
-        }
-        state.kernel.drain(max_polls)
+        self.kernel.drain(max_polls)
     }
 }
 
@@ -96,6 +87,41 @@ pub struct Candidate {
     expected_epoch: u64,
     stages: Vec<StagedPlugin>,
     generation: Arc<Generation>,
+}
+
+/// Preparation-only inspection capability. It exposes exports and deployment
+/// identities, but no kernel, engine, wave admission, or producer access.
+/// Exports are arbitrary application values; their external effects are not
+/// sandboxed or rolled back by the host.
+///
+/// ```compile_fail
+/// use phenix_kernel::host::Binding;
+/// fn admit(binding: &Binding<'_>) {
+///     binding.engine().fire("refresh", vec![]);
+/// }
+/// ```
+/// ```compile_fail
+/// use phenix_kernel::host::Binding;
+/// fn admit(binding: &Binding<'_>) {
+///     binding.fire("refresh", vec![]);
+/// }
+/// ```
+pub struct Binding<'a> {
+    kernel: &'a Kernel,
+}
+
+impl Binding<'_> {
+    pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
+        self.kernel.export(key)
+    }
+
+    pub fn node_ids_for_action(&self, action: &Arc<dyn NodeAction>) -> Vec<u16> {
+        self.kernel.engine().node_ids_for_action(action)
+    }
+
+    pub fn trigger_targets(&self, name: &str) -> Option<&[Vec<InputAddr>]> {
+        self.kernel.engine().trigger_targets(name)
+    }
 }
 
 /// Sole owner of the mutable plugin inventory and the coherent active pointer.
@@ -127,27 +153,17 @@ impl KernelHost {
         self.active.clone()
     }
 
+    /// Build the exact candidate inventory, inspect it through a nonadmitting
+    /// binding capability, then start producers without polling them. Failure
+    /// drops candidate-owned resources without changing the active generation;
+    /// arbitrary callback external effects are not rolled back.
     pub fn prepare(
         &self,
         stages: Vec<StagedPlugin>,
-        policy: &ImportPolicy,
+        options: BuildOptions,
         executor: Arc<dyn Executor>,
         name: impl Into<String>,
-    ) -> Result<Candidate, LifecycleError> {
-        self.prepare_with(stages, policy, executor, name, |_| Ok(()))
-    }
-
-    /// The trusted host binds store/query adapters here against this exact
-    /// kernel and its exports before producers start. This keeps storage dependencies out of
-    /// the kernel. The hook must not admit waves or leak an admission handle;
-    /// cleanup of hook-owned external effects remains the caller's obligation.
-    pub fn prepare_with(
-        &self,
-        stages: Vec<StagedPlugin>,
-        policy: &ImportPolicy,
-        executor: Arc<dyn Executor>,
-        name: impl Into<String>,
-        bind: impl FnOnce(&Kernel) -> Result<(), String>,
+        bind: impl FnOnce(&Binding<'_>) -> Result<(), CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
         let epoch = self
             .epoch
@@ -157,34 +173,29 @@ impl KernelHost {
             .plugins
             .candidate_snapshots(&stages)
             .map_err(LifecycleError::Plugins)?;
-        let mut kernel = Kernel::build_with_policy(name, snapshots, executor, policy)
+        let mut kernel = Kernel::build_with_options(name, snapshots, executor, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        bind(&kernel).map_err(LifecycleError::Binding)?;
+        bind(&Binding { kernel: &kernel }).map_err(LifecycleError::Binding)?;
         kernel.start().map_err(LifecycleError::Start)?;
         Ok(Candidate {
             host: self.identity.clone(),
             expected_epoch: self.epoch,
             stages,
-            generation: Arc::new(Generation {
-                epoch,
-                state: Mutex::new(State {
-                    kernel,
-                    retired: false,
-                }),
-            }),
+            generation: Arc::new(Generation { epoch, kernel }),
         })
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Acquiring the old lock may wait for a wave/query, but old Arc readers do
-    /// not prevent publication. Producer destructors run after the transition.
+    /// Retirement waits only for producer drains, never explicit waves or queries.
+    /// Producer destructors run after the transition.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
         }
         let mut old = self.active.as_ref().map(|generation| {
             generation
-                .state
+                .kernel
+                .producers
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
         });
@@ -193,7 +204,7 @@ impl KernelHost {
             .map_err(LifecycleError::Plugins)?;
         let producers = old.as_mut().map(|state| {
             state.retired = true;
-            std::mem::take(&mut state.kernel.producers)
+            std::mem::take(&mut state.producers)
         });
         drop(old);
         self.epoch = candidate.generation.epoch;
@@ -210,11 +221,12 @@ impl Drop for KernelHost {
     fn drop(&mut self) {
         if let Some(generation) = &self.active {
             let mut state = generation
-                .state
+                .kernel
+                .producers
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             state.retired = true;
-            let producers = std::mem::take(&mut state.kernel.producers);
+            let producers = std::mem::take(&mut state.producers);
             drop(state);
             drop(producers);
         }
@@ -231,7 +243,7 @@ mod tests {
 
     struct Source;
     impl Producer for Source {
-        fn poll(&mut self) -> Result<Option<Notice>, String> {
+        fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
             Ok(None)
         }
     }
@@ -273,9 +285,10 @@ mod tests {
         let candidate = host
             .prepare(
                 vec![stage],
-                &ImportPolicy::default(),
+                BuildOptions::default(),
                 Arc::new(LocalExecutor),
                 "last",
+                |_| Ok(()),
             )
             .unwrap();
         let active = host.publish(candidate).unwrap();
@@ -288,9 +301,9 @@ mod tests {
         let before = calls.load(Ordering::SeqCst);
         assert_eq!(before, 4); // Two registrations, one composition and activation.
         for stages in [vec![], vec![stage]] {
-            let result = host.prepare_with(
+            let result = host.prepare(
                 stages,
-                &ImportPolicy::default(),
+                BuildOptions::default(),
                 Arc::new(LocalExecutor),
                 "exhausted",
                 |_| panic!("binding must not run after epoch exhaustion"),

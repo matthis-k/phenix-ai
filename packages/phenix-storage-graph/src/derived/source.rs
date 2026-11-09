@@ -45,7 +45,7 @@ pub(crate) fn action<I: StoredInputs>(
 }
 
 pub(crate) fn lower<I: StoredInputs>(
-    g: &mut GraphBuilder,
+    g: &mut phenix_graph::authoring::GraphAdditions<'_>,
     name: &str,
     root: Arc<Root>,
 ) -> Result<DerivedRef<I::Values>, Error> {

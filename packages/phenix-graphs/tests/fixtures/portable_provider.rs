@@ -1,14 +1,22 @@
 use phenix_graph::{ContractValue, Schema};
 
+#[derive(PartialEq)]
 pub struct Number {
     pub value: i64,
 }
 
-impl ContractValue for Number {
-    const SCHEMA: &'static str = "provider-number";
+#[cfg(feature = "derive")]
+#[derive(ContractValue, PartialEq)]
+#[contract(schema = "fixture/record")]
+pub struct Record {
+    pub bytes: i64,
+    pub cursor: Option<String>,
+    pub r#type: bool,
+}
 
-    fn schema_descriptor() -> Option<Schema> {
-        Some(Schema::record(
+impl ContractValue for Number {
+    fn schema() -> Schema {
+        Schema::record(
             "fixture/number",
             &[(
                 "value",
@@ -20,7 +28,7 @@ impl ContractValue for Number {
                     codec: "le-i64-v1".into(),
                 },
             )],
-        ))
+        )
     }
 
     fn encode(&self) -> Vec<u8> {

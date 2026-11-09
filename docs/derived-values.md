@@ -127,12 +127,14 @@ The runnable [examples/derived.rs](../packages/phenix-storage-graph/examples/der
 4. Call `DerivedRuntime::build(name, snapshots, Arc::new(LocalExecutor))`, then `start()`. Kernel compiles and preflights routes before activating observations. `drain(max_polls)` or `run_until(&wake, on_event)` drives existing producers. Start does not itself execute the bootstrap wave.
 5. Retrieve the candidate's exported `QuerySpec` via `runtime.kernel().export`, then use `runtime.bind_query(&spec)?.query()?`. Binding does no payload IO and fires no waves; querying before start through DerivedRuntime fails. Each call fires one ordinary demand wave.
 
-For `KernelHost`, bind exports in `prepare_with` before producers start. Use
-`Generation::with_kernel` after publication to retrieve exports and call
-`QuerySpec::bind_engine(kernel.engine())?.query()`. Prepare with
-`DerivedRuntime::guard_executor(executor)` to retain nested-query protection on
-dispatch and worker threads. This guard is opt-in on the host path. The low-level
-engine adapter bypasses Kernel's start guard; do not query in the preparation hook.
+For host publication, use `DerivedHost`. Its `prepare` always guards the supplied
+executor, including worker threads; there is no opt-in wrapper to forget. The
+preparation callback receives a nonadmitting `Binding`: retrieve typed exports
+and call `QuerySpec::validate_binding(binding)` before producers start. After
+publication, use `DerivedGeneration::query(&spec)` against the exact guarded
+deployment. Retained generations remain queryable after replacement. Explicit
+low-level `bind_engine` bypasses Kernel's start guard and cannot ensure host-only
+dispatch for arbitrary engines. Callback/export external effects are not rolled back.
 See [Kernel](kernel.md#host-publication) and the source-reviewed
 [host adapter tests](../packages/phenix-storage-graph/tests/host_derived.rs).
 

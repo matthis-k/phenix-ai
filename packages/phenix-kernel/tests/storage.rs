@@ -28,8 +28,8 @@ impl Drop for ProbedSubscription {
 }
 
 impl Producer for ProbedSubscription {
-    fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, String> {
-        let notices = self.subscription.drain().map_err(|e| e.to_string())?;
+    fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, phenix_kernel::CallbackError> {
+        let notices = self.subscription.drain()?;
         assert!(notices.len() <= 1);
         Ok(notices
             .into_iter()
@@ -67,11 +67,9 @@ impl PluginInstance for SubscriptionPlugin {
                     let graph = &mut *context.graph;
                     if !later {
                         let observed = observed.clone();
-                        let sink = graph
-                            .node("observe", move |notice: Notice| {
-                                observed.lock().unwrap().push(notice);
-                            })
-                            .map_err(|e| e.to_string())?;
+                        let sink = graph.node("observe", move |notice: Notice| {
+                            observed.lock().unwrap().push(notice);
+                        })?;
                         let input = graph.expose_input("notice", sink.inlet())?;
                         graph.trigger("observed", [input])?;
                     }
@@ -84,8 +82,7 @@ impl PluginInstance for SubscriptionPlugin {
                         }
                         let subscription = counter
                             .session
-                            .subscribe(Scope::Dataset(counter.address.clone()), 1)
-                            .map_err(|e| e.to_string())?;
+                            .subscribe(Scope::Dataset(counter.address.clone()), 1)?;
                         let marker = Arc::new(());
                         probe.markers.lock().unwrap().push(Arc::downgrade(&marker));
                         Ok(Box::new(ProbedSubscription {
@@ -165,7 +162,9 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
     assert!(kernel.fire("observed", vec![]).is_err());
     counter.write(0).unwrap();
     if retry {
-        assert_eq!(kernel.start().unwrap_err(), "later activation failed");
+        assert!(
+            matches!(kernel.start().unwrap_err(), phenix_kernel::StartError::Activation { cause, .. } if cause.to_string() == "later activation failed")
+        );
         assert_eq!(probe.drops.load(Ordering::SeqCst), 1);
         let markers = probe.markers.lock().unwrap();
         assert_eq!(markers.len(), 1);

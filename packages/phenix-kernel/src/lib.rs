@@ -5,6 +5,7 @@ use phenix_graph::{
     Deployment, Engine, Executor, GraphBuilder, GraphContract, TriggerId, TriggerSelector, Value,
     WaveReport,
 };
+pub use phenix_plugin::CallbackError;
 use phenix_plugin::{ContributionHandle, PluginSnapshot};
 use std::{
     any::Any,
@@ -37,7 +38,9 @@ pub struct Notice {
 /// A producer must not wait for an event. Drop must stop and release its resources.
 /// Factories must clean up partially acquired resources if activation fails.
 pub trait Producer: Send {
-    fn poll(&mut self) -> Result<Option<Notice>, String>;
+    /// An error is terminal: the kernel reports it once and drops this producer.
+    /// Transient unavailability must return Ok(None) and wake when ready to retry.
+    fn poll(&mut self) -> Result<Option<Notice>, CallbackError>;
 
     /// Register notification for newly available events. Return false if unsupported.
     /// Implementations must synchronize registration with event publication.
@@ -71,8 +74,8 @@ impl WakeHandle {
     }
 }
 
-pub type Compose = dyn Fn(&mut ComposeContext<'_>) -> Result<(), String> + Send + Sync;
-pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, String> + Send + Sync;
+pub type Compose = dyn Fn(&mut ComposeContext<'_>) -> Result<(), CallbackError> + Send + Sync;
+pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync;
 
 /// Owned selection metadata. Projection uses the graph's authoritative contract checker.
 #[derive(Clone, Debug)]
@@ -109,8 +112,8 @@ impl ComposeContext<'_> {
     /// Only one factory is allowed per contribution in each candidate.
     pub fn activate(
         &mut self,
-        factory: impl Fn() -> Result<Box<dyn Producer>, String> + Send + Sync + 'static,
-    ) -> Result<(), String> {
+        factory: impl Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync + 'static,
+    ) -> Result<(), CallbackError> {
         if self.artifacts.activate.is_some() {
             return Err("candidate activation already registered".into());
         }
@@ -120,7 +123,7 @@ impl ComposeContext<'_> {
 
     /// Export one typed value owned by this candidate and scoped to its contribution key.
     /// Bundle multiple values in a struct; retrieve it through Kernel::export.
-    pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), String> {
+    pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), CallbackError> {
         if self.artifacts.export.is_some() {
             return Err("candidate export already registered".into());
         }
@@ -130,11 +133,11 @@ impl ComposeContext<'_> {
 
     /// Look up only this contribution's declared imports. The result owns its
     /// metadata so endpoint projection need not hold a borrow of the context.
-    pub fn import(&self, id: &str) -> Result<ResolvedImport, String> {
+    pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {
         self.imports
             .get(id)
             .cloned()
-            .ok_or_else(|| format!("undeclared import: {id}"))
+            .ok_or_else(|| format!("undeclared import: {id}").into())
     }
 }
 
@@ -205,7 +208,37 @@ pub struct ImportPolicy {
     pub deny: BTreeSet<(Key, Key)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Trusted import selection and Graph-owned execution limits.
+/// Configuration never receives the validated deployment or an admission API.
+///
+/// ```compile_fail
+/// use phenix_kernel::BuildOptions;
+/// let options = BuildOptions::default();
+/// options.execution.build().unwrap().fire("start", vec![]);
+/// ```
+/// ```compile_fail
+/// use phenix_graph::Deployment;
+/// use phenix_kernel::BuildOptions;
+/// fn substitute(options: &mut BuildOptions, replacement: Deployment) {
+///     options.execution = replacement;
+/// }
+/// ```
+/// ```compile_fail
+/// use phenix_graph::Deployment;
+/// use phenix_kernel::BuildOptions;
+/// let options = BuildOptions {
+///     deployment: |deployment: Deployment| deployment,
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Default)]
+pub struct BuildOptions {
+    pub imports: ImportPolicy,
+    /// Limits only: cannot replace graphs, build/fire, or override executors.
+    pub execution: phenix_graph::ExecutionLimits,
+}
+
+#[derive(Debug)]
 pub enum ResolutionError {
     DuplicateOwner(String),
     Invalid(String),
@@ -215,7 +248,7 @@ pub enum ResolutionError {
     },
     Composition {
         contribution: Key,
-        cause: String,
+        cause: CallbackError,
     },
     Compilation {
         cause: phenix_graph::CompileDiagnostic,
@@ -311,6 +344,7 @@ impl std::error::Error for ResolutionError {
         match self {
             Self::Compilation { cause } => Some(cause),
             Self::Interface { cause, .. } => Some(cause.as_ref()),
+            Self::Composition { cause, .. } => Some(cause.as_ref()),
             _ => None,
         }
     }
@@ -336,22 +370,97 @@ pub struct ProducerEvent {
 }
 
 /// Invocation failures remain inside successful WaveReports, not these errors.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ProducerError {
-    Poll(String),
+    Poll(CallbackError),
     UndeclaredRoute(String),
     Admission(String),
+}
+
+impl std::fmt::Display for ProducerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Poll(cause) => write!(f, "producer poll: {cause}"),
+            Self::UndeclaredRoute(route) => write!(f, "undeclared producer route: {route}"),
+            Self::Admission(cause) => write!(f, "producer admission: {cause}"),
+        }
+    }
+}
+
+impl std::error::Error for ProducerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Poll(cause) => Some(cause.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum DriverError {
+    NotStarted,
+    UnsupportedWake { producer: Key },
+}
+
+impl std::fmt::Display for DriverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotStarted => f.write_str("kernel not started"),
+            Self::UnsupportedWake { producer } => write!(
+                f,
+                "producer does not support wake notifications: {producer:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DriverError {}
+
+#[derive(Debug)]
+pub enum StartError {
+    AlreadyStarted,
+    Activation {
+        contribution: Key,
+        cause: CallbackError,
+    },
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyStarted => f.write_str("kernel already started"),
+            Self::Activation {
+                contribution,
+                cause,
+            } => write!(f, "activation of {contribution:?}: {cause}"),
+        }
+    }
+}
+
+impl std::error::Error for StartError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Activation { cause, .. } => Some(cause.as_ref()),
+            Self::AlreadyStarted => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ProducerState {
+    producers: Vec<(Key, Box<dyn Producer>)>,
+    next: usize,
+    retired: bool,
 }
 
 pub struct Kernel {
     // Drop clears producers first; field order then keeps leases alive past engine teardown.
     engine: Engine,
-    producers: Vec<(Key, Box<dyn Producer>)>,
+    producers: Mutex<ProducerState>,
     artifacts: BTreeMap<Key, BuildArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
     started: bool,
-    next_producer: usize,
     routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
     // Keep definition/offer/consumer code alive after engine and action teardown.
     _snapshots: Vec<PluginSnapshot>,
@@ -359,7 +468,11 @@ pub struct Kernel {
 
 impl Drop for Kernel {
     fn drop(&mut self) {
-        self.producers.clear();
+        self.producers
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .producers
+            .clear();
     }
 }
 
@@ -370,20 +483,20 @@ impl Kernel {
         name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         executor: Arc<dyn Executor>,
-    ) -> Result<Self, String> {
-        Self::build_with_policy(name, snapshots, executor, &ImportPolicy::default())
-            .map_err(|error| error.to_string())
+    ) -> Result<Self, ResolutionError> {
+        Self::build_with_options(name, snapshots, executor, BuildOptions::default())
     }
 
     /// Discover compatible offers, apply trusted eligibility and selections,
     /// and order composers before invoking any plugin code. A unique eligible
     /// offer is selected automatically; missing or ambiguous imports fail closed.
-    pub fn build_with_policy(
+    pub fn build_with_options(
         name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         executor: Arc<dyn Executor>,
-        policy: &ImportPolicy,
+        options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
+        let policy = &options.imports;
         let snapshots: Vec<_> = snapshots.into_iter().collect();
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
@@ -460,9 +573,24 @@ impl Kernel {
                 (key.clone(), contribution.requires.iter().cloned().collect())
             })
             .collect();
-        for key in policy.selections.keys() {
-            if !requirements.contains_key(key) {
-                return Err(format!("host selection names unknown requirement: {key:?}").into());
+        for (requirement, offer) in policy
+            .selections
+            .iter()
+            .chain(
+                policy
+                    .allow
+                    .iter()
+                    .flat_map(|pairs| pairs.iter().map(|(r, o)| (r, o))),
+            )
+            .chain(policy.deny.iter().map(|(r, o)| (r, o)))
+        {
+            if !requirements.contains_key(requirement) {
+                return Err(
+                    format!("host policy names unknown requirement: {requirement:?}").into(),
+                );
+            }
+            if !offers.contains_key(offer) {
+                return Err(format!("host policy names unknown offer: {offer:?}").into());
             }
         }
         for (key, requirement) in &requirements {
@@ -663,15 +791,17 @@ impl Kernel {
             }
             routes.insert(key.clone(), selected);
         }
-        let engine = Deployment::new(compiled).executor(executor).build()?;
+        let engine = Deployment::new(compiled)
+            .max_activations(options.execution.max_activations)
+            .executor(executor)
+            .build()?;
         Ok(Self {
             engine,
-            producers: Vec::new(),
+            producers: Mutex::new(ProducerState::default()),
             artifacts,
             _leases: leases,
             keys,
             started: false,
-            next_producer: 0,
             routes,
             _snapshots: snapshots,
         })
@@ -680,18 +810,24 @@ impl Kernel {
     /// Activate in dependency order. Failure drops all newly acquired producers
     /// and leaves the kernel unstarted, allowing retry. A second successful start
     /// is rejected, including when no contributions have producers.
-    pub fn start(&mut self) -> Result<(), String> {
+    pub fn start(&mut self) -> Result<(), StartError> {
         if self.started {
-            return Err("kernel already started".into());
+            return Err(StartError::AlreadyStarted);
         }
         let mut producers = Vec::new();
         for key in &self.keys {
             if let Some(activate) = &self.artifacts[key].activate {
-                let producer = activate()?;
+                let producer = activate().map_err(|cause| StartError::Activation {
+                    contribution: key.clone(),
+                    cause,
+                })?;
                 producers.push((key.clone(), producer));
             }
         }
-        self.producers = producers;
+        self.producers
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .producers = producers;
         self.started = true;
         Ok(())
     }
@@ -719,17 +855,27 @@ impl Kernel {
     }
 
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
-    /// calls. Idle polls count toward the bound. Errors do not stop other polls.
+    /// calls. Idle polls count toward the bound. Poll errors retire only the failed
+    /// producer; admission errors do not stop polling.
     /// This bounds admissions, not the execution time of an individual wave.
-    pub fn drain(&mut self, max_polls: usize) -> Vec<ProducerEvent> {
+    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+        // Plugin destructors may reenter drain; release the state lock first.
+        let mut detached = Vec::new();
+        let mut state = self
+            .producers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut events = Vec::new();
-        if self.producers.is_empty() {
+        if state.retired {
             return events;
         }
-        let count = self.producers.len();
         for _ in 0..max_polls {
-            let (key, producer) = &mut self.producers[self.next_producer];
-            self.next_producer = (self.next_producer + 1) % count;
+            if state.producers.is_empty() {
+                break;
+            }
+            let index = state.next;
+            state.next = (index + 1) % state.producers.len();
+            let (key, producer) = &mut state.producers[index];
             let result = match producer.poll() {
                 Ok(None) => continue,
                 Ok(Some(notice)) => match self.routes[key].get(&notice.trigger) {
@@ -745,7 +891,16 @@ impl Kernel {
                 producer: key.clone(),
                 result,
             });
+            if matches!(events.last().unwrap().result, Err(ProducerError::Poll(_))) {
+                detached.push(state.producers.remove(index));
+                state.next = index;
+            }
+            if state.next >= state.producers.len() {
+                state.next = 0;
+            }
         }
+        drop(state);
+        drop(detached);
         events
     }
 
@@ -756,15 +911,19 @@ impl Kernel {
         &mut self,
         wake: &WakeHandle,
         mut on_event: impl FnMut(ProducerEvent),
-    ) -> Result<(), String> {
+    ) -> Result<(), DriverError> {
         if !self.started {
-            return Err("kernel not started".into());
+            return Err(DriverError::NotStarted);
         }
-        for (key, producer) in &mut self.producers {
+        let state = self
+            .producers
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner());
+        for (key, producer) in &mut state.producers {
             if !producer.set_waker(wake.clone()) {
-                return Err(format!(
-                    "producer does not support wake notifications: {key:?}"
-                ));
+                return Err(DriverError::UnsupportedWake {
+                    producer: key.clone(),
+                });
             }
         }
         loop {
@@ -776,7 +935,13 @@ impl Kernel {
                 state.0
             };
             let mut active = false;
-            for _ in 0..self.producers.len() {
+            let count = self
+                .producers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .producers
+                .len();
+            for _ in 0..count {
                 if wake.0.state.lock().unwrap().1 {
                     return Ok(());
                 }
@@ -794,5 +959,106 @@ impl Kernel {
                     .unwrap();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_producer_destructors_reenter_after_all_failures_are_detached() {
+        use std::sync::{
+            Weak,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct Source(Weak<Kernel>, Arc<AtomicUsize>);
+        impl Producer for Source {
+            fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+                Err("terminal".into())
+            }
+        }
+        impl Drop for Source {
+            fn drop(&mut self) {
+                let kernel = self.0.upgrade().unwrap();
+                // Fail deterministically rather than hanging if Drop holds the lock.
+                {
+                    let state = kernel
+                        .producers
+                        .try_lock()
+                        .expect("Drop held producer mutex");
+                    assert!(state.producers.is_empty());
+                    assert_eq!(state.next, 0);
+                }
+                assert!(kernel.drain(1).is_empty());
+                self.1.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("reentrant", [], Arc::new(phenix_graph::LocalExecutor)).unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        let drops = Arc::new(AtomicUsize::new(0));
+        kernel.producers.lock().unwrap().producers = ["a", "b"]
+            .into_iter()
+            .map(|name| {
+                (
+                    Key::new("test", name),
+                    Box::new(Source(Arc::downgrade(&kernel), drops.clone())) as Box<dyn Producer>,
+                )
+            })
+            .collect();
+        let events = kernel.drain(2);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.producer.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event.result, Err(ProducerError::Poll(_))))
+        );
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+        assert!(kernel.drain(2).is_empty());
+    }
+
+    #[test]
+    fn terminal_failure_preserves_round_robin_and_idle_poll_budget() {
+        struct Source(&'static str, Arc<Mutex<Vec<&'static str>>>);
+        impl Producer for Source {
+            fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+                self.1.lock().unwrap().push(self.0);
+                if self.0 == "broken" {
+                    Err("terminal".into())
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut kernel = Kernel::build("fair", [], Arc::new(phenix_graph::LocalExecutor)).unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers = ["a", "broken", "b"]
+            .into_iter()
+            .map(|name| {
+                (
+                    Key::new("test", name),
+                    Box::new(Source(name, log.clone())) as Box<dyn Producer>,
+                )
+            })
+            .collect();
+        assert!(kernel.drain(0).is_empty());
+        assert!(log.lock().unwrap().is_empty());
+        assert!(kernel.drain(1).is_empty());
+        let events = kernel.drain(1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].producer, Key::new("test", "broken"));
+        assert!(kernel.drain(3).is_empty());
+        assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
     }
 }

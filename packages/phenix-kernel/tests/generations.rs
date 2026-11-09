@@ -1,10 +1,17 @@
 use phenix_graph::{CompileLimits, GraphBuilder, LocalExecutor, Value};
 use phenix_kernel::host::{Candidate, Generation, KernelHost, LifecycleError};
-use phenix_kernel::{Contribution, ImportPolicy, Key, Notice, Producer};
+use phenix_kernel::{BuildOptions, Contribution, Key, Notice, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 
 type Log = Arc<Mutex<Vec<String>>>;
+
+struct Artifact(String, Log);
+impl Drop for Artifact {
+    fn drop(&mut self) {
+        self.1.lock().unwrap().push(self.0.clone());
+    }
+}
 
 #[derive(Clone)]
 struct Plugin {
@@ -13,6 +20,7 @@ struct Plugin {
     log: Log,
     requires: Vec<Key>,
     compile_fail: bool,
+    compose_fail: bool,
     start_fail: bool,
     gate: Option<Arc<(Barrier, Barrier)>>,
 }
@@ -25,6 +33,7 @@ impl Plugin {
             log: log.clone(),
             requires: vec![],
             compile_fail: false,
+            compose_fail: false,
             start_fail: false,
             gate: None,
         }
@@ -42,7 +51,7 @@ impl Drop for Plugin {
 
 struct Source(String, Log);
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         self.1.lock().unwrap().push(format!("poll:{}", self.0));
         Ok(Some(Notice {
             trigger: self.0.clone(),
@@ -62,6 +71,7 @@ impl PluginInstance for Plugin {
         let revision = self.revision;
         let log = self.log.clone();
         let compile_fail = self.compile_fail;
+        let compose_fail = self.compose_fail;
         let start_fail = self.start_fail;
         let start_log = log.clone();
         let start_name = name.clone();
@@ -74,6 +84,9 @@ impl PluginInstance for Plugin {
                 log.lock()
                     .unwrap()
                     .push(format!("compose:{name}:{revision}"));
+                context.export(Artifact(format!("export:{name}:{revision}"), log.clone()))?;
+                let action_guard = Artifact(format!("action:{name}:{revision}"), log.clone());
+                let factory_guard = Artifact(format!("factory:{name}:{revision}"), log.clone());
                 let graph = &mut *context.graph;
                 if compile_fail {
                     *graph = GraphBuilder::new("invalid").limits(CompileLimits {
@@ -84,24 +97,24 @@ impl PluginInstance for Plugin {
                 let action_log = log.clone();
                 let action_name = name.clone();
                 let action_gate = gate.clone();
-                let node = graph
-                    .node(&name, move |x: i64| {
-                        if let Some(gate) = &action_gate {
-                            gate.0.wait();
-                            gate.1.wait();
-                        }
-                        action_log
-                            .lock()
-                            .unwrap()
-                            .push(format!("fire:{action_name}:{revision}"));
-                        x + revision as i64
-                    })
-                    .map_err(|error| error.to_string())?;
+                let node = graph.node(&name, move |x: i64| {
+                    let _ = &action_guard;
+                    if let Some(gate) = &action_gate {
+                        gate.0.wait();
+                        gate.1.wait();
+                    }
+                    action_log
+                        .lock()
+                        .unwrap()
+                        .push(format!("fire:{action_name}:{revision}"));
+                    x + revision as i64
+                })?;
                 let input = graph.expose_input(format!("input_{name}"), node.inlet())?;
                 graph.trigger(&name, [input])?;
                 let start_log = start_log.clone();
                 let start_name = start_name.clone();
                 context.activate(move || {
+                    let _ = &factory_guard;
                     start_log
                         .lock()
                         .unwrap()
@@ -110,7 +123,11 @@ impl PluginInstance for Plugin {
                         return Err("activation failed".into());
                     }
                     Ok(Box::new(Source(start_name.clone(), start_log.clone())))
-                })
+                })?;
+                if compose_fail {
+                    return Err("composition failed".into());
+                }
+                Ok(())
             }),
         })
     }
@@ -119,9 +136,10 @@ impl PluginInstance for Plugin {
 fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Result<Candidate, LifecycleError> {
     host.prepare(
         stages,
-        &ImportPolicy::default(),
+        BuildOptions::default(),
         Arc::new(LocalExecutor),
         "generation",
+        |_| Ok(()),
     )
 }
 
@@ -216,7 +234,7 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
 }
 
 #[test]
-fn resolution_compile_binding_and_nth_start_failure_leave_active_unchanged() {
+fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unchanged() {
     let log = Log::default();
     let mut catalog = PluginCatalog::new();
     let a = catalog.register("alpha", |p: Plugin| Ok(p)).unwrap();
@@ -232,7 +250,7 @@ fn resolution_compile_binding_and_nth_start_failure_leave_active_unchanged() {
     )
     .unwrap();
     let old = host.publish(initial).unwrap();
-    for mode in 0..4 {
+    for mode in 0..5 {
         log.lock().unwrap().clear();
         let mut replacement = Plugin::new("alpha", 2, &log);
         replacement.requires = if mode == 0 {
@@ -241,14 +259,15 @@ fn resolution_compile_binding_and_nth_start_failure_leave_active_unchanged() {
             vec![]
         };
         replacement.compile_fail = mode == 1;
+        replacement.compose_fail = mode == 4;
         let first = host.plugins().prepare_reload(&a, replacement).unwrap();
         let mut second = Plugin::new("beta", 2, &log);
         second.start_fail = mode == 3;
         let stages = vec![first, host.plugins().prepare_load(&b, second).unwrap()];
         let result = if mode == 2 {
-            host.prepare_with(
+            host.prepare(
                 stages,
-                &ImportPolicy::default(),
+                BuildOptions::default(),
                 Arc::new(LocalExecutor),
                 "binding",
                 |_| Err("store refused".into()),
@@ -257,12 +276,38 @@ fn resolution_compile_binding_and_nth_start_failure_leave_active_unchanged() {
             prepare(&host, stages)
         };
         match (mode, result) {
-            (0 | 1, Err(LifecycleError::Build(_)))
-            | (2, Err(LifecycleError::Binding(_)))
-            | (3, Err(LifecycleError::Start(_))) => {}
+            (0 | 1 | 4, Err(LifecycleError::Build(_))) | (2, Err(LifecycleError::Binding(_))) => {}
+            (3, Err(error @ LifecycleError::Start(_))) => {
+                let start = std::error::Error::source(&error)
+                    .unwrap()
+                    .downcast_ref::<phenix_kernel::StartError>()
+                    .unwrap();
+                assert!(
+                    matches!(start, phenix_kernel::StartError::Activation { contribution, .. } if *contribution == Key::new("beta", "main"))
+                );
+                assert!(std::error::Error::source(start).is_some());
+            }
             _ => panic!("unexpected preparation outcome for {mode}"),
         }
         let events = log.lock().unwrap().clone();
+        for name in ["alpha", "beta"] {
+            let plugin = format!("plugin:{name}:2");
+            let plugin_index = events.iter().position(|event| event == &plugin).unwrap();
+            for kind in ["export", "action", "factory"] {
+                let artifact = format!("{kind}:{name}:2");
+                let positions: Vec<_> = events
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, event)| (event == &artifact).then_some(index))
+                    .collect();
+                if mode == 0 || (mode == 4 && name == "beta") {
+                    assert!(positions.is_empty(), "{events:?}");
+                } else {
+                    assert_eq!(positions.len(), 1, "{events:?}");
+                    assert!(positions[0] < plugin_index, "{events:?}");
+                }
+            }
+        }
         assert!(
             !events
                 .iter()
@@ -356,7 +401,7 @@ fn interleaved_candidates_foreign_hosts_and_empty_batch_epochs() {
 }
 
 #[test]
-fn publication_waits_for_old_in_flight_wave_without_invalidating_its_handle() {
+fn publication_does_not_wait_for_old_explicit_wave_or_callback() {
     let log = Log::default();
     let mut catalog = PluginCatalog::new();
     let a = catalog.register("alpha", |p: Plugin| Ok(p)).unwrap();
@@ -375,19 +420,46 @@ fn publication_waits_for_old_in_flight_wave_without_invalidating_its_handle() {
     let reader = old.clone();
     let wave = std::thread::spawn(move || fire(&reader, "alpha"));
     gate.0.wait();
+    let (entered, entry) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let reader = old.clone();
+    let callback = std::thread::spawn(move || {
+        reader.with_engine(|engine| {
+            entered.send(()).unwrap();
+            released.recv().unwrap();
+            assert!(engine.trigger_targets("alpha").is_some());
+        })
+    });
+    // The callback must enter even while the explicit wave is blocked.
+    if entry
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .is_err()
+    {
+        gate.1.wait();
+        release.send(()).unwrap();
+        wave.join().unwrap();
+        callback.join().unwrap();
+        panic!("engine callback blocked behind explicit wave");
+    }
     let (publishing, started) = mpsc::channel();
     let publisher = std::thread::spawn(move || {
-        publishing.send(()).unwrap();
         let current = host.publish(candidate).unwrap();
+        publishing.send(()).unwrap();
         (host, current)
     });
-    started.recv().unwrap();
+    let published = started.recv_timeout(std::time::Duration::from_secs(2));
     gate.1.wait();
+    release.send(()).unwrap();
     wave.join().unwrap();
+    callback.join().unwrap();
+    published.expect("explicit operations must not block publication");
     let (host, current) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert!(old.drain(100).is_empty());
     assert!(old.with_engine(|engine| engine.trigger_targets("alpha").is_some()));
+    assert!(old.with_engine(|_| {
+        old.with_kernel(|kernel| kernel.engine().trigger_targets("alpha").is_some())
+    }));
     assert!(current.with_engine(|engine| engine.trigger_targets("alpha").is_none()));
 }
 

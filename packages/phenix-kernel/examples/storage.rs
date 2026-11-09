@@ -77,10 +77,9 @@ struct StorageProducer {
     pending: VecDeque<phenix_storage::Notice>,
 }
 impl Producer for StorageProducer {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         if self.pending.is_empty() {
-            self.pending
-                .extend(self.subscription.drain().map_err(|e| e.to_string())?);
+            self.pending.extend(self.subscription.drain()?);
         }
         Ok(self.pending.pop_front().map(|notice| Notice {
             trigger: "storage_changed".into(),
@@ -107,25 +106,20 @@ impl PluginInstance for CounterPlugin {
                 let graph = &mut *context.graph;
                 let mut module = GraphBuilder::new("counter-module");
                 let writer = counter.clone();
-                let write = module
-                    .node("write", move |value: i64| writer.write(value))
-                    .map_err(|e| e.to_string())?;
+                let write = module.node("write", move |value: i64| writer.write(value))?;
                 let reader = counter.clone();
-                let read = module
-                    .node("read", move |written: Result<(), String>| {
-                        written.and_then(|()| reader.read())
-                    })
-                    .map_err(|e| e.to_string())?;
+                let read = module.node("read", move |written: Result<(), String>| {
+                    written.and_then(|()| reader.read())
+                })?;
                 module.connect(write.output(), read.inlet())?;
                 module.expose_input("value", write.inlet())?;
                 module.expose_output("value", read.output())?;
                 let instance = graph.instance("counter", &module.module())?;
                 let log = reads.clone();
-                let sink = graph
-                    .node("read_result", move |value: Result<Option<i64>, String>| {
+                let sink =
+                    graph.node("read_result", move |value: Result<Option<i64>, String>| {
                         log.lock().unwrap().push(value);
-                    })
-                    .map_err(|e| e.to_string())?;
+                    })?;
                 graph.connect(
                     instance.local_output::<Result<Option<i64>, String>>("value")?,
                     sink.inlet(),
@@ -157,20 +151,16 @@ impl PluginInstance for ObserverPlugin {
             compose: Box::new(move |context| {
                 let graph = &mut *context.graph;
                 let log = observed.clone();
-                let sink = graph
-                    .node("observe", move |notice: phenix_storage::Notice| {
-                        log.lock().unwrap().push(notice);
-                    })
-                    .map_err(|e| e.to_string())?;
+                let sink = graph.node("observe", move |notice: phenix_storage::Notice| {
+                    log.lock().unwrap().push(notice);
+                })?;
                 let input = graph.expose_input("storage_notice", sink.inlet())?;
                 graph.trigger("storage_changed", [input])?;
                 let session = session.clone();
                 let scope = scope.clone();
                 context.activate(move || {
                     Ok(Box::new(StorageProducer {
-                        subscription: session
-                            .subscribe(scope.clone(), capacity)
-                            .map_err(|e| e.to_string())?,
+                        subscription: session.subscribe(scope.clone(), capacity)?,
                         pending: VecDeque::new(),
                     }))
                 })
@@ -250,7 +240,8 @@ pub fn build(sqlite: bool, capacity: usize) -> Result<Demo, String> {
             },
         )
         .map_err(|e| e.to_string())?;
-    let kernel = Kernel::build("storage", plugins.snapshots(), Arc::new(LocalExecutor))?;
+    let kernel = Kernel::build("storage", plugins.snapshots(), Arc::new(LocalExecutor))
+        .map_err(|error| error.to_string())?;
     Ok(Demo {
         kernel,
         counter,
@@ -263,7 +254,7 @@ pub fn build(sqlite: bool, capacity: usize) -> Result<Demo, String> {
 fn main() -> Result<(), String> {
     for sqlite in [false, true] {
         let mut demo = build(sqlite, 8)?;
-        demo.kernel.start()?;
+        demo.kernel.start().map_err(|error| error.to_string())?;
         let write = demo
             .kernel
             .fire("write_counter", vec![Value::local(42_i64)])?;

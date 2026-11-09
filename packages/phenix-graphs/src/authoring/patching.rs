@@ -332,8 +332,8 @@ impl GraphBuilder {
                     .identity()
             }
         };
-        let src = self.verify_source(&source, actual)?;
-        let dst = self.verify_target(&target, actual)?;
+        let src = self.verify_source(&source, actual.clone())?;
+        let dst = self.verify_target(&target, actual.clone())?;
         if !self
             .module
             .edges
@@ -351,14 +351,14 @@ impl GraphBuilder {
                     port: "run".into(),
                     slot: "value".into(),
                 },
-                actual,
+                actual.clone(),
             )?;
             let node_output = self.verify_source(
                 &Source::Node {
                     node: name.clone(),
                     output: "value".into(),
                 },
-                actual,
+                actual.clone(),
             )?;
             next_edges.push((prev, node_input));
             prev = node_output;

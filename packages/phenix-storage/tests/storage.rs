@@ -1,6 +1,96 @@
 use phenix_storage::*;
 
 #[test]
+fn mount_factory_reservation_excludes_competitors_without_holding_registry_lock() {
+    let registry = Registry::new();
+    let worker_registry = registry.clone();
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        worker_registry
+            .mount_with("main", || -> Result<Box<dyn Backend>> {
+                entered.send(()).unwrap();
+                released
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(Box::new(MemoryBackend::default()))
+            })
+            .unwrap();
+    });
+    ready
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(matches!(
+        registry.mount_with("main", || -> Result<Box<dyn Backend>> {
+            panic!("duplicate factory must not run")
+        }),
+        Err(Error::DuplicateMount)
+    ));
+    assert!(matches!(
+        registry.mount_sqlite("main", ":memory:"),
+        Err(Error::DuplicateMount)
+    ));
+    registry.mount_memory("other").unwrap();
+    release.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(matches!(
+        registry.mount_memory("main"),
+        Err(Error::DuplicateMount)
+    ));
+}
+
+#[test]
+fn mount_factory_error_and_unwind_release_reservation() {
+    let registry = Registry::new();
+    assert!(matches!(
+        registry.mount_with("retry", || -> Result<Box<dyn Backend>> {
+            Err(Error::Codec("factory failed".into()))
+        }),
+        Err(Error::Codec(_))
+    ));
+    assert!(
+        std::panic::catch_unwind(|| {
+            let _ = registry.mount_with("retry", || -> Result<Box<dyn Backend>> {
+                // Reentry on the reserved name must fail, not deadlock.
+                assert!(matches!(
+                    registry.mount_memory("retry"),
+                    Err(Error::DuplicateMount)
+                ));
+                panic!("factory panic")
+            });
+        })
+        .is_err()
+    );
+    registry.mount_memory("retry").unwrap();
+}
+
+#[test]
+fn rejected_sqlite_mounts_do_not_create_or_migrate_files() {
+    let root = std::env::temp_dir().join(format!("phenix-rejected-mount-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let registry = Registry::new();
+    registry.mount_memory("main").unwrap();
+    for (name, invalid) in [("INVALID", true), ("main", false)] {
+        let missing = root.join(format!("{name}-missing.sqlite"));
+        let result = registry.mount_sqlite(name, &missing);
+        assert!(if invalid {
+            matches!(result, Err(Error::InvalidAddress))
+        } else {
+            matches!(result, Err(Error::DuplicateMount))
+        });
+        assert!(!missing.exists());
+        let legacy = root.join(format!("{name}-legacy.sqlite"));
+        rusqlite::Connection::open(&legacy).unwrap().execute_batch(
+            "CREATE TABLE __phenix_kv (dataset TEXT, key TEXT, value BLOB, PRIMARY KEY(dataset, key))"
+        ).unwrap();
+        let before = std::fs::read(&legacy).unwrap();
+        assert!(registry.mount_sqlite(name, &legacy).is_err());
+        assert_eq!(std::fs::read(&legacy).unwrap(), before);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn external_optional_backend_is_object_safe() {
     struct External(MemoryBackend);
     impl Backend for External {

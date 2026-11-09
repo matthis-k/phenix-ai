@@ -32,7 +32,7 @@ struct Source {
     _mark: Mark,
 }
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         self.state.polls.fetch_add(1, Ordering::SeqCst);
         Ok(None)
     }
@@ -84,10 +84,7 @@ impl PluginInstance for Plugin {
                     });
                     context.export(state.clone())?;
                     let action = Mark(format!("engine:{name}:{id}"), log.clone());
-                    context
-                        .graph
-                        .node(name, move |_: i64| action.touch())
-                        .map_err(|error| error.to_string())?;
+                    context.graph.node(name, move |_: i64| action.touch())?;
                     let factory = Mark(format!("factory:{name}:{id}"), log.clone());
                     let activations = activations.clone();
                     let log = log.clone();
@@ -199,17 +196,27 @@ fn nth_activation_failure_retries_the_exact_composed_state_without_recomposition
     assert!(!Arc::ptr_eq(&a, &other_a));
     assert!(!Arc::ptr_eq(&b, &other_b));
     assert!(activations.lock().unwrap().is_empty());
-    assert_eq!(first.start().unwrap_err(), "nth activation failed");
+    let expected = phenix_kernel::StartError::Activation {
+        contribution: Key::new("plugin", "b"),
+        cause: "nth activation failed".into(),
+    };
+    assert_eq!(first.start().unwrap_err().to_string(), expected.to_string());
     assert_eq!(*log.lock().unwrap(), [format!("producer:a:{}", a.id)]);
     assert!(first.drain(4).is_empty());
     assert!(first.fire("missing", vec![]).is_err());
     first.start().unwrap();
-    assert!(first.start().unwrap_err().contains("already started"));
+    assert!(matches!(
+        first.start().unwrap_err(),
+        phenix_kernel::StartError::AlreadyStarted
+    ));
     assert!(first.drain(2).is_empty());
     assert_eq!(a.polls.load(Ordering::SeqCst), 1);
     assert_eq!(b.polls.load(Ordering::SeqCst), 1);
     assert_eq!(other_a.polls.load(Ordering::SeqCst), 0);
-    assert_eq!(second.start().unwrap_err(), "nth activation failed");
+    assert_eq!(
+        second.start().unwrap_err().to_string(),
+        expected.to_string()
+    );
     second.start().unwrap();
     assert_eq!(composed.load(Ordering::SeqCst), 4);
     assert_eq!(
