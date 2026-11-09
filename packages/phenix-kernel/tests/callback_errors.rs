@@ -33,11 +33,7 @@ impl PluginInstance for Plugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let phase = self.0;
         let identity = self.1.clone();
-        registrar.add(Contribution {
-            id: "callback".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("callback", move |context| {
                 if matches!(phase, Phase::Compose) {
                     return Err(Box::new(Cause(identity.clone())));
                 }
@@ -48,8 +44,8 @@ impl PluginInstance for Plugin {
                     }
                     Ok(Box::new(Source(identity.clone())))
                 })
-            }),
-        })
+            })
+.register(registrar)
     }
 }
 
