@@ -1,115 +1,140 @@
 # Kernel
 
-`phenix-kernel` composes Rust-only, in-process plugins into one graph. It uses
-the existing `PluginCatalog`, `PluginSnapshot`, and `ContributionHandle` loader
-boundary, not another plugin loader or graph scheduler. It has no storage dependency.
+`phenix-kernel` composes Rust-only, in-process plugins into one graph using the
+existing `PluginCatalog`, `PluginSnapshot`, `ContributionHandle`, Graph compiler
+and Engine. It has no storage dependency and introduces no second scheduler.
+See [Contract Composition Iteration](contract-composition-iteration.md) for the
+current evidence ledger, ownership/mutation audit and pending verification gates.
 
 ```text
-host configuration -> PluginCatalog / PluginSet -> leased PluginSnapshots
-                                                   |
-                         resolve dependencies -> compose GraphBuilder
-                                                   |
-                              graph compiler -> Deployment / Engine
-                                                   |
-                         start producers -> public trigger -> new wave
-                                                   |
-                       cancel/drop producers -> nodes -> contribution leases
+catalog / plugin stages -> candidate snapshots -> resolve imports/dependencies
+    -> compose contexts + candidate artifacts -> compile/check actual graph
+    -> bind host adapters -> start producers -> publish generation
+    -> declared producer notice -> existing Engine -> separate wave
 ```
 
-## ABI Safety
+## ABI Boundary
 
-The existing loader accepts statically linked Rust factories. Its `Any` and Rust
-trait-object contracts are deliberately in-process only, never shared-library
-interfaces. There are no plugin artifacts to scan, ABI versions to validate, or
-native library handles in this branch. Explicit selection is through catalog keys
-and snapshots; existing cross-crate loader tests exercise that boundary. Neither
-`libloading` alone nor a matching schema name would make Rust vtables ABI-safe.
-No native loader, unload or hot reload is added here.
-
-## Abstraction Inventory
-
-The following covers every added public kernel abstraction. All are runtime
-contracts with compile-time Rust signature checking, not domain policy.
-
-| API | Owner/lifetime | Invariant | Why existing API is insufficient | Simplification | Replace/bypass |
-|---|---|---|---|---|---|
-| `Key` | contribution metadata | qualified dependency identity | graph IDs identify topology, not plugin contributions | explicit dependencies | use GraphBuilder directly |
-| `Contribution`, `Compose` | existing leased plugin inventory | graph declarations before activation | registrar stores arbitrary kinds but does not assemble a graph | one ordinary GraphBuilder callback | another host may consume snapshots |
-| `Activate` | leased contribution | I/O acquisition after compilation | graph actions do not own external producers | separate startup factory | omit for graph-only plugins |
-| `Producer` | started kernel | drop releases external resources | executor owns waves, not sources | source-local polling and cancellation | host may fire triggers directly |
-| `Notice` | one producer poll | one admission payload per event | Value has no external route | pairs existing values with trigger name | use Engine ingress directly |
-| `ProducerEvent` | drain caller | preserve poll/admission and invocation failures | WaveReport cannot represent a failed poll | explicit per-source outcome | caller may drive producers itself |
-| `Kernel` | trusted host, one generation | leases outlive graph and sources | foundations intentionally do not compose themselves | load/compose/start/execute/drop glue | use catalog, builder and Deployment directly |
+Factories, `Any`, Rust trait objects and callbacks are statically linked,
+in-process contracts, not shared-library ABI interfaces. Schema agreement does
+not make Rust vtables ABI-safe or codecs honest. There is no native loader,
+dynamic-library unload or sandbox. Plugin reload stages in-process revisions;
+leases retain old code/implementation ownership until their graph users die.
 
 ## Run
 
-From the repository root:
-
 ```sh
-cargo run --manifest-path packages/phenix-kernel/Cargo.toml --example basic
-cargo run --manifest-path packages/phenix-kernel/Cargo.toml --example storage
-cargo test --manifest-path packages/phenix-kernel/Cargo.toml
+cargo run -p phenix-kernel --example basic
+cargo run -p phenix-kernel --example storage
+cargo test -p phenix-kernel
 ```
 
-The complete runnable example is `packages/phenix-kernel/examples/basic.rs`.
-It registers an `Increment` plugin in the catalog, loads a snapshot, composes a
-typed `GraphBuilder` node, compiles it, explicitly starts the kernel, and admits
-`41_i64` through `run`.
-The example checks that the wave succeeds. Graph values use the existing local
-typed value API, not a kernel-specific graph DSL.
+`examples/basic.rs` composes a typed increment node and fires an ordinary wave.
+`examples/storage.rs` uses memory and in-memory SQLite, with change notices routed
+into separate observer waves. Subscriptions are acquired on start, not composition.
+These are runnable entry points, not a claim that these commands were rerun here.
 
-The `storage` example runs both memory and in-memory SQLite backends. It writes
-and reads a counter through a graph module, then drains storage change notices
-into separate observer waves. Subscriptions are acquired only by `start`.
+## Composition API
 
-## Integration API
+- Register `Contribution { id, requires, routes, compose }` using `Registrar::add`.
+  `compose` receives `&mut ComposeContext`, with the ordinary builder at `context.graph`.
+- Dependencies use owner-qualified `Key::new(owner, id)`. All contributions compose
+  in topological order, with lexical owner/id tie-breaking. Duplicates, missing
+  dependencies, cycles and duplicate snapshot owners fail before composition.
+- Register `ContractDefinition { id, contract }`, `GraphOffer { id, producer,
+  unit, contract }`, and `ContractRequirement { id, consumer, contract }` as ordinary
+  typed contributions. Producer/consumer keys must belong to the registering plugin.
+- `Kernel::build_with_policy` applies trusted `ImportPolicy` selections and optional
+  allow/deny pairs. Denial wins. A unique eligible compatible offer is selected
+  automatically; missing, ambiguous or invalid selections fail closed.
+- Selected providers become dependencies of their consumers. A consumer calls
+  `context.import(local_requirement_id)?`, then `ResolvedImport::bind(graph)` to
+  project actual claimed endpoints. Connect them explicitly with Graph APIs.
+  Consumers need not capture provider paths; automatic edge insertion is not provided.
+- `context.activate(factory)` registers one candidate-local producer factory.
+  There is no `Contribution.activate` field. The zero-argument factory captures
+  the exact composed state and returns an owned `Box<dyn Producer>` after compile.
+- `context.export(value)` registers one typed candidate-owned export. Bundle
+  multiple values in a struct; retrieve using `Kernel::export::<T>(&key)`.
+  Missing keys/wrong types return `None`. Shared snapshot slots are not candidate exports.
+- Build validates all offers, including unused offers, all registered contract
+  definitions against compiled claims/requests, exact contribution origins, and
+  declared routes before constructing one Deployment with the supplied Executor.
+  `Kernel::build` uses default policy and converts errors to strings;
+  `build_with_policy` returns `ResolutionError`.
 
-- Register `phenix_kernel::Contribution` through `Registrar::add`.
-- Set `id`, `requires: Vec<Key>`, `compose`, and optional `activate` factory.
-- Use `Key::new(plugin_owner, contribution_id)` for dependencies. All selected
-  contributions are composed, with lexical owner/id tie-breaking among ready
-  dependencies. Duplicate contributions/dependencies, missing dependencies and
-  cycles fail before composition.
-- `compose` receives the single existing `GraphBuilder`. Use its typed handles,
-  named endpoint lookups, modules and patching APIs for cross-plugin composition.
-- `Kernel::build(name, snapshots, executor)` compiles once and builds one
-   `Deployment` with the supplied graph `Executor`, leaving no active producers.
-- `Kernel::start(&mut self)` explicitly activates producers in dependency order.
-  Repeated successful startup is rejected, even for a producer-free kernel.
-- `activate` is a zero-argument factory returning an owned `Box<dyn Producer>`.
-   It receives no engine; trusted captured callbacks must not admit waves or perform
-   setup I/O during composition. This is a lifecycle contract, not a sandbox.
-- `Producer::poll` must not wait for events and returns at most one `Notice`, idle,
-  or an error. A notice contains an existing public trigger name and values.
-- `Kernel::drain(max_polls)` explicitly polls round-robin, preserving the cursor
-  across calls. Idle polls count toward the bound. Each notice calls
-  `Engine::fire`, creating a new wave. Poll/admission errors are returned in
-  `ProducerEvent`; invocation failures remain ordinary `WaveReport` failures.
-  Neither stops the remaining bounded polls.
-- `Kernel::fire` rejects admissions until startup succeeds, then forwards them to
-  `Engine::fire`. Before startup, `drain` returns no events.
-  `engine()` exposes low-level engine/session APIs and bypasses this lifecycle guard.
+Graph owns actual shape and semantic matching. Kernel does not copy purported
+implementation shapes into offers. Per-composer origin children distinguish
+contributions within the exact loaded plugin revision; PluginSnapshot binding
+checks revision ancestry, while Kernel offers check exact producer identity.
+Native composers retain low-level graph access: selected imports are not a sandbox
+or proof that every arbitrary closure wires the selected provider.
 
-## Lifecycle
+## Producer Lifecycle
 
-Contribution handles pin the exact plugin revision even after loader unload.
-Composition and compilation failures never activate producers. If activation
-fails, a local activation vector drops already activated producers by RAII before
-returning the error. The kernel stays unstarted with no producers and can retry
-`start`; its engine and leases remain alive. Factories must clean up
-their own partially acquired resources on error. Producers must stop and release
-their resources on drop. `Kernel::drop` clears producers before nodes are dropped
-with the engine, retaining contribution leases until both are destroyed, including
-startup rollback; shutdown is not reverse dependency order.
+`Kernel::build` does not activate producers. `Kernel::start` activates registered
+factories in dependency order; a second successful start is rejected, even with
+no producers. Failure drops already-created producers and leaves the same composed
+artifacts available for retry. Factories must clean up partial acquisitions;
+producers must stop/release resources on drop. Producers die before graph/actions,
+artifacts and contribution/snapshot code leases; shutdown is not reverse dependency order.
+
+`Producer::poll` must not wait for events. It returns at most one `Notice`, idle,
+or an error. Routes are preflighted before activation and notices to undeclared
+routes reject. `drain(max_polls)` polls round-robin across calls; idle polls count
+toward the bound. Each notice fires a separate Engine wave. `ProducerError`
+distinguishes poll, undeclared-route and admission errors; invocation failures
+remain inside ordinary WaveReports. Errors do not stop remaining bounded polls.
+
+`fire` rejects before successful start; `drain` produces no events before start.
+`engine()` deliberately bypasses that startup guard. The optional blocking
+`run_until(&WakeHandle, on_event)` requires wake registration from every producer;
+it waits when idle and checks sticky shutdown between waves. Registration must
+synchronize with publication. There is no background thread or new async runtime.
+Poll count bounds admissions, not callback duration. Shutdown does not interrupt
+running polls, waves or callbacks; queue/overflow policy belongs to producers.
+
+## Host Publication
+
+`host::KernelHost` owns the mutable PluginSet and active generation pointer.
+`plugins()` permits staging through shared access, not committing the host's set.
+`prepare`/`prepare_with` validates the entire staged batch and exact post-commit
+snapshot inventory, builds a Kernel, optionally binds host adapters, then starts
+producers without polling them. `Candidate` is opaque and bound to host identity
+and expected epoch; it exposes no engine or generation admission handle.
+
+The trusted binding hook receives `&Kernel` before producer startup. It may bind
+generation-owned exports and query/store adapters, but must not fire waves or
+leak admission handles. Kernel remains independent of Storage. For derived queries,
+use `QuerySpec::bind_engine(kernel.engine())`; prepare with
+`DerivedRuntime::guard_executor(executor)` to preserve host-only nested-query checks.
+That wrapper is explicitly opt-in for KernelHost.
+
+`publish` rejects stale/foreign candidates, locks the old generation against
+in-flight scoped work, commits the validated plugin batch, marks old producers
+retired, and replaces the active pointer. A retained `Arc<Generation>` pins its
+old engine, exports and leases; explicit old waves/queries remain valid, but
+retired `drain` calls return empty. Host drop also retires active producers.
+Producer destructors complete before old leases are released.
+
+`Generation::with_kernel` gives scoped read-only access to engine and exports;
+`with_engine` is the engine-only convenience. Access is mutex-serialized with
+publication. Do not reenter the same generation from a callback. A query adapter
+may bind/query within `with_kernel` after publication; low-level `bind_engine`
+bypasses Kernel's startup guard and must not execute in the preparation hook.
 
 ## Limits
 
-There is no background loop, async runtime, dynamic-library ABI, automatic reload,
-retry, delivery durability, or transactional rollback of callback side effects.
-The poll count bounds admissions, not callback duration or wave execution time.
-Producer queues and overflow policies belong to producer implementations.
-Producer trigger routes are not declared by contributions; notice trigger names
-are therefore validated by the existing engine on admission, not before activation.
-Panicking plugin code is not isolated. The initial deployment uses the graph's
- default in-memory graph resource store, not a database. The storage example passes
- scoped sessions directly to plugin-owned node closures without executor coupling.
+Build/bind/start failure leaves the active inventory/generation unchanged, and
+dropping abandoned candidates releases owned resources. Preparation can acquire
+external resources before publication. This is **not guaranteed transactional
+rollback of arbitrary external callback effects**, nor panic/process-failure
+atomicity. Native callbacks, partial-acquisition cleanup and destructors are trusted.
+
+There is no automatic retry, durable delivery, distributed transaction, native
+ABI guarantee or live permission revocation. Claims establish declared semantic
+membership, not behavioral correctness, scheduling or authorization. Resolution
+and lifecycle errors have typed stage envelopes but still contain string errors
+on several paths. Schema interning still retains distinct identities for process
+lifetime. The graph deployment defaults to its existing in-memory resource store;
+storage authorization and backend lifetimes remain external adapter responsibilities.
