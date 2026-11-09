@@ -1,7 +1,7 @@
 use super::{DerivedRuntime, Error, QuerySpec};
 use phenix_graph::Executor;
 use phenix_kernel::{
-    BuildOptions,
+    BuildOptions, WakeHandle,
     host::{Binding, Candidate, Generation, KernelHost, LifecycleError},
 };
 use phenix_plugin::{PluginSet, StagedPlugin};
@@ -28,6 +28,14 @@ impl DerivedHost {
     pub fn new(plugins: PluginSet) -> Self {
         Self {
             host: KernelHost::new(plugins),
+        }
+    }
+
+    /// Opt into wake-driven published generations while retaining the mandatory
+    /// derived-query executor guard in prepare.
+    pub fn with_wake(plugins: PluginSet, wake: WakeHandle) -> Self {
+        Self {
+            host: KernelHost::with_wake(plugins, wake),
         }
     }
 
