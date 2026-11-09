@@ -97,7 +97,10 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
             )
             .is_err()
     );
-    assert_eq!(reader.get_revisioned("default").unwrap().unwrap().value.0, "second");
+    assert_eq!(
+        reader.get_revisioned("default").unwrap().unwrap().value.0,
+        "second"
+    );
     assert!(
         demo.kernel
             .fire("index", vec![Value::local("Agent::run".to_string())])
