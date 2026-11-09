@@ -141,17 +141,100 @@ impl ComposeContext<'_> {
     }
 }
 
-/// Shared Rust type registered by plugins through the existing Registrar.
-/// Low-level graph authoring remains available through the composition context.
+/// Graph composition and its declared imports/exports are registered as one
+/// atomic bundle. Offers and imports belong to this composer, not to a second
+/// user-supplied owner key. This value is authoring-only; Graph still validates
+/// the compiled unit's contract and exact origin.
 pub struct Contribution {
-    pub id: String,
-    pub requires: Vec<Key>,
-    /// Public trigger names this contribution's producer may emit.
-    pub routes: Vec<String>,
-    pub compose: Box<Compose>,
+    id: String,
+    requires: Vec<Key>,
+    routes: Vec<String>,
+    compose: Box<Compose>,
+    offers: Vec<(String, String, Key)>,
+    imports: Vec<(String, Key)>,
 }
 
-impl phenix_plugin::Contribution for Contribution {
+impl Contribution {
+    pub fn new(
+        id: impl Into<String>,
+        compose: impl Fn(&mut ComposeContext<'_>) -> Result<(), CallbackError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            requires: Vec::new(),
+            routes: Vec::new(),
+            compose: Box::new(compose),
+            offers: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+
+    /// Explicit composition dependency, besides dependencies inferred by imports.
+    pub fn after(mut self, dependencies: impl IntoIterator<Item = Key>) -> Self {
+        self.requires.extend(dependencies);
+        self
+    }
+
+    /// Trigger names this composer's optional producer may emit.
+    pub fn route(mut self, routes: impl IntoIterator<Item = String>) -> Self {
+        self.routes.extend(routes);
+        self
+    }
+
+    /// Advertise a unit this composer actually creates under a semantic contract.
+    pub fn offer(mut self, id: impl Into<String>, unit: impl Into<String>, contract: Key) -> Self {
+        self.offers.push((id.into(), unit.into(), contract));
+        self
+    }
+
+    /// Require a semantic contract; the trusted host chooses a suitable offer.
+    pub fn import(mut self, id: impl Into<String>, contract: Key) -> Self {
+        self.imports.push((id.into(), contract));
+        self
+    }
+
+    /// Validate the entire declaration before adding any part of it.
+    pub fn register(
+        self,
+        into: &mut phenix_plugin::Registrar,
+    ) -> Result<(), phenix_plugin::Failure> {
+        let owner = into.owner().to_owned();
+        let composer = Key::new(&owner, &self.id);
+        let mut batch = phenix_plugin::Registrar::new(owner)?;
+        batch.add(RegisteredComposer {
+            id: self.id,
+            requires: self.requires,
+            routes: self.routes,
+            compose: self.compose,
+        })?;
+        for (id, unit, contract) in self.offers {
+            batch.add(GraphOffer {
+                id,
+                producer: composer.clone(),
+                unit,
+                contract,
+            })?;
+        }
+        for (id, contract) in self.imports {
+            batch.add(ContractRequirement {
+                id,
+                consumer: composer.clone(),
+                contract,
+            })?;
+        }
+        into.merge(batch.finish())
+    }
+}
+
+/// Internal registered payload. The plugin registry remains graph-independent.
+struct RegisteredComposer {
+    id: String,
+    requires: Vec<Key>,
+    routes: Vec<String>,
+    compose: Box<Compose>,
+}
+
+impl phenix_plugin::Contribution for RegisteredComposer {
     const KIND: &'static str = "kernel.contribution";
     fn id(&self) -> &str {
         &self.id
@@ -174,7 +257,7 @@ impl phenix_plugin::Contribution for ContractDefinition {
 
 /// An offer names an actual unit, never a purported implementation shape.
 /// Every offer is checked after all composition, including unused offers.
-pub struct GraphOffer {
+struct GraphOffer {
     pub id: String,
     /// Exact contribution responsible for creating the offered unit.
     pub producer: Key,
@@ -193,7 +276,7 @@ impl phenix_plugin::Contribution for GraphOffer {
 }
 
 /// A local declarative import. Only the trusted host can select its provider.
-pub struct ContractRequirement {
+struct ContractRequirement {
     pub id: String,
     pub consumer: Key,
     pub contract: Key,
@@ -458,7 +541,7 @@ pub struct Kernel {
     engine: Engine,
     producers: Mutex<ProducerState>,
     artifacts: BTreeMap<Key, BuildArtifacts>,
-    _leases: Vec<ContributionHandle<Contribution>>,
+    _leases: Vec<ContributionHandle<RegisteredComposer>>,
     keys: Vec<Key>,
     started: bool,
     routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
@@ -527,11 +610,11 @@ impl Kernel {
                 collect!(ContractDefinition, definitions);
                 collect!(GraphOffer, offers);
                 collect!(ContractRequirement, requirements);
-                if kind != <Contribution as phenix_plugin::Contribution>::KIND {
+                if kind != <RegisteredComposer as phenix_plugin::Contribution>::KIND {
                     continue;
                 }
                 let handle = snapshot
-                    .get::<Contribution>(id)
+                    .get::<RegisteredComposer>(id)
                     .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
                 if pending.insert(key.clone(), handle).is_some() {
                     return Err(format!("duplicate contribution: {key:?}").into());

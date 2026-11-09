@@ -67,36 +67,33 @@ impl PluginInstance for Plugin {
         let log = self.log.clone();
         let polls = self.polls.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "source".into(),
-            requires: vec![],
-            routes: vec!["tick".into()],
-            compose: Box::new(move |context| {
-                context.export(Guard("export", id, log.clone()))?;
-                let action = Guard("action", id, log.clone());
-                let action_log = log.clone();
-                let node = context.graph.node("clock", move |tick: i64| {
-                    action.touch();
-                    action_log.lock().unwrap().push(format!("tick:{id}:{tick}"));
-                    tick
-                })?;
-                let input = context.graph.expose_input("clock", node.inlet())?;
-                context.graph.trigger("tick", [input])?;
-                let factory = Guard("factory", id, log.clone());
-                let log = log.clone();
-                let polls = polls.clone();
-                let gate = gate.clone();
-                context.activate(move || {
-                    factory.touch();
-                    log.lock().unwrap().push(format!("start:{id}"));
-                    Ok(Box::new(Source {
-                        polls: polls.clone(),
-                        gate: gate.clone(),
-                        _guard: Guard("producer", id, log.clone()),
-                    }))
-                })
-            }),
+        Contribution::new("source", move |context| {
+            context.export(Guard("export", id, log.clone()))?;
+            let action = Guard("action", id, log.clone());
+            let action_log = log.clone();
+            let node = context.graph.node("clock", move |tick: i64| {
+                action.touch();
+                action_log.lock().unwrap().push(format!("tick:{id}:{tick}"));
+                tick
+            })?;
+            let input = context.graph.expose_input("clock", node.inlet())?;
+            context.graph.trigger("tick", [input])?;
+            let factory = Guard("factory", id, log.clone());
+            let log = log.clone();
+            let polls = polls.clone();
+            let gate = gate.clone();
+            context.activate(move || {
+                factory.touch();
+                log.lock().unwrap().push(format!("start:{id}"));
+                Ok(Box::new(Source {
+                    polls: polls.clone(),
+                    gate: gate.clone(),
+                    _guard: Guard("producer", id, log.clone()),
+                }))
+            })
         })
+        .route(vec!["tick".into()])
+        .register(into)
     }
 }
 

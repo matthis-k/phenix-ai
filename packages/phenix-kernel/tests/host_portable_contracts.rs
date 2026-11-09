@@ -7,7 +7,7 @@ use phenix_graph::{
     emit,
 };
 use phenix_kernel::host::{Generation, KernelHost, LifecycleError};
-use phenix_kernel::{ContractDefinition, Contribution, GraphOffer, ImportPolicy, Key};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -135,45 +135,36 @@ mod provider {
 
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(GraphOffer {
-                id: "service".into(),
-                producer: Key::new(into.owner(), "main"),
-                unit: self.path.into(),
-                contract: Key::new("definition", "transform"),
-            })?;
             let config = self.clone();
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
-                    let extra = matches!(config.fault, Fault::ExtraInput);
-                    let template = if matches!(config.fault, Fault::Codec) {
-                        worker::<WrongCodec>(config.increment, extra)
-                    } else {
-                        worker::<Request>(config.increment, extra)
-                    };
-                    if config.nested {
-                        let mut child = GraphBuilder::new("private-module");
-                        child.add("worker", template)?;
-                        expose(&mut child, "worker", extra)?;
-                        let mut wrapper = GraphBuilder::new("wrapper");
-                        wrapper.instance("inside", &child.module())?;
-                        expose(&mut wrapper, "inside", extra)?;
-                        if !matches!(config.fault, Fault::MissingClaim) {
-                            wrapper.implements_public(&definition::contract())?;
-                        }
-                        graph.instance(config.path, &wrapper.module())?;
-                    } else {
-                        graph.add(config.path, template)?;
-                        if !matches!(config.fault, Fault::MissingClaim) {
-                            graph.implements(config.path, &definition::contract())?;
-                        }
+            Contribution::new("main", move |context| {
+                let graph = &mut *context.graph;
+                let extra = matches!(config.fault, Fault::ExtraInput);
+                let template = if matches!(config.fault, Fault::Codec) {
+                    worker::<WrongCodec>(config.increment, extra)
+                } else {
+                    worker::<Request>(config.increment, extra)
+                };
+                if config.nested {
+                    let mut child = GraphBuilder::new("private-module");
+                    child.add("worker", template)?;
+                    expose(&mut child, "worker", extra)?;
+                    let mut wrapper = GraphBuilder::new("wrapper");
+                    wrapper.instance("inside", &child.module())?;
+                    expose(&mut wrapper, "inside", extra)?;
+                    if !matches!(config.fault, Fault::MissingClaim) {
+                        wrapper.implements_public(&definition::contract())?;
                     }
-                    Ok(())
-                }),
+                    graph.instance(config.path, &wrapper.module())?;
+                } else {
+                    graph.add(config.path, template)?;
+                    if !matches!(config.fault, Fault::MissingClaim) {
+                        graph.implements(config.path, &definition::contract())?;
+                    }
+                }
+                Ok(())
             })
+            .offer("service", self.path, Key::new("definition", "transform"))
+            .register(into)
         }
     }
 }

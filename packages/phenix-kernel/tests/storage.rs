@@ -55,15 +55,9 @@ impl PluginInstance for SubscriptionPlugin {
             let observed = self.observed.clone();
             let probe = self.probe.clone();
             let fail_first = self.fail_first;
-            registrar.add(Contribution {
-                id: if later { "later" } else { "subscription" }.into(),
-                routes: vec!["observed".into()],
-                requires: if later {
-                    vec![Key::new("storage", "subscription")]
-                } else {
-                    vec![]
-                },
-                compose: Box::new(move |context| {
+            Contribution::new(
+                if later { "later" } else { "subscription" },
+                move |context| {
                     let graph = &mut *context.graph;
                     if !later {
                         let observed = observed.clone();
@@ -91,8 +85,15 @@ impl PluginInstance for SubscriptionPlugin {
                             drops: probe.drops.clone(),
                         }))
                     })
-                }),
-            })?;
+                },
+            )
+            .after(if later {
+                vec![Key::new("storage", "subscription")]
+            } else {
+                vec![]
+            })
+            .route(vec!["observed".into()])
+            .register(registrar)?;
         }
         Ok(())
     }

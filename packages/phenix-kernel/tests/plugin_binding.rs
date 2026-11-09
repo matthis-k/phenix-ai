@@ -1,7 +1,7 @@
 use phenix_graph::{
     CompiledGraph, DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor,
 };
-use phenix_kernel::{ContractDefinition, Contribution, GraphOffer, Kernel, Key};
+use phenix_kernel::{ContractDefinition, Contribution, Kernel, Key};
 use phenix_plugin::{Code, Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +17,19 @@ fn contract() -> GraphContract {
     .unwrap()
 }
 
+// This remains an ordinary typed plugin value. Its graph locator is verified
+// by PluginSnapshot independently of Kernel's composer-owned offer metadata.
+struct ProviderBinding;
+impl phenix_plugin::Contribution for ProviderBinding {
+    const KIND: &'static str = "test.graph_binding";
+    fn id(&self) -> &str {
+        "offer"
+    }
+    fn graph_unit(&self) -> Option<&str> {
+        Some("service")
+    }
+}
+
 #[derive(Clone)]
 struct Provider {
     module: bool,
@@ -30,26 +43,16 @@ impl PluginInstance for Provider {
             id: "definition".into(),
             contract: contract(),
         })?;
-        into.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: "service".into(),
-            contract: Key::new("provider", "definition"),
-        })?;
+        into.add(ProviderBinding)?;
         if self.sibling {
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(|_| Ok(())),
-            })?;
+            Contribution::new("main", |_| Ok(()))
+                .offer("offer", "service", Key::new("provider", "definition"))
+                .register(into)?;
         }
         let config = self.clone();
-        into.add(Contribution {
-            id: if self.sibling { "sibling" } else { "main" }.into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        let composer = Contribution::new(
+            if self.sibling { "sibling" } else { "main" },
+            move |context| {
                 let graph = &mut *context.graph;
                 if config.module {
                     let mut child = GraphBuilder::new("implementation");
@@ -66,8 +69,14 @@ impl PluginInstance for Provider {
                 // declarations and kernel-assigned provenance for Plugin API binding.
                 *config.compiled.lock().unwrap() = Some(graph.clone().compile()?);
                 Ok(())
-            }),
-        })
+            },
+        );
+        let composer = if self.sibling {
+            composer
+        } else {
+            composer.offer("offer", "service", Key::new("provider", "definition"))
+        };
+        composer.register(into)
     }
 }
 
@@ -91,7 +100,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         assert_ne!(&origin, snapshot.graph_origin());
         assert!(origin.belongs_to(snapshot.graph_origin()));
         snapshot
-            .bind::<GraphOffer>("offer", &contract(), &compiled)
+            .bind::<ProviderBinding>("offer", &contract(), &compiled)
             .unwrap();
 
         let staged = plugins.prepare_reload(&key, config.clone()).unwrap();
@@ -103,7 +112,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         assert_eq!(snapshot.revision(), foreign.revision());
         for other in [candidate, replacement, foreign] {
             let error = other
-                .bind::<GraphOffer>("offer", &contract(), &compiled)
+                .bind::<ProviderBinding>("offer", &contract(), &compiled)
                 .err()
                 .unwrap();
             assert_eq!(error.code, Code::Denied);
@@ -111,7 +120,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         drop(kernel);
         plugins.unload(&key).unwrap();
         snapshot
-            .bind::<GraphOffer>("offer", &contract(), &compiled)
+            .bind::<ProviderBinding>("offer", &contract(), &compiled)
             .unwrap();
 
         let sibling = plugins

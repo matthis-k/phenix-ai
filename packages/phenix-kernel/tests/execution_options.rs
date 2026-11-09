@@ -8,23 +8,19 @@ struct Dag(usize);
 impl PluginInstance for Dag {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         let length = self.0;
-        into.add(Contribution {
-            id: "dag".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
-                let first = context.graph.node("first", |value: i64| value + 1)?;
-                let input = context.graph.expose_input("input", first.inlet())?;
-                context.graph.trigger("start", [input])?;
-                for index in 1..length {
-                    let node = context
-                        .graph
-                        .node(format!("step-{index}"), |value: i64| value + 1)?;
-                    context.graph.connect(first.output(), node.inlet())?;
-                }
-                Ok(())
-            }),
+        Contribution::new("dag", move |context| {
+            let first = context.graph.node("first", |value: i64| value + 1)?;
+            let input = context.graph.expose_input("input", first.inlet())?;
+            context.graph.trigger("start", [input])?;
+            for index in 1..length {
+                let node = context
+                    .graph
+                    .node(format!("step-{index}"), |value: i64| value + 1)?;
+                context.graph.connect(first.output(), node.inlet())?;
+            }
+            Ok(())
         })
+        .register(into)
     }
 }
 

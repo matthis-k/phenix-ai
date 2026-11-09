@@ -2,9 +2,7 @@ use phenix_graph::{
     CompileDiagnostic, CompilePhase, DeclaredValue, GraphContract, InterfaceError, InterfacePhase,
     InterfaceShape, LocalExecutor, TypeIdentity,
 };
-use phenix_kernel::{
-    BuildOptions, ContractDefinition, Contribution, GraphOffer, Kernel, Key, ResolutionError,
-};
+use phenix_kernel::{BuildOptions, ContractDefinition, Contribution, Kernel, Key, ResolutionError};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{any::TypeId, error::Error, sync::Arc};
 
@@ -37,51 +35,51 @@ impl PluginInstance for Case {
                 .unwrap(),
             })?;
         }
-        if matches!(self, Self::WrongOrigin | Self::Interface) {
-            into.add(GraphOffer {
-                id: "offer".into(),
-                producer: Key::new(
-                    if matches!(self, Self::WrongOrigin) {
-                        "foreign"
-                    } else {
-                        "plugin"
-                    },
-                    "main",
-                ),
-                unit: "invalid/../path".into(),
-                contract: Key::new("plugin", "contract"),
-            })?;
+        if matches!(self, Self::WrongOrigin) {
+            // The unit belongs to another composer even though it has the
+            // requested shape and claim. Attaching an offer to main must fail.
+            let claimed = contract.clone();
+            Contribution::new("source", move |context| {
+                let module = phenix_graph::GraphBuilder::new("empty");
+                context.graph.instance("service", &module.module())?;
+                context.graph.implements("service", &claimed)?;
+                Ok(())
+            })
+            .register(into)?;
         }
         let case = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| match case {
-                Self::Composition => Err("composer failed".into()),
-                Self::Compilation => context
+        let main = Contribution::new("main", move |context| match case {
+            Self::Composition => Err("composer failed".into()),
+            Self::Compilation => context
+                .graph
+                .require_contract("missing", &contract)
+                .map_err(Into::into),
+            Self::Catalog => {
+                let different = GraphContract::new(
+                    contract.id(),
+                    InterfaceShape::new()
+                        .input_slot("run", "value", DeclaredValue::local::<i64>())
+                        .unwrap()
+                        .output("value", DeclaredValue::local::<i64>())
+                        .unwrap(),
+                )
+                .unwrap();
+                context.graph.node("service", |v: i64| v)?;
+                context
                     .graph
-                    .require_contract("missing", &contract)
-                    .map_err(Into::into),
-                Self::Catalog => {
-                    let different = GraphContract::new(
-                        contract.id(),
-                        InterfaceShape::new()
-                            .input_slot("run", "value", DeclaredValue::local::<i64>())
-                            .unwrap()
-                            .output("value", DeclaredValue::local::<i64>())
-                            .unwrap(),
-                    )
-                    .unwrap();
-                    context.graph.node("service", |v: i64| v)?;
-                    context
-                        .graph
-                        .implements("service", &different)
-                        .map_err(Into::into)
-                }
-                _ => Ok(()),
-            }),
-        })
+                    .implements("service", &different)
+                    .map_err(Into::into)
+            }
+            _ => Ok(()),
+        });
+        let main = match self {
+            Self::WrongOrigin => main.offer("offer", "service", Key::new("plugin", "contract")),
+            Self::Interface => {
+                main.offer("offer", "invalid/../path", Key::new("plugin", "contract"))
+            }
+            _ => main,
+        };
+        main.register(into)
     }
 }
 
@@ -122,7 +120,7 @@ fn build_failures_identify_definition_composer_and_origin() {
     let origin = failure(Case::WrongOrigin);
     assert!(
         matches!(&origin, ResolutionError::WrongOrigin { offer, producer, unit }
-        if *offer == Key::new("plugin", "offer") && **producer == Key::new("foreign", "main") && unit == "invalid/../path")
+        if *offer == Key::new("plugin", "offer") && **producer == Key::new("plugin", "main") && unit == "invalid/../path")
     );
     assert!(
         origin

@@ -1,7 +1,5 @@
 use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
-use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
-};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Kernel, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 
@@ -30,65 +28,49 @@ impl PluginInstance for Plugin {
             id: "definition".into(),
             contract: contract(),
         })?;
-        into.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: if self.missing_path {
+
+        Contribution::new("consumer", |_| Ok(()))
+            .import("request", Key::new("provider", "definition"))
+            .register(into)?;
+        let config = *self;
+        Contribution::new("main", move |context| {
+            let graph = &mut *context.graph;
+            if config.module {
+                let mut module = GraphBuilder::new("implementation");
+                let node = module.node("private", |x: i64| x + 1)?;
+                module.expose_input_slot("run", "value", node.inlet())?;
+                module.expose_output("value", node.output())?;
+                if config.claim {
+                    module.implements_public(&contract())?;
+                }
+                graph.instance("service", &module.module())?;
+            } else {
+                graph.node("service", |x: i64| x + 1)?;
+                if config.claim {
+                    graph.implements("service", &contract())?;
+                }
+            }
+            Ok(())
+        })
+        .offer(
+            "offer",
+            if self.missing_path {
                 "absent"
             } else {
                 "service"
-            }
-            .into(),
-            contract: Key::new("provider", "definition"),
-        })?;
-        into.add(ContractRequirement {
-            id: "request".into(),
-            consumer: Key::new("provider", "consumer"),
-            contract: Key::new("provider", "definition"),
-        })?;
-        into.add(Contribution {
-            id: "consumer".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|_| Ok(())),
-        })?;
-        let config = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                if config.module {
-                    let mut module = GraphBuilder::new("implementation");
-                    let node = module.node("private", |x: i64| x + 1)?;
-                    module.expose_input_slot("run", "value", node.inlet())?;
-                    module.expose_output("value", node.output())?;
-                    if config.claim {
-                        module.implements_public(&contract())?;
-                    }
-                    graph.instance("service", &module.module())?;
-                } else {
-                    graph.node("service", |x: i64| x + 1)?;
-                    if config.claim {
-                        graph.implements("service", &contract())?;
-                    }
-                }
-                Ok(())
-            }),
-        })?;
+            },
+            Key::new("provider", "definition"),
+        )
+        .register(into)?;
         if self.late_edit {
-            into.add(Contribution {
-                id: "late".into(),
-                requires: vec![Key::new("provider", "main")],
-                routes: vec![],
-                compose: Box::new(|context| {
-                    let graph = &mut *context.graph;
-                    *graph = GraphBuilder::new("late");
-                    graph.node("service", |x: i64| x + 2)?;
-                    Ok(())
-                }),
-            })?;
+            Contribution::new("late", |context| {
+                let graph = &mut *context.graph;
+                *graph = GraphBuilder::new("late");
+                graph.node("service", |x: i64| x + 2)?;
+                Ok(())
+            })
+            .after(vec![Key::new("provider", "main")])
+            .register(into)?;
         }
         Ok(())
     }
@@ -161,36 +143,31 @@ struct ForeignPlugin {
 impl PluginInstance for ForeignPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         if !self.replace {
-            return into.add(GraphOffer {
-                id: "stolen".into(),
-                producer: Key::new("provider", "main"),
-                unit: "service".into(),
-                contract: Key::new("provider", "definition"),
-            });
+            // This plugin cannot forge a provider key: it can only offer a
+            // foreign unit from its own composer, which final origin checks reject.
+            return Contribution::new("fraud", |_| Ok(()))
+                .offer("stolen", "service", Key::new("provider", "definition"))
+                .register(into);
         }
         let module = self.module;
-        into.add(Contribution {
-            id: "patch".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: vec![],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                if module {
-                    let mut child = GraphBuilder::new("replacement");
-                    let node = child.node("private", |x: i64| x + 10)?;
-                    child.expose_input_slot("run", "value", node.inlet())?;
-                    child.expose_output("value", node.output())?;
-                    child.implements_public(&contract())?;
-                    graph.replace("service", child.module())?;
-                } else {
-                    let mut replacement =
-                        phenix_graph::NodeTemplate::local_function(|x: i64| x + 10);
-                    replacement.claims.push(contract());
-                    graph.replace("service", replacement)?;
-                }
-                Ok(())
-            }),
+        Contribution::new("patch", move |context| {
+            let graph = &mut *context.graph;
+            if module {
+                let mut child = GraphBuilder::new("replacement");
+                let node = child.node("private", |x: i64| x + 10)?;
+                child.expose_input_slot("run", "value", node.inlet())?;
+                child.expose_output("value", node.output())?;
+                child.implements_public(&contract())?;
+                graph.replace("service", child.module())?;
+            } else {
+                let mut replacement = phenix_graph::NodeTemplate::local_function(|x: i64| x + 10);
+                replacement.claims.push(contract());
+                graph.replace("service", replacement)?;
+            }
+            Ok(())
         })
+        .after(vec![Key::new("provider", "main")])
+        .register(into)
     }
 }
 

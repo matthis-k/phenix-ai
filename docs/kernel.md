@@ -36,14 +36,18 @@ These are runnable entry points, not a claim that these commands were rerun here
 
 ## Composition API
 
-- Register `Contribution { id, requires, routes, compose }` using `Registrar::add`.
-  `compose` receives `&mut ComposeContext`, with the ordinary builder at `context.graph`.
-- Dependencies use owner-qualified `Key::new(owner, id)`. All contributions compose
-  in topological order, with lexical owner/id tie-breaking. Duplicates, missing
-  dependencies, cycles and duplicate snapshot owners fail before composition.
-- Register `ContractDefinition { id, contract }`, `GraphOffer { id, producer,
-  unit, contract }`, and `ContractRequirement { id, consumer, contract }` as ordinary
-  typed contributions. Producer/consumer keys must belong to the registering plugin.
+- Register a Graph composer with `Contribution::new(id, |cx| { ... }).register(into)`.
+  The callback receives `&mut ComposeContext`, with ordinary Graph APIs at `cx.graph`.
+- A composer advertises its own units using `.offer(id, unit, contract)` and
+  declares imports with `.import(id, contract)`. Its producer/consumer keys are
+  derived from the registrar's owner and this composer's id, never hand-authored.
+  Each complete bundle is validated and registered atomically. Non-Graph plugin
+  contributions and standalone `ContractDefinition { id, contract }` still use
+  generic `Registrar::add`.
+- Explicit dependencies use `.after([Key::new(owner, id)])`; optional producer
+  routes use `.route(vec!["tick".to_owned()])`. All contributions compose in
+  topological order, with lexical ties. Duplicate names, missing dependencies,
+  cycles and duplicate snapshot owners are rejected before composition.
 - `Kernel::build_with_options` applies `BuildOptions.imports`, the trusted
   `ImportPolicy` selections and optional
   allow/deny pairs. Denial wins. A unique eligible compatible offer is selected

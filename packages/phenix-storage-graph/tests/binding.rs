@@ -54,26 +54,24 @@ impl PluginInstance for Observer {
         let target = route.clone();
         let session = self.session.clone();
         let observed = self.observed.clone();
-        registrar.add(Contribution {
-            id: "observer".into(),
-            requires: vec![],
-            routes: vec![route.clone()],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                let observed = observed.clone();
-                let sink = graph.node(&route, move |notice: Notice| {
-                    observed.lock().unwrap().push(notice);
-                })?;
-                let input = graph.expose_input(&route, sink.inlet())?;
-                graph.trigger(&route, [input])?;
-                let session = session.clone();
-                let target = target.clone();
-                context.activate(move || {
-                    let subscription = session.subscribe(Scope::Mount("main".into()), 2)?;
-                    Ok(Box::new(StorageBinding::new(subscription, target.clone())))
-                })
-            }),
+        let routes = vec![route.clone()];
+        Contribution::new("observer", move |context| {
+            let graph = &mut *context.graph;
+            let observed = observed.clone();
+            let sink = graph.node(&route, move |notice: Notice| {
+                observed.lock().unwrap().push(notice);
+            })?;
+            let input = graph.expose_input(&route, sink.inlet())?;
+            graph.trigger(&route, [input])?;
+            let session = session.clone();
+            let target = target.clone();
+            context.activate(move || {
+                let subscription = session.subscribe(Scope::Mount("main".into()), 2)?;
+                Ok(Box::new(StorageBinding::new(subscription, target.clone())))
+            })
         })
+        .route(routes)
+        .register(registrar)
     }
 }
 

@@ -1,5 +1,5 @@
 use phenix_graph::{ContractValue, Node, Schema};
-use phenix_kernel::{ContractRequirement, Contribution, Key};
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -35,17 +35,8 @@ pub struct Plugin(pub Arc<Mutex<Vec<i64>>>);
 
 impl PluginInstance for Plugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(ContractRequirement {
-            id: "transform".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new("definition", "transform"),
-        })?;
         let observed = self.0.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("main", move |context| {
                 let selected = context.import("transform")?;
                 let graph = &mut *context.graph;
                 let bound = selected.bind(graph)?;
@@ -75,7 +66,8 @@ impl PluginInstance for Plugin {
                 }
                 graph.trigger("run", inputs)?;
                 Ok(())
-            }),
-        })
+            })
+            .import("transform", Key::new("definition", "transform"))
+            .register(into)
     }
 }

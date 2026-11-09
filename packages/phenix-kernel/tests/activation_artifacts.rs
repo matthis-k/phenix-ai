@@ -56,56 +56,54 @@ impl PluginInstance for Plugin {
             let composed = self.composed.clone();
             let activations = self.activations.clone();
             let failure = self.failure;
-            registrar.add(Contribution {
-                id: name.into(),
-                requires: if name == "b" {
-                    vec![Key::new("plugin", "a")]
-                } else {
-                    vec![]
-                },
-                routes: if failure == "route" {
-                    vec!["missing".into()]
-                } else {
-                    vec![]
-                },
-                compose: Box::new(move |context| {
-                    if failure == "compile" && name == "a" {
-                        *context.graph = GraphBuilder::new("invalid").limits(CompileLimits {
-                            max_work: 0,
-                            ..Default::default()
-                        });
-                    }
-                    let id = composed.fetch_add(1, Ordering::SeqCst);
-                    let state = Arc::new(State {
-                        id,
-                        attempts: AtomicUsize::new(0),
-                        polls: AtomicUsize::new(0),
-                        _mark: Mark(format!("export:{name}:{id}"), log.clone()),
+            Contribution::new(name, move |context| {
+                if failure == "compile" && name == "a" {
+                    *context.graph = GraphBuilder::new("invalid").limits(CompileLimits {
+                        max_work: 0,
+                        ..Default::default()
                     });
-                    context.export(state.clone())?;
-                    let action = Mark(format!("engine:{name}:{id}"), log.clone());
-                    context.graph.node(name, move |_: i64| action.touch())?;
-                    let factory = Mark(format!("factory:{name}:{id}"), log.clone());
-                    let activations = activations.clone();
-                    let log = log.clone();
-                    context.activate(move || {
-                        factory.touch();
-                        activations.lock().unwrap().push((name.into(), state.id));
-                        let attempt = state.attempts.fetch_add(1, Ordering::SeqCst);
-                        if failure == "activation" && name == "b" && attempt == 0 {
-                            return Err("nth activation failed".into());
-                        }
-                        Ok(Box::new(Source {
-                            state: state.clone(),
-                            _mark: Mark(format!("producer:{name}:{id}"), log.clone()),
-                        }))
-                    })?;
-                    if failure == "compose" {
-                        return Err("composition failed".into());
+                }
+                let id = composed.fetch_add(1, Ordering::SeqCst);
+                let state = Arc::new(State {
+                    id,
+                    attempts: AtomicUsize::new(0),
+                    polls: AtomicUsize::new(0),
+                    _mark: Mark(format!("export:{name}:{id}"), log.clone()),
+                });
+                context.export(state.clone())?;
+                let action = Mark(format!("engine:{name}:{id}"), log.clone());
+                context.graph.node(name, move |_: i64| action.touch())?;
+                let factory = Mark(format!("factory:{name}:{id}"), log.clone());
+                let activations = activations.clone();
+                let log = log.clone();
+                context.activate(move || {
+                    factory.touch();
+                    activations.lock().unwrap().push((name.into(), state.id));
+                    let attempt = state.attempts.fetch_add(1, Ordering::SeqCst);
+                    if failure == "activation" && name == "b" && attempt == 0 {
+                        return Err("nth activation failed".into());
                     }
-                    Ok(())
-                }),
-            })?;
+                    Ok(Box::new(Source {
+                        state: state.clone(),
+                        _mark: Mark(format!("producer:{name}:{id}"), log.clone()),
+                    }))
+                })?;
+                if failure == "compose" {
+                    return Err("composition failed".into());
+                }
+                Ok(())
+            })
+            .after(if name == "b" {
+                vec![Key::new("plugin", "a")]
+            } else {
+                vec![]
+            })
+            .route(if failure == "route" {
+                vec!["missing".into()]
+            } else {
+                vec![]
+            })
+            .register(registrar)?;
         }
         Ok(())
     }

@@ -1,7 +1,5 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor};
-use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
-};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Kernel, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 
@@ -44,50 +42,34 @@ impl PluginInstance for Fixture {
                 id: "y".into(),
                 contract: y.clone(),
             })?;
-            registrar.add(GraphOffer {
-                id: "offer".into(),
-                producer: Key::new("provider", "compose"),
-                unit: "service".into(),
-                contract: Key::new("provider", "x"),
-            })?;
-            registrar.add(ContractRequirement {
-                id: "request".into(),
-                consumer: Key::new("provider", "consumer"),
-                contract: Key::new("provider", "y"),
-            })?;
-            registrar.add(Contribution {
-                id: "consumer".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(|_| Ok(())),
-            })?;
+
+            Contribution::new("consumer", |_| Ok(()))
+                .import("request", Key::new("provider", "y"))
+                .register(registrar)?;
         }
         let case = self.0;
-        registrar.add(Contribution {
-            id: "compose".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                match case {
-                    Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
-                        graph.node("service", |v: i64| v + 1)?;
-                        graph.implements("service", &x)?;
-                        if matches!(case, Case::DifferentAdvertisedContract) {
-                            graph.implements("service", &y)?;
-                        }
-                    }
-                    Case::UnofferedGraphConflict => {
-                        graph.node("service", |v: i64| v.to_string())?;
-                        graph.implements(
-                            "service",
-                            &contract("example/x@1", DeclaredValue::local::<String>()),
-                        )?;
+        Contribution::new("compose", move |context| {
+            let graph = &mut *context.graph;
+            match case {
+                Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
+                    graph.node("service", |v: i64| v + 1)?;
+                    graph.implements("service", &x)?;
+                    if matches!(case, Case::DifferentAdvertisedContract) {
+                        graph.implements("service", &y)?;
                     }
                 }
-                Ok(())
-            }),
+                Case::UnofferedGraphConflict => {
+                    graph.node("service", |v: i64| v.to_string())?;
+                    graph.implements(
+                        "service",
+                        &contract("example/x@1", DeclaredValue::local::<String>()),
+                    )?;
+                }
+            }
+            Ok(())
         })
+        .offer("offer", "service", Key::new("provider", "x"))
+        .register(registrar)
     }
 }
 
@@ -153,22 +135,14 @@ impl PluginInstance for HonestOffer {
             id: "x".into(),
             contract: contract("example/x@1", DeclaredValue::local::<i64>()),
         })?;
-        registrar.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: "service".into(),
-            contract: Key::new("provider", "x"),
-        })?;
-        registrar.add(Contribution {
-            id: "main".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(|context| {
-                let graph = &mut *context.graph;
-                graph.node("service", |v: i64| v + 1)?;
-                Ok(())
-            }),
+
+        Contribution::new("main", |context| {
+            let graph = &mut *context.graph;
+            graph.node("service", |v: i64| v + 1)?;
+            Ok(())
         })
+        .offer("offer", "service", Key::new("provider", "x"))
+        .register(registrar)
     }
 }
 
@@ -176,20 +150,17 @@ struct ForeignClaim;
 
 impl PluginInstance for ForeignClaim {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "mutate".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: Vec::new(),
-            compose: Box::new(|context| {
-                let graph = &mut *context.graph;
-                graph
-                    .implements(
-                        "service",
-                        &contract("example/x@1", DeclaredValue::local::<i64>()),
-                    )
-                    .map_err(Into::into)
-            }),
+        Contribution::new("mutate", |context| {
+            let graph = &mut *context.graph;
+            graph
+                .implements(
+                    "service",
+                    &contract("example/x@1", DeclaredValue::local::<i64>()),
+                )
+                .map_err(Into::into)
         })
+        .after(vec![Key::new("provider", "main")])
+        .register(registrar)
     }
 }
 
