@@ -1,7 +1,7 @@
 //! Wake-driven published generations reuse the existing producer and wake protocol.
 use phenix_graph::{LocalExecutor, Value};
 use phenix_kernel::host::{Candidate, KernelHost, LifecycleError};
-use phenix_kernel::{BuildOptions, Contribution, DriverError, Key, Notice, Producer, WakeHandle};
+use phenix_kernel::{BuildOptions, Contribution, DriverError, Kernel, Key, Notice, Producer, WakeHandle};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,6 +22,7 @@ struct Channel {
     registrations: Arc<AtomicUsize>,
     accepts_wake: bool,
     eager_wake: bool,
+    shutdown_on_register: bool,
     drop_gate: Option<Arc<(Barrier, Barrier)>>,
 }
 
@@ -33,6 +34,7 @@ impl Channel {
             registrations: Arc::new(AtomicUsize::new(0)),
             accepts_wake: true,
             eager_wake: false,
+            shutdown_on_register: false,
             drop_gate: None,
         }
     }
@@ -72,6 +74,9 @@ impl Producer for Source {
         self.0.registrations.fetch_add(1, Ordering::SeqCst);
         if ready || self.0.eager_wake {
             wake.wake();
+        }
+        if self.0.shutdown_on_register {
+            wake.shutdown();
         }
         true
     }
@@ -345,4 +350,70 @@ fn host_mutex_is_released_while_driver_waits_drains_and_handles_events() {
     wake.shutdown();
     driver.join().unwrap();
     assert_eq!(outcome.unwrap(), (next.epoch(), true));
+}
+
+#[test]
+fn static_driver_preserves_graceful_shutdown_before_and_during_registration() {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    let mut source = Channel::new();
+    source.shutdown_on_register = true;
+    plugins.load(&key, source).unwrap();
+    let mut kernel =
+        Kernel::build("static-shutdown", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    kernel.start().unwrap();
+
+    let shutdown_during = WakeHandle::default();
+    assert!(kernel.run_until(&shutdown_during, |_| panic!("poll after shutdown")).is_ok());
+    assert!(shutdown_during.is_shutdown());
+
+    let already_shut_down = WakeHandle::default();
+    already_shut_down.shutdown();
+    assert!(
+        kernel
+            .run_until(&already_shut_down, |_| panic!("poll after shutdown"))
+            .is_ok()
+    );
+}
+
+#[test]
+fn busy_reloadable_reactor_can_observe_shutdown_without_waiting() {
+    let mut catalog = PluginCatalog::new();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
+    let wake = WakeHandle::default();
+    let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
+    let source = Channel::new();
+    for n in 0..100 {
+        source.push(n);
+    }
+    let stage = host.plugins().prepare_load(&key, source).unwrap();
+    let candidate = prepare(&host, vec![stage]).unwrap();
+    host.publish(candidate).unwrap();
+
+    let mut handled = 0;
+    for _ in 0..10 {
+        if wake.is_shutdown() {
+            break;
+        }
+        let _token = wake.version();
+        let generation = host.active().unwrap();
+        let events = generation.drain(2);
+        assert!(!events.is_empty(), "source unexpectedly became idle");
+        for event in events {
+            assert!(event.result.unwrap().success());
+            handled += 1;
+            if handled == 3 {
+                wake.shutdown();
+            }
+        }
+        // No idle path or wait_since call occurs; the shutdown predicate
+        // must still terminate a continuously busy host loop.
+    }
+    assert_eq!(handled, 4);
+    assert!(wake.is_shutdown());
 }
