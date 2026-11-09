@@ -6,19 +6,15 @@ use std::sync::Arc;
 struct Increment;
 impl PluginInstance for Increment {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|context| {
+        Contribution::new("main", |context| {
                 let graph = &mut *context.graph;
                 let node = graph.node("increment", |x: i64| x + 1)?;
                 let input = graph.expose_input("request", node.inlet())?;
                 graph.expose_output("reply", node.output())?;
                 graph.trigger("run", [input])?;
                 Ok(())
-            }),
-        })
+            })
+.register(registrar)
     }
 }
 fn main() -> Result<(), phenix_kernel::CallbackError> {
