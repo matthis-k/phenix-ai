@@ -173,7 +173,9 @@ pub mod observer {
                     let log = reads.clone();
                     let node = graph
                         .node("refresh_config", move |_notice: phenix_storage::Notice| {
-                            log.lock().unwrap().push(kv.get_revisioned("default").map_err(text));
+                            log.lock()
+                                .unwrap()
+                                .push(kv.get_revisioned("default").map_err(text));
                         })
                         .map_err(text)?;
                     let input = graph.expose_input("config_notice", node.inlet())?;
