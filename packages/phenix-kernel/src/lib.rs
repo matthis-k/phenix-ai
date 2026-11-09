@@ -541,7 +541,7 @@ pub struct Kernel {
     engine: Engine,
     producers: Mutex<ProducerState>,
     artifacts: BTreeMap<Key, BuildArtifacts>,
-    _leases: Vec<ContributionHandle<Contribution>>,
+    _leases: Vec<ContributionHandle<RegisteredComposer>>,
     keys: Vec<Key>,
     started: bool,
     routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
