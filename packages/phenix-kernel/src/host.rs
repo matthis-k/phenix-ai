@@ -3,7 +3,10 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
-use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
+use crate::{
+    BuildOptions, CallbackError, DriverError, Kernel, Key, ProducerEvent, ResolutionError,
+    StartError, WakeHandle,
+};
 use phenix_graph::{Engine, Executor, InputAddr, NodeAction, TriggerSelector, Value, WaveReport};
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
 use std::sync::Arc;
@@ -13,6 +16,7 @@ pub enum LifecycleError {
     Plugins(Failure),
     Build(Box<ResolutionError>),
     Start(StartError),
+    Driver(DriverError),
     Binding(CallbackError),
     StaleCandidate,
     EpochExhausted,
@@ -24,6 +28,7 @@ impl std::fmt::Display for LifecycleError {
             Self::Plugins(error) => write!(f, "plugin batch: {error}"),
             Self::Build(error) => write!(f, "generation build: {error}"),
             Self::Start(error) => write!(f, "producer start: {error}"),
+            Self::Driver(error) => write!(f, "producer wake registration: {error}"),
             Self::Binding(error) => write!(f, "generation binding: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
@@ -37,6 +42,7 @@ impl std::error::Error for LifecycleError {
             Self::Plugins(error) => Some(error),
             Self::Build(error) => Some(error.as_ref()),
             Self::Start(error) => Some(error),
+            Self::Driver(error) => Some(error),
             Self::Binding(error) => Some(error.as_ref()),
             _ => None,
         }
@@ -132,6 +138,7 @@ pub struct KernelHost {
     epoch: u64,
     plugins: PluginSet,
     active: Option<Arc<Generation>>,
+    wake: Option<WakeHandle>,
 }
 
 impl KernelHost {
@@ -141,6 +148,16 @@ impl KernelHost {
             epoch: 0,
             plugins,
             active: None,
+            wake: None,
+        }
+    }
+
+    /// Opt in to a wake-driven published-generation host. Producers must support
+    /// wake registration; the embedding application owns the event loop and thread.
+    pub fn with_wake(plugins: PluginSet, wake: WakeHandle) -> Self {
+        Self {
+            wake: Some(wake),
+            ..Self::new(plugins)
         }
     }
 
@@ -177,6 +194,11 @@ impl KernelHost {
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
         bind(&Binding { kernel: &kernel }).map_err(LifecycleError::Binding)?;
         kernel.start().map_err(LifecycleError::Start)?;
+        if let Some(wake) = &self.wake {
+            kernel
+                .register_wake(wake.clone())
+                .map_err(LifecycleError::Driver)?;
+        }
         Ok(Candidate {
             host: self.identity.clone(),
             expected_epoch: self.epoch,
@@ -209,6 +231,11 @@ impl KernelHost {
         drop(old);
         self.epoch = candidate.generation.epoch;
         let previous = self.active.replace(candidate.generation.clone());
+        // Wake the reactor after the new active pointer becomes visible but
+        // before running arbitrary old-producer destructors.
+        if let Some(wake) = &self.wake {
+            wake.wake();
+        }
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
