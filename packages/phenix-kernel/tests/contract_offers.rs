@@ -1,6 +1,6 @@
 use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
@@ -30,23 +30,10 @@ impl PluginInstance for Plugin {
             id: "definition".into(),
             contract: contract(),
         })?;
-        into.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: if self.missing_path {
-                "absent"
-            } else {
-                "service"
-            }
-            .into(),
-            contract: Key::new("provider", "definition"),
-        })?;
-        into.add(ContractRequirement {
-            id: "request".into(),
-            consumer: Key::new("provider", "consumer"),
-            contract: Key::new("provider", "definition"),
-        })?;
+        
+        
         Contribution::new("consumer", |_| Ok(()))
+.import("request", Key::new("provider", "definition"))
 .register(into)?;
         let config = *self;
         Contribution::new("main", move |context| {
@@ -68,6 +55,12 @@ impl PluginInstance for Plugin {
                 }
                 Ok(())
             })
+.offer("offer", if self.missing_path {
+                "absent"
+            } else {
+                "service"
+            }
+            , Key::new("provider", "definition"))
 .register(into)?;
         if self.late_edit {
             Contribution::new("late", |context| {
