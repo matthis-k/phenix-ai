@@ -1,7 +1,9 @@
 //! Wake-driven published generations reuse the existing producer and wake protocol.
 use phenix_graph::{LocalExecutor, Value};
 use phenix_kernel::host::{Candidate, KernelHost, LifecycleError};
-use phenix_kernel::{BuildOptions, Contribution, DriverError, Kernel, Key, Notice, Producer, WakeHandle};
+use phenix_kernel::{
+    BuildOptions, Contribution, DriverError, Kernel, Key, Notice, Producer, WakeHandle,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -362,12 +364,20 @@ fn static_driver_preserves_graceful_shutdown_before_and_during_registration() {
     let mut source = Channel::new();
     source.shutdown_on_register = true;
     plugins.load(&key, source).unwrap();
-    let mut kernel =
-        Kernel::build("static-shutdown", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build(
+        "static-shutdown",
+        plugins.snapshots(),
+        Arc::new(LocalExecutor),
+    )
+    .unwrap();
     kernel.start().unwrap();
 
     let shutdown_during = WakeHandle::default();
-    assert!(kernel.run_until(&shutdown_during, |_| panic!("poll after shutdown")).is_ok());
+    assert!(
+        kernel
+            .run_until(&shutdown_during, |_| panic!("poll after shutdown"))
+            .is_ok()
+    );
     assert!(shutdown_during.is_shutdown());
 
     let already_shut_down = WakeHandle::default();
