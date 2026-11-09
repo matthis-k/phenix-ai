@@ -15,16 +15,15 @@ explicit `Identity` resolves it to a stable `ScopeId`. Missing projects/sessions
 are errors, never fallbacks to user storage. Resource names use a namespace and
 path, for example `phenix.agent/settings`.
 
-`ResourceOffer::new(id, ResourceRequest::new(spec, operations).with_atomic_cas())`
-can explicitly require atomic compare-and-exchange. SQL requests accept SQL
-operations and subscription; KV requests accept read, write, delete and
-subscription. CAS requires write authority. Since scoped `Kv::get` always returns
-a revision, **every KV `Read` request implicitly requires the atomic-CAS/revision
-capability**, even without `with_atomic_cas()`. Both declared capabilities during
-prepare and actual backend capabilities during activation must satisfy this.
-`ResourceRequest::requires_atomic_cas()` exposes that effective requirement.
-Legacy unversioned-only backends remain usable through low-level `Session::get`,
-not through scoped reads.
+`ResourceOffer::new(id, ResourceRequest::new(spec, operations)
+.require(Capability::CompareExchange))` explicitly requests atomic conditional
+writes; CAS requires `Write`. `RevisionedRead` and `AtomicReadMany` require
+`Read` and are independently supported. `CellSpec::request(operations)`
+automatically declares `AtomicReadMany`. SQL requests accept SQL operations
+and subscription; KV requests accept read, write, delete and subscription.
+`Kv::get` returns the plain value for any readable typed KV backend, while
+`Kv::get_revisioned` explicitly needs revision support. Declared features are
+verified in prepare and actual features again before activation publishes views.
 
 ## Host Flow
 
@@ -120,7 +119,8 @@ activation themselves; old views remain usable until dropped.
 
 Use `view.user().config::<T>(name)`, or `project()?` / `session()?` followed by
 `config`, `data`, `state`, `cache` or `runtime`. `Kv::get` returns
-`Result<Option<Revisioned<T>>>`; read `.value` and retain `.revision` for
+`Result<Option<T>>`; `Kv::get_revisioned` returns `Option<Revisioned<T>>`.
+Read `.value` and retain `.revision` for
 `compare_exchange(key, Some(&revision), &value)`. Use `None` to insert only when
 absent. CAS delegates to the session/backend and is never emulated with get/put.
 `put`, `delete` and `changed` retain their explicit operation requirements.
