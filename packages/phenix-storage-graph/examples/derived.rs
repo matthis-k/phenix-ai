@@ -84,11 +84,7 @@ pub mod writer {
             offers(registrar, &[Operation::Write])?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
-            registrar.add(Contribution {
-                id: "writer".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("writer", move |context| {
                     let graph = &mut *context.graph;
                     let project = storage
                         .get()
@@ -107,8 +103,8 @@ pub mod writer {
                     let input = graph.expose_input("update", node.inlet())?;
                     graph.trigger("write", [input])?;
                     Ok(())
-                }),
-            })
+                })
+.register(registrar)
         }
     }
 }
@@ -139,11 +135,7 @@ pub mod reader {
             let name = self.name;
             let storage = self.storage.clone();
             let state = self.state.clone();
-            registrar.add(Contribution {
-                id: name.into(),
-                requires: vec![],
-                routes: vec![format!("{name}.values.refresh")],
-                compose: Box::new(move |context| {
+            Contribution::new(name, move |context| {
                     let graph = &mut *context.graph;
                     let (a, b) = storage
                         .get()
@@ -180,8 +172,9 @@ pub mod reader {
                     context.export(queries)?;
                     context.activate(move || observation.activate().map_err(Into::into))?;
                     Ok(())
-                }),
-            })
+                })
+.route(vec![format!("{name}.values.refresh")])
+.register(registrar)
         }
     }
 }
