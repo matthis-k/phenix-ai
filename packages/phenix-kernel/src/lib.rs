@@ -170,14 +170,14 @@ impl Contribution {
     }
 
     /// Explicit composition dependency, besides dependencies inferred by imports.
-    pub fn after(mut self, dependency: Key) -> Self {
-        self.requires.push(dependency);
+    pub fn after(mut self, dependencies: impl IntoIterator<Item = Key>) -> Self {
+        self.requires.extend(dependencies);
         self
     }
 
-    /// A trigger this composer's optional producer may emit.
-    pub fn route(mut self, route: impl Into<String>) -> Self {
-        self.routes.push(route.into());
+    /// Trigger names this composer's optional producer may emit.
+    pub fn route<S: Into<String>>(mut self, routes: impl IntoIterator<Item = S>) -> Self {
+        self.routes.extend(routes.into_iter().map(Into::into));
         self
     }
 
