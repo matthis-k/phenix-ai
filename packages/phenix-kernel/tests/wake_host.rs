@@ -139,7 +139,9 @@ fn wake_token_does_not_lose_prior_wake_and_shutdown_is_sticky() {
 #[test]
 fn candidate_registers_before_publication_but_admits_only_afterward() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("service", |c: Channel| Ok(Service(c))).unwrap();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
     let wake = WakeHandle::default();
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
     let channel = Channel::new();
@@ -158,13 +160,20 @@ fn candidate_registers_before_publication_but_admits_only_afterward() {
     let events = active.drain(8);
     assert_eq!(events.len(), 1);
     assert!(events[0].result.as_ref().unwrap().success());
-    assert!(active.fire("run", vec![Value::local(1_i64)]).unwrap().success());
+    assert!(
+        active
+            .fire("run", vec![Value::local(1_i64)])
+            .unwrap()
+            .success()
+    );
 }
 
 #[test]
 fn failed_wake_registration_keeps_old_generation_active() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("service", |c: Channel| Ok(Service(c))).unwrap();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
     let wake = WakeHandle::default();
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
     let original = Channel::new();
@@ -174,7 +183,10 @@ fn failed_wake_registration_keeps_old_generation_active() {
 
     let mut unsupported = Channel::new();
     unsupported.accepts_wake = false;
-    let stage = host.plugins().prepare_reload(&key, unsupported.clone()).unwrap();
+    let stage = host
+        .plugins()
+        .prepare_reload(&key, unsupported.clone())
+        .unwrap();
     match prepare(&host, vec![stage]) {
         Err(LifecycleError::Driver(DriverError::UnsupportedWake { producer })) => {
             assert_eq!(producer, Key::new("service", "main"));
@@ -201,7 +213,9 @@ fn failed_wake_registration_keeps_old_generation_active() {
 #[test]
 fn reload_wakes_a_driver_that_previously_observed_the_old_generation() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("service", |c: Channel| Ok(Service(c))).unwrap();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
     let wake = WakeHandle::default();
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
     let original = Channel::new();
@@ -212,7 +226,10 @@ fn reload_wakes_a_driver_that_previously_observed_the_old_generation() {
     let observed = host.active().unwrap();
 
     let replacement = Channel::new();
-    let stage = host.plugins().prepare_reload(&key, replacement.clone()).unwrap();
+    let stage = host
+        .plugins()
+        .prepare_reload(&key, replacement.clone())
+        .unwrap();
     let candidate = prepare(&host, vec![stage]).unwrap();
     let new = host.publish(candidate).unwrap();
 
@@ -223,13 +240,19 @@ fn reload_wakes_a_driver_that_previously_observed_the_old_generation() {
     assert_eq!(events.len(), 1);
     assert!(events[0].result.as_ref().unwrap().success());
     assert!(Arc::ptr_eq(&new, &host.active().unwrap()));
-    assert!(old.fire("run", vec![Value::local(1_i64)]).unwrap().success());
+    assert!(
+        old.fire("run", vec![Value::local(1_i64)])
+            .unwrap()
+            .success()
+    );
 }
 
 #[test]
 fn publication_signal_precedes_stalled_old_producer_destruction() {
     let mut catalog = PluginCatalog::new();
-    let key = catalog.register("service", |c: Channel| Ok(Service(c))).unwrap();
+    let key = catalog
+        .register("service", |c: Channel| Ok(Service(c)))
+        .unwrap();
     let wake = WakeHandle::default();
     let mut host = KernelHost::with_wake(catalog.instance(), wake.clone());
 
@@ -246,7 +269,10 @@ fn publication_signal_precedes_stalled_old_producer_destruction() {
     let new_key = key.clone();
     let worker = thread::spawn(move || {
         let mut host = publishing.lock().unwrap();
-        let stage = host.plugins().prepare_reload(&new_key, Channel::new()).unwrap();
+        let stage = host
+            .plugins()
+            .prepare_reload(&new_key, Channel::new())
+            .unwrap();
         let candidate = prepare(&host, vec![stage]).unwrap();
         host.publish(candidate).unwrap()
     });
