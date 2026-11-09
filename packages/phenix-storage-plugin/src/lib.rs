@@ -1392,7 +1392,7 @@ mod tests {
             prepared.requirements().iter().collect::<Vec<_>>(),
             vec![(&id, &ResourceKind::TypedKv(TextCodec.schema()))]
         );
-        assert!(prepared.requirements().requests()["writer"][0].1.atomic_cas);
+        assert!(prepared.requirements().requests()["writer"][0].1.required.contains(&Capability::CompareExchange));
         let address = Address::parse("store://main/settings").unwrap();
         assert_eq!(
             prepared.bindings()[&id].target,
