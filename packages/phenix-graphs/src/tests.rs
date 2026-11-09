@@ -1,14 +1,15 @@
 use super::*;
+use crate::*;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-
-const I: &str = <i64 as ContractValue>::SCHEMA;
-const S: &str = <String as ContractValue>::SCHEMA;
 
 fn wrap(id: u16, name: &'static str) -> NodeTemplate {
     node(
         id,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |ctx| {
@@ -26,11 +27,11 @@ fn join2(id: u16, name: &'static str) -> NodeTemplate {
         vec![all(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
             ],
         )],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |ctx| {
@@ -53,12 +54,12 @@ fn join3(id: u16, name: &'static str) -> NodeTemplate {
         vec![all(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
-                slot(2, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
+                slot(2, String::wire_schema(), BufferMode::Deferred),
             ],
         )],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |ctx| {
@@ -160,24 +161,33 @@ fn diamond(omit_right: bool) -> Engine {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::FreshPerInvocation,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? + 1)]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? * 2)]),
     ));
     g.add_node(node(
         3,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |ctx| {
@@ -193,11 +203,11 @@ fn diamond(omit_right: bool) -> Engine {
         vec![all(
             0,
             vec![
-                slot(0, I, BufferMode::Deferred),
-                slot(1, I, BufferMode::Deferred),
+                slot(0, i64::wire_schema(), BufferMode::Deferred),
+                slot(1, i64::wire_schema(), BufferMode::Deferred),
             ],
         )],
-        vec![out(0, I)],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? + ctx.arg::<i64>(1)?)]),
@@ -240,24 +250,33 @@ fn repeated_invocations_join_only_their_own_cohorts() {
     // execute twice within the same wave, and assigns a fresh cohort to each.
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I), out(1, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema()), out(1, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![emit(0, 1_i64), emit(1, 2_i64)]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::FreshPerInvocation,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)?)]),
     ));
     g.add_node(node(
         3,
-        vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -267,8 +286,11 @@ fn repeated_invocations_join_only_their_own_cohorts() {
     ));
     g.add_node(node(
         4,
-        vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -281,11 +303,11 @@ fn repeated_invocations_join_only_their_own_cohorts() {
         vec![all(
             0,
             vec![
-                slot(0, I, BufferMode::Deferred),
-                slot(1, I, BufferMode::Deferred),
+                slot(0, i64::wire_schema(), BufferMode::Deferred),
+                slot(1, i64::wire_schema(), BufferMode::Deferred),
             ],
         )],
-        vec![out(0, I)],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -339,15 +361,22 @@ fn deferred_keeps_three_values_and_immediate_rejects_a_batch() {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I), out(1, I), out(2, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![
+                out(0, i64::wire_schema()),
+                out(1, i64::wire_schema()),
+                out(2, i64::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |_ctx| Ok(vec![emit(0, 10_i64), emit(1, 20_i64), emit(2, 30_i64)]),
         ));
         g.add_node(node(
             2,
-            vec![all(0, vec![slot(0, I, mode)])],
+            vec![all(0, vec![slot(0, i64::wire_schema(), mode)])],
             vec![],
             CohortMode::Inherit,
             vec![],
@@ -384,8 +413,11 @@ fn sequential_waves_and_store_reads_do_not_activate_nodes() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![ResourceNeed {
             key: "counter",
@@ -432,11 +464,11 @@ fn any_policy_consumes_only_an_available_candidate() {
         vec![any(
             0,
             vec![
-                slot(0, I, BufferMode::Deferred),
-                slot(1, I, BufferMode::Deferred),
+                slot(0, i64::wire_schema(), BufferMode::Deferred),
+                slot(1, i64::wire_schema(), BufferMode::Deferred),
             ],
         )],
-        vec![out(0, I)],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -466,16 +498,22 @@ fn external_triggers_are_explicit_and_store_resources_never_trigger() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)?)]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![ResourceNeed {
             key: "bias",
@@ -517,15 +555,21 @@ fn multiple_invocations_are_distinct_but_serial() {
     let p = Arc::clone(&peak);
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I), out(1, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema()), out(1, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![emit(0, 1_i64), emit(1, 2_i64)]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+        )],
         vec![],
         CohortMode::Inherit,
         vec![],
@@ -556,23 +600,32 @@ fn queued_producer_must_execute_before_wave_settles() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? + 1)]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? * 2)]),
     ));
     g.add_node(node(
         3,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
         vec![],
         CohortMode::Inherit,
         vec![],
@@ -669,11 +722,14 @@ fn expression_nested_joins_show_reused_subexpressions() {
 
 fn any_two_graph(enabled: &[u16]) -> Engine {
     let mut g = FlatGraphBuilder::default();
-    let outputs: Vec<_> = (0..3).map(|i| out(i, S)).collect();
+    let outputs: Vec<_> = (0..3).map(|i| out(i, String::wire_schema())).collect();
     let subset = enabled.to_vec();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
         outputs,
         CohortMode::Inherit,
         vec![],
@@ -684,12 +740,14 @@ fn any_two_graph(enabled: &[u16]) -> Engine {
         vec![
             custom_policy(
                 0,
-                (0..3).map(|i| slot(i, S, BufferMode::Deferred)).collect(),
+                (0..3)
+                    .map(|i| slot(i, String::wire_schema(), BufferMode::Deferred))
+                    .collect(),
                 AnyTwoOfThree,
             )
             .args(|values| AnyTwoOfThree::build_args(values.selected)),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -753,8 +811,15 @@ fn pair_then_third_graph(emit_a: bool, emit_b: bool, emit_third: bool) -> Engine
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S), out(1, S), out(2, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![
+            out(0, String::wire_schema()),
+            out(1, String::wire_schema()),
+            out(2, String::wire_schema()),
+        ],
         CohortMode::Inherit,
         vec![],
         move |_ctx| {
@@ -771,8 +836,11 @@ fn pair_then_third_graph(emit_a: bool, emit_b: bool, emit_third: bool) -> Engine
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |_ctx| {
@@ -789,15 +857,15 @@ fn pair_then_third_graph(emit_a: bool, emit_b: bool, emit_third: bool) -> Engine
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -948,8 +1016,11 @@ fn colored_graph(color_wait: bool, c_emits: bool, c_fails: bool) -> Engine {
     g.add_node(wrap(3, "e"));
     g.add_node(node(
         4,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         move |ctx| {
@@ -967,8 +1038,8 @@ fn colored_graph(color_wait: bool, c_emits: bool, c_fails: bool) -> Engine {
         custom_policy(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
             ],
             WhenUpstreamSettles::new(PreferPairOnce),
         )
@@ -977,8 +1048,8 @@ fn colored_graph(color_wait: bool, c_emits: bool, c_fails: bool) -> Engine {
         custom_policy(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
             ],
             PreferPairOnce,
         )
@@ -987,7 +1058,7 @@ fn colored_graph(color_wait: bool, c_emits: bool, c_fails: bool) -> Engine {
     g.add_node(node(
         5,
         vec![chooser],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -1087,8 +1158,11 @@ fn all_policy_with_coloring_still_errors_when_required_branch_skips() {
     g.add_node(wrap(2, "b"));
     g.add_node(node(
         3,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![]),
@@ -1098,12 +1172,12 @@ fn all_policy_with_coloring_still_errors_when_required_branch_skips() {
         vec![custom_policy(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
             ],
             WhenUpstreamSettles::new(AllSameCohort),
         )],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![emit(0, "bad".to_owned())]),
@@ -1133,24 +1207,33 @@ fn values_from_different_cohorts_cannot_satisfy_two_slot_policy() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S), out(1, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![emit(0, "a".to_owned()), emit(1, "b".to_owned())]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::FreshPerInvocation,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
     ));
     g.add_node(node(
         3,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -1160,12 +1243,12 @@ fn values_from_different_cohorts_cannot_satisfy_two_slot_policy() {
         vec![custom_policy(
             0,
             vec![
-                slot(0, S, BufferMode::Deferred),
-                slot(1, S, BufferMode::Deferred),
+                slot(0, String::wire_schema(), BufferMode::Deferred),
+                slot(1, String::wire_schema(), BufferMode::Deferred),
             ],
             WhenUpstreamSettles::new(AllSameCohort),
         )],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Err("must not execute".into()),
@@ -1209,14 +1292,14 @@ fn colored_wait_does_not_hold_for_dormant_unadmitted_branch() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
                 WhenUpstreamSettles::new(PreferPairOnce),
             )
             .args(decode_chosen),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -1257,15 +1340,15 @@ fn third_slot_arriving_first_is_buffered_until_pair_stage() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -1303,8 +1386,15 @@ fn incomplete_stage_history_does_not_leak_between_independent_waves() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S), out(1, S), out(2, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![
+            out(0, String::wire_schema()),
+            out(1, String::wire_schema()),
+            out(2, String::wire_schema()),
+        ],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -1322,15 +1412,15 @@ fn incomplete_stage_history_does_not_leak_between_independent_waves() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -1367,15 +1457,15 @@ fn consumed_pair_still_owes_third_after_output_is_consumed_downstream() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -1408,8 +1498,11 @@ fn independently_colored_cohorts_settle_missing_third_once_only() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S), out(1, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| {
@@ -1421,8 +1514,15 @@ fn independently_colored_cohorts_settle_missing_third_once_only() {
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-        vec![out(0, S), out(1, S), out(2, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+        )],
+        vec![
+            out(0, String::wire_schema()),
+            out(1, String::wire_schema()),
+            out(2, String::wire_schema()),
+        ],
         CohortMode::FreshPerInvocation,
         vec![],
         |ctx| {
@@ -1443,15 +1543,15 @@ fn independently_colored_cohorts_settle_missing_third_once_only() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -1495,16 +1595,22 @@ fn repeated_cohorts_remain_independent_under_colored_upstream_gate() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S), out(1, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![emit(0, "x".to_owned()), emit(1, "y".to_owned())]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::FreshPerInvocation,
         vec![],
         |ctx| Ok(vec![emit(0, format!("a({})", ctx.arg::<String>(0)?))]),
@@ -1518,14 +1624,14 @@ fn repeated_cohorts_remain_independent_under_colored_upstream_gate() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
                 WhenUpstreamSettles::new(PreferPairOnce),
             )
             .args(decode_chosen),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -1585,8 +1691,11 @@ fn invalid_typed_args_rejects_atomically_and_reports_once() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-        vec![out(0, S)],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -1596,12 +1705,12 @@ fn invalid_typed_args_rejects_atomically_and_reports_once() {
         vec![
             custom_policy(
                 0,
-                vec![slot(0, S, BufferMode::Deferred)],
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
                 RejectPreparedPolicy,
             )
             .validate(|_| Err("invalid Args constructor".into())),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Err("must not execute".into()),
@@ -1647,14 +1756,14 @@ fn colored_multiport_trigger_admission_reserves_upstream_before_downstream() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
                 WhenUpstreamSettles::new(PreferPairOnce),
             )
             .args(decode_chosen),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| {
@@ -1696,15 +1805,15 @@ fn failed_pair_invocation_cannot_admit_its_third_phase() {
             custom_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
-                    slot(2, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
+                    slot(2, String::wire_schema(), BufferMode::Deferred),
                 ],
                 PairThenThird,
             )
             .args(decode_pair_stage),
         ],
-        vec![out(0, S)],
+        vec![out(0, String::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -1741,15 +1850,21 @@ fn graph_rejects_edge_type_mismatch() {
     let mut g = FlatGraphBuilder::default();
     g.add_node(node(
         1,
-        vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-        vec![out(0, I)],
+        vec![all(
+            0,
+            vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+        )],
+        vec![out(0, i64::wire_schema())],
         CohortMode::Inherit,
         vec![],
         |_ctx| Ok(vec![]),
     ));
     g.add_node(node(
         2,
-        vec![all(0, vec![slot(0, String::SCHEMA, BufferMode::Immediate)])],
+        vec![all(
+            0,
+            vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+        )],
         vec![],
         CohortMode::Inherit,
         vec![],
@@ -1772,14 +1887,14 @@ mod conformance {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-    const S: &str = <String as ContractValue>::SCHEMA;
-    const I: &str = <i64 as ContractValue>::SCHEMA;
-
     fn passthrough(id: u16) -> NodeTemplate {
         node(
             id,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -1788,8 +1903,11 @@ mod conformance {
     fn scalar(id: u16) -> NodeTemplate {
         node(
             id,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)?)]),
@@ -1821,7 +1939,10 @@ mod conformance {
             1,
             vec![custom_policy(
                 0,
-                vec![slot(0, S, mode), slot(1, S, mode)],
+                vec![
+                    slot(0, String::wire_schema(), mode),
+                    slot(1, String::wire_schema(), mode),
+                ],
                 policy,
             )],
             vec![],
@@ -1838,14 +1959,14 @@ mod conformance {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(OptionalPair),
                 )
                 .args(decode_optional_pair),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -1867,17 +1988,25 @@ mod conformance {
         module.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(node_id, 0, 0))],
         );
-        module.output(0, "output", S, ModuleOutputSource::Node(output(node_id, 0)));
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(node_id, 0)),
+        );
         module.build()
     }
     fn named_transform(id: u16, label: &'static str) -> NodeTemplate {
         node(
             id,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             move |ctx| Ok(vec![emit(0, format!("{label}({})", ctx.arg::<String>(0)?))]),
@@ -1891,8 +2020,18 @@ mod conformance {
             ModuleOutputSource::Node(output(1, 0)),
             ModuleInputTarget::Node(input(2, 0, 0)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         module.build()
     }
     fn two_step_root(id: &str, module_definition: Option<&str>) -> ModuleEntry {
@@ -1902,7 +2041,7 @@ mod conformance {
             root.input(
                 0,
                 "input",
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Instance {
                     name: "pipeline".into(),
                     port: 0,
@@ -1911,7 +2050,7 @@ mod conformance {
             root.output(
                 0,
                 "output",
-                S,
+                String::wire_schema(),
                 ModuleOutputSource::Instance {
                     name: "pipeline".into(),
                     port: 0,
@@ -1924,8 +2063,18 @@ mod conformance {
                 ModuleOutputSource::Node(output(1, 0)),
                 ModuleInputTarget::Node(input(2, 0, 0)),
             );
-            root.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-            root.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+            root.input(
+                0,
+                "input",
+                String::wire_schema(),
+                vec![ModuleInputTarget::Node(input(1, 0, 0))],
+            );
+            root.output(
+                0,
+                "output",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(2, 0)),
+            );
         }
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         root.build()
@@ -1938,8 +2087,11 @@ mod conformance {
         let mut module = ModuleDefBuilder::new(id);
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -1949,8 +2101,11 @@ mod conformance {
         ));
         module.node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             move |ctx| {
@@ -1969,11 +2124,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -1995,8 +2150,18 @@ mod conformance {
             ModuleOutputSource::Node(output(2, 0)),
             ModuleInputTarget::Node(input(3, 0, 1)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", S, ModuleOutputSource::Node(output(3, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(3, 0)),
+        );
         module.build()
     }
     fn root_for_module(id: &str, definition: &str) -> ModuleEntry {
@@ -2005,7 +2170,7 @@ mod conformance {
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "work".into(),
                 port: 0,
@@ -2014,7 +2179,7 @@ mod conformance {
         root.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "work".into(),
                 port: 0,
@@ -2055,8 +2220,18 @@ mod conformance {
             },
             ModuleInputTarget::Node(input(4, 0, 0)),
         );
-        root.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        root.output(0, "output", S, ModuleOutputSource::Node(output(4, 0)));
+        root.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        root.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(4, 0)),
+        );
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         root.build()
     }
@@ -2067,7 +2242,7 @@ mod conformance {
             root.input(
                 0,
                 "input",
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Instance {
                     name: "inner".into(),
                     port: 0,
@@ -2076,7 +2251,7 @@ mod conformance {
             root.output(
                 0,
                 "output",
-                S,
+                String::wire_schema(),
                 ModuleOutputSource::Instance {
                     name: "inner".into(),
                     port: 0,
@@ -2084,8 +2259,18 @@ mod conformance {
             );
         } else {
             root.node(passthrough(1));
-            root.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-            root.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+            root.input(
+                0,
+                "input",
+                String::wire_schema(),
+                vec![ModuleInputTarget::Node(input(1, 0, 0))],
+            );
+            root.output(
+                0,
+                "output",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(1, 0)),
+            );
         }
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         root.build()
@@ -2100,15 +2285,25 @@ mod conformance {
     fn named_lookup_graph() -> Arc<Graph> {
         let mut deepest = ModuleDefBuilder::new("deepest-definition");
         deepest.add_named("execute", passthrough(1)).unwrap();
-        deepest.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        deepest.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        deepest.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        deepest.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
 
         let mut inner = ModuleDefBuilder::new("inner-definition");
         inner.try_instance("deep", "deepest-definition").unwrap();
         inner.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "deep".into(),
                 port: 0,
@@ -2117,7 +2312,7 @@ mod conformance {
         inner.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "deep".into(),
                 port: 0,
@@ -2127,8 +2322,18 @@ mod conformance {
         let mut process = ModuleDefBuilder::new("process-definition");
         process.add_named("validate", passthrough(1)).unwrap();
         process.try_instance("inner", "inner-definition").unwrap();
-        process.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        process.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        process.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        process.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
 
         let mut root = ModuleDefBuilder::new("lookup-root");
         let mut source = passthrough(1);
@@ -2148,10 +2353,15 @@ mod conformance {
         root.input(
             0,
             "incoming",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
-        root.output(0, "outgoing", S, ModuleOutputSource::Node(output(1, 0)));
+        root.output(
+            0,
+            "outgoing",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         compile_module(
             vec![
@@ -2235,7 +2445,7 @@ mod conformance {
     fn malformed_value_payload_is_rejected_without_panic() {
         assert!(
             Value {
-                schema: I,
+                schema: i64::wire_schema(),
                 bytes: vec![1, 2],
                 local: None
             }
@@ -2244,7 +2454,7 @@ mod conformance {
         );
         assert!(
             Value {
-                schema: S,
+                schema: String::wire_schema(),
                 bytes: vec![0xff, 0xfe],
                 local: None
             }
@@ -2308,8 +2518,14 @@ mod conformance {
         g.add_node(node(
             1,
             vec![
-                all(0, vec![slot(0, S, BufferMode::Immediate)]),
-                all(0, vec![slot(1, S, BufferMode::Immediate)]),
+                all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                ),
+                all(
+                    0,
+                    vec![slot(1, String::wire_schema(), BufferMode::Immediate)],
+                ),
             ],
             vec![],
             CohortMode::Inherit,
@@ -2339,8 +2555,8 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Immediate),
-                    slot(0, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Immediate),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
             vec![],
@@ -2355,8 +2571,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_| Ok(vec![]),
@@ -2517,14 +2736,24 @@ mod conformance {
         root.input(
             0,
             "shared",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Node(input(1, 0, 0)),
                 ModuleInputTarget::Node(input(2, 0, 0)),
             ],
         );
-        root.output(0, "first", S, ModuleOutputSource::Node(output(1, 0)));
-        root.output(1, "second", S, ModuleOutputSource::Node(output(2, 0)));
+        root.output(
+            0,
+            "first",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
+        root.output(
+            1,
+            "second",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let graph = compile_module(vec![root.build()], "fanout-root").unwrap();
         let report = Deployment::new(graph.clone())
@@ -2550,7 +2779,7 @@ mod conformance {
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Instance {
                     name: "left".into(),
@@ -2565,7 +2794,7 @@ mod conformance {
         root.output(
             0,
             "left",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "left".into(),
                 port: 0,
@@ -2574,7 +2803,7 @@ mod conformance {
         root.output(
             1,
             "right",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "right".into(),
                 port: 0,
@@ -2622,8 +2851,11 @@ mod conformance {
         let create = Arc::clone(&factories);
         definition.node(node_with_factory(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             move || {
@@ -2635,15 +2867,25 @@ mod conformance {
                 }
             },
         ));
-        definition.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        definition.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        definition.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        definition.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         let mut root = ModuleDefBuilder::new("stateful-root");
         root.try_instance("left", "stateful").unwrap();
         root.try_instance("right", "stateful").unwrap();
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Instance {
                     name: "left".into(),
@@ -2658,7 +2900,7 @@ mod conformance {
         root.output(
             0,
             "left",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "left".into(),
                 port: 0,
@@ -2667,7 +2909,7 @@ mod conformance {
         root.output(
             1,
             "right",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "right".into(),
                 port: 0,
@@ -2723,9 +2965,13 @@ mod conformance {
             1,
             vec![Port::all(
                 0,
-                vec![InputSlot::new(0, S, BufferMode::Immediate)],
+                vec![InputSlot::new(
+                    0,
+                    String::wire_schema(),
+                    BufferMode::Immediate,
+                )],
             )],
-            vec![OutputSlot::new(0, S)],
+            vec![OutputSlot::new(0, String::wire_schema())],
             || {
                 let count = Arc::new(AtomicUsize::new(0));
                 move |_ctx| {
@@ -2735,8 +2981,18 @@ mod conformance {
             },
         )))
         .unwrap();
-        root.input(0, "in", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        root.output(0, "out", S, ModuleOutputSource::Node(output(1, 0)));
+        root.input(
+            0,
+            "in",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        root.output(
+            0,
+            "out",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let mut catalog = ModuleCatalog::new();
         catalog.add(root.build()).unwrap();
@@ -2793,7 +3049,7 @@ mod conformance {
         outer.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "step".into(),
                 port: 0,
@@ -2802,7 +3058,7 @@ mod conformance {
         outer.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "step".into(),
                 port: 0,
@@ -2849,8 +3105,18 @@ mod conformance {
             ModuleOutputSource::Node(output(1, 0)),
             ModuleInputTarget::Node(input(2, 0, 0)),
         );
-        reverse.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        reverse.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+        reverse.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        reverse.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         let a = compile_module(
             vec![forward, two_step_root("root-a", Some("process"))],
             "root-a",
@@ -3000,8 +3266,18 @@ mod conformance {
     fn module_instances_can_select_distinct_compatible_definitions() {
         let mut plain = ModuleDefBuilder::new("plain-definition");
         plain.node(passthrough(1));
-        plain.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        plain.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        plain.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        plain.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
 
         let mut decorated = ModuleDefBuilder::new("decorated-definition");
         decorated.node(passthrough(8));
@@ -3010,8 +3286,11 @@ mod conformance {
                 "decorated-node",
                 node(
                     1,
-                    vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                    vec![out(0, S)],
+                    vec![all(
+                        0,
+                        vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                    )],
+                    vec![out(0, String::wire_schema())],
                     CohortMode::Inherit,
                     vec![],
                     |ctx| {
@@ -3031,8 +3310,18 @@ mod conformance {
                 port: 0,
             },
         );
-        decorated.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        decorated.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        decorated.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        decorated.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
 
         let mut root = ModuleDefBuilder::new("composition-root");
         root.try_instance("decorated", "decorated-definition")
@@ -3041,7 +3330,7 @@ mod conformance {
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Instance {
                     name: "decorated".into(),
@@ -3056,7 +3345,7 @@ mod conformance {
         root.output(
             0,
             "decorated",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "decorated".into(),
                 port: 0,
@@ -3065,7 +3354,7 @@ mod conformance {
         root.output(
             1,
             "plain",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "plain".into(),
                 port: 0,
@@ -3146,14 +3435,20 @@ mod conformance {
         assert_eq!(process.expanded_node_count(), 2);
         let inputs: Vec<_> = process
             .input_ports()
-            .map(|port| (port.id(), port.name().to_owned(), port.schema()))
+            .map(|port| (port.id(), port.name().to_owned(), port.schema().clone()))
             .collect();
         let outputs: Vec<_> = process
             .output_ports()
-            .map(|port| (port.id(), port.name().to_owned(), port.schema()))
+            .map(|port| (port.id(), port.name().to_owned(), port.schema().clone()))
             .collect();
-        assert_eq!(inputs, vec![(0, "input".to_string(), S)]);
-        assert_eq!(outputs, vec![(0, "output".to_string(), S)]);
+        assert_eq!(
+            inputs,
+            vec![(0, "input".to_string(), String::wire_schema())]
+        );
+        assert_eq!(
+            outputs,
+            vec![(0, "output".to_string(), String::wire_schema())]
+        );
 
         let Some(Node(absolute_validate)) = graph.find("process/validate") else {
             panic!("qualified node must resolve");
@@ -3364,8 +3659,18 @@ mod conformance {
             ModuleOutputSource::Node(output(3, 0)),
             ModuleInputTarget::Node(input(4, 0, 0)),
         );
-        flat.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        flat.output(0, "output", S, ModuleOutputSource::Node(output(4, 0)));
+        flat.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        flat.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(4, 0)),
+        );
         flat.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let flat = compile_module(vec![flat.build()], "connected-flat").unwrap();
 
@@ -3422,8 +3727,18 @@ mod conformance {
             },
             ModuleInputTarget::Node(input(3, 0, 0)),
         );
-        modular.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        modular.output(0, "output", S, ModuleOutputSource::Node(output(3, 0)));
+        modular.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        modular.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(3, 0)),
+        );
         modular.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
 
         let mut flat = ModuleDefBuilder::new("unified-flat");
@@ -3438,8 +3753,18 @@ mod conformance {
             ModuleOutputSource::Node(output(2, 0)),
             ModuleInputTarget::Node(input(3, 0, 0)),
         );
-        flat.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        flat.output(0, "output", S, ModuleOutputSource::Node(output(3, 0)));
+        flat.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        flat.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(3, 0)),
+        );
         flat.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
 
         let modular = compile_module(
@@ -3533,8 +3858,11 @@ mod conformance {
         let mut module = ModuleDefBuilder::new("independent-branches");
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -3545,8 +3873,11 @@ mod conformance {
         module.node(named_transform(2, "published"));
         module.node(node(
             3,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_ctx| Err("independent failure".into()),
@@ -3559,15 +3890,25 @@ mod conformance {
             ModuleOutputSource::Node(output(1, 1)),
             ModuleInputTarget::Node(input(3, 0, 0)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "good", S, ModuleOutputSource::Node(output(2, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "good",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         let mut root = ModuleDefBuilder::new("independent-root");
         root.try_instance("branches", "independent-branches")
             .unwrap();
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "branches".into(),
                 port: 0,
@@ -3576,7 +3917,7 @@ mod conformance {
         root.output(
             0,
             "good",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "branches".into(),
                 port: 0,
@@ -3609,8 +3950,11 @@ mod conformance {
         let mut definition = ModuleDefBuilder::new("conditional");
         definition.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -3622,14 +3966,24 @@ mod conformance {
                 }
             },
         ));
-        definition.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        definition.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        definition.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        definition.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         let mut wrapper = ModuleDefBuilder::new("wrapper");
         wrapper.try_instance("inner", "conditional").unwrap();
         wrapper.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "inner".into(),
                 port: 0,
@@ -3638,7 +3992,7 @@ mod conformance {
         wrapper.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "inner".into(),
                 port: 0,
@@ -3650,7 +4004,7 @@ mod conformance {
         root.input(
             0,
             "bad",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "failing".into(),
                 port: 0,
@@ -3659,7 +4013,7 @@ mod conformance {
         root.input(
             1,
             "good",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "passing".into(),
                 port: 0,
@@ -3668,7 +4022,7 @@ mod conformance {
         root.output(
             0,
             "bad-output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "failing".into(),
                 port: 0,
@@ -3677,7 +4031,7 @@ mod conformance {
         root.output(
             1,
             "good-output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "passing".into(),
                 port: 0,
@@ -3726,8 +4080,11 @@ mod conformance {
             });
             module.node(node(
                 1,
-                vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                vec![out(0, S), out(1, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                )],
+                vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 move |_ctx| {
@@ -3741,9 +4098,24 @@ mod conformance {
                     }
                 },
             ));
-            module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-            module.output(0, "first", S, ModuleOutputSource::Node(output(1, 0)));
-            module.output(1, "second", S, ModuleOutputSource::Node(output(1, 1)));
+            module.input(
+                0,
+                "input",
+                String::wire_schema(),
+                vec![ModuleInputTarget::Node(input(1, 0, 0))],
+            );
+            module.output(
+                0,
+                "first",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(1, 0)),
+            );
+            module.output(
+                1,
+                "second",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(1, 1)),
+            );
             let definition_id = if invalid_schema {
                 "bad-output"
             } else {
@@ -3769,13 +4141,18 @@ mod conformance {
             root.input(
                 0,
                 "input",
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Instance {
                     name: "work".into(),
                     port: 0,
                 }],
             );
-            root.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+            root.output(
+                0,
+                "output",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(2, 0)),
+            );
             root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
             let graph = compile_module(vec![module.build(), root.build()], "atomic-root").unwrap();
             let report = Deployment::new(graph)
@@ -3803,8 +4180,11 @@ mod conformance {
         let mut module = ModuleDefBuilder::new("early-output");
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_ctx| {
@@ -3829,8 +4209,18 @@ mod conformance {
             ModuleOutputSource::Node(output(3, 0)),
             ModuleInputTarget::Node(input(4, 0, 0)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         let mut root = ModuleDefBuilder::new("early-root");
         root.node(named_transform(9, "consumer"));
         root.node(named_transform(10, "consumer-two"));
@@ -3852,14 +4242,24 @@ mod conformance {
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "work".into(),
                 port: 0,
             }],
         );
-        root.output(0, "output", S, ModuleOutputSource::Node(output(9, 0)));
-        root.output(1, "output-two", S, ModuleOutputSource::Node(output(10, 0)));
+        root.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(9, 0)),
+        );
+        root.output(
+            1,
+            "output-two",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(10, 0)),
+        );
         root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let graph = compile_module(vec![module.build(), root.build()], "early-root").unwrap();
         let report = Deployment::new(graph.clone())
@@ -3900,8 +4300,11 @@ mod conformance {
         let mut module = ModuleDefBuilder::new("optional-pair");
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -3912,8 +4315,11 @@ mod conformance {
         module.node(optional_pair_node(2));
         module.node(node(
             3,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -3937,8 +4343,18 @@ mod conformance {
             ModuleOutputSource::Node(output(3, 0)),
             ModuleInputTarget::Node(input(2, 0, 1)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", S, ModuleOutputSource::Node(output(2, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         let graph = compile_module(
             vec![
                 module.build(),
@@ -3987,11 +4403,11 @@ mod conformance {
             vec![any(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -4003,20 +4419,30 @@ mod conformance {
                 Ok(vec![emit(0, format!("selected({value})"))])
             },
         ));
-        module.input(0, "first", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
+        module.input(
+            0,
+            "first",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
         module.input(
             1,
             "second",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 1))],
         );
-        module.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         let mut root = ModuleDefBuilder::new("any-root");
         root.try_instance("work", "any-input").unwrap();
         root.input(
             0,
             "first",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "work".into(),
                 port: 0,
@@ -4025,7 +4451,7 @@ mod conformance {
         root.input(
             1,
             "second",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "work".into(),
                 port: 1,
@@ -4034,7 +4460,7 @@ mod conformance {
         root.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "work".into(),
                 port: 0,
@@ -4092,15 +4518,15 @@ mod conformance {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
-                        slot(2, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
+                        slot(2, String::wire_schema(), BufferMode::Deferred),
                     ],
                     PairThenThird,
                 )
                 .args(decode_pair_stage),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -4114,18 +4540,23 @@ mod conformance {
             module.input(
                 slot,
                 ["left", "right", "third"][slot as usize],
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Node(input(1, 0, slot))],
             );
         }
-        module.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         let mut root = ModuleDefBuilder::new("staged-root");
         root.try_instance("work", "staged").unwrap();
         for port in 0..3 {
             root.input(
                 port,
                 ["left", "right", "third"][port as usize],
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Instance {
                     name: "work".into(),
                     port,
@@ -4135,7 +4566,7 @@ mod conformance {
         root.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "work".into(),
                 port: 0,
@@ -4196,16 +4627,22 @@ mod conformance {
         let mut module = ModuleDefBuilder::new("fresh-pair");
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
         ));
         module.node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::FreshPerInvocation,
             vec![],
             |ctx| {
@@ -4223,11 +4660,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -4257,14 +4694,24 @@ mod conformance {
             ModuleOutputSource::Node(output(4, 0)),
             ModuleInputTarget::Node(input(5, 0, 1)),
         );
-        module.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", S, ModuleOutputSource::Node(output(5, 0)));
+        module.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(5, 0)),
+        );
         let mut root = ModuleDefBuilder::new("fresh-root");
         root.try_instance("work", "fresh-pair").unwrap();
         root.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "work".into(),
                 port: 0,
@@ -4273,7 +4720,7 @@ mod conformance {
         root.output(
             0,
             "output",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "work".into(),
                 port: 0,
@@ -4314,8 +4761,11 @@ mod conformance {
         let mut module = ModuleDefBuilder::new("feedback-module");
         module.node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -4331,8 +4781,18 @@ mod conformance {
             ModuleOutputSource::Node(output(1, 0)),
             ModuleInputTarget::Node(input(1, 0, 0)),
         );
-        module.input(0, "input", I, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        module.output(0, "output", I, ModuleOutputSource::Node(output(1, 0)));
+        module.input(
+            0,
+            "input",
+            i64::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        module.output(
+            0,
+            "output",
+            i64::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let graph = compile_module(vec![module.build()], "feedback-module").unwrap();
         let report = Deployment::new(graph.clone())
@@ -4375,11 +4835,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -4388,8 +4848,18 @@ mod conformance {
             ModuleOutputSource::Node(output(1, 0)),
             ModuleInputTarget::Node(input(1, 0, 1)),
         );
-        cycle.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        cycle.output(0, "output", S, ModuleOutputSource::Node(output(1, 0)));
+        cycle.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        cycle.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         cycle.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         assert!(compile_module(vec![cycle.build()], "data-cycle").is_ok());
     }
@@ -4439,7 +4909,7 @@ mod conformance {
         large.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Node(input(1, 0, 0));
                 (CompileLimits::default().max_work + 1) as usize
@@ -4482,7 +4952,12 @@ mod conformance {
 
         let mut bypass = ModuleDefBuilder::new("bypass-root");
         bypass.try_instance("private", "identity").unwrap();
-        bypass.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
+        bypass.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
         bypass.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         assert!(
             compile_module(
@@ -4496,7 +4971,12 @@ mod conformance {
 
         let mut output_bypass = ModuleDefBuilder::new("output-bypass-root");
         output_bypass.try_instance("private", "identity").unwrap();
-        output_bypass.output(0, "hidden", S, ModuleOutputSource::Node(output(1, 0)));
+        output_bypass.output(
+            0,
+            "hidden",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         assert!(
             compile_module(
                 vec![passthrough_module("identity", 1), output_bypass.build()],
@@ -4515,17 +4995,22 @@ mod conformance {
         child.input(
             0,
             "incoming",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
-        child.output(0, "outgoing", S, ModuleOutputSource::Node(output(1, 0)));
+        child.output(
+            0,
+            "outgoing",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         child.trigger(42, vec![ModuleTriggerTarget::PublicInput(0)]);
         let mut root = ModuleDefBuilder::new("parent-entry");
         root.try_instance("child", "child-with-entry").unwrap();
         root.input(
             0,
             "incoming",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "child".into(),
                 port: 0,
@@ -4566,7 +5051,12 @@ mod conformance {
 
         let mut wrong_schema = ModuleDefBuilder::new("wrong-schema-root");
         wrong_schema.node(passthrough(1));
-        wrong_schema.input(0, "input", I, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
+        wrong_schema.input(
+            0,
+            "input",
+            i64::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
         assert!(
             compile_module(vec![wrong_schema.build()], "wrong-schema-root")
                 .err()
@@ -4576,7 +5066,12 @@ mod conformance {
 
         let mut bad_export = ModuleDefBuilder::new("bad-export-root");
         bad_export.node(passthrough(1));
-        bad_export.output(0, "output", S, ModuleOutputSource::Node(output(1, 9)));
+        bad_export.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 9)),
+        );
         assert!(
             compile_module(vec![bad_export.build()], "bad-export-root")
                 .err()
@@ -4630,7 +5125,7 @@ mod conformance {
         module.input(
             0,
             "value",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::NodeNamed {
                 node: "typed".into(),
                 port: "run".into(),
@@ -4640,7 +5135,7 @@ mod conformance {
         module.output(
             0,
             "value",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::NodeNamed {
                 node: "typed".into(),
                 output: "value".into(),
@@ -4742,7 +5237,7 @@ mod conformance {
         module.input(
             0,
             "value",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::NodeNamed {
                 node: "typed".into(),
                 port: "run".into(),
@@ -4788,8 +5283,8 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
             vec![],
@@ -4834,8 +5329,8 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
             vec![],
@@ -5015,16 +5510,36 @@ mod conformance {
     fn module_compiler_rejects_duplicate_public_names_unknown_defs_and_ports() {
         let mut duplicate_name = ModuleDefBuilder::new("duplicate-port-root");
         duplicate_name.node(passthrough(1));
-        duplicate_name.input(0, "same", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        duplicate_name.output(0, "same", S, ModuleOutputSource::Node(output(1, 0)));
+        duplicate_name.input(
+            0,
+            "same",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        duplicate_name.output(
+            0,
+            "same",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         // Input and output live in different name namespaces.  This is an
         // identity interface rather than a duplicate declaration.
         assert!(compile_module(vec![duplicate_name.build()], "duplicate-port-root").is_ok());
 
         let mut duplicate_inputs = ModuleDefBuilder::new("duplicate-input-root");
         duplicate_inputs.node(passthrough(1));
-        duplicate_inputs.input(0, "same", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        duplicate_inputs.input(1, "same", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
+        duplicate_inputs.input(
+            0,
+            "same",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        duplicate_inputs.input(
+            1,
+            "same",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
         assert!(
             compile_module(vec![duplicate_inputs.build()], "duplicate-input-root")
                 .err()
@@ -5048,7 +5563,7 @@ mod conformance {
         unknown_port.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "child".into(),
                 port: 88,
@@ -5128,7 +5643,10 @@ mod conformance {
         let mut direct = ModuleDefBuilder::new("duplicate-targets");
         direct.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
             vec![],
             CohortMode::Inherit,
             vec![],
@@ -5137,7 +5655,7 @@ mod conformance {
         direct.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Node(input(1, 0, 0)),
                 ModuleInputTarget::Node(input(1, 0, 0)),
@@ -5153,19 +5671,27 @@ mod conformance {
         let mut child = ModuleDefBuilder::new("target-child");
         child.node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
             vec![],
             CohortMode::Inherit,
             vec![],
             |_ctx| Ok(vec![]),
         ));
-        child.input(0, "input", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
+        child.input(
+            0,
+            "input",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
         let mut parent = ModuleDefBuilder::new("nested-duplicate-targets");
         parent.try_instance("child", "target-child").unwrap();
         parent.input(
             0,
             "input",
-            S,
+            String::wire_schema(),
             vec![
                 ModuleInputTarget::Instance {
                     name: "child".into(),
@@ -5504,14 +6030,14 @@ mod conformance {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                     RejectBadCohort,
                 )
                 .validate(validate_cohort),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -5593,10 +6119,16 @@ mod conformance {
         g.add_node(node(
             1,
             vec![
-                all(0, vec![slot(0, S, BufferMode::Immediate)]),
-                all(1, vec![slot(0, S, BufferMode::Immediate)]),
+                all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                ),
+                all(
+                    1,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                ),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -5630,8 +6162,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![any(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![any(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -5671,8 +6206,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_| Ok(vec![]),
@@ -5700,8 +6238,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             f,
@@ -5769,8 +6310,15 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S), out(2, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![
+                out(0, String::wire_schema()),
+                out(1, String::wire_schema()),
+                out(2, String::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |_| {
@@ -5806,8 +6354,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             move |ctx| {
@@ -5842,7 +6393,10 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
             vec![],
             CohortMode::Inherit,
             vec![],
@@ -5871,8 +6425,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![ResourceNeed {
                 key: "counter",
@@ -5916,8 +6473,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![ResourceNeed {
                 key: "counter",
@@ -6015,8 +6575,11 @@ mod conformance {
             let mut graph = FlatGraphBuilder::default();
             graph.add_node(node(
                 1,
-                vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                vec![out(0, S), out(1, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                )],
+                vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |_ctx| {
@@ -6029,8 +6592,11 @@ mod conformance {
             graph.add_node(passthrough(2));
             graph.add_node(node(
                 3,
-                vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                vec![out(0, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                )],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 move |_ctx| {
@@ -6046,14 +6612,14 @@ mod conformance {
                 vec![custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(ObserveColors {
                         seen: Arc::clone(&seen),
                     }),
                 )],
-                vec![out(0, S)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -6118,8 +6684,11 @@ mod conformance {
         let mut graph = FlatGraphBuilder::default();
         graph.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6135,12 +6704,12 @@ mod conformance {
             2,
             vec![custom_policy(
                 0,
-                vec![slot(0, S, BufferMode::Deferred)],
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
                 WhenUpstreamSettles::new(ObserveColors {
                     seen: Arc::clone(&seen),
                 }),
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -6209,8 +6778,15 @@ mod conformance {
         let mut graph = FlatGraphBuilder::default();
         graph.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S), out(2, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![
+                out(0, String::wire_schema()),
+                out(1, String::wire_schema()),
+                out(2, String::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |_| {
@@ -6223,16 +6799,22 @@ mod conformance {
         ));
         graph.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_| Ok(vec![]),
         ));
         graph.add_node(node(
             3,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_| Err("candidate failed".into()),
@@ -6242,7 +6824,9 @@ mod conformance {
             vec![
                 custom_policy(
                     0,
-                    (0..3).map(|id| slot(id, S, BufferMode::Deferred)).collect(),
+                    (0..3)
+                        .map(|id| slot(id, String::wire_schema(), BufferMode::Deferred))
+                        .collect(),
                     WhenUpstreamSettles::new(ObserveAnyTwo {
                         seen: Arc::clone(&seen),
                     }),
@@ -6298,8 +6882,11 @@ mod conformance {
         let mut graph = FlatGraphBuilder::default();
         graph.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6311,8 +6898,11 @@ mod conformance {
         ));
         graph.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6329,11 +6919,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6407,8 +6997,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_ctx| {
@@ -6420,8 +7013,11 @@ mod conformance {
         ));
         g.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |_ctx| Ok(vec![]),
@@ -6482,8 +7078,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::FreshPerInvocation,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -6514,8 +7113,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6550,8 +7152,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6581,16 +7186,22 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
         ));
         g.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6604,8 +7215,11 @@ mod conformance {
         ));
         g.add_node(node(
             3,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, format!("right({})", ctx.arg::<String>(0)?))]),
@@ -6658,8 +7272,15 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S), out(2, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![
+                out(0, String::wire_schema()),
+                out(1, String::wire_schema()),
+                out(2, String::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6702,8 +7323,11 @@ mod conformance {
         for (id, label) in [(1, "a"), (2, "b"), (3, "c")] {
             g.add_node(node(
                 id,
-                vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-                vec![out(0, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+                )],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 move |ctx| Ok(vec![emit(0, format!("{label}({})", ctx.arg::<String>(0)?))]),
@@ -6714,11 +7338,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6769,8 +7393,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6787,11 +7414,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6848,8 +7475,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -6884,11 +7514,11 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -6936,16 +7566,16 @@ mod conformance {
         for i in ids {
             let parents = predecessors[i].len();
             let slots = if i == 1 {
-                vec![slot(0, S, BufferMode::Deferred)]
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)]
             } else {
                 (0..parents)
-                    .map(|j| slot(j as u16, S, BufferMode::Deferred))
+                    .map(|j| slot(j as u16, String::wire_schema(), BufferMode::Deferred))
                     .collect()
             };
             g.add_node(node(
                 i as u16,
                 vec![all(0, slots)],
-                vec![out(0, S)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 move |ctx| {
@@ -7076,8 +7706,11 @@ mod conformance {
         let mut graph = FlatGraphBuilder::default();
         graph.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::FreshPerInvocation,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -7087,8 +7720,8 @@ mod conformance {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
             vec![],
@@ -7165,8 +7798,11 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
-            vec![out(0, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, i64::wire_schema())],
             CohortMode::Inherit,
             vec![ResourceNeed {
                 key: "counter",
@@ -7209,7 +7845,10 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, I, BufferMode::Immediate)])],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Immediate)],
+            )],
             vec![],
             CohortMode::Inherit,
             vec![ResourceNeed {
@@ -7344,8 +7983,15 @@ mod conformance {
         let mut g = FlatGraphBuilder::default();
         g.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S), out(1, S), out(2, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![
+                out(0, String::wire_schema()),
+                out(1, String::wire_schema()),
+                out(2, String::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -7359,8 +8005,11 @@ mod conformance {
         ));
         g.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -7378,15 +8027,15 @@ mod conformance {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
-                        slot(2, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
+                        slot(2, String::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(PairThenThird),
                 )
                 .args(decode_pair_stage),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| match ctx.prepared::<PairStageArgs>()? {
@@ -7401,8 +8050,11 @@ mod conformance {
         ));
         g.add_node(node(
             4,
-            vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, format!("down({})", ctx.arg::<String>(0)?))]),
@@ -7473,9 +8125,6 @@ mod conformance {
 mod partitioned_active_coloring_conformance {
     use super::*;
 
-    const S: &str = <String as ContractValue>::SCHEMA;
-    const I: &str = <i64 as ContractValue>::SCHEMA;
-
     fn component(mut template: NodeTemplate, name: &str) -> NodeTemplate {
         template.id = NodeId(1);
         template.name = Some(name.to_owned());
@@ -7485,8 +8134,8 @@ mod partitioned_active_coloring_conformance {
     fn single_node_module(
         id: &str,
         template: NodeTemplate,
-        inputs: Vec<(u16, &'static str, &'static str, InputAddr)>,
-        outputs: Vec<(u16, &'static str, &'static str, OutputAddr)>,
+        inputs: Vec<(u16, &'static str, Arc<str>, InputAddr)>,
+        outputs: Vec<(u16, &'static str, Arc<str>, OutputAddr)>,
     ) -> ModuleEntry {
         let mut module = ModuleDefBuilder::new(id);
         module.add(template).unwrap();
@@ -7510,8 +8159,11 @@ mod partitioned_active_coloring_conformance {
     fn delayed_nodes(fresh_gate: bool) -> Vec<NodeTemplate> {
         let mut gate = node(
             5,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -7529,8 +8181,15 @@ mod partitioned_active_coloring_conformance {
         vec![
             node(
                 1,
-                vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-                vec![out(0, S), out(1, S), out(2, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+                )],
+                vec![
+                    out(0, String::wire_schema()),
+                    out(1, String::wire_schema()),
+                    out(2, String::wire_schema()),
+                ],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -7544,8 +8203,11 @@ mod partitioned_active_coloring_conformance {
             ),
             node(
                 2,
-                vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                vec![out(0, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                )],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| Ok(vec![emit(0, format!("fast({})", ctx.arg::<String>(0)?))]),
@@ -7555,11 +8217,11 @@ mod partitioned_active_coloring_conformance {
                 vec![all(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                 )],
-                vec![out(0, S)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -7571,8 +8233,11 @@ mod partitioned_active_coloring_conformance {
             ),
             node(
                 4,
-                vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-                vec![out(0, S)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+                )],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| Ok(vec![emit(0, format!("delay({})", ctx.arg::<String>(0)?))]),
@@ -7584,14 +8249,14 @@ mod partitioned_active_coloring_conformance {
                     custom_policy(
                         0,
                         vec![
-                            slot(0, S, BufferMode::Deferred),
-                            slot(1, S, BufferMode::Deferred),
+                            slot(0, String::wire_schema(), BufferMode::Deferred),
+                            slot(1, String::wire_schema(), BufferMode::Deferred),
                         ],
                         WhenUpstreamSettles::new(PreferPairOnce),
                     )
                     .args(decode_chosen),
                 ],
-                vec![out(0, S)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -7628,10 +8293,15 @@ mod partitioned_active_coloring_conformance {
             root.input(
                 0,
                 "request",
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Node(input(1, 0, 0))],
             );
-            root.output(0, "result", S, ModuleOutputSource::Node(output(6, 0)));
+            root.output(
+                0,
+                "result",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(6, 0)),
+            );
             root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
             return compile(vec![root.build()], "delayed-root");
         }
@@ -7645,48 +8315,48 @@ mod partitioned_active_coloring_conformance {
             single_node_module(
                 "source-def",
                 nodes[0].clone(),
-                vec![(0, "request", S, input(1, 0, 0))],
+                vec![(0, "request", String::wire_schema(), input(1, 0, 0))],
                 vec![
-                    (0, "fast", S, output(1, 0)),
-                    (1, "left", S, output(1, 1)),
-                    (2, "slow", S, output(1, 2)),
+                    (0, "fast", String::wire_schema(), output(1, 0)),
+                    (1, "left", String::wire_schema(), output(1, 1)),
+                    (2, "slow", String::wire_schema(), output(1, 2)),
                 ],
             ),
             single_node_module(
                 "fast-def",
                 nodes[1].clone(),
-                vec![(0, "request", S, input(1, 0, 0))],
-                vec![(0, "value", S, output(1, 0))],
+                vec![(0, "request", String::wire_schema(), input(1, 0, 0))],
+                vec![(0, "value", String::wire_schema(), output(1, 0))],
             ),
             single_node_module(
                 "join-def",
                 nodes[2].clone(),
                 vec![
-                    (0, "left", S, input(1, 0, 0)),
-                    (1, "right", S, input(1, 0, 1)),
+                    (0, "left", String::wire_schema(), input(1, 0, 0)),
+                    (1, "right", String::wire_schema(), input(1, 0, 1)),
                 ],
-                vec![(0, "value", S, output(1, 0))],
+                vec![(0, "value", String::wire_schema(), output(1, 0))],
             ),
             single_node_module(
                 "delay-def",
                 nodes[3].clone(),
-                vec![(0, "request", S, input(1, 0, 0))],
-                vec![(0, "value", S, output(1, 0))],
+                vec![(0, "request", String::wire_schema(), input(1, 0, 0))],
+                vec![(0, "value", String::wire_schema(), output(1, 0))],
             ),
             single_node_module(
                 "gate-def",
                 nodes[4].clone(),
-                vec![(0, "request", S, input(1, 0, 0))],
-                vec![(0, "value", S, output(1, 0))],
+                vec![(0, "request", String::wire_schema(), input(1, 0, 0))],
+                vec![(0, "value", String::wire_schema(), output(1, 0))],
             ),
             single_node_module(
                 "choose-def",
                 nodes[5].clone(),
                 vec![
-                    (0, "slow", S, input(1, 0, 0)),
-                    (1, "fast", S, input(1, 0, 1)),
+                    (0, "slow", String::wire_schema(), input(1, 0, 0)),
+                    (1, "fast", String::wire_schema(), input(1, 0, 1)),
                 ],
-                vec![(0, "result", S, output(1, 0))],
+                vec![(0, "result", String::wire_schema(), output(1, 0))],
             ),
         ];
         let mut pipeline = ModuleDefBuilder::new("delayed-pipeline");
@@ -7707,7 +8377,7 @@ mod partitioned_active_coloring_conformance {
             pipeline.input(
                 port,
                 name,
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Instance {
                     name: target.0.into(),
                     port: target.1,
@@ -7717,7 +8387,7 @@ mod partitioned_active_coloring_conformance {
         pipeline.output(
             0,
             "result",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "choose".into(),
                 port: 0,
@@ -7746,7 +8416,7 @@ mod partitioned_active_coloring_conformance {
         root.input(
             0,
             "request",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "source".into(),
                 port: 0,
@@ -7755,7 +8425,7 @@ mod partitioned_active_coloring_conformance {
         root.output(
             0,
             "result",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "pipeline".into(),
                 port: 0,
@@ -7834,16 +8504,22 @@ mod partitioned_active_coloring_conformance {
         vec![
             node(
                 1,
-                vec![all(0, vec![slot(0, S, BufferMode::Deferred)])],
-                vec![out(0, S), out(1, I)],
+                vec![all(
+                    0,
+                    vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+                )],
+                vec![out(0, String::wire_schema()), out(1, i64::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?), emit(1, 0_i64)]),
             ),
             node(
                 2,
-                vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
-                vec![out(0, I), out(1, I)],
+                vec![all(
+                    0,
+                    vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+                )],
+                vec![out(0, i64::wire_schema()), out(1, i64::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -7860,12 +8536,12 @@ mod partitioned_active_coloring_conformance {
                 vec![Port::new(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, I, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, i64::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(LatestOnce),
                 )],
-                vec![out(0, S)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![],
                 |ctx| {
@@ -7896,10 +8572,15 @@ mod partitioned_active_coloring_conformance {
             root.input(
                 0,
                 "request",
-                S,
+                String::wire_schema(),
                 vec![ModuleInputTarget::Node(input(1, 0, 0))],
             );
-            root.output(0, "result", S, ModuleOutputSource::Node(output(3, 0)));
+            root.output(
+                0,
+                "result",
+                String::wire_schema(),
+                ModuleOutputSource::Node(output(3, 0)),
+            );
             root.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
             return compile(vec![root.build()], "feedback-root");
         }
@@ -7912,14 +8593,32 @@ mod partitioned_active_coloring_conformance {
         let source = single_node_module(
             "feedback-source",
             nodes[0].clone(),
-            vec![(0, "request", S, input(1, 0, 0))],
-            vec![(0, "source", S, output(1, 0)), (1, "seed", I, output(1, 1))],
+            vec![(0, "request", String::wire_schema(), input(1, 0, 0))],
+            vec![
+                (0, "source", String::wire_schema(), output(1, 0)),
+                (1, "seed", i64::wire_schema(), output(1, 1)),
+            ],
         );
         let mut loop_module = ModuleDefBuilder::new("feedback-loop");
         loop_module.add(nodes[1].clone()).unwrap();
-        loop_module.input(0, "seed", I, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        loop_module.output(0, "feedback", I, ModuleOutputSource::Node(output(1, 0)));
-        loop_module.output(1, "latest", I, ModuleOutputSource::Node(output(1, 1)));
+        loop_module.input(
+            0,
+            "seed",
+            i64::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        loop_module.output(
+            0,
+            "feedback",
+            i64::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
+        loop_module.output(
+            1,
+            "latest",
+            i64::wire_schema(),
+            ModuleOutputSource::Node(output(1, 1)),
+        );
         loop_module.connect(
             ModuleOutputSource::Node(output(1, 0)),
             ModuleInputTarget::Node(input(1, 0, 0)),
@@ -7928,10 +8627,10 @@ mod partitioned_active_coloring_conformance {
             "feedback-choose",
             nodes[2].clone(),
             vec![
-                (0, "source", S, input(1, 0, 0)),
-                (1, "latest", I, input(1, 0, 1)),
+                (0, "source", String::wire_schema(), input(1, 0, 0)),
+                (1, "latest", i64::wire_schema(), input(1, 0, 1)),
             ],
-            vec![(0, "result", S, output(1, 0))],
+            vec![(0, "result", String::wire_schema(), output(1, 0))],
         );
         let mut work = ModuleDefBuilder::new("feedback-work");
         work.try_instance("loop", "feedback-loop").unwrap();
@@ -7939,7 +8638,7 @@ mod partitioned_active_coloring_conformance {
         work.input(
             0,
             "source",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "choose".into(),
                 port: 0,
@@ -7948,7 +8647,7 @@ mod partitioned_active_coloring_conformance {
         work.input(
             1,
             "seed",
-            I,
+            i64::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "loop".into(),
                 port: 0,
@@ -7957,7 +8656,7 @@ mod partitioned_active_coloring_conformance {
         work.output(
             0,
             "result",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "choose".into(),
                 port: 0,
@@ -7979,7 +8678,7 @@ mod partitioned_active_coloring_conformance {
         root.input(
             0,
             "request",
-            S,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "source".into(),
                 port: 0,
@@ -7988,7 +8687,7 @@ mod partitioned_active_coloring_conformance {
         root.output(
             0,
             "result",
-            S,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "work".into(),
                 port: 0,
@@ -8074,9 +8773,9 @@ mod partitioned_active_coloring_conformance {
             .published
             .iter()
             .map(|publication| {
-                let value = if publication.value.schema == S {
+                let value = if publication.value.schema == String::wire_schema() {
                     publication.value.get::<String>().unwrap()
-                } else if publication.value.schema == I {
+                } else if publication.value.schema == i64::wire_schema() {
                     publication.value.get::<i64>().unwrap().to_string()
                 } else {
                     format!("schema:{}", publication.value.schema)
@@ -8145,6 +8844,7 @@ mod partitioned_active_coloring_conformance {
         state.next_cohort = next_cohort;
         assert!(state.deliver_batch(incoming));
         while let Some(invocation) = state.ready.pop_front() {
+            state.report.activations += 1;
             state.report.trace.executed.push(invocation.node);
             state
                 .report
@@ -8477,8 +9177,6 @@ mod declarative_consumer_api_tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    const TEXT: &str = <String as ContractValue>::SCHEMA;
-
     // A normal user-defined behavior is an ordinary struct literal, not an
     // enum case registered with the core graph executor.
     struct FormatAction {
@@ -8519,10 +9217,15 @@ mod declarative_consumer_api_tests {
         module.input(
             0,
             "input",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
-        module.output(0, "output", TEXT, ModuleOutputSource::Node(output(1, 0)));
+        module.output(
+            0,
+            "output",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let mut catalog = ModuleCatalog::new();
         catalog.add(module.build()).unwrap();
@@ -8608,9 +9311,13 @@ mod declarative_consumer_api_tests {
             1,
             vec![Port::all(
                 0,
-                vec![InputSlot::new(0, TEXT, BufferMode::Deferred)],
+                vec![InputSlot::new(
+                    0,
+                    String::wire_schema(),
+                    BufferMode::Deferred,
+                )],
             )],
-            vec![OutputSlot::new(0, TEXT)],
+            vec![OutputSlot::new(0, String::wire_schema())],
             || StatefulAction {
                 sequence: AtomicUsize::new(0),
             },
@@ -8646,7 +9353,11 @@ mod declarative_consumer_api_tests {
             vec![
                 Port::new(
                     0,
-                    vec![InputSlot::new(0, TEXT, BufferMode::Deferred)],
+                    vec![InputSlot::new(
+                        0,
+                        String::wire_schema(),
+                        BufferMode::Deferred,
+                    )],
                     PrepareText,
                 )
                 .args(|selected| {
@@ -8659,7 +9370,7 @@ mod declarative_consumer_api_tests {
                     Ok(PreparedText { value })
                 }),
             ],
-            vec![OutputSlot::new(0, TEXT)],
+            vec![OutputSlot::new(0, String::wire_schema())],
             FormatAction {
                 prefix: "denied:".to_owned(),
             },
@@ -8694,7 +9405,7 @@ mod declarative_consumer_api_tests {
         module.input(
             0,
             "start",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
         module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -8717,7 +9428,11 @@ mod declarative_consumer_api_tests {
             1,
             vec![Port::any(
                 0,
-                vec![InputSlot::new(0, TEXT, BufferMode::Deferred)],
+                vec![InputSlot::new(
+                    0,
+                    String::wire_schema(),
+                    BufferMode::Deferred,
+                )],
             )],
             vec![OutputSlot::typed::<()>(0)],
             |_ctx| Ok(vec![emit(0, ())]),
@@ -8727,7 +9442,7 @@ mod declarative_consumer_api_tests {
         module.input(
             0,
             "start",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
         module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -8771,7 +9486,11 @@ mod declarative_consumer_api_tests {
             1,
             vec![Port::new(
                 0,
-                vec![InputSlot::new(0, TEXT, BufferMode::Deferred)],
+                vec![InputSlot::new(
+                    0,
+                    String::wire_schema(),
+                    BufferMode::Deferred,
+                )],
                 InvalidPolicy,
             )],
             vec![OutputSlot::typed::<()>(0)],
@@ -8782,7 +9501,7 @@ mod declarative_consumer_api_tests {
         module.input(
             0,
             "start",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
         module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -8808,7 +9527,6 @@ mod declarative_consumer_api_tests {
 mod echo_agent_poc {
     use super::*;
 
-    const TEXT: &str = <String as ContractValue>::SCHEMA;
     const STATE: &str = "echo-agent.transcript";
 
     #[derive(Default, Debug)]
@@ -8819,7 +9537,11 @@ mod echo_agent_poc {
     fn text_port() -> Vec<Port> {
         vec![Port::all(
             0,
-            vec![InputSlot::new(0, TEXT, BufferMode::Deferred)],
+            vec![InputSlot::new(
+                0,
+                String::wire_schema(),
+                BufferMode::Deferred,
+            )],
         )]
     }
 
@@ -8829,7 +9551,7 @@ mod echo_agent_poc {
         let model = node(
             1,
             text_port(),
-            vec![out(0, TEXT), out(1, TEXT)],
+            vec![out(0, String::wire_schema()), out(1, String::wire_schema())],
             CohortMode::Inherit,
             vec![ResourceNeed {
                 key: STATE,
@@ -8853,11 +9575,21 @@ mod echo_agent_poc {
         m.input(
             0,
             "prompt",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
-        m.output(0, "final", TEXT, ModuleOutputSource::Node(output(1, 0)));
-        m.output(1, "tool_call", TEXT, ModuleOutputSource::Node(output(1, 1)));
+        m.output(
+            0,
+            "final",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
+        m.output(
+            1,
+            "tool_call",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 1)),
+        );
         m.build()
     }
 
@@ -8871,10 +9603,15 @@ mod echo_agent_poc {
         m.input(
             0,
             "call",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Node(input(1, 0, 0))],
         );
-        m.output(0, "result", TEXT, ModuleOutputSource::Node(output(1, 0)));
+        m.output(
+            0,
+            "result",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         m.build()
     }
 
@@ -8887,7 +9624,7 @@ mod echo_agent_poc {
             node(
                 1,
                 text_port(),
-                vec![out(0, TEXT)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![ResourceNeed {
                     key: STATE,
@@ -8910,7 +9647,7 @@ mod echo_agent_poc {
             node(
                 2,
                 text_port(),
-                vec![out(0, TEXT)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![ResourceNeed {
                     key: STATE,
@@ -8937,7 +9674,7 @@ mod echo_agent_poc {
             node(
                 3,
                 text_port(),
-                vec![out(0, TEXT)],
+                vec![out(0, String::wire_schema())],
                 CohortMode::Inherit,
                 vec![ResourceNeed {
                     key: STATE,
@@ -9001,8 +9738,13 @@ mod echo_agent_poc {
             input(3, 0, 0),
         );
 
-        m.input(0, "message", TEXT, vec![ToNode(input(1, 0, 0))]);
-        m.output(0, "reply", TEXT, FromNode(output(3, 0)));
+        m.input(
+            0,
+            "message",
+            String::wire_schema(),
+            vec![ToNode(input(1, 0, 0))],
+        );
+        m.output(0, "reply", String::wire_schema(), FromNode(output(3, 0)));
         m.build()
     }
 
@@ -9012,7 +9754,7 @@ mod echo_agent_poc {
         server.input(
             0,
             "message",
-            TEXT,
+            String::wire_schema(),
             vec![ModuleInputTarget::Instance {
                 name: "agent".into(),
                 port: 0,
@@ -9021,7 +9763,7 @@ mod echo_agent_poc {
         server.output(
             0,
             "reply",
-            TEXT,
+            String::wire_schema(),
             ModuleOutputSource::Instance {
                 name: "agent".into(),
                 port: 0,
@@ -9194,9 +9936,6 @@ macro_rules! wire {
 mod sparse_activity_partition_tests {
     use super::*;
 
-    const S: &str = <String as ContractValue>::SCHEMA;
-    const I: &str = <i64 as ContractValue>::SCHEMA;
-
     fn published_string(report: &WaveReport, from: OutputAddr) -> String {
         report
             .published
@@ -9211,8 +9950,11 @@ mod sparse_activity_partition_tests {
     fn pass(id: u16) -> NodeTemplate {
         node(
             id,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?)]),
@@ -9224,8 +9966,8 @@ mod sparse_activity_partition_tests {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
             vec![],
@@ -9316,11 +10058,11 @@ mod sparse_activity_partition_tests {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9336,14 +10078,14 @@ mod sparse_activity_partition_tests {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(PreferPairOnce),
                 )
                 .args(decode_chosen),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9415,8 +10157,15 @@ mod sparse_activity_partition_tests {
         let mut builder = FlatGraphBuilder::default();
         builder.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, S), out(2, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![
+                out(0, String::wire_schema()),
+                out(1, String::wire_schema()),
+                out(2, String::wire_schema()),
+            ],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9430,8 +10179,11 @@ mod sparse_activity_partition_tests {
         ));
         builder.add_node(node(
             2,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, format!("fast({})", ctx.arg::<String>(0)?))]),
@@ -9441,11 +10193,11 @@ mod sparse_activity_partition_tests {
             vec![all(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, S, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, String::wire_schema(), BufferMode::Deferred),
                 ],
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9457,16 +10209,22 @@ mod sparse_activity_partition_tests {
         ));
         builder.add_node(node(
             4,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, format!("delay1({})", ctx.arg::<String>(0)?))]),
         ));
         builder.add_node(node(
             5,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, format!("delay2({})", ctx.arg::<String>(0)?))]),
@@ -9477,14 +10235,14 @@ mod sparse_activity_partition_tests {
                 custom_policy(
                     0,
                     vec![
-                        slot(0, S, BufferMode::Deferred),
-                        slot(1, S, BufferMode::Deferred),
+                        slot(0, String::wire_schema(), BufferMode::Deferred),
+                        slot(1, String::wire_schema(), BufferMode::Deferred),
                     ],
                     WhenUpstreamSettles::new(PreferPairOnce),
                 )
                 .args(decode_chosen),
             ],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9599,16 +10357,22 @@ mod sparse_activity_partition_tests {
         let mut builder = FlatGraphBuilder::default();
         builder.add_node(node(
             1,
-            vec![all(0, vec![slot(0, S, BufferMode::Immediate)])],
-            vec![out(0, S), out(1, I)],
+            vec![all(
+                0,
+                vec![slot(0, String::wire_schema(), BufferMode::Immediate)],
+            )],
+            vec![out(0, String::wire_schema()), out(1, i64::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| Ok(vec![emit(0, ctx.arg::<String>(0)?), emit(1, 0_i64)]),
         ));
         builder.add_node(node(
             2,
-            vec![all(0, vec![slot(0, I, BufferMode::Deferred)])],
-            vec![out(0, I), out(1, I)],
+            vec![all(
+                0,
+                vec![slot(0, i64::wire_schema(), BufferMode::Deferred)],
+            )],
+            vec![out(0, i64::wire_schema()), out(1, i64::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9630,12 +10394,12 @@ mod sparse_activity_partition_tests {
             vec![Port::with_policy(
                 0,
                 vec![
-                    slot(0, S, BufferMode::Deferred),
-                    slot(1, I, BufferMode::Deferred),
+                    slot(0, String::wire_schema(), BufferMode::Deferred),
+                    slot(1, i64::wire_schema(), BufferMode::Deferred),
                 ],
                 policy,
             )],
-            vec![out(0, S)],
+            vec![out(0, String::wire_schema())],
             CohortMode::Inherit,
             vec![],
             |ctx| {
@@ -9747,7 +10511,7 @@ mod sparse_activity_partition_tests {
             2,
             vec![Port::any_after_upstream(
                 0,
-                vec![slot(0, S, BufferMode::Deferred)],
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
             )],
             vec![],
             CohortMode::Inherit,
@@ -9758,7 +10522,7 @@ mod sparse_activity_partition_tests {
             3,
             vec![custom_policy(
                 0,
-                vec![slot(0, S, BufferMode::Deferred)],
+                vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
                 CountChecks(Arc::clone(&unrelated_checks)),
             )],
             vec![],
@@ -9806,8 +10570,18 @@ mod sparse_activity_partition_tests {
     fn module_partition_index_is_conservative_but_exact_reachability_is_not() {
         let mut inner = ModuleDefBuilder::new("inner");
         inner.node(pass(1));
-        inner.input(0, "in", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        inner.output(0, "out", S, ModuleOutputSource::Node(output(1, 0)));
+        inner.input(
+            0,
+            "in",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        inner.output(
+            0,
+            "out",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(1, 0)),
+        );
         let mut outer = ModuleDefBuilder::new("outer");
         outer.node(pass(1));
         outer.node(pass(2));
@@ -9826,8 +10600,18 @@ mod sparse_activity_partition_tests {
             },
             ModuleInputTarget::Node(input(2, 0, 0)),
         );
-        outer.input(0, "in", S, vec![ModuleInputTarget::Node(input(1, 0, 0))]);
-        outer.output(0, "out", S, ModuleOutputSource::Node(output(2, 0)));
+        outer.input(
+            0,
+            "in",
+            String::wire_schema(),
+            vec![ModuleInputTarget::Node(input(1, 0, 0))],
+        );
+        outer.output(
+            0,
+            "out",
+            String::wire_schema(),
+            ModuleOutputSource::Node(output(2, 0)),
+        );
         outer.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
         let mut catalog = ModuleCatalog::new();
         catalog.add(inner.build()).unwrap();
@@ -9988,10 +10772,16 @@ mod sparse_activity_partition_tests {
                 g.add_node(node(
                     n,
                     vec![
-                        all(0, vec![slot(0, S, BufferMode::Deferred)]),
-                        all(1, vec![slot(0, S, BufferMode::Deferred)]),
+                        all(
+                            0,
+                            vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+                        ),
+                        all(
+                            1,
+                            vec![slot(0, String::wire_schema(), BufferMode::Deferred)],
+                        ),
                     ],
-                    vec![out(0, S)],
+                    vec![out(0, String::wire_schema())],
                     if next() % 4 == 0 {
                         CohortMode::FreshPerInvocation
                     } else {

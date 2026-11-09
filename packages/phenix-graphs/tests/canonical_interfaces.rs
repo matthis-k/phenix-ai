@@ -103,16 +103,16 @@ fn construction_rejects_duplicate_and_invalid_names() {
     let v = DeclaredValue::local::<i64>();
     assert!(
         InterfaceShape::new()
-            .input_slot("run", "value", v)
+            .input_slot("run", "value", v.clone())
             .unwrap()
-            .input_slot("run", "value", v)
+            .input_slot("run", "value", v.clone())
             .is_err()
     );
     assert!(
         InterfaceShape::new()
-            .output("value", v)
+            .output("value", v.clone())
             .unwrap()
-            .output("value", v)
+            .output("value", v.clone())
             .is_err()
     );
     assert!(InterfaceShape::new().input_slot("", "value", v).is_err());
@@ -439,12 +439,8 @@ fn authoring_wire_binding_limits_endpoints_and_connects_nodes_and_nested_modules
     };
     struct Number(i64);
     impl ContractValue for Number {
-        const SCHEMA: &'static str = "test/number";
-        fn schema_descriptor() -> Option<Schema> {
-            Some(Schema::record(
-                Self::SCHEMA,
-                &[("value", false, i64::schema())],
-            ))
+        fn schema() -> Schema {
+            Schema::record("test/number", &[("value", false, i64::schema())])
         }
         fn encode(&self) -> Vec<u8> {
             self.0.encode()

@@ -116,14 +116,13 @@ pub fn mount_offer(
     let lease = snapshot
         .get::<BackendOffer>(offer_id)
         .ok_or(Error::MissingOffer)?;
-    let backend = (lease.open)().map_err(Error::Open)?;
-    registry.mount_boxed(
-        mount_name,
-        Box::new(LeasedBackend {
+    registry.mount_with(mount_name, || -> Result<Box<dyn Backend>, Error> {
+        let backend = (lease.open)().map_err(Error::Open)?;
+        Ok(Box::new(LeasedBackend {
             backend,
             _lease: lease,
-        }),
-    )?;
+        }))
+    })?;
     Ok(())
 }
 
@@ -525,6 +524,48 @@ pub struct PreparedStorage {
     plugin_access: BTreeMap<String, BTreeMap<ResourceId, std::collections::BTreeSet<Operation>>>,
     shared_sql_mounts: std::collections::BTreeSet<String>,
 }
+
+// Advisory at prepare, repeated before activation effects. This does not make
+// host-selected paths immune to concurrent filesystem replacement.
+fn validate_sqlite_paths<'a>(
+    paths: impl IntoIterator<Item = &'a std::path::Path>,
+) -> Result<(), Error> {
+    let mut files = std::collections::BTreeSet::new();
+    #[cfg(unix)]
+    let mut file_ids = std::collections::BTreeSet::new();
+    for path in paths {
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(Error::PhysicalAlias);
+        }
+        let mut prefix = path;
+        let mut suffix = Vec::new();
+        while !prefix.try_exists()? {
+            suffix.push(prefix.file_name().ok_or(Error::InvalidRequest)?.to_owned());
+            prefix = prefix.parent().ok_or(Error::InvalidRequest)?;
+        }
+        let mut canonical = std::fs::canonicalize(prefix)?;
+        for part in suffix.into_iter().rev() {
+            canonical.push(part);
+        }
+        if !files.insert(canonical) {
+            return Err(Error::PhysicalAlias);
+        }
+        #[cfg(unix)]
+        if path.try_exists()? {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = std::fs::metadata(path)?;
+            if !file_ids.insert((metadata.dev(), metadata.ino())) {
+                return Err(Error::PhysicalAlias);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl PreparedStorage {
     /// Canonical IDs, kinds and approved per-plugin requests. Every request in a
     /// successful plan passed both host allowlists; only requested grants issue.
@@ -571,45 +612,21 @@ impl PreparedStorage {
         }
         let mut mounts = BTreeMap::new();
         let mut features = BTreeMap::new();
-        let mut files = std::collections::BTreeSet::new();
-        #[cfg(unix)]
-        let mut file_ids = std::collections::BTreeSet::new();
+        validate_sqlite_paths(
+            policy
+                .mounts
+                .values()
+                .filter_map(|placement| match placement {
+                    BackendPlacement::Sqlite(path) => Some(path.as_path()),
+                    _ => None,
+                }),
+        )?;
         for (name, placement) in policy.mounts {
             // Reuse canonical mount validation without allocating a registry.
             Address::parse(&format!("store://{name}/validation"))?;
             let (backend, caps) = match placement {
                 BackendPlacement::Memory => (PreparedBackend::Memory, BackendFeatures::MEMORY),
                 BackendPlacement::Sqlite(path) => {
-                    if !path.is_absolute()
-                        || path
-                            .components()
-                            .any(|c| matches!(c, std::path::Component::ParentDir))
-                    {
-                        return Err(Error::PhysicalAlias);
-                    }
-                    // Resolve the existing prefix without creating anything, so
-                    // symlinked parents and spelling aliases cannot hide sharing.
-                    let mut prefix = path.as_path();
-                    let mut suffix = Vec::new();
-                    while !prefix.try_exists()? {
-                        suffix.push(prefix.file_name().ok_or(Error::InvalidRequest)?.to_owned());
-                        prefix = prefix.parent().ok_or(Error::InvalidRequest)?;
-                    }
-                    let mut canonical = std::fs::canonicalize(prefix)?;
-                    for part in suffix.into_iter().rev() {
-                        canonical.push(part);
-                    }
-                    if !files.insert(canonical) {
-                        return Err(Error::PhysicalAlias);
-                    }
-                    #[cfg(unix)]
-                    if path.try_exists()? {
-                        use std::os::unix::fs::MetadataExt;
-                        let metadata = std::fs::metadata(&path)?;
-                        if !file_ids.insert((metadata.dev(), metadata.ino())) {
-                            return Err(Error::PhysicalAlias);
-                        }
-                    }
                     (PreparedBackend::Sqlite(path), BackendFeatures::SQLITE)
                 }
                 BackendPlacement::Offer { snapshot, id } => {
@@ -740,6 +757,10 @@ impl PreparedStorage {
     /// Failure publishes no sessions. Already-opened backends are dropped with
     /// the private registry; durable files/data are deliberately not deleted.
     pub fn activate(self) -> Result<ActivatedStorage, Error> {
+        validate_sqlite_paths(self.mounts.values().filter_map(|backend| match backend {
+            PreparedBackend::Sqlite(path) => Some(path.as_path()),
+            _ => None,
+        }))?;
         #[cfg(not(unix))]
         if self.xdg_paths.is_some()
             && self
@@ -1702,6 +1723,73 @@ mod tests {
             fail,
             features: BackendFeatures::MEMORY,
             legacy: false,
+        }
+    }
+
+    #[test]
+    fn rejected_offer_mounts_do_not_invoke_factory() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("provider", |config: ProviderConfig| Ok(Provider(config)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let config = provider_config(false);
+        let snapshot = plugins.load(&handle, config.clone()).unwrap();
+        let registry = Registry::new();
+        registry.mount_memory("main").unwrap();
+        assert!(matches!(
+            mount_offer(&registry, &snapshot, "tracked", "INVALID"),
+            Err(Error::Storage(StorageError::InvalidAddress))
+        ));
+        assert_eq!(config.opens.load(SeqCst), 0);
+        assert!(matches!(
+            mount_offer(&registry, &snapshot, "tracked", "main"),
+            Err(Error::Storage(StorageError::DuplicateMount))
+        ));
+        assert_eq!(config.opens.load(SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn activation_rechecks_aliases_introduced_after_prepare() {
+        use std::os::unix::fs::symlink;
+        for case in ["symlink", "hardlink", "parent-symlink"] {
+            let root = temporary_path(case);
+            std::fs::create_dir(&root).unwrap();
+            let first = root.join("one/database.sqlite");
+            let second = root.join("two/database.sqlite");
+            let mut other = request([Operation::Read]);
+            other.spec.name = "phenix.test/other".into();
+            let requirements =
+                requirements(vec![("one", request([Operation::Read])), ("two", other)]);
+            let mut policy = policy(&requirements, BackendPlacement::Sqlite(first.clone()));
+            policy
+                .mounts
+                .insert("other".into(), BackendPlacement::Sqlite(second.clone()));
+            policy.resources.values_mut().last().unwrap().target =
+                BindingTarget::Dataset(Address::parse("store://other/settings").unwrap());
+            let prepared =
+                PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                    .unwrap();
+            std::fs::create_dir(root.join("one")).unwrap();
+            std::fs::File::create(&first).unwrap();
+            if case == "parent-symlink" {
+                symlink(root.join("one"), root.join("two")).unwrap();
+            } else {
+                std::fs::create_dir(root.join("two")).unwrap();
+                if case == "symlink" {
+                    symlink(&first, &second).unwrap();
+                } else {
+                    std::fs::hard_link(&first, &second).unwrap();
+                }
+            }
+            assert!(
+                matches!(prepared.activate(), Err(Error::PhysicalAlias)),
+                "{case}"
+            );
+            assert_eq!(std::fs::metadata(&first).unwrap().len(), 0);
+            std::fs::remove_dir_all(root).unwrap();
         }
     }
 

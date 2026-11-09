@@ -1,7 +1,7 @@
 use super::*;
 use phenix_graph::{
-    Emission, Engine, Executor, InputSlot, InvocationCtx, NodeAction, NodeTemplate, OutputSlot,
-    Port, Value, WaveReport, emit_local,
+    Emission, Engine, Executor, InputAddr, InputSlot, InvocationCtx, NodeAction, NodeTemplate,
+    OutputSlot, Port, Value, WaveReport, emit_local,
 };
 use phenix_kernel::{Kernel, ProducerEvent, WakeHandle};
 use phenix_plugin::PluginSnapshot;
@@ -53,17 +53,15 @@ impl DerivedRuntime {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         executor: Arc<dyn Executor>,
     ) -> Result<Self, Error> {
-        let kernel =
-            Kernel::build(name, snapshots, Self::guard_executor(executor)).map_err(Error::Graph)?;
+        let kernel = Kernel::build(name, snapshots, Self::guard_executor(executor))
+            .map_err(|e| Error::Kernel(Box::new(e)))?;
         Ok(Self { kernel })
     }
     pub fn kernel(&self) -> &Kernel {
         &self.kernel
     }
-    /// Use this executor when preparing a KernelHost generation with derived
-    /// queries. It rejects queries from all dispatched actions, including on
-    /// delegated worker threads and queries targeting a different runtime.
-    pub fn guard_executor(executor: Arc<dyn Executor>) -> Arc<dyn Executor> {
+    // Both supported builders install this store-owned guard unconditionally.
+    pub(super) fn guard_executor(executor: Arc<dyn Executor>) -> Arc<dyn Executor> {
         Arc::new(HostOnlyExecutor(executor))
     }
     pub fn drain(&mut self, max_polls: usize) -> Vec<ProducerEvent> {
@@ -74,10 +72,12 @@ impl DerivedRuntime {
         wake: &WakeHandle,
         on_event: impl FnMut(ProducerEvent),
     ) -> Result<(), Error> {
-        self.kernel.run_until(wake, on_event).map_err(Error::Graph)
+        self.kernel
+            .run_until(wake, on_event)
+            .map_err(|e| Error::Kernel(Box::new(e)))
     }
     pub fn start(&mut self) -> Result<(), Error> {
-        self.kernel.start().map_err(Error::Graph)
+        self.kernel.start().map_err(|e| Error::Kernel(Box::new(e)))
     }
     pub fn bind_query<T: Clone + Send + Sync + 'static>(
         &self,
@@ -98,19 +98,50 @@ pub struct QuerySpec<T: Clone + Send + Sync + 'static> {
     value: DerivedRef<T>,
 }
 impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
-    /// Bind against the exact deployed engine without firing a wave. For host
-    /// generations, call inside Generation::with_kernel and prepare the kernel
-    /// with DerivedRuntime::guard_executor to preserve host-only dispatch.
-    /// Like Kernel::engine, this low-level path bypasses the kernel start guard;
-    /// execute only after publication, not in the preparation binding hook.
+    /// Low-level binding against an explicit engine, without firing a wave.
+    /// This cannot ensure host-only dispatch for an arbitrary engine and bypasses
+    /// the kernel start guard. Prefer DerivedGeneration::query or
+    /// DerivedRuntime::bind_query; execute only after start/publication.
     pub fn bind_engine<'a>(&self, engine: &'a Engine) -> Result<QueryHandle<'a, T>, Error> {
-        let taps = engine.node_ids_for_action(&self.action);
-        let roots = engine.node_ids_for_action(&self.value.root.action);
+        let (tap_node, root_node) = self.validate(
+            engine.node_ids_for_action(&self.action),
+            engine.node_ids_for_action(&self.value.root.action),
+            engine.trigger_targets(self.value.refresh_route()),
+        )?;
+        Ok(QueryHandle {
+            engine,
+            kernel: None,
+            spec: self.clone(),
+            tap_node,
+            root_node,
+        })
+    }
+
+    /// Check exact deployment identities and refresh routing during preparation,
+    /// without creating a query handle or exposing any wave admission capability.
+    pub fn validate_binding(
+        &self,
+        binding: &phenix_kernel::host::Binding<'_>,
+    ) -> Result<(), Error> {
+        self.validate(
+            binding.node_ids_for_action(&self.action),
+            binding.node_ids_for_action(&self.value.root.action),
+            binding.trigger_targets(self.value.refresh_route()),
+        )
+        .map(|_| ())
+    }
+
+    fn validate(
+        &self,
+        taps: Vec<u16>,
+        roots: Vec<u16>,
+        targets: Option<&[Vec<InputAddr>]>,
+    ) -> Result<(u16, u16), Error> {
         let ([tap_node], [root_node]) = (taps.as_slice(), roots.as_slice()) else {
             return Err(Error::WrongGeneration);
         };
         let route = self.value.refresh_route();
-        if !engine.trigger_targets(route).is_some_and(|groups| {
+        if !targets.is_some_and(|groups| {
             let [targets] = groups else { return false };
             let [target] = targets.as_slice() else {
                 return false;
@@ -119,19 +150,13 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
         }) {
             return Err(Error::InvalidRefreshRoute(route.into()));
         }
-        Ok(QueryHandle {
-            engine,
-            kernel: None,
-            spec: self.clone(),
-            tap_node: *tap_node,
-            root_node: *root_node,
-        })
+        Ok((*tap_node, *root_node))
     }
 }
 
 pub struct QueryHandle<'a, T: Clone + Send + Sync + 'static> {
     engine: &'a Engine,
-    kernel: Option<&'a Kernel>,
+    pub(super) kernel: Option<&'a Kernel>,
     spec: QuerySpec<T>,
     tap_node: u16,
     root_node: u16,

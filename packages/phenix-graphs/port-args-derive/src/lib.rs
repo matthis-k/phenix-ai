@@ -6,6 +6,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
 use quote::{ToTokens, quote};
 use std::collections::BTreeSet;
+use syn::ext::IdentExt;
 use syn::{
     Data, DeriveInput, Fields, GenericArgument, LitInt, LitStr, PathArguments, Type,
     parse_macro_input,
@@ -66,7 +67,7 @@ fn fields(input: &DeriveInput, parse_slots: bool) -> syn::Result<Vec<FieldSpec>>
         let ident = field.ident.clone().expect("named field");
         let mut slot_id = u16::try_from(index)
             .map_err(|_| syn::Error::new_spanned(&ident, "too many fields for slot ID"))?;
-        let mut name = LitStr::new(&ident.to_string(), ident.span());
+        let mut name = LitStr::new(&ident.unraw().to_string(), ident.span());
         let mut immediate = false;
         for attr in field.attrs.iter().filter(|a| a.path().is_ident("slot")) {
             if !parse_slots {
@@ -254,6 +255,7 @@ fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     let mut bounded_impls: Vec<Vec<(Tokens, Tokens)>> = (0..8).map(|_| Vec::new()).collect();
     for field in &fields.named {
         let name = field.ident.as_ref().expect("named field");
+        let path_name = name.unraw().to_string();
         let ty = &field.ty;
         let mut directive: Option<bool> = None; // true = flatten, false = atomic
         for attr in field
@@ -291,8 +293,8 @@ fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
             ));
         }
         let path = quote! {
-            if prefix.is_empty() { ::std::string::ToString::to_string(stringify!(#name)) }
-            else { ::std::format!("{prefix}.{}", stringify!(#name)) }
+            if prefix.is_empty() { ::std::string::ToString::to_string(#path_name) }
+            else { ::std::format!("{prefix}.{}", #path_name) }
         };
         if flatten && tuple_field(ty) {
             append.push(quote! {
@@ -420,109 +422,7 @@ fn derive_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     })
 }
 
-/// Derive a length-delimited canonical field codec for a named struct.
-/// Contract schemas are explicit, NOT inferred from Rust type names or layout.
-/// This is a proof-of-concept byte codec; not a general ABI for trait objects.
-fn derive_contract_value(input: DeriveInput) -> syn::Result<Tokens> {
-    let ident = &input.ident;
-    let fields = fields(&input, false)?;
-    let mut schema: Option<LitStr> = None;
-    for attr in input.attrs.iter().filter(|a| a.path().is_ident("contract")) {
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("schema") {
-                schema = Some(meta.value()?.parse()?);
-                Ok(())
-            } else {
-                Err(meta.error("supported: schema = \"stable.schema.id\""))
-            }
-        })?;
-    }
-    let schema = schema.ok_or_else(|| {
-        syn::Error::new_spanned(
-            ident,
-            "#[derive(ContractValue)] requires #[contract(schema = \"stable.schema.id\")]",
-        )
-    })?;
-    if schema.value().trim().is_empty() {
-        return Err(syn::Error::new_spanned(&schema, "schema must not be empty"));
-    }
-    // For each field, encode a length-prefixed payload. Optional fields get
-    // a presence tag (0 = None, 1 = Some), independent of the inner codec.
-    let write_fields = fields.iter().map(|f| {
-        let ident = &f.ident;
-        let data = if f.optional {
-            quote! {
-                match &self.#ident {
-                    None => field.push(0),
-                    Some(value) => {
-                        field.push(1);
-                        field.extend_from_slice(&::phenix_graph::ContractValue::encode(value));
-                    }
-                }
-            }
-        } else {
-            quote! { field.extend_from_slice(&::phenix_graph::ContractValue::encode(&self.#ident)); }
-        };
-        quote! {
-            let mut field = ::std::vec::Vec::new();
-            #data
-            out.extend_from_slice(&u64::try_from(field.len()).expect("field too large").to_le_bytes());
-            out.extend_from_slice(&field);
-        }
-    });
-    let read_fields = fields.iter().map(|f| {
-        let ident = &f.ident;
-        let ty = &f.value_type;
-        let decoder = if f.optional {
-            quote! {
-                match field.split_first() {
-                    Some((&0, rest)) if rest.is_empty() => None,
-                    Some((&1, rest)) => Some(<#ty as ::phenix_graph::ContractValue>::decode(rest)?),
-                    _ => return Err(format!("invalid Option encoding for {}", stringify!(#ident))),
-                }
-            }
-        } else {
-            quote! { <#ty as ::phenix_graph::ContractValue>::decode(field)? }
-        };
-        quote! {
-            let header_end = cursor.checked_add(8).ok_or("field offset overflow")?;
-            let header = bytes.get(cursor..header_end).ok_or("truncated field header")?;
-            let length = usize::try_from(u64::from_le_bytes(
-                header.try_into().map_err(|_| "invalid field header")?
-            )).map_err(|_| "field length overflow")?;
-            let end = header_end.checked_add(length).ok_or("field length overflow")?;
-            let field = bytes.get(header_end..end).ok_or("truncated field payload")?;
-            let #ident = #decoder;
-            cursor = end;
-        }
-    });
-    let descriptors = fields.iter().map(|f| {
-        let name = f.ident.to_string();
-        let ty = &f.value_type;
-        let optional = f.optional;
-        quote! { (#name, #optional, <#ty as ::phenix_graph::ContractValue>::schema()) }
-    });
-    let identifiers = fields.iter().map(|f| &f.ident);
-    Ok(quote! {
-        impl ::phenix_graph::ContractValue for #ident {
-            const SCHEMA: &'static str = #schema;
-            fn schema_descriptor() -> Option<::phenix_graph::Schema> {
-                Some(::phenix_graph::Schema::record(#schema, &[#(#descriptors),*]))
-            }
-            fn encode(&self) -> ::std::vec::Vec<u8> {
-                let mut out = ::std::vec::Vec::new();
-                #(#write_fields)*
-                out
-            }
-            fn decode(bytes: &[u8]) -> ::std::result::Result<Self, ::std::string::String> {
-                let mut cursor = 0usize;
-                #(#read_fields)*
-                if cursor != bytes.len() { return Err("trailing bytes in contract value".into()); }
-                Ok(Self { #(#identifiers),* })
-            }
-        }
-    })
-}
+mod contract_value;
 
 #[proc_macro_derive(PortArgs, attributes(slot))]
 pub fn port_args(input: TokenStream) -> TokenStream {
@@ -543,7 +443,7 @@ pub fn port_layout(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(ContractValue, attributes(contract, slot))]
 pub fn contract_value(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    derive_contract_value(input)
+    contract_value::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -572,8 +472,16 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
         ));
     };
     let mut specs = Vec::new();
+    let mut seen_keys = BTreeSet::new();
     for field in &fields.named {
         let field_name = field.ident.as_ref().expect("named field").clone();
+        let key = format!("SLOT_{}", field_name.unraw().to_string().to_uppercase());
+        if !seen_keys.insert(key.clone()) {
+            return Err(syn::Error::new_spanned(
+                &field_name,
+                format!("generated slot constant {key} collides with another field"),
+            ));
+        }
         let ty = field.ty.clone();
         let mut directive = None;
         for attr in field.attrs.iter().filter(|a| a.path().is_ident("port")) {
@@ -610,9 +518,10 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
         let mut append = Vec::new();
         let mut assemble = Vec::new();
         for (field, ty, flatten, forced) in &specs {
+            let path_name = field.unraw().to_string();
             let path = quote! {
-                if prefix.is_empty() { stringify!(#field).to_owned() }
-                else { ::std::format!("{prefix}.{}", stringify!(#field)) }
+                if prefix.is_empty() { #path_name.to_owned() }
+                else { ::std::format!("{prefix}.{}", #path_name) }
             };
             let leaf_take = if let Some(inner) = arc_inner(ty) {
                 quote! { values.take_shared_local_path::<#inner>(&path)? }
@@ -677,9 +586,10 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     let mut deep_append = Vec::new();
     let mut deep_assemble = Vec::new();
     for (field, ty, flatten, _) in &specs {
+        let path_name = field.unraw().to_string();
         let path = quote! {
-            if prefix.is_empty() { stringify!(#field).to_owned() }
-            else { ::std::format!("{prefix}.{}", stringify!(#field)) }
+            if prefix.is_empty() { #path_name.to_owned() }
+            else { ::std::format!("{prefix}.{}", #path_name) }
         };
         let leaf_take = if let Some(inner) = arc_inner(ty) {
             quote! { values.take_shared_local_path::<#inner>(&path)? }
@@ -711,13 +621,11 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
         }
     }
     let keys = specs.iter().map(|(field, ty, _, _)| {
-        let upper = syn::Ident::new(
-            &format!("SLOT_{}", field.to_string().to_uppercase()),
-            field.span(),
-        );
+        let path_name = field.unraw().to_string();
+        let upper = syn::Ident::new(&format!("SLOT_{}", path_name.to_uppercase()), field.span());
         quote! {
             pub const #upper: ::phenix_graph::authoring::SlotField<Self, #ty> =
-                ::phenix_graph::authoring::SlotField::new(stringify!(#field));
+                ::phenix_graph::authoring::SlotField::new(#path_name);
         }
     });
     Ok(quote! {
@@ -994,4 +902,84 @@ mod patch_syntax {
 pub fn patch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as patch_syntax::PatchSyntax);
     input.expand().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_layout_reports_generated_key_collisions() {
+        let input = syn::parse_quote! {
+            struct Collision { foo: i64, FOO: i64 }
+        };
+        let error = derive_local_port_layout(input).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "generated slot constant SLOT_FOO collides with another field"
+        );
+    }
+
+    #[test]
+    fn raw_local_fields_do_not_panic() {
+        derive_local_port_layout(syn::parse_quote! {
+            struct Raw { r#type: i64 }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn duplicate_slot_names_and_ids_are_diagnosed() {
+        let error = derive_port_args(syn::parse_quote! {
+            struct Duplicate { #[slot(id = 1)] a: i64, b: i64 }
+        })
+        .unwrap_err()
+        .to_string();
+        assert_eq!(error, "duplicate slot ID 1");
+        let error = derive_port_args(syn::parse_quote! {
+            struct Duplicate { r#type: i64, #[slot(name = "type")] other: i64 }
+        })
+        .unwrap_err()
+        .to_string();
+        assert_eq!(error, "duplicate slot name \"type\"");
+    }
+
+    #[test]
+    fn codec_requires_one_explicit_nonempty_schema() {
+        for (input, message) in [
+            (
+                syn::parse_quote!(
+                    struct Missing {
+                        value: i64,
+                    }
+                ),
+                "requires #[contract",
+            ),
+            (
+                syn::parse_quote!(
+                    #[contract(schema = " ")]
+                    struct Empty {
+                        value: i64,
+                    }
+                ),
+                "schema must not be empty",
+            ),
+            (
+                syn::parse_quote!(
+                    #[contract(schema = "a", schema = "b")]
+                    struct Duplicate {
+                        value: i64,
+                    }
+                ),
+                "duplicate contract schema",
+            ),
+        ] {
+            assert!(
+                contract_value::derive(input)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message)
+            );
+        }
+    }
 }

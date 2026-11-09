@@ -82,23 +82,19 @@ pub mod writer {
                     let kv = storage
                         .get()
                         .ok_or("writer storage not injected")?
-                        .project()
-                        .map_err(text)?
-                        .config::<AgentConfig>("phenix.agent/settings")
-                        .map_err(text)?;
+                        .project()?
+                        .config::<AgentConfig>("phenix.agent/settings")?;
                     let log = writes.clone();
-                    let node = graph
-                        .node("save_config", move |update: Update| {
-                            log.lock().unwrap().push(
-                                kv.compare_exchange(
-                                    "default",
-                                    update.expected.as_ref(),
-                                    &update.config,
-                                )
-                                .map_err(text),
-                            );
-                        })
-                        .map_err(text)?;
+                    let node = graph.node("save_config", move |update: Update| {
+                        log.lock().unwrap().push(
+                            kv.compare_exchange(
+                                "default",
+                                update.expected.as_ref(),
+                                &update.config,
+                            )
+                            .map_err(text),
+                        );
+                    })?;
                     let input = graph.expose_input("config_update", node.inlet())?;
                     graph.trigger("configure", [input])?;
                     Ok(())
@@ -164,16 +160,13 @@ pub mod observer {
                     let kv = storage
                         .get()
                         .ok_or("observer storage not injected")?
-                        .project()
-                        .map_err(text)?
-                        .config::<ObservedConfig>("phenix.agent/settings")
-                        .map_err(text)?;
+                        .project()?
+                        .config::<ObservedConfig>("phenix.agent/settings")?;
                     let log = reads.clone();
-                    let node = graph
-                        .node("refresh_config", move |_notice: phenix_storage::Notice| {
+                    let node =
+                        graph.node("refresh_config", move |_notice: phenix_storage::Notice| {
                             log.lock().unwrap().push(kv.get("default").map_err(text));
-                        })
-                        .map_err(text)?;
+                        })?;
                     let input = graph.expose_input("config_notice", node.inlet())?;
                     graph.trigger("config_changed", [input])?;
                     let source = source.clone();
@@ -181,12 +174,9 @@ pub mod observer {
                         let subscription = source
                             .get()
                             .ok_or("observer storage not injected")?
-                            .project()
-                            .map_err(text)?
-                            .config::<ObservedConfig>("phenix.agent/settings")
-                            .map_err(text)?
-                            .changed(16)
-                            .map_err(text)?;
+                            .project()?
+                            .config::<ObservedConfig>("phenix.agent/settings")?
+                            .changed(16)?;
                         Ok(Box::new(StorageBinding::new(
                             subscription,
                             "config_changed",
@@ -220,8 +210,8 @@ pub mod code_index {
                 id: "index".into(), requires: vec![], routes: vec![],
                 compose: Box::new(move |context| {
                     let graph = &mut *context.graph;
-                    let sql = storage.get().ok_or("index storage not injected")?.project().map_err(text)?
-                        .sql(StorageClass::Data, "phenix.code/index").map_err(text)?;
+                    let sql = storage.get().ok_or("index storage not injected")?.project()?
+                        .sql(StorageClass::Data, "phenix.code/index")?;
                     let log = results.clone();
                     let node = graph.node("index_symbols", move |symbol: String| {
                         let result = sql.transaction(|tx| {
@@ -381,8 +371,9 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
     index_slot
         .set(index_view.clone())
         .map_err(|_| "index already injected")?;
-    let mut kernel = Kernel::build("scoped-storage", snapshots, Arc::new(LocalExecutor))?;
-    kernel.start()?;
+    let mut kernel = Kernel::build("scoped-storage", snapshots, Arc::new(LocalExecutor))
+        .map_err(|error| error.to_string())?;
+    kernel.start().map_err(|error| error.to_string())?;
     Ok(Demo {
         kernel,
         writer: writer_view,
@@ -396,7 +387,7 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
 
 pub fn run() -> Result<(), String> {
     let root = tempfile::tempdir().map_err(text)?;
-    let mut demo = build(root.path(), "project-one")?;
+    let demo = build(root.path(), "project-one")?;
     assert!(
         demo.kernel
             .fire(

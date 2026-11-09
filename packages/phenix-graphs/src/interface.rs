@@ -72,7 +72,7 @@ fn valid_segment(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'@'))
 }
 pub(crate) fn value_identity(value: DeclaredValue) -> TypeIdentity {
-    identity(value.schema, value.local_type)
+    identity(&value.schema, value.local_type)
 }
 
 /// ID-free complete boundary snapshot. Unnamed endpoints retain numeric addresses
@@ -134,12 +134,14 @@ impl InterfaceShape {
         Ok(self)
     }
     pub fn inputs(&self) -> impl Iterator<Item = (&str, &str, DeclaredValue)> {
-        self.inputs
-            .iter()
-            .flat_map(|(p, slots)| slots.iter().map(move |(s, v)| (p.as_str(), s.as_str(), *v)))
+        self.inputs.iter().flat_map(|(p, slots)| {
+            slots
+                .iter()
+                .map(move |(s, v)| (p.as_str(), s.as_str(), v.clone()))
+        })
     }
     pub fn outputs(&self) -> impl Iterator<Item = (&str, DeclaredValue)> {
-        self.outputs.iter().map(|(n, v)| (n.as_str(), *v))
+        self.outputs.iter().map(|(n, v)| (n.as_str(), v.clone()))
     }
     /// Exact input ports, slots and identities; additional outputs are allowed.
     pub fn check_shape(&self, actual: &Self) -> Result<(), InterfaceError> {
@@ -156,7 +158,7 @@ impl InterfaceShape {
                     .inputs
                     .get(port)
                     .and_then(|p| p.get(slot))
-                    .copied()
+                    .cloned()
                     .map(value_identity),
             )?;
         }
@@ -170,7 +172,7 @@ impl InterfaceShape {
                 if !self.inputs[port].contains_key(slot) {
                     let mut error = InterfaceError::new("unexpected input slot");
                     error.endpoint = Some(format!("input {port}.{slot}").into());
-                    error.actual = Some(value_identity(*value));
+                    error.actual = Some(value_identity(value.clone()));
                     return Err(error);
                 }
             }
@@ -184,7 +186,7 @@ impl InterfaceShape {
             check_endpoint(
                 format!("output {name}"),
                 value_identity(value),
-                actual.outputs.get(name).copied().map(value_identity),
+                actual.outputs.get(name).cloned().map(value_identity),
             )?;
         }
         if !self
@@ -237,7 +239,7 @@ impl InterfaceShape {
                         p,
                         s,
                         DeclaredValue {
-                            schema: slot.schema,
+                            schema: slot.schema.clone(),
                             local_type: slot.local_type,
                         },
                     )?;
@@ -259,7 +261,7 @@ impl InterfaceShape {
                 shape = shape.output(
                     name,
                     DeclaredValue {
-                        schema: slot.schema,
+                        schema: slot.schema.clone(),
                         local_type: slot.local_type,
                     },
                 )?;
@@ -283,7 +285,7 @@ impl InterfaceShape {
                 &p.port,
                 &p.slot,
                 DeclaredValue {
-                    schema: p.schema,
+                    schema: p.schema.clone(),
                     local_type: p.local_type,
                 },
             )?;
@@ -292,7 +294,7 @@ impl InterfaceShape {
             shape = shape.output(
                 &p.name,
                 DeclaredValue {
-                    schema: p.schema,
+                    schema: p.schema.clone(),
                     local_type: p.local_type,
                 },
             )?;
@@ -305,7 +307,7 @@ fn check_endpoint(
     expected: TypeIdentity,
     actual: Option<TypeIdentity>,
 ) -> Result<(), InterfaceError> {
-    if actual == Some(expected) {
+    if actual.as_ref() == Some(&expected) {
         return Ok(());
     }
     let mut error = InterfaceError::new("missing or incompatible endpoint");
@@ -336,26 +338,11 @@ impl GraphContract {
     }
     /// Structural validation only; does not require semantic membership.
     pub fn check_shape(&self, unit: &dyn GraphUnit) -> Result<(), InterfaceError> {
-        let snapshot = unit.inspect().map_err(|mut error| {
-            error.contract = Some(self.id().into());
-            error
-        })?;
-        self.required.check_shape(&snapshot.shape).map_err(|error| {
-            error.context(
-                snapshot.provenance.phase,
-                &snapshot.provenance.path,
-                Some(self.id()),
-            )
-        })
+        unit.check_interface(self, false)
     }
     /// Require an explicit, exactly matching definition and the actual shape.
     pub fn check_implementation(&self, unit: &dyn GraphUnit) -> Result<(), InterfaceError> {
-        unit.inspect()
-            .map_err(|mut error| {
-                error.contract = Some(self.id().into());
-                error
-            })?
-            .check_contract(self)
+        unit.check_interface(self, true)
     }
     /// Definition compatibility is exact, unlike structural satisfaction.
     pub fn check_definition(&self, provided: &Self) -> Result<(), InterfaceError> {
@@ -409,23 +396,46 @@ pub(crate) mod sealed {
 /// ```
 pub trait GraphUnit: sealed::Sealed {
     fn inspect(&self) -> Result<UnitSnapshot, InterfaceError>;
+
+    #[doc(hidden)]
+    fn check_interface(
+        &self,
+        contract: &GraphContract,
+        membership: bool,
+    ) -> Result<(), InterfaceError> {
+        let snapshot = self.inspect().map_err(|mut error| {
+            error.contract = Some(contract.id().into());
+            error
+        })?;
+        check_interface(&snapshot.shape, &snapshot.claims, contract, membership).map_err(|error| {
+            error.context(
+                snapshot.provenance.phase,
+                &snapshot.provenance.path,
+                Some(contract.id()),
+            )
+        })
+    }
+}
+pub(crate) fn check_interface(
+    shape: &InterfaceShape,
+    claims: &[GraphContract],
+    contract: &GraphContract,
+    membership: bool,
+) -> Result<(), InterfaceError> {
+    if membership {
+        let mut claims = claims.iter().filter(|c| c.id() == contract.id()).peekable();
+        if claims.peek().is_none() {
+            return Err(InterfaceError::new("missing explicit contract claim"));
+        }
+        for claim in claims {
+            contract.check_definition(claim)?;
+        }
+    }
+    contract.required.check_shape(shape)
 }
 impl UnitSnapshot {
     pub fn check_contract(&self, contract: &GraphContract) -> Result<(), InterfaceError> {
-        let result = (|| {
-            let mut claims = self
-                .claims
-                .iter()
-                .filter(|c| c.id() == contract.id())
-                .peekable();
-            if claims.peek().is_none() {
-                return Err(InterfaceError::new("missing explicit contract claim"));
-            }
-            for claim in claims {
-                contract.check_definition(claim)?;
-            }
-            contract.required.check_shape(&self.shape)
-        })();
+        let result = check_interface(&self.shape, &self.claims, contract, true);
         result.map_err(|e| {
             e.context(
                 self.provenance.phase,
@@ -761,17 +771,17 @@ impl<'g> BoundUnit<'g> {
 /// declarations that are registered by the host but never offered or selected.
 impl CompiledGraph {
     pub fn check_contract_catalog<'a>(
-        &self,
+        &'a self,
         registered: impl IntoIterator<Item = &'a GraphContract>,
     ) -> Result<(), InterfaceError> {
-        let mut seen: BTreeMap<String, GraphContract> = BTreeMap::new();
-        let mut check = |contract: &GraphContract, path: &str| {
+        let mut seen: BTreeMap<&str, &GraphContract> = BTreeMap::new();
+        let mut check = |contract: &'a GraphContract, path: &str| {
             if let Some(previous) = seen.get(contract.id()) {
                 previous.check_definition(contract).map_err(|error| {
                     error.context(InterfacePhase::Compiled, path, Some(contract.id()))
                 })?;
             } else {
-                seen.insert(contract.id().into(), contract.clone());
+                seen.insert(contract.id(), contract);
             }
             Ok(())
         };
@@ -923,11 +933,11 @@ mod tests {
     #[test]
     fn local_identity_ignores_diagnostic_schema_names() {
         let a = DeclaredValue {
-            schema: "first diagnostic",
+            schema: "first diagnostic".into(),
             local_type: Some(TypeId::of::<i64>()),
         };
         let b = DeclaredValue {
-            schema: "second diagnostic",
+            schema: "second diagnostic".into(),
             ..a
         };
         let a = InterfaceShape::new().output("value", a).unwrap();

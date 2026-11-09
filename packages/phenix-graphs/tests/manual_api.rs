@@ -57,7 +57,7 @@ fn std_only_manual_graph_compiles_and_executes() {
     builder.input(
         0,
         "request",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(addr)],
     );
     builder.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -162,14 +162,14 @@ fn direct_module_struct_literal_compiles_without_builder() {
                 name: "request".into(),
                 port: "request".into(),
                 slot: "value".into(),
-                schema: i64::SCHEMA,
+                schema: i64::wire_schema(),
                 local_type: None,
                 targets: vec![ModuleInputTarget::Node(input(1, 0, 0))],
             }],
             outputs: vec![ModuleOutput {
                 id: 0,
                 name: "result".into(),
-                schema: i64::SCHEMA,
+                schema: i64::wire_schema(),
                 local_type: None,
                 source: ModuleOutputSource::Node(output(1, 0)),
             }],
@@ -228,7 +228,7 @@ fn failed_typed_decoder_is_atomic_and_another_wave_can_succeed() {
     m.input(
         0,
         "request",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(input(1, 0, 0))],
     );
     m.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -300,13 +300,13 @@ fn custom_policy_can_select_by_declared_input_name() {
     m.input(
         0,
         "left",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(input(1, 0, 0))],
     );
     m.input(
         1,
         "right",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(input(1, 0, 1))],
     );
     m.trigger(

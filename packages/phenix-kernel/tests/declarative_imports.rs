@@ -78,22 +78,14 @@ impl PluginInstance for Provider {
                 let increment = config.increment;
                 if config.module {
                     let mut child = GraphBuilder::new(format!("module-{}", config.path));
-                    let node = child
-                        .node("private", move |v: i64| v + increment)
-                        .map_err(|e| e.to_string())?;
+                    let node = child.node("private", move |v: i64| v + increment)?;
                     child.expose_input_slot("run", "value", node.inlet())?;
                     child.expose_output("value", node.output())?;
-                    child
-                        .implements_public(&contract(config.semantic))
-                        .map_err(|e| e.to_string())?;
+                    child.implements_public(&contract(config.semantic))?;
                     graph.instance(&config.path, &child.module())?;
                 } else {
-                    graph
-                        .node(&config.path, move |v: i64| v + increment)
-                        .map_err(|e| e.to_string())?;
-                    graph
-                        .implements(&config.path, &contract(config.semantic))
-                        .map_err(|e| e.to_string())?;
+                    graph.node(&config.path, move |v: i64| v + increment)?;
+                    graph.implements(&config.path, &contract(config.semantic))?;
                 }
                 Ok(())
             }),
@@ -133,25 +125,17 @@ impl PluginInstance for Consumer {
                 assert!(context.import("undeclared").is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
                 let graph = &mut *context.graph;
-                let bound = selected.bind(graph).map_err(|e| e.to_string())?;
+                let bound = selected.bind(graph)?;
                 assert!(bound.local_output::<i64>("private").is_err());
                 assert!(bound.local_output::<String>("value").is_err());
-                let input = bound
-                    .local_input::<i64>("run", "value")
-                    .map_err(|e| e.to_string())?;
-                let output = bound
-                    .local_output::<i64>("value")
-                    .map_err(|e| e.to_string())?;
+                let input = bound.local_input::<i64>("run", "value")?;
+                let output = bound.local_output::<i64>("value")?;
                 let observed = config.observed.clone();
-                let sink = graph
-                    .node("sink", move |v: i64| {
-                        observed.lock().unwrap().push(v);
-                        v
-                    })
-                    .map_err(|e| e.to_string())?;
-                graph
-                    .connect(output, sink.inlet())
-                    .map_err(|e| e.to_string())?;
+                let sink = graph.node("sink", move |v: i64| {
+                    observed.lock().unwrap().push(v);
+                    v
+                })?;
+                graph.connect(output, sink.inlet())?;
                 let public = graph.expose_input("request", input)?;
                 graph.trigger("run", [public])?;
                 Ok(())
@@ -172,7 +156,67 @@ fn selected(owner: &str) -> ImportPolicy {
     policy
 }
 fn build(snapshots: Vec<PluginSnapshot>, policy: &ImportPolicy) -> Result<Kernel, ResolutionError> {
-    Kernel::build_with_policy("imports", snapshots, Arc::new(LocalExecutor), policy)
+    Kernel::build_with_options(
+        "imports",
+        snapshots,
+        Arc::new(LocalExecutor),
+        phenix_kernel::BuildOptions {
+            imports: policy.clone(),
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn every_policy_table_rejects_unknown_requirement_and_offer_keys() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut catalog = PluginCatalog::new();
+    let z = catalog.register("z-provider", |p: Provider| Ok(p)).unwrap();
+    let a = catalog.register("a-consumer", |p: Consumer| Ok(p)).unwrap();
+    let mut plugins = catalog.instance();
+    plugins
+        .load(&z, Provider::new("service", false, 1, &count))
+        .unwrap();
+    plugins
+        .load(
+            &a,
+            Consumer {
+                observed: Arc::default(),
+                compositions: count.clone(),
+            },
+        )
+        .unwrap();
+    for table in 0..3 {
+        for unknown_requirement in [false, true] {
+            let requirement = if unknown_requirement {
+                Key::new("stale", "requirement")
+            } else {
+                requirement()
+            };
+            let offer = if unknown_requirement {
+                offer("z-provider")
+            } else {
+                offer("stale")
+            };
+            let mut policy = ImportPolicy::default();
+            match table {
+                0 => {
+                    policy.selections.insert(requirement, offer);
+                }
+                1 => {
+                    policy.allow = Some(BTreeSet::from([(requirement, offer)]));
+                }
+                _ => {
+                    policy.deny.insert((requirement, offer));
+                }
+            }
+            let error = build(plugins.snapshots().collect(), &policy)
+                .err()
+                .expect("stale policy must fail closed");
+            assert!(error.to_string().contains("unknown"), "{error}");
+            assert_eq!(count.load(Ordering::SeqCst), 0);
+        }
+    }
 }
 
 #[test]
@@ -204,12 +248,9 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
         let error = build(snapshots.clone(), &ImportPolicy::default())
             .err()
             .unwrap();
-        assert_eq!(
-            error,
-            ResolutionError::Ambiguous {
-                requirement: requirement(),
-                offers: vec![offer("y-provider"), offer("z-provider")]
-            }
+        assert!(
+            matches!(error, ResolutionError::Ambiguous { requirement: key, offers }
+            if key == requirement() && offers == vec![offer("y-provider"), offer("z-provider")])
         );
         assert_eq!(count.load(Ordering::SeqCst), 0);
         let mut old = build(snapshots.clone(), &selected("z-provider")).unwrap();
@@ -385,17 +426,11 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 routes: vec![],
                 compose: Box::new(|cx| {
                     let selected = cx.import("service")?;
-                    cx.graph
-                        .node("provider", |v: i64| v + 1)
-                        .map_err(|e| e.to_string())?;
-                    cx.graph
-                        .implements("provider", &contract("service@1"))
-                        .map_err(|e| e.to_string())?;
+                    cx.graph.node("provider", |v: i64| v + 1)?;
+                    cx.graph.implements("provider", &contract("service@1"))?;
                     let input = selected
-                        .bind(cx.graph)
-                        .map_err(|e| e.to_string())?
-                        .local_input::<i64>("run", "value")
-                        .map_err(|e| e.to_string())?;
+                        .bind(cx.graph)?
+                        .local_input::<i64>("run", "value")?;
                     let public = cx.graph.expose_input("request", input)?;
                     cx.graph.trigger("run", [public])?;
                     Ok(())

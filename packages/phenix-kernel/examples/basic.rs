@@ -12,9 +12,7 @@ impl PluginInstance for Increment {
             routes: vec![],
             compose: Box::new(|context| {
                 let graph = &mut *context.graph;
-                let node = graph
-                    .node("increment", |x: i64| x + 1)
-                    .map_err(|e| e.to_string())?;
+                let node = graph.node("increment", |x: i64| x + 1)?;
                 let input = graph.expose_input("request", node.inlet())?;
                 graph.expose_output("reply", node.output())?;
                 graph.trigger("run", [input])?;
@@ -23,13 +21,11 @@ impl PluginInstance for Increment {
         })
     }
 }
-fn main() -> Result<(), String> {
+fn main() -> Result<(), phenix_kernel::CallbackError> {
     let mut catalog = PluginCatalog::new();
-    let key = catalog
-        .register("increment", |_: ()| Ok(Increment))
-        .map_err(|e| e.to_string())?;
+    let key = catalog.register("increment", |_: ()| Ok(Increment))?;
     let mut plugins = catalog.instance();
-    plugins.load(&key, ()).map_err(|e| e.to_string())?;
+    plugins.load(&key, ())?;
     let mut kernel = Kernel::build("example", plugins.snapshots(), Arc::new(LocalExecutor))?;
     drop(plugins); // The kernel retains exact-revision contribution leases.
     kernel.start()?;

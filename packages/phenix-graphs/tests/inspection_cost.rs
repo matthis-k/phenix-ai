@@ -1,4 +1,4 @@
-use phenix_graph::{GraphBuilder, GraphContract, GraphUnit, InterfaceShape};
+use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, GraphUnit, InterfaceShape};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -78,6 +78,87 @@ fn inspection_vs_compile() {
                 "{},{count},{inspect:.1},{inspect_snapshot:.1},{bind:.1},{implements:.1},{compile:.1}",
                 if nested { "nested" } else { "named" }
             );
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual timing measurement; no timing assertions"]
+fn repeated_inspection() {
+    fn median(mut measure: impl FnMut()) -> f64 {
+        measure();
+        let mut samples = (0..11)
+            .map(|_| {
+                let start = Instant::now();
+                for _ in 0..16 {
+                    measure();
+                }
+                start.elapsed()
+            })
+            .collect::<Vec<_>>();
+        samples.sort();
+        samples[5].as_secs_f64() * 1_000_000.0 / 16.0
+    }
+    let contract = GraphContract::new(
+        "bench/output@1",
+        InterfaceShape::new()
+            .output("value", DeclaredValue::local::<i64>())
+            .unwrap(),
+    )
+    .unwrap();
+    println!("shape,nodes,path,repeat_snapshot,repeat_contract,repeat_output_attempt,catalog");
+    for nested in [false, true] {
+        for count in [10, 100, 1000] {
+            let mut service = GraphBuilder::new("service");
+            let worker = service.node("worker", |x: i64| x).unwrap();
+            service.expose_output("value", worker.output()).unwrap();
+            if nested {
+                let mut leaf = GraphBuilder::new("leaf");
+                leaf.node("worker", |x: i64| x).unwrap();
+                let leaf = leaf.module();
+                let mut wrapper = GraphBuilder::new("wrapper");
+                for i in 0..10 {
+                    wrapper.instance(format!("leaf{i}"), &leaf).unwrap();
+                }
+                let wrapper = wrapper.module();
+                for i in 0..count / 10 {
+                    service.instance(format!("wrapper{i}"), &wrapper).unwrap();
+                }
+            } else {
+                for i in 1..count {
+                    service.node(format!("worker{i}"), |x: i64| x).unwrap();
+                }
+            }
+            service.implements_public(&contract).unwrap();
+            let mut graph = GraphBuilder::new("root");
+            graph.instance("service", &service.module()).unwrap();
+            let output = graph.local_output::<i64>("service", "value").unwrap();
+            graph.expose_output("value", output).unwrap();
+            graph.implements_public(&contract).unwrap();
+            let compiled = graph.clone().compile().unwrap();
+            for path in ["", "service"] {
+                let view = graph.inspect(path).unwrap();
+                let bound = graph.bind_contract(path, &contract).unwrap();
+                let snapshot = median(|| {
+                    black_box(view.inspect().unwrap());
+                });
+                let check = median(|| {
+                    contract.check_implementation(black_box(&view)).unwrap();
+                });
+                // Root typed endpoint lookup is currently unsupported; measure its rejection too.
+                assert_eq!(bound.local_output::<i64>("value").is_ok(), !path.is_empty());
+                let output = median(|| {
+                    let _ = black_box(bound.local_output::<i64>("value"));
+                });
+                let catalog = median(|| {
+                    compiled.check_contract_catalog([&contract]).unwrap();
+                });
+                println!(
+                    "{},{},{path:?},{snapshot:.1},{check:.1},{output:.1},{catalog:.1}",
+                    if nested { "nested" } else { "named" },
+                    if nested { count + 1 } else { count }
+                );
+            }
         }
     }
 }

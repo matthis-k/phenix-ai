@@ -3,7 +3,7 @@ use phenix_graph::{
     InterfaceShape, LocalExecutor, TypeIdentity,
 };
 use phenix_kernel::{
-    ContractDefinition, Contribution, GraphOffer, ImportPolicy, Kernel, Key, ResolutionError,
+    BuildOptions, ContractDefinition, Contribution, GraphOffer, Kernel, Key, ResolutionError,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{any::TypeId, error::Error, sync::Arc};
@@ -62,7 +62,7 @@ impl PluginInstance for Case {
                 Self::Compilation => context
                     .graph
                     .require_contract("missing", &contract)
-                    .map_err(|error| error.to_string()),
+                    .map_err(Into::into),
                 Self::Catalog => {
                     let different = GraphContract::new(
                         contract.id(),
@@ -73,14 +73,11 @@ impl PluginInstance for Case {
                             .unwrap(),
                     )
                     .unwrap();
-                    context
-                        .graph
-                        .node("service", |v: i64| v)
-                        .map_err(|error| error.to_string())?;
+                    context.graph.node("service", |v: i64| v)?;
                     context
                         .graph
                         .implements("service", &different)
-                        .map_err(|error| error.to_string())
+                        .map_err(Into::into)
                 }
                 _ => Ok(()),
             }),
@@ -93,11 +90,11 @@ fn failure(case: Case) -> ResolutionError {
     let plugin = catalog.register("plugin", |case: Case| Ok(case)).unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&plugin, case).unwrap();
-    Kernel::build_with_policy(
+    Kernel::build_with_options(
         "diagnostics",
         plugins.snapshots(),
         Arc::new(LocalExecutor),
-        &ImportPolicy::default(),
+        BuildOptions::default(),
     )
     .err()
     .expect("diagnostic build must fail")
@@ -106,12 +103,9 @@ fn failure(case: Case) -> ResolutionError {
 #[test]
 fn build_failures_identify_definition_composer_and_origin() {
     let conflict = failure(Case::Conflict);
-    assert_eq!(
-        conflict,
-        ResolutionError::ConflictingDefinition {
-            definition: Key::new("plugin", "other"),
-            contract: "diagnostics/test@1".into(),
-        }
+    assert!(
+        matches!(&conflict, ResolutionError::ConflictingDefinition { definition, contract }
+        if *definition == Key::new("plugin", "other") && contract == "diagnostics/test@1")
     );
     assert!(
         conflict
@@ -119,23 +113,16 @@ fn build_failures_identify_definition_composer_and_origin() {
             .contains("conflicting contract definition")
     );
     let composition = failure(Case::Composition);
-    assert_eq!(
-        composition,
-        ResolutionError::Composition {
-            contribution: Key::new("plugin", "main"),
-            cause: "composer failed".into(),
-        }
+    assert!(
+        matches!(&composition, ResolutionError::Composition { contribution, cause }
+        if *contribution == Key::new("plugin", "main") && cause.to_string() == "composer failed")
     );
     assert!(composition.to_string().contains("composer failed"));
-    assert!(composition.source().is_none());
+    assert_eq!(composition.source().unwrap().to_string(), "composer failed");
     let origin = failure(Case::WrongOrigin);
-    assert_eq!(
-        origin,
-        ResolutionError::WrongOrigin {
-            offer: Key::new("plugin", "offer"),
-            producer: Box::new(Key::new("foreign", "main")),
-            unit: "invalid/../path".into(),
-        }
+    assert!(
+        matches!(&origin, ResolutionError::WrongOrigin { offer, producer, unit }
+        if *offer == Key::new("plugin", "offer") && **producer == Key::new("foreign", "main") && unit == "invalid/../path")
     );
     assert!(
         origin
@@ -190,7 +177,6 @@ fn interface_failures_identify_offer_or_catalog_and_preserve_source() {
             error.source().unwrap().downcast_ref::<InterfaceError>(),
             Some(cause.as_ref())
         );
-        assert_eq!(error, error.clone());
     }
 }
 
@@ -214,7 +200,6 @@ fn interface_fields_and_missing_unit_remain_machine_readable() {
         error.source().unwrap().downcast_ref::<InterfaceError>(),
         Some(&cause)
     );
-    assert_eq!(error, error.clone());
     let missing = ResolutionError::MissingUnit {
         offer: Key::new("plugin", "offer"),
         unit: "service".into(),

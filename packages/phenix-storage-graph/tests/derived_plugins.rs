@@ -207,22 +207,14 @@ impl PluginInstance for SelectedReader {
             requires: vec![],
             routes: vec!["values.refresh".into()],
             compose: Box::new(move |context| {
-                let (a, b) = selected
-                    .lock()
-                    .unwrap()
-                    .bind((A.read(), B.read()))
-                    .map_err(|e| e.to_string())?;
+                let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
                 let graph = &mut *context.graph;
-                let group = graph
-                    .sources("values", (&a, &b))
-                    .map_err(|e| e.to_string())?;
-                let sum = graph
-                    .derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)
-                    .map_err(|e| e.to_string())?;
-                let query = graph.query_spec("query", &sum).map_err(|e| e.to_string())?;
+                let group = graph.sources("values", (&a, &b))?;
+                let sum = graph.derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)?;
+                let query = graph.query_spec("query", &sum)?;
                 let observation = group.observation(16);
                 context.export(query)?;
-                context.activate(move || observation.activate().map_err(|e| e.to_string()))
+                context.activate(move || observation.activate().map_err(Into::into))
             }),
         })
     }
@@ -314,7 +306,9 @@ fn duplicate_candidate_factories_are_rejected_not_silently_overridden() {
         .err()
         .unwrap();
     assert!(
-        error.contains("candidate activation already registered"),
+        error
+            .to_string()
+            .contains("candidate activation already registered"),
         "{error}"
     );
 }

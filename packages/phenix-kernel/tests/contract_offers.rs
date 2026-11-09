@@ -61,25 +61,17 @@ impl PluginInstance for Plugin {
                 let graph = &mut *context.graph;
                 if config.module {
                     let mut module = GraphBuilder::new("implementation");
-                    let node = module
-                        .node("private", |x: i64| x + 1)
-                        .map_err(|e| e.to_string())?;
+                    let node = module.node("private", |x: i64| x + 1)?;
                     module.expose_input_slot("run", "value", node.inlet())?;
                     module.expose_output("value", node.output())?;
                     if config.claim {
-                        module
-                            .implements_public(&contract())
-                            .map_err(|e| e.to_string())?;
+                        module.implements_public(&contract())?;
                     }
                     graph.instance("service", &module.module())?;
                 } else {
-                    graph
-                        .node("service", |x: i64| x + 1)
-                        .map_err(|e| e.to_string())?;
+                    graph.node("service", |x: i64| x + 1)?;
                     if config.claim {
-                        graph
-                            .implements("service", &contract())
-                            .map_err(|e| e.to_string())?;
+                        graph.implements("service", &contract())?;
                     }
                 }
                 Ok(())
@@ -93,9 +85,7 @@ impl PluginInstance for Plugin {
                 compose: Box::new(|context| {
                     let graph = &mut *context.graph;
                     *graph = GraphBuilder::new("late");
-                    graph
-                        .node("service", |x: i64| x + 2)
-                        .map_err(|e| e.to_string())?;
+                    graph.node("service", |x: i64| x + 2)?;
                     Ok(())
                 }),
             })?;
@@ -137,9 +127,16 @@ fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection()
                     Key::new("provider", "absent"),
                 );
             }
-            let result =
-                Kernel::build_with_policy("host", [snapshot], Arc::new(LocalExecutor), &policy)
-                    .map_err(|error| error.to_string());
+            let result = Kernel::build_with_options(
+                "host",
+                [snapshot],
+                Arc::new(LocalExecutor),
+                phenix_kernel::BuildOptions {
+                    imports: policy,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| error.to_string());
             if let Some(failure) = failure {
                 let error = result.err().expect("invalid offer must fail");
                 let expected = match failure {
@@ -180,14 +177,10 @@ impl PluginInstance for ForeignPlugin {
                 let graph = &mut *context.graph;
                 if module {
                     let mut child = GraphBuilder::new("replacement");
-                    let node = child
-                        .node("private", |x: i64| x + 10)
-                        .map_err(|e| e.to_string())?;
+                    let node = child.node("private", |x: i64| x + 10)?;
                     child.expose_input_slot("run", "value", node.inlet())?;
                     child.expose_output("value", node.output())?;
-                    child
-                        .implements_public(&contract())
-                        .map_err(|e| e.to_string())?;
+                    child.implements_public(&contract())?;
                     graph.replace("service", child.module())?;
                 } else {
                     let mut replacement =
@@ -231,7 +224,7 @@ fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
                 .err()
                 .unwrap();
             assert!(
-                error.contains("origin mismatch"),
+                error.to_string().contains("origin mismatch"),
                 "module={module}, replace={replace}: {error}"
             );
         }

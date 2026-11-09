@@ -97,12 +97,12 @@ fn selected_fields_retain_typed_field_endpoints() {
 
 #[test]
 fn signature_identity_is_explicitly_local_or_wire() {
-    use phenix_graph::{DeclaredValue, NodeSignature};
+    use phenix_graph::{ContractValue, DeclaredValue, NodeSignature};
     let signature = NodeSignature {
         input: DeclaredValue::local::<i64>(),
         output: DeclaredValue::wire::<i64>(),
     };
     assert!(signature.input.local_type.is_some());
     assert!(signature.output.local_type.is_none());
-    assert_eq!(signature.output.schema, "example.i64");
+    assert_eq!(signature.output.schema, i64::wire_schema());
 }

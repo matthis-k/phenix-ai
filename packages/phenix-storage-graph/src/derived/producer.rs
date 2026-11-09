@@ -55,7 +55,7 @@ struct Observer {
     route: String,
 }
 impl Producer for Observer {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         if self.bootstrap {
             self.bootstrap = false;
             return Ok(Some(Notice {

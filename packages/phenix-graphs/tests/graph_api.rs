@@ -128,10 +128,15 @@ fn graph(derive: bool, wiring_macro: bool) -> Arc<phenix_graph::CompiledGraph> {
     m.input(
         0,
         "start",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(root_input)],
     );
-    m.output(0, "sum", i64::SCHEMA, ModuleOutputSource::Node(root_output));
+    m.output(
+        0,
+        "sum",
+        i64::wire_schema(),
+        ModuleOutputSource::Node(root_output),
+    );
     m.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = ModuleCatalog::new();
     catalog.add(m.build()).unwrap();
@@ -197,13 +202,13 @@ fn closure_decoder_and_struct_literal_port_are_supported_without_derive() {
     m.input(
         0,
         "left",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(node.input("run", "left").unwrap())],
     );
     m.input(
         1,
         "right",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(node.input("run", "right").unwrap())],
     );
     m.trigger(
@@ -261,7 +266,7 @@ fn derived_optional_fields_respect_selected_deliveries() {
     m.input(
         0,
         "event",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(phenix_graph::input(1, 0, 5))],
     );
     m.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
@@ -304,10 +309,11 @@ fn derived_contract_codec_roundtrips_and_rejects_malformed_bytes() {
     ] {
         let encoded = Value::of(record.clone());
         assert_eq!(encoded.get::<Record>().unwrap(), record);
-        let reconstructed = Value::from_wire_parts(encoded.schema(), encoded.bytes().to_vec());
+        let reconstructed =
+            Value::from_wire_parts(encoded.schema().clone(), encoded.bytes().to_vec());
         assert_eq!(reconstructed.get::<Record>().unwrap(), record);
         assert!(
-            Value::from_wire_parts("not.the.record", encoded.bytes().to_vec())
+            Value::from_wire_parts("not.the.record".into(), encoded.bytes().to_vec())
                 .get::<Record>()
                 .is_err()
         );
@@ -354,7 +360,7 @@ fn compiler_rejects_duplicate_names_but_unambiguous_literal_definitions_work() {
     let raw_slot = InputSlot {
         id: SlotId::new(0),
         name: Some("request".into()),
-        schema: i64::SCHEMA,
+        schema: i64::wire_schema(),
         local_type: None,
         buffer: BufferMode::Deferred,
     };
@@ -376,7 +382,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     child.input(
         0,
         "incoming",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(
             child_node.input("run", "number").unwrap(),
         )],
@@ -384,7 +390,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     child.output(
         0,
         "response",
-        i64::SCHEMA,
+        i64::wire_schema(),
         ModuleOutputSource::Node(child_node.output("value").unwrap()),
     );
     child.add(child_node).unwrap();
@@ -401,7 +407,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     root.input(
         0,
         "start",
-        i64::SCHEMA,
+        i64::wire_schema(),
         vec![ModuleInputTarget::Node(
             root_node.input("run", "value").unwrap(),
         )],
@@ -409,7 +415,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     root.output(
         0,
         "result",
-        i64::SCHEMA,
+        i64::wire_schema(),
         ModuleOutputSource::InstanceNamed {
             name: "worker".into(),
             port: "response".into(),

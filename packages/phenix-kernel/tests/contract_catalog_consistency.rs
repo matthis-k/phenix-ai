@@ -71,28 +71,18 @@ impl PluginInstance for Fixture {
                 let graph = &mut *context.graph;
                 match case {
                     Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
-                        graph
-                            .node("service", |v: i64| v + 1)
-                            .map_err(|error| error.to_string())?;
-                        graph
-                            .implements("service", &x)
-                            .map_err(|error| error.to_string())?;
+                        graph.node("service", |v: i64| v + 1)?;
+                        graph.implements("service", &x)?;
                         if matches!(case, Case::DifferentAdvertisedContract) {
-                            graph
-                                .implements("service", &y)
-                                .map_err(|error| error.to_string())?;
+                            graph.implements("service", &y)?;
                         }
                     }
                     Case::UnofferedGraphConflict => {
-                        graph
-                            .node("service", |v: i64| v.to_string())
-                            .map_err(|error| error.to_string())?;
-                        graph
-                            .implements(
-                                "service",
-                                &contract("example/x@1", DeclaredValue::local::<String>()),
-                            )
-                            .map_err(|error| error.to_string())?;
+                        graph.node("service", |v: i64| v.to_string())?;
+                        graph.implements(
+                            "service",
+                            &contract("example/x@1", DeclaredValue::local::<String>()),
+                        )?;
                     }
                 }
                 Ok(())
@@ -115,8 +105,16 @@ fn build(case: Case) -> Result<Kernel, String> {
             Key::new("provider", "offer"),
         );
     }
-    Kernel::build_with_policy("host", [provider], Arc::new(LocalExecutor), &policy)
-        .map_err(|error| error.to_string())
+    Kernel::build_with_options(
+        "host",
+        [provider],
+        Arc::new(LocalExecutor),
+        phenix_kernel::BuildOptions {
+            imports: policy,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -167,9 +165,7 @@ impl PluginInstance for HonestOffer {
             routes: Vec::new(),
             compose: Box::new(|context| {
                 let graph = &mut *context.graph;
-                graph
-                    .node("service", |v: i64| v + 1)
-                    .map_err(|error| error.to_string())?;
+                graph.node("service", |v: i64| v + 1)?;
                 Ok(())
             }),
         })
@@ -191,7 +187,7 @@ impl PluginInstance for ForeignClaim {
                         "service",
                         &contract("example/x@1", DeclaredValue::local::<i64>()),
                     )
-                    .map_err(|error| error.to_string())
+                    .map_err(Into::into)
             }),
         })
     }
@@ -213,7 +209,9 @@ fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
         .err()
         .expect("foreign semantic claim mutation must fail");
     assert!(
-        failure.contains("another contribution generation"),
+        failure
+            .to_string()
+            .contains("another contribution generation"),
         "{failure}"
     );
 }

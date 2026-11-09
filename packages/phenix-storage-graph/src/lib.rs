@@ -50,10 +50,9 @@ impl Wake for KernelWake {
 }
 
 impl Producer for StorageBinding {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         if self.pending.is_empty() {
-            self.pending
-                .extend(self.subscription.drain().map_err(|e| e.to_string())?);
+            self.pending.extend(self.subscription.drain()?);
         }
         Ok(self.pending.pop_front().map(|notice| Notice {
             trigger: self.trigger.clone(),

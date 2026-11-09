@@ -53,15 +53,10 @@ impl GraphBuilder {
                 output.identity(),
             ))
         } else {
-            let selected = self.pending.borrow().get(name).cloned();
-            let node = selected
-                .as_ref()
-                .or_else(|| {
-                    self.module
-                        .nodes
-                        .iter()
-                        .find(|n| n.name.as_deref() == Some(name))
-                })
+            let pending = self.pending.borrow();
+            let node = pending
+                .get(name)
+                .or_else(|| self.module.named_node(name))
                 .ok_or_else(|| format!("unknown source node {name:?}"))?;
             let output = match specified {
                 Some(selected) => node
@@ -104,15 +99,10 @@ impl GraphBuilder {
                 input.identity(),
             ))
         } else {
-            let selected = self.pending.borrow().get(name).cloned();
-            let node = selected
-                .as_ref()
-                .or_else(|| {
-                    self.module
-                        .nodes
-                        .iter()
-                        .find(|n| n.name.as_deref() == Some(name))
-                })
+            let pending = self.pending.borrow();
+            let node = pending
+                .get(name)
+                .or_else(|| self.module.named_node(name))
                 .ok_or_else(|| format!("unknown target node {name:?}"))?;
             // Defaults count *all* physical slots, including unnamed slots
             // that cannot be referenced symbolically. Never infer the single
@@ -147,7 +137,7 @@ impl GraphBuilder {
             }
             let (port, slot, kind) = match matched.as_slice() {
                 [] => return Err(format!("no input slot at {path:?}")),
-                [one] => *one,
+                [one] => one.clone(),
                 _ => {
                     return Err(format!(
                         "ambiguous input {path:?}; specify .in.<port>.<slot>"
@@ -219,7 +209,7 @@ impl GraphBuilder {
         to: &str,
     ) -> Result<PublicInput, String> {
         let (target, kind) = self.target_path(to)?;
-        let resolved = self.verify_target(&target, kind)?;
+        let resolved = self.verify_target(&target, kind.clone())?;
         validate_name_segment(&port).map_err(|err| err.to_string())?;
         validate_name_segment(&slot).map_err(|err| err.to_string())?;
         let name = module_input_slot_name(&port, &slot);
@@ -229,8 +219,14 @@ impl GraphBuilder {
         let id =
             u16::try_from(self.module.inputs.len()).map_err(|_| "public input limit exceeded")?;
         let (schema, local_type) = self.endpoint_identity(kind, &target)?;
-        self.module
-            .input_slot_with_identity(id, port, slot, schema, local_type, vec![resolved]);
+        self.module.input_slot_with_identity(
+            id,
+            port,
+            slot,
+            schema.clone(),
+            local_type,
+            vec![resolved],
+        );
         let declaration_id = NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed);
         self.public_input_ids.insert(name.clone(), declaration_id);
         Ok(PublicInput {
@@ -245,7 +241,7 @@ impl GraphBuilder {
 
     pub(super) fn expose_output_symbolic(&mut self, name: &str, from: &str) -> Result<(), String> {
         let (source, kind) = self.source_path(from)?;
-        let resolved = self.verify_source(&source, kind)?;
+        let resolved = self.verify_source(&source, kind.clone())?;
         validate_name_segment(name).map_err(|err| err.to_string())?;
         if self.module.outputs.iter().any(|output| output.name == name) {
             return Err(format!("duplicate public output {name:?}"));
@@ -264,18 +260,13 @@ impl GraphBuilder {
         &self,
         _kind: TypeIdentity,
         target: &Target,
-    ) -> Result<(&'static str, Option<TypeId>), String> {
+    ) -> Result<(Arc<str>, Option<TypeId>), String> {
         match target {
             Target::Node { node, port, slot } => {
-                let selected = self.pending.borrow().get(node).cloned();
-                let n = selected
-                    .as_ref()
-                    .or_else(|| {
-                        self.module
-                            .nodes
-                            .iter()
-                            .find(|n| n.name.as_deref() == Some(node))
-                    })
+                let pending = self.pending.borrow();
+                let n = pending
+                    .get(node)
+                    .or_else(|| self.module.named_node(node))
                     .ok_or("node missing")?;
                 let p = n
                     .ports
@@ -287,7 +278,7 @@ impl GraphBuilder {
                     .iter()
                     .find(|s| s.name.as_deref() == Some(slot))
                     .ok_or("slot missing")?;
-                Ok((s.schema, s.local_type))
+                Ok((s.schema.clone(), s.local_type))
             }
             Target::Instance { name, port } => {
                 let entry = self.dependency_for_instance(name)?;
@@ -297,7 +288,7 @@ impl GraphBuilder {
                     .iter()
                     .find(|p| &p.name == port)
                     .ok_or("input missing")?;
-                Ok((p.schema, p.local_type))
+                Ok((p.schema.clone(), p.local_type))
             }
         }
     }
@@ -305,25 +296,20 @@ impl GraphBuilder {
         &self,
         _kind: TypeIdentity,
         source: &Source,
-    ) -> Result<(&'static str, Option<TypeId>), String> {
+    ) -> Result<(Arc<str>, Option<TypeId>), String> {
         match source {
             Source::Node { node, output } => {
-                let selected = self.pending.borrow().get(node).cloned();
-                let n = selected
-                    .as_ref()
-                    .or_else(|| {
-                        self.module
-                            .nodes
-                            .iter()
-                            .find(|n| n.name.as_deref() == Some(node))
-                    })
+                let pending = self.pending.borrow();
+                let n = pending
+                    .get(node)
+                    .or_else(|| self.module.named_node(node))
                     .ok_or("node missing")?;
                 let p = n
                     .outputs
                     .iter()
                     .find(|p| p.name.as_deref() == Some(output))
                     .ok_or("output missing")?;
-                Ok((p.schema, p.local_type))
+                Ok((p.schema.clone(), p.local_type))
             }
             Source::Instance { name, port } => {
                 let entry = self.dependency_for_instance(name)?;
@@ -333,18 +319,23 @@ impl GraphBuilder {
                     .iter()
                     .find(|p| &p.name == port)
                     .ok_or("output missing")?;
-                Ok((p.schema, p.local_type))
+                Ok((p.schema.clone(), p.local_type))
             }
         }
     }
 
     pub fn public_input(&self, name: &str) -> Result<PublicInput, String> {
+        self.public_input_slot(name, "value")
+    }
+
+    /// Look up an exact public pair for trigger authoring. Routing keys remain private.
+    pub fn public_input_slot(&self, port: &str, slot: &str) -> Result<PublicInput, String> {
         let p = self
             .module
             .inputs
             .iter()
-            .find(|p| p.port == name && p.slot == "value")
-            .ok_or_else(|| format!("unknown public input {name:?}"))?;
+            .find(|p| p.port == port && p.slot == slot)
+            .ok_or_else(|| format!("unknown public input ({port:?}, {slot:?})"))?;
         Ok(PublicInput {
             scope: self.module.scope,
             declaration_id: *self
@@ -353,7 +344,7 @@ impl GraphBuilder {
                 .ok_or("public input declaration identity missing")?,
             id: p.id,
             name: p.name.clone(),
-            schema: p.schema,
+            schema: p.schema.clone(),
             local_type: p.local_type,
         })
     }

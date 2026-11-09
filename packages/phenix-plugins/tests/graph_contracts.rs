@@ -51,13 +51,23 @@ fn plugin_request_checks_final_selected_unit() {
     });
     // Matching structure alone never creates semantic membership.
     let unclaimed = graph.clone().compile().unwrap();
-    assert_eq!(
-        snapshot
-            .bind::<ProviderAction>("model", &required, &unclaimed)
-            .err()
+    let error = snapshot
+        .bind::<ProviderAction>("model", &required, &unclaimed)
+        .err()
+        .unwrap();
+    assert_eq!(error.code, Code::SchemaRejected);
+    let context = error.context.as_ref().unwrap();
+    assert_eq!(context.plugin, "provider");
+    assert_eq!(context.phase, phenix_plugin::CallbackPhase::Bind);
+    assert_eq!(context.contribution.as_deref(), Some("model"));
+    let source = std::error::Error::source(&error)
+        .unwrap()
+        .downcast_ref::<phenix_plugin::Failure>()
+        .unwrap();
+    assert!(
+        std::error::Error::source(source)
             .unwrap()
-            .code,
-        Code::SchemaRejected
+            .is::<phenix_graph::InterfaceError>()
     );
     graph.implements("provider", &required).unwrap();
     let compiled = graph.compile().unwrap();

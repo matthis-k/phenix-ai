@@ -10,9 +10,11 @@
 //! Deliberately redeploying the same compiled graph is supported; each bound query
 //! borrows its owning engine. Queries are host-only: dispatch of any node through
 //! a DerivedRuntime rejects nested queries, including queries of another runtime.
-//! KernelHost generations use the same binding via [`QuerySpec::bind_engine`]
-//! inside `Generation::with_kernel`, and must use [`DerivedRuntime::guard_executor`]
-//! when preparing to enforce this rule on delegated execution threads too.
+//! [`DerivedHost`] installs this guard unconditionally for host generations,
+//! including delegated execution threads. Prepare with [`QuerySpec::validate_binding`]
+//! and query after publication with [`DerivedGeneration::query`]. Explicit
+//! [`QuerySpec::bind_engine`] is low-level: arbitrary engines cannot guarantee
+//! host-only dispatch or kernel started-state admission.
 //! Stored and derived inputs cannot be mixed in a tuple: explicitly declare one
 //! [`GraphDeriveExt::sources`] group and reuse it with `derive_from` instead.
 //! All values are local Rust types with `Clone + Send + Sync + 'static` bounds.
@@ -74,10 +76,12 @@
 //! let mut graph = GraphBuilder::new("cycle");
 //! let cycle = graph.derive("cycle", (&cycle,), |x: i64| x + 1);
 //! ```
+mod host;
 mod inputs;
 mod producer;
 mod query;
 mod source;
+pub use host::{DerivedGeneration, DerivedHost};
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
 pub use query::{DerivedRuntime, QueryHandle, QuerySpec};
@@ -96,6 +100,7 @@ pub enum RefreshCause {
 #[derive(Debug)]
 pub enum Error {
     Graph(String),
+    Kernel(phenix_kernel::CallbackError),
     Storage(phenix_storage::Error),
     MultipleRefreshRoots,
     WrongGeneration,
@@ -110,7 +115,15 @@ impl std::fmt::Display for Error {
         write!(f, "{self:?}")
     }
 }
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Kernel(error) => Some(error.as_ref()),
+            Self::Storage(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 impl From<String> for Error {
     fn from(e: String) -> Self {
         Self::Graph(e)
@@ -178,14 +191,11 @@ pub trait GraphDeriveExt {
     ) -> Result<QuerySpec<T>, Error>;
 }
 
-// Never replace the original with a clone: that would invalidate user NodeHandle
-// weak configuration references. Validate deterministically, then replay additions.
 pub(crate) fn staged<T>(
     graph: &mut GraphBuilder,
-    mut edit: impl FnMut(&mut GraphBuilder) -> Result<T, Error>,
+    edit: impl FnOnce(&mut phenix_graph::authoring::GraphAdditions<'_>) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    edit(&mut graph.clone())?;
-    edit(graph)
+    graph.additions(edit)
 }
 
 impl GraphDeriveExt for GraphBuilder {

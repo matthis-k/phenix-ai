@@ -61,19 +61,15 @@ impl PluginInstance for Observer {
             compose: Box::new(move |context| {
                 let graph = &mut *context.graph;
                 let observed = observed.clone();
-                let sink = graph
-                    .node(&route, move |notice: Notice| {
-                        observed.lock().unwrap().push(notice);
-                    })
-                    .map_err(|e| e.to_string())?;
+                let sink = graph.node(&route, move |notice: Notice| {
+                    observed.lock().unwrap().push(notice);
+                })?;
                 let input = graph.expose_input(&route, sink.inlet())?;
                 graph.trigger(&route, [input])?;
                 let session = session.clone();
                 let target = target.clone();
                 context.activate(move || {
-                    let subscription = session
-                        .subscribe(Scope::Mount("main".into()), 2)
-                        .map_err(|e| e.to_string())?;
+                    let subscription = session.subscribe(Scope::Mount("main".into()), 2)?;
                     Ok(Box::new(StorageBinding::new(subscription, target.clone())))
                 })
             }),
@@ -177,7 +173,14 @@ fn closed_subscription_is_a_poll_error() {
     let mut binding = StorageBinding::new(subscription, "changed");
     drop(session);
     drop(registry);
-    assert_eq!(binding.poll().err().unwrap(), "SubscriptionClosed");
+    assert!(matches!(
+        binding
+            .poll()
+            .err()
+            .unwrap()
+            .downcast_ref::<phenix_storage::Error>(),
+        Some(phenix_storage::Error::SubscriptionClosed)
+    ));
 }
 
 #[test]

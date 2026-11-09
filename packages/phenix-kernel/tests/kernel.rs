@@ -33,8 +33,8 @@ struct Source {
     notices: VecDeque<Result<Notice, String>>,
 }
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
-        self.notices.pop_front().transpose()
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+        self.notices.pop_front().transpose().map_err(Into::into)
     }
 }
 impl PluginInstance for Plugin {
@@ -59,12 +59,10 @@ impl PluginInstance for Plugin {
                     });
                 }
                 let mark = Mark(format!("engine:{name}"), log.clone());
-                let n = g
-                    .node(&name, move |x: i64| {
-                        mark.1.lock().unwrap().push(format!("execute:{}", mark.0));
-                        x + 1
-                    })
-                    .map_err(|e| e.to_string())?;
+                let n = g.node(&name, move |x: i64| {
+                    mark.1.lock().unwrap().push(format!("execute:{}", mark.0));
+                    x + 1
+                })?;
                 let input = g.expose_input(format!("input_{name}"), n.inlet())?;
                 g.trigger(&name, [input])?;
                 let start_log = start_log.clone();
@@ -146,7 +144,10 @@ fn loader_order_waves_bounds_and_lifetimes() {
     assert!(kernel.fire("alpha", vec![Value::local(4_i64)]).is_err());
     assert!(kernel.drain(10).is_empty());
     kernel.start().unwrap();
-    assert!(kernel.start().unwrap_err().contains("already started"));
+    assert!(matches!(
+        kernel.start().unwrap_err(),
+        phenix_kernel::StartError::AlreadyStarted
+    ));
     assert_eq!(
         *log.lock().unwrap(),
         ["compose:beta", "compose:alpha", "start:beta", "start:alpha"]
@@ -209,7 +210,7 @@ fn dependencies_fail_before_composition() {
         )
         .err()
         .unwrap();
-        assert!(error.contains(expected), "{error}");
+        assert!(error.to_string().contains(expected), "{error}");
         assert!(
             !log.lock()
                 .unwrap()
@@ -224,6 +225,7 @@ fn dependencies_fail_before_composition() {
         Kernel::build("test", selected, Arc::new(LocalExecutor))
             .err()
             .unwrap()
+            .to_string()
             .contains("duplicate snapshot owner")
     );
 }
@@ -247,12 +249,24 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
     )
     .unwrap();
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("start:")));
-    assert_eq!(kernel.start().unwrap_err(), "startup failed");
+    let expected = phenix_kernel::StartError::Activation {
+        contribution: Key::new("beta", "main"),
+        cause: "startup failed".into(),
+    };
+    let error = kernel.start().unwrap_err();
+    assert_eq!(error.to_string(), expected.to_string());
+    assert_eq!(
+        std::error::Error::source(&error).unwrap().to_string(),
+        "startup failed"
+    );
     assert!(kernel.drain(10).is_empty());
     assert!(kernel.fire("alpha", vec![Value::local(1_i64)]).is_err());
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("engine:")));
     // Retrying runs factories again rather than retaining a partial activation.
-    assert_eq!(kernel.start().unwrap_err(), "startup failed");
+    assert_eq!(
+        kernel.start().unwrap_err().to_string(),
+        expected.to_string()
+    );
     assert_eq!(
         log.lock()
             .unwrap()
@@ -319,7 +333,7 @@ struct WakeSource {
     wake: Option<phenix_kernel::WakeHandle>,
 }
 impl Producer for WakeSource {
-    fn poll(&mut self) -> Result<Option<Notice>, String> {
+    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
         self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Notification during polling must not be lost before the driver waits.
         if let Some(wake) = self.wake.take() {
@@ -341,7 +355,7 @@ impl PluginInstance for DriverPlugin {
             routes: self.routes.clone(),
             compose: Box::new(move |context| {
                 let g = &mut *context.graph;
-                let n = g.node("sink", |_: i64| ()).map_err(|e| e.to_string())?;
+                let n = g.node("sink", |_: i64| ())?;
                 let input = g.expose_input("in", n.inlet())?;
                 g.trigger("run", [input])?;
                 let polls = polls.clone();
@@ -358,7 +372,7 @@ impl PluginInstance for DriverPlugin {
 fn driver_kernel(
     routes: &[&str],
     polls: Arc<std::sync::atomic::AtomicUsize>,
-) -> Result<Kernel, String> {
+) -> Result<Kernel, phenix_kernel::ResolutionError> {
     let mut catalog = PluginCatalog::new();
     let key = catalog.register("driver", |p: DriverPlugin| Ok(p)).unwrap();
     let mut plugins = catalog.instance();
@@ -381,7 +395,7 @@ fn routes_are_preflighted_without_activation() {
     ] {
         let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let error = driver_kernel(&routes, polls.clone()).err().unwrap();
-        assert!(error.contains(expected), "{error}");
+        assert!(error.to_string().contains(expected), "{error}");
         assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
@@ -405,6 +419,7 @@ fn driver_handles_shutdown_during_poll_and_rejects_legacy_sources() {
         kernel
             .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
             .unwrap_err()
+            .to_string()
             .contains("does not support")
     );
     assert_eq!(kernel.drain(2).len(), 2);
@@ -449,4 +464,68 @@ fn empty_driver_blocks_until_cross_thread_shutdown() {
     wake.shutdown();
     rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
     thread.join().unwrap();
+}
+
+#[test]
+fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable() {
+    struct Broken(Arc<std::sync::atomic::AtomicUsize>);
+    impl Producer for Broken {
+        fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("permanent".into())
+        }
+        fn set_waker(&mut self, _: phenix_kernel::WakeHandle) -> bool {
+            true
+        }
+    }
+    impl PluginInstance for Broken {
+        fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
+            let polls = self.0.clone();
+            r.add(Contribution {
+                id: "broken".into(),
+                requires: vec![],
+                routes: vec![],
+                compose: Box::new(move |c| {
+                    let polls = polls.clone();
+                    c.activate(move || Ok(Box::new(Broken(polls.clone()))))
+                }),
+            })
+        }
+    }
+    let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut catalog = PluginCatalog::new();
+    let key = catalog.register("broken", |p: Broken| Ok(p)).unwrap();
+    let mut plugins = catalog.instance();
+    plugins.load(&key, Broken(polls.clone())).unwrap();
+    let mut kernel = Kernel::build("broken", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    kernel.start().unwrap();
+    assert_eq!(kernel.drain(100).len(), 1);
+    assert!(kernel.drain(100).is_empty());
+    assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    polls.store(0, std::sync::atomic::Ordering::SeqCst);
+    let mut kernel = Kernel::build(
+        "broken-driver",
+        plugins.snapshots(),
+        Arc::new(LocalExecutor),
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    let wake = phenix_kernel::WakeHandle::default();
+    let driver_wake = wake.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        kernel.run_until(&driver_wake, |event| {
+            let _ = tx.send(event);
+        })
+    });
+    let first = rx.recv_timeout(std::time::Duration::from_secs(2));
+    let repeated = rx.recv_timeout(std::time::Duration::from_millis(30));
+    wake.shutdown();
+    thread.join().unwrap().unwrap();
+    assert!(matches!(
+        first.unwrap().result,
+        Err(phenix_kernel::ProducerError::Poll(_))
+    ));
+    assert!(repeated.is_err(), "terminal failure must not hot spin");
+    assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

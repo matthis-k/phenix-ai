@@ -14,9 +14,8 @@ impl Clone for Sender {
     }
 }
 impl ContractValue for Sender {
-    const SCHEMA: &'static str = "sender-rust-name";
-    fn schema_descriptor() -> Option<Schema> {
-        Some(descriptor(false))
+    fn schema() -> Schema {
+        descriptor(false)
     }
     fn encode(&self) -> Vec<u8> {
         self.0.encode()
@@ -34,8 +33,7 @@ impl<const V: u8> Clone for Receiver<V> {
     }
 }
 impl<const V: u8> ContractValue for Receiver<V> {
-    const SCHEMA: &'static str = "receiver-rust-name";
-    fn schema_descriptor() -> Option<Schema> {
+    fn schema() -> Schema {
         let mut schema = descriptor(V == 5);
         match V {
             1 => schema.name = "portable/other".into(),
@@ -44,7 +42,7 @@ impl<const V: u8> ContractValue for Receiver<V> {
             4 => schema.codec = "other-codec".into(),
             _ => {}
         }
-        Some(schema)
+        schema
     }
     fn encode(&self) -> Vec<u8> {
         self.0.encode()
@@ -56,9 +54,14 @@ impl<const V: u8> ContractValue for Receiver<V> {
     }
 }
 
-struct Legacy;
-impl ContractValue for Legacy {
-    const SCHEMA: &'static str = "sender-rust-name";
+struct Incomplete;
+impl ContractValue for Incomplete {
+    fn schema() -> Schema {
+        Schema {
+            structure: String::new(),
+            ..Sender::schema()
+        }
+    }
     fn encode(&self) -> Vec<u8> {
         vec![]
     }
@@ -67,9 +70,11 @@ impl ContractValue for Legacy {
     }
 }
 
-struct OtherLegacy;
-impl ContractValue for OtherLegacy {
-    const SCHEMA: &'static str = Legacy::SCHEMA;
+struct OtherIncomplete;
+impl ContractValue for OtherIncomplete {
+    fn schema() -> Schema {
+        Incomplete::schema()
+    }
     fn encode(&self) -> Vec<u8> {
         vec![]
     }
@@ -80,12 +85,11 @@ impl ContractValue for OtherLegacy {
 
 struct Inconsistent;
 impl ContractValue for Inconsistent {
-    const SCHEMA: &'static str = "nominal-override";
-    fn schema_descriptor() -> Option<Schema> {
-        Some(descriptor(false))
+    fn schema() -> Schema {
+        descriptor(false)
     }
-    fn wire_schema() -> &'static str {
-        Self::SCHEMA
+    fn wire_schema() -> std::sync::Arc<str> {
+        "nominal-override".into()
     }
     fn encode(&self) -> Vec<u8> {
         vec![]
@@ -97,9 +101,8 @@ impl ContractValue for Inconsistent {
 
 struct EncodedLength(usize);
 impl ContractValue for EncodedLength {
-    const SCHEMA: &'static str = Sender::SCHEMA;
-    fn schema_descriptor() -> Option<Schema> {
-        Sender::schema_descriptor()
+    fn schema() -> Schema {
+        Sender::schema()
     }
     fn encode(&self) -> Vec<u8> {
         vec![0; self.0]
@@ -152,11 +155,7 @@ fn engine(mut graph: GraphBuilder) -> phenix_graph::Engine {
 
 #[test]
 fn unrelated_manual_types_execute_and_roundtrip_vectors() {
-    assert_ne!(Sender::SCHEMA, Receiver::<0>::SCHEMA);
-    assert_eq!(
-        Sender::schema_descriptor(),
-        Receiver::<0>::schema_descriptor()
-    );
+    assert_eq!(Sender::schema(), Receiver::<0>::schema());
     let mut graph = pair::<Sender, Receiver<0>>();
     connect::<Sender, Receiver<0>>(&mut graph).unwrap();
     // Traverse the boundary in both directions, using each receiver's decoder.
@@ -253,28 +252,26 @@ fn schema_optionality_mismatch() {
 }
 
 #[test]
-fn legacy_equal_names_do_not_certify_portability() {
-    // Same type and same nominal name are still insufficient without descriptors.
-    let mut graph = pair::<Legacy, Legacy>();
+fn incomplete_equal_descriptors_do_not_certify_portability() {
+    let mut graph = pair::<Incomplete, Incomplete>();
     assert!(
-        connect::<Legacy, Legacy>(&mut graph)
+        connect::<Incomplete, Incomplete>(&mut graph)
             .unwrap_err()
-            .contains("explicit source schema")
+            .contains("schema mismatch or non-portable descriptor")
     );
-    let mut graph = pair::<Legacy, OtherLegacy>();
-    assert!(connect::<Legacy, OtherLegacy>(&mut graph).is_err());
-    let mut graph = pair::<Sender, Legacy>();
-    assert_eq!(Sender::SCHEMA, Legacy::SCHEMA);
+    let mut graph = pair::<Incomplete, OtherIncomplete>();
+    assert!(connect::<Incomplete, OtherIncomplete>(&mut graph).is_err());
+    let mut graph = pair::<Sender, Incomplete>();
     assert!(
-        connect::<Sender, Legacy>(&mut graph)
+        connect::<Sender, Incomplete>(&mut graph)
             .unwrap_err()
-            .contains("explicit destination schema")
+            .contains("schema mismatch or non-portable descriptor")
     );
-    let mut graph = pair::<Legacy, Sender>();
+    let mut graph = pair::<Incomplete, Sender>();
     assert!(
-        connect::<Legacy, Sender>(&mut graph)
+        connect::<Incomplete, Sender>(&mut graph)
             .unwrap_err()
-            .contains("explicit source schema")
+            .contains("schema mismatch or non-portable descriptor")
     );
 }
 
@@ -400,25 +397,34 @@ fn stale_and_divergent_clone_endpoints_are_rejected() {
     assert!(right.connect_wire(left_source, right_sink).is_err());
 }
 
-fn rustc_paths() -> (std::path::PathBuf, std::path::PathBuf) {
-    let deps = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_owned();
-    let library = std::fs::read_dir(&deps)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("libphenix_graph-")
-                && path.extension().is_some_and(|ext| ext == "rlib")
-        })
-        .max_by_key(|path| path.metadata().unwrap().modified().unwrap())
-        .unwrap();
-    (deps, library)
+fn rustc_paths(output_dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    // Let Cargo supply the exact feature-specific artifact, rather than guessing
+    // among hashed rlibs left by other builds in the integration test's deps dir.
+    let target = output_dir.join("target");
+    let mut command = std::process::Command::new(env!("CARGO"));
+    command
+        .args([
+            "build",
+            "--offline",
+            "--locked",
+            "--lib",
+            "--no-default-features",
+            "--manifest-path",
+        ])
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target);
+    if cfg!(feature = "derive") {
+        command.args(["--features", "derive"]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "fixture library build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let profile = target.join("debug");
+    (profile.join("deps"), profile.join("libphenix_graph.rlib"))
 }
 
 #[test]
@@ -427,10 +433,10 @@ fn ordinary_connect_compile_checks_unrelated_endpoint_types() {
         io::Write,
         process::{Command, Stdio},
     };
-    let (deps, library) = rustc_paths();
     let output_dir =
         std::env::temp_dir().join(format!("phenix-portable-wire-{}", std::process::id()));
     std::fs::create_dir_all(&output_dir).unwrap();
+    let (deps, library) = rustc_paths(&output_dir);
     let test_file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/portable_wire.rs");
     for (case, endpoints, valid) in [
         (
@@ -495,10 +501,10 @@ fn ordinary_connect_compile_checks_unrelated_endpoint_types() {
 #[test]
 fn independently_compiled_portable_crates_execute() {
     use std::process::Command;
-    let (deps, library) = rustc_paths();
     let output_dir =
         std::env::temp_dir().join(format!("phenix-portable-fixtures-{}", std::process::id()));
     std::fs::create_dir_all(&output_dir).unwrap();
+    let (deps, library) = rustc_paths(&output_dir);
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     for name in [
         "portable_provider",
@@ -506,6 +512,9 @@ fn independently_compiled_portable_crates_execute() {
         "portable_execution",
     ] {
         let mut command = Command::new("rustc");
+        if cfg!(feature = "derive") {
+            command.args(["--cfg", "feature=\"derive\""]);
+        }
         command
             .args(["--edition=2024", "--crate-name", name])
             .arg("--extern")
@@ -539,6 +548,65 @@ fn independently_compiled_portable_crates_execute() {
         output.status.success(),
         "fixture execution failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(output_dir).unwrap();
+}
+
+#[test]
+fn manual_codec_cannot_omit_complete_schema() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let output_dir =
+        std::env::temp_dir().join(format!("phenix-required-schema-{}", std::process::id()));
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let (deps, library) = rustc_paths(&output_dir);
+    let mut child = Command::new("rustc")
+        .args([
+            "--edition=2024",
+            "--crate-name",
+            "required_schema",
+            "--emit=metadata",
+            "--out-dir",
+        ])
+        .arg(&output_dir)
+        .arg("--extern")
+        .arg(format!("phenix_graph={}", library.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", deps.display()))
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"
+        use phenix_graph::ContractValue;
+        struct Nominal;
+        impl ContractValue for Nominal {
+            fn wire_schema() -> std::sync::Arc<str> { "nominal-only".into() }
+            fn encode(&self) -> Vec<u8> { vec![] }
+            fn decode(_: &[u8]) -> Result<Self, String> { Ok(Self) }
+        }
+        fn main() {}
+    "#,
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "nominal-only implementation compiled"
+    );
+    assert!(
+        stderr.contains("missing") && stderr.contains("schema"),
+        "{stderr}"
     );
     std::fs::remove_dir_all(output_dir).unwrap();
 }

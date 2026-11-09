@@ -1,6 +1,5 @@
 //! Shared wire contract. Equality is authoritative, not a hash or Rust type name.
-use std::collections::BTreeSet;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schema {
@@ -41,17 +40,10 @@ impl Schema {
         }
     }
 
-    /// Interning retains the graph's existing static-string identity API.
-    pub fn intern(&self) -> &'static str {
-        static IDENTITIES: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
-        let canonical = self.canonical();
-        let mut identities = IDENTITIES.get_or_init(Default::default).lock().unwrap();
-        if let Some(value) = identities.get(canonical.as_str()) {
-            return value;
-        }
-        let value = Box::leak(canonical.into_boxed_str());
-        identities.insert(value);
-        value
+    /// Complete, content-comparable identity owned only by its consumers.
+    /// Cloning the returned Arc shares its allocation; no global cache retains it.
+    pub fn identity(&self) -> Arc<str> {
+        self.canonical().into()
     }
 }
 
@@ -62,6 +54,7 @@ mod tests {
     #[test]
     #[ignore = "manual distinct-descriptor reload retention measurement"]
     fn distinct_descriptor_reload_retention() {
+        let mut encoded_bytes = 0;
         let mut retained_bytes = 0;
         let mut previous = 0;
         for count in [10, 100, 1_000, 10_000] {
@@ -73,14 +66,48 @@ mod tests {
                     structure: "record{value:i64}".into(),
                     codec: "i64-le-v1".into(),
                 };
-                retained_bytes += schema.intern().len();
-                // Dropping the descriptor cannot release its interned identity.
+                let identity = schema.identity();
+                encoded_bytes += identity.len();
+                let weak = Arc::downgrade(&identity);
+                drop(identity);
+                if let Some(identity) = weak.upgrade() {
+                    retained_bytes += identity.len();
+                }
             }
             println!(
-                "distinct={count} retained_string_bytes={retained_bytes} batch_elapsed={:?}",
+                "distinct={count} encoded_string_bytes={encoded_bytes} batch_elapsed={:?}",
                 start.elapsed()
             );
+            println!("retained_string_bytes={retained_bytes}");
+            assert_eq!(retained_bytes, 0);
             previous = count;
+        }
+    }
+
+    #[test]
+    fn identities_are_shared_by_clones_and_reclaimed_after_repeated_unloads() {
+        for revision in 0..10_000 {
+            let schema = Schema {
+                name: format!("reload/{}", revision % 2),
+                revision,
+                structure: "record{value:i64}".into(),
+                codec: "i64-le-v1".into(),
+            };
+            let identity = schema.identity();
+            let independent = schema.identity();
+            assert_eq!(identity, independent);
+            assert!(!Arc::ptr_eq(&identity, &independent));
+            let weak = Arc::downgrade(&identity);
+            let cloned = identity.clone();
+            assert!(Arc::ptr_eq(&identity, &cloned));
+            assert_eq!(Arc::strong_count(&identity), 2);
+            drop(schema);
+            drop(identity);
+            assert!(weak.upgrade().is_some());
+            drop(cloned);
+            assert!(weak.upgrade().is_none());
+            // An equal identity is not a hidden strong owner of this allocation.
+            drop(independent);
         }
     }
 
@@ -110,9 +137,9 @@ mod tests {
                 ..base.clone()
             },
         ] {
-            assert_ne!(base.canonical(), changed.canonical());
+            assert_ne!(base.identity(), changed.identity());
         }
-        assert!(std::ptr::eq(base.intern(), base.clone().intern()));
+        assert_eq!(base.identity(), base.clone().identity());
         let required = Schema::record("r", &[("a", false, base.clone())]);
         assert_ne!(required, Schema::record("r", &[("a", true, base.clone())]));
         assert_ne!(required, Schema::record("r", &[("b", false, base)]));
