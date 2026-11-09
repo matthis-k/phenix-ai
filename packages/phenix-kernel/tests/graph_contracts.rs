@@ -91,11 +91,7 @@ mod provider {
             } else {
                 self.path.clone()
             };
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("main", move |context| {
                     let graph = &mut *context.graph;
                     graph.node(
                         &path,
@@ -109,8 +105,8 @@ mod provider {
                         activations.fetch_add(1, Ordering::SeqCst);
                         Ok(Box::new(Idle))
                     })
-                }),
-            })
+                })
+.register(into)
         }
     }
     struct Idle;
@@ -136,11 +132,7 @@ mod consumer {
                 contract: Key::new("definition", "transform"),
             })?;
             let observed = self.observed.clone();
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("main", move |context| {
                     let selected = context.import("transform")?;
                     let graph = &mut *context.graph;
                     let source = graph.node("source", Node::wire(|request: Request| request))?;
@@ -168,8 +160,8 @@ mod consumer {
                     let input = graph.expose_input("request", source.inlet())?;
                     graph.trigger("run", [input])?;
                     Ok(())
-                }),
-            })
+                })
+.register(into)
         }
     }
 }
@@ -339,12 +331,8 @@ impl PluginInstance for RequirementPlugin {
             consumer: Key::new(into.owner(), "main"),
             contract: Key::new(into.owner(), "requested"),
         })?;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|_| Ok(())),
-        })
+        Contribution::new("main", |_| Ok(()))
+.register(into)
     }
 }
 
@@ -440,11 +428,7 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
 struct LateEdit;
 impl PluginInstance for LateEdit {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: vec![],
-            compose: Box::new(|context| {
+        Contribution::new("main", |context| {
                 let graph = &mut *context.graph;
                 // A later contributor can replace the entire builder. An early
                 // successful claim/inspection must not certify this final unit.
@@ -454,8 +438,9 @@ impl PluginInstance for LateEdit {
                     Node::wire(|request: definition::Request| definition::Response(request.0)),
                 )?;
                 Ok(())
-            }),
-        })
+            })
+.after(vec![Key::new("provider", "main")])
+.register(into)
     }
 }
 
