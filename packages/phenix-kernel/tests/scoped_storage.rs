@@ -97,7 +97,7 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
             )
             .is_err()
     );
-    assert_eq!(reader.get("default").unwrap().unwrap().value.0, "second");
+    assert_eq!(reader.get_revisioned("default").unwrap().unwrap().value.0, "second");
     assert!(
         demo.kernel
             .fire("index", vec![Value::local("Agent::run".to_string())])
@@ -149,7 +149,7 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
             .unwrap()
             .config::<ObservedConfig>("phenix.agent/settings")
             .unwrap();
-        let found = reader.get("default").unwrap().unwrap();
+        let found = reader.get_revisioned("default").unwrap().unwrap();
         assert_eq!(found.revision, revision);
         assert_eq!(found.value.0, "persisted");
         let sql = demo
@@ -197,7 +197,7 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
         .unwrap()
         .config::<ObservedConfig>("phenix.agent/settings")
         .unwrap()
-        .get("default")
+        .get_revisioned("default")
         .unwrap()
         .unwrap();
     assert_eq!(found.value.0, "after-restart");
