@@ -45,6 +45,7 @@ impl PluginInstance for Plugin {
         let start_name = name.clone();
         let start_log = log.clone();
         let start_fail = self.start_fail;
+        let routes = vec![name.clone()];
         Contribution::new("main", move |context| {
             let g = &mut *context.graph;
             log.lock().unwrap().push(format!("compose:{name}"));
@@ -88,7 +89,7 @@ impl PluginInstance for Plugin {
             })
         })
         .after(self.requires.clone())
-        .route(vec![name.clone()])
+        .route(routes)
         .register(r)
     }
 }

@@ -229,18 +229,15 @@ impl PluginInstance for Plugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let compose = self.compose.clone();
         let activate = self.activate.clone();
-        registrar.add(Contribution {
-            id: "derive".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            compose: Box::new(move |context| {
-                compose(context.graph)?;
-                if let Some(activate) = activate.clone() {
-                    context.activate(move || activate())?;
-                }
-                Ok(())
-            }),
+        Contribution::new("derive", move |context| {
+            compose(context.graph)?;
+            if let Some(activate) = activate.clone() {
+                context.activate(move || activate())?;
+            }
+            Ok(())
         })
+        .route(self.routes.clone())
+        .register(registrar)
     }
 }
 fn build(plugin: Plugin, executor: Arc<dyn Executor>) -> DerivedRuntime {
