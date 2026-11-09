@@ -68,8 +68,6 @@ impl PluginInstance for Fixture {
             }
             Ok(())
         })
-        .after(Vec::new())
-        .route(Vec::new())
         .offer("offer", "service", Key::new("provider", "x"))
         .register(registrar)
     }
@@ -143,8 +141,6 @@ impl PluginInstance for HonestOffer {
             graph.node("service", |v: i64| v + 1)?;
             Ok(())
         })
-        .after(Vec::new())
-        .route(Vec::new())
         .offer("offer", "service", Key::new("provider", "x"))
         .register(registrar)
     }
@@ -164,7 +160,6 @@ impl PluginInstance for ForeignClaim {
                 .map_err(Into::into)
         })
         .after(vec![Key::new("provider", "main")])
-        .route(Vec::new())
         .register(registrar)
     }
 }
