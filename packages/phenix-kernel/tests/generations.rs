@@ -76,6 +76,7 @@ impl PluginInstance for Plugin {
         let start_log = log.clone();
         let start_name = name.clone();
         let gate = self.gate.clone();
+        let routes = vec![name.clone()];
         Contribution::new("main", move |context| {
             log.lock()
                 .unwrap()
@@ -126,7 +127,7 @@ impl PluginInstance for Plugin {
             Ok(())
         })
         .after(self.requires.clone())
-        .route(vec![name.clone()])
+        .route(routes)
         .register(into)
     }
 }

@@ -212,7 +212,7 @@ fn public_entry_point_runs() {
 #[test]
 fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
     use phenix_graph::LocalExecutor;
-    use phenix_kernel::{Contribution, Kernel};
+    use phenix_kernel::Kernel;
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use phenix_storage::{
         Operation,
@@ -285,8 +285,8 @@ fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
                     .iter()
                     .find(|s| s.name() == owner)
                     .unwrap()
-                    .get::<Contribution>(id)
-                    .is_some()
+                    .keys()
+                    .any(|(_, kind, key)| kind == "kernel.contribution" && key == id)
             );
         }
         // Graphs are already present, but cannot compose until the host injects storage.
