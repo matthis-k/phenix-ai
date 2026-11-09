@@ -68,11 +68,7 @@ impl PluginInstance for Provider {
             contract: Key::new(&owner, "definition"),
         })?;
         let config = self.clone();
-        into.add(Contribution {
-            id: self.actual_composer.into(),
-            requires: self.requires.clone(),
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new(self.actual_composer, move |context| {
                 config.compositions.fetch_add(1, Ordering::SeqCst);
                 let graph = &mut *context.graph;
                 let increment = config.increment;
@@ -88,15 +84,13 @@ impl PluginInstance for Provider {
                     graph.implements(&config.path, &contract(config.semantic))?;
                 }
                 Ok(())
-            }),
-        })?;
+            })
+.after(self.requires.clone())
+.register(into)?;
         if self.actual_composer != "main" {
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![Key::new(&owner, self.actual_composer)],
-                routes: vec![],
-                compose: Box::new(|_| Ok(())),
-            })?;
+            Contribution::new("main", |_| Ok(()))
+.after(vec![Key::new(&owner, self.actual_composer)])
+.register(into)?;
         }
         Ok(())
     }
@@ -116,11 +110,7 @@ impl PluginInstance for Consumer {
             contract: Key::new("z-provider", "definition"),
         })?;
         let config = self.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
+        Contribution::new("main", move |context| {
                 let selected = context.import("service")?;
                 assert!(context.import("undeclared").is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
@@ -139,8 +129,8 @@ impl PluginInstance for Consumer {
                 let public = graph.expose_input("request", input)?;
                 graph.trigger("run", [public])?;
                 Ok(())
-            }),
-        })
+            })
+.register(into)
     }
 }
 
@@ -420,11 +410,7 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 consumer: Key::new("combined", "main"),
                 contract: Key::new("combined", "definition"),
             })?;
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(|cx| {
+            Contribution::new("main", |cx| {
                     let selected = cx.import("service")?;
                     cx.graph.node("provider", |v: i64| v + 1)?;
                     cx.graph.implements("provider", &contract("service@1"))?;
@@ -434,8 +420,8 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                     let public = cx.graph.expose_input("request", input)?;
                     cx.graph.trigger("run", [public])?;
                     Ok(())
-                }),
-            })
+                })
+.register(into)
         }
     }
     let mut catalog = PluginCatalog::new();
