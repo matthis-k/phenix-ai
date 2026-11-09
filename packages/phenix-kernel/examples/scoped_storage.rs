@@ -73,11 +73,7 @@ pub mod writer {
             registrar.add(offer)?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
-            registrar.add(Contribution {
-                id: "writer".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("writer", move |context| {
                     let graph = &mut *context.graph;
                     let kv = storage
                         .get()
@@ -98,8 +94,8 @@ pub mod writer {
                     let input = graph.expose_input("config_update", node.inlet())?;
                     graph.trigger("configure", [input])?;
                     Ok(())
-                }),
-            })
+                })
+.register(registrar)
         }
     }
 }
@@ -151,11 +147,7 @@ pub mod observer {
             let storage = self.storage.clone();
             let source = storage.clone();
             let reads = self.reads.clone();
-            registrar.add(Contribution {
-                id: "observer".into(),
-                requires: vec![],
-                routes: vec!["config_changed".into()],
-                compose: Box::new(move |context| {
+            Contribution::new("observer", move |context| {
                     let graph = &mut *context.graph;
                     let kv = storage
                         .get()
@@ -182,8 +174,9 @@ pub mod observer {
                             "config_changed",
                         )))
                     })
-                }),
-            })
+                })
+.route(vec!["config_changed".into()])
+.register(registrar)
         }
     }
 }
@@ -206,9 +199,7 @@ pub mod code_index {
             ))?;
             let storage = self.storage.clone();
             let results = self.results.clone();
-            registrar.add(Contribution {
-                id: "index".into(), requires: vec![], routes: vec![],
-                compose: Box::new(move |context| {
+            Contribution::new("index", move |context| {
                     let graph = &mut *context.graph;
                     let sql = storage.get().ok_or("index storage not injected")?.project()?
                         .sql(StorageClass::Data, "phenix.code/index")?;
@@ -227,8 +218,8 @@ pub mod code_index {
                     let input = graph.expose_input("symbol", node.inlet())?;
                     graph.trigger("index", [input])?;
                     Ok(())
-                }),
-            })
+                })
+.register(registrar)
         }
     }
 }
