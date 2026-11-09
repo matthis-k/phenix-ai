@@ -31,5 +31,16 @@ C. **Chosen**: correct existing capability representation, `get` = plain, `get_r
 ## Subtraction, budget and migration
 Delete `ResourceRequest.atomic_cas`, `requires_atomic_cas`, `with_atomic_cas`, implied Read=>CAS, and revisioned-returning `Kv::get` compatibility meaning. No alias/shim. Only add a capability enum variant, a requirement set in existing type, a backend predicate, one renamed method, and one cell declaration convenience. Grep all affected Rust/docs/call sites; migrate fully. No second producer or native query API.
 
+## Phase 3 implementation discovery and revision
+The source review found a late preflight: `Session::read_source` was only used by
+typed `CellRead::bind`, but validated `ReadConsistency::BestEffort` while
+`ReadCell::get` and Graph source groups require atomic batches. The implementation
+now uses the existing `SnapshotReader::AtomicWithinMount` validator during
+cell binding, without new abstractions or duplicated probes. It also reports a
+missing revisioned read as `Capability::RevisionedRead`, not CAS. These are
+invariant placement and diagnostic corrections within the chosen design,
+not added feature categories. Both have regression coverage. See
+[seven actual cases](storage-capabilities-cases.md).
+
 ## Acceptance
 Full plain-only, revision-only, batch-only, CAS-only, all-features, dishonest-offer tests; per-plugin grant isolation, unknown schema denial, exact batch snapshot behavior and existing derived example. `cargo fmt --all --check`, `cargo test --workspace --locked`, no-default tests, Clippy strict, focused storage/plugin/derived/kernel tests, Nix flake check, exact-head CI. Record call-site counts, obsolete grep counts and baseline-vs-new behavior. Stop and return to Phase 1 on a new conceptual problem. All historical examples are in actual linked source files, not invented.
