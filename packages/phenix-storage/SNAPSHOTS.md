@@ -33,6 +33,7 @@ The exact public cell API in `phenix_storage::scoped` is:
 - `CellSpec::<T>::project_state(name: &'static str) -> CellSpec<T>` is `const`.
 - `CellSpec::<T>::read(self) -> CellRead<T>` is `const`.
 - `CellSpec::<T>::resource_spec(&self) -> ResourceSpec` requires `T: Stored`.
+- `CellSpec::<T>::request(&self, operations) -> ResourceRequest` declares the `AtomicReadMany` requirement for the host before graph binding.
 - `Storage::bind<B: BindCells>(&self, cells: B) -> scoped::Result<B::Bound>` supports `CellRead<T>` and tuples of arity 1-4, returning correspondingly shaped `ReadCell<T>` handles.
 - `ReadCell::<T>::source(&self) -> ReadSource` erases the type, not authority.
 - `ReadCell::<T>::get(&self) -> storage::Result<Revisioned<T>>` uses an atomic singleton snapshot.
@@ -108,7 +109,7 @@ fn read_many(&mut self, keys: &[ReadKey<'_>])
     -> phenix_storage::Result<Vec<Option<Revisioned<Vec<u8>>>>>;
 ```
 
-An opt-in backend must return a true coherent versioned snapshot in exactly the
+An opt-in backend must advertise `AtomicReadMany` in its `BackendFeatures` declaration and return a true coherent versioned snapshot in exactly the
 requested order and length. Memory reads run under one mount lock. SQLite reads
 use one deferred read transaction and its own snapshot, including isolation from
 other connections. Existing revision tokens and SQL authorizer policy are reused.

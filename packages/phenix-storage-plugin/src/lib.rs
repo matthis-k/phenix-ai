@@ -2,8 +2,8 @@
 //! in-process plugin Registrar. No second loader, database engine or kernel API.
 use phenix_plugin::{Contribution, ContributionHandle, PluginSnapshot};
 use phenix_storage::{
-    Address, Backend, Codec, Error as StorageError, Grant, Observation, Operation, Registry,
-    Schema, Scope, SqlBackend, TypedKv,
+    Address, Backend, Capability, Codec, Error as StorageError, Grant, Observation, Operation,
+    Registry, Schema, Scope, SqlBackend, TypedKv,
     scoped::{
         self, BindingTarget, Identity, ResourceCatalog, ResourceId, ResourceKind, ResourceRequest,
         ResourceSpec, ScopeKind, Storage, StorageClass, Stored, XdgPaths,
@@ -245,8 +245,20 @@ impl ResourceRequirements {
                         Operation::Read | Operation::Write | Operation::Delete => sql,
                         Operation::Subscribe => false,
                     })
-                    || (offer.request.atomic_cas
-                        && (sql || !offer.request.operations.contains(&Operation::Write)))
+                    || offer
+                        .request
+                        .required
+                        .iter()
+                        .any(|capability| match capability {
+                            Capability::TypedKv => sql,
+                            Capability::Sql => !sql,
+                            Capability::RevisionedRead | Capability::AtomicReadMany => {
+                                sql || !offer.request.operations.contains(&Operation::Read)
+                            }
+                            Capability::CompareExchange => {
+                                sql || !offer.request.operations.contains(&Operation::Write)
+                            }
+                        })
                 {
                     return Err(Error::InvalidRequest);
                 }
@@ -274,21 +286,34 @@ impl ResourceRequirements {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackendFeatures {
     pub typed_kv: bool,
+    pub revisioned_read: bool,
+    pub atomic_read_many: bool,
+    pub compare_exchange: bool,
     pub sql: bool,
-    pub atomic_cas: bool,
     pub invalidation: bool,
 }
 impl BackendFeatures {
     pub const MEMORY: Self = Self {
         typed_kv: true,
+        revisioned_read: true,
+        atomic_read_many: true,
+        compare_exchange: true,
         sql: false,
-        atomic_cas: true,
         invalidation: true,
     };
     pub const SQLITE: Self = Self {
         sql: true,
         ..Self::MEMORY
     };
+    fn supports(self, capability: Capability) -> bool {
+        match capability {
+            Capability::TypedKv => self.typed_kv,
+            Capability::RevisionedRead => self.revisioned_read,
+            Capability::AtomicReadMany => self.atomic_read_many,
+            Capability::CompareExchange => self.compare_exchange,
+            Capability::Sql => self.sql,
+        }
+    }
 }
 
 pub enum BackendPlacement {
@@ -656,7 +681,7 @@ impl PreparedStorage {
                 if !request.operations.is_subset(&binding.allowed) {
                     return Err(Error::Denied);
                 }
-                if (request.requires_atomic_cas() && !caps.atomic_cas)
+                if request.required.iter().any(|cap| !caps.supports(*cap))
                     || (request.operations.contains(&Operation::Subscribe) && !caps.invalidation)
                 {
                     return Err(Error::UnsupportedCapability);
@@ -787,11 +812,25 @@ impl PreparedStorage {
                     let mut backend = (lease.open)().map_err(Error::Open)?;
                     // Probe the provider before mounting it or issuing sessions.
                     // Built-in memory/SQLite capabilities are fixed.
-                    let (typed_kv, atomic_cas) = match backend.typed_kv() {
-                        Some(kv) => (true, kv.supports_compare_exchange()),
-                        None => (false, false),
-                    };
+                    let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
+                        match backend.typed_kv() {
+                            Some(kv) => (
+                                true,
+                                kv.supports_revisioned_reads(),
+                                kv.supports_atomic_read_many(),
+                                kv.supports_compare_exchange(),
+                            ),
+                            None => (false, false, false, false),
+                        };
                     let sql = backend.sql().is_some();
+                    let actual = BackendFeatures {
+                        typed_kv,
+                        revisioned_read,
+                        atomic_read_many,
+                        compare_exchange,
+                        sql,
+                        invalidation: true, // Registry writes always publish notices.
+                    };
                     for (id, request) in self.requirements.requests.values().flatten() {
                         let target_mount = match &self.resources[id].target {
                             BindingTarget::Dataset(address) => address.mount(),
@@ -804,7 +843,7 @@ impl PreparedStorage {
                             ResourceKind::TypedKv(_) => typed_kv,
                             ResourceKind::Sql => sql,
                         };
-                        if !supported || (request.requires_atomic_cas() && !atomic_cas) {
+                        if !supported || request.required.iter().any(|cap| !actual.supports(*cap)) {
                             return Err(Error::UnsupportedCapability);
                         }
                     }
@@ -1341,7 +1380,7 @@ mod tests {
     fn prepared_plan_exposes_existing_data_without_opening_or_granting() {
         let requirements = requirements(vec![(
             "writer",
-            request([Operation::Write]).with_atomic_cas(),
+            request([Operation::Write]).require(Capability::CompareExchange),
         )]);
         let id = requirements.iter().next().unwrap().0.clone();
         let mut policy = policy(&requirements, BackendPlacement::Memory);
@@ -1357,7 +1396,12 @@ mod tests {
             prepared.requirements().iter().collect::<Vec<_>>(),
             vec![(&id, &ResourceKind::TypedKv(TextCodec.schema()))]
         );
-        assert!(prepared.requirements().requests()["writer"][0].1.atomic_cas);
+        assert!(
+            prepared.requirements().requests()["writer"][0]
+                .1
+                .required
+                .contains(&Capability::CompareExchange)
+        );
         let address = Address::parse("store://main/settings").unwrap();
         assert_eq!(
             prepared.bindings()[&id].target,
@@ -1440,7 +1484,10 @@ mod tests {
     #[test]
     fn activation_has_independent_views_and_cas_delegates() {
         let requirements = requirements(vec![
-            ("writer", request([Operation::Write]).with_atomic_cas()),
+            (
+                "writer",
+                request([Operation::Write]).require(Capability::CompareExchange),
+            ),
             ("reader", request([Operation::Read])),
         ]);
         assert_eq!(requirements.iter().count(), 1);
@@ -1465,7 +1512,7 @@ mod tests {
         let revision = writer
             .compare_exchange("key", None, &Text("one".into()))
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "one");
         assert_eq!(found.revision, revision);
         assert!(reader.put("key", &Text("denied".into())).is_err());
@@ -1705,26 +1752,245 @@ mod tests {
         }
     }
 
+    /// Provider whose backend supports coherent snapshots without conditional writes.
+    #[derive(Default)]
+    struct BatchReadBackend(MemoryBackend);
+    impl Backend for BatchReadBackend {
+        fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
+            Some(self)
+        }
+    }
+    impl TypedKv for BatchReadBackend {
+        fn supports_revisioned_reads(&self) -> bool {
+            true
+        }
+        fn supports_atomic_read_many(&self) -> bool {
+            true
+        }
+        fn read_many(
+            &mut self,
+            keys: &[phenix_storage::snapshot::ReadKey<'_>],
+        ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
+            self.0.read_many(keys)
+        }
+        fn get_revisioned(
+            &mut self,
+            dataset: &str,
+            key: &str,
+        ) -> phenix_storage::Result<Option<phenix_storage::Revisioned<Vec<u8>>>> {
+            self.0.get_revisioned(dataset, key)
+        }
+        fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
+            self.0.get(dataset, key)
+        }
+        fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> phenix_storage::Result<()> {
+            self.0.put(dataset, key, value)
+        }
+        fn delete(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<bool> {
+            self.0.delete(dataset, key)
+        }
+    }
+    struct BatchReaderProvider;
+    impl PluginInstance for BatchReaderProvider {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            registrar.add(
+                BackendOffer::new("read-only-batch", || {
+                    Ok(Box::new(BatchReadBackend::default()))
+                })
+                .with_features(BackendFeatures {
+                    typed_kv: true,
+                    revisioned_read: true,
+                    atomic_read_many: true,
+                    compare_exchange: false,
+                    sql: false,
+                    invalidation: true,
+                }),
+            )
+        }
+    }
+
     #[test]
-    fn read_only_kv_requests_require_revision_support_in_prepare_and_activate() {
+    fn read_only_atomic_batch_provider_works_without_compare_exchange() {
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("batch", |_: ()| Ok(BatchReaderProvider))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let snapshot = plugins.load(&handle, ()).unwrap();
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        assert_eq!(
+            requirements.requests()["reader"][0].1.required,
+            [Capability::AtomicReadMany].into()
+        );
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "read-only-batch".into(),
+            },
+        );
+        let active =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap()
+                .activate()
+                .unwrap();
+        let cell = active.views["reader"].bind(spec.read()).unwrap();
+        assert!(cell.optional().get().unwrap().is_none());
+        let kv = active.views["reader"]
+            .user()
+            .config::<Text>("phenix.test/settings")
+            .unwrap();
+        assert!(kv.get("value").unwrap().is_none());
+        assert!(kv.get_revisioned("value").unwrap().is_none());
+        assert!(matches!(
+            kv.compare_exchange("value", None, &Text("denied".into())),
+            Err(phenix_storage::Error::Denied)
+        ));
+    }
+
+    #[test]
+    fn plain_scoped_reads_need_neither_revision_nor_cas() {
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("legacy", |config: ProviderConfig| Ok(Provider(config)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let mut config = provider_config(false);
+        config.legacy = true;
+        config.features.revisioned_read = false;
+        config.features.atomic_read_many = false;
+        config.features.compare_exchange = false;
+        let snapshot = plugins.load(&handle, config).unwrap();
+        let requirements = requirements(vec![("reader", request([Operation::Read]))]);
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        let active =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap()
+                .activate()
+                .unwrap();
+        let kv = active.views["reader"]
+            .user()
+            .config::<Text>("phenix.test/settings")
+            .unwrap();
+        assert!(kv.get("missing").unwrap().is_none());
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        assert!(matches!(
+            active.views["reader"].bind(spec.read()),
+            Err(scoped::Error::Storage(
+                phenix_storage::Error::UnsupportedCapability {
+                    capability: Capability::AtomicReadMany
+                }
+            ))
+        ));
+        assert!(matches!(
+            kv.get_revisioned("missing"),
+            Err(phenix_storage::Error::UnsupportedCapability {
+                capability: Capability::RevisionedRead
+            })
+        ));
+    }
+
+    #[test]
+    fn snapshot_requirement_rejects_cas_only_and_false_batch_offers() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let mut catalog = PluginCatalog::new();
+        let handle = catalog
+            .register("provider", |config: ProviderConfig| Ok(Provider(config)))
+            .unwrap();
+        let mut plugins = catalog.instance();
+        let spec = phenix_storage::scoped::CellSpec::<Text>::new(
+            ScopeKind::User,
+            StorageClass::Config,
+            "phenix.test/settings",
+        );
+        let mut declared = provider_config(false);
+        declared.features.atomic_read_many = false;
+        let snapshot = plugins.load(&handle, declared.clone()).unwrap();
+        let rejected_requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        let rejected_policy = policy(
+            &rejected_requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        assert!(matches!(
+            PreparedStorage::prepare(
+                rejected_requirements,
+                Identity::user("alice").unwrap(),
+                rejected_policy,
+            ),
+            Err(Error::UnsupportedCapability)
+        ));
+        assert_eq!(declared.opens.load(SeqCst), 0);
+
+        let mut dishonest = provider_config(false);
+        dishonest.legacy = true; // Implements plain KV only.
+        dishonest.features.revisioned_read = false;
+        dishonest.features.atomic_read_many = true; // Incorrect declaration.
+        dishonest.features.compare_exchange = false;
+        let snapshot = plugins.reload(&handle, dishonest.clone()).unwrap();
+        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        let policy = policy(
+            &requirements,
+            BackendPlacement::Offer {
+                snapshot,
+                id: "tracked".into(),
+            },
+        );
+        let prepared =
+            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                .unwrap();
+        assert!(matches!(
+            prepared.activate(),
+            Err(Error::UnsupportedCapability)
+        ));
+        assert_eq!(dishonest.opens.load(SeqCst), 1);
+        assert_eq!(dishonest.backend_drops.load(SeqCst), 1);
+    }
+
+    #[test]
+    fn explicitly_revisioned_reads_require_backend_support_in_prepare_and_activate() {
         use std::sync::atomic::Ordering::SeqCst;
         let mut catalog = PluginCatalog::new();
         let handle = catalog
             .register("legacy", |config: ProviderConfig| Ok(Provider(config)))
             .unwrap();
         let mut plugins = catalog.instance();
-        for declared_cas in [false, true] {
+        for declared_revisioned in [false, true] {
             let mut config = provider_config(false);
             config.legacy = true;
-            config.features.atomic_cas = declared_cas;
-            let snapshot = if declared_cas {
+            config.features.revisioned_read = declared_revisioned;
+            let snapshot = if declared_revisioned {
                 plugins.reload(&handle, config.clone()).unwrap()
             } else {
                 plugins.load(&handle, config.clone()).unwrap()
             };
-            let requirements = requirements(vec![("reader", request([Operation::Read]))]);
-            assert!(!requirements.requests()["reader"][0].1.atomic_cas);
-            assert!(requirements.requests()["reader"][0].1.requires_atomic_cas());
+            let requirements = requirements(vec![(
+                "reader",
+                request([Operation::Read]).require(Capability::RevisionedRead),
+            )]);
+            assert!(
+                requirements.requests()["reader"][0]
+                    .1
+                    .required
+                    .contains(&Capability::RevisionedRead)
+            );
             let policy = policy(
                 &requirements,
                 BackendPlacement::Offer {
@@ -1735,7 +2001,7 @@ mod tests {
             let prepared =
                 PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy);
             assert_eq!(config.opens.load(SeqCst), 0);
-            if declared_cas {
+            if declared_revisioned {
                 assert!(matches!(
                     prepared.unwrap().activate(),
                     Err(Error::UnsupportedCapability)
@@ -1757,11 +2023,11 @@ mod tests {
             .unwrap();
         let mut plugins = catalog.instance();
         let mut config = provider_config(false);
-        config.features.atomic_cas = false;
+        config.features.compare_exchange = false;
         let snapshot = plugins.load(&handle, config.clone()).unwrap();
         let requirements = requirements(vec![(
             "writer",
-            request([Operation::Write]).with_atomic_cas(),
+            request([Operation::Write]).require(Capability::CompareExchange),
         )]);
         let policy = policy(
             &requirements,
@@ -1904,8 +2170,14 @@ mod tests {
         let old_config = provider_config(false);
         let snapshot = plugins.load(&handle, old_config.clone()).unwrap();
         let declarations = snapshots(vec![
-            ("writer", request([Operation::Write])),
-            ("reader", request([Operation::Read])),
+            (
+                "writer",
+                request([Operation::Write]).require(Capability::CompareExchange),
+            ),
+            (
+                "reader",
+                request([Operation::Read]).require(Capability::RevisionedRead),
+            ),
         ]);
         let identity = Identity::user("alice").unwrap();
         let requirements = ResourceRequirements::collect(declarations.clone(), &identity).unwrap();
@@ -1955,13 +2227,13 @@ mod tests {
             .user()
             .config::<Text>("phenix.test/settings")
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "original");
         assert_eq!(found.revision, revision);
         let updated = writer
             .compare_exchange("key", Some(&revision), &Text("still active".into()))
             .unwrap();
-        let found = reader.get("key").unwrap().unwrap();
+        let found = reader.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "still active");
         assert_eq!(found.revision, updated);
     }
@@ -2001,11 +2273,14 @@ mod tests {
         plugins.unload(&handle).unwrap();
         assert_eq!(config.backend_drops.load(SeqCst), 0);
         assert_eq!(config.provider_drops.load(SeqCst), 0);
-        let found = kv.get("key").unwrap().unwrap();
+        let found = kv.get_revisioned("key").unwrap().unwrap();
         assert_eq!(found.value.0, "retained");
         kv.compare_exchange("key", Some(&found.revision), &Text("after unload".into()))
             .unwrap();
-        assert_eq!(kv.get("key").unwrap().unwrap().value.0, "after unload");
+        assert_eq!(
+            kv.get_revisioned("key").unwrap().unwrap().value.0,
+            "after unload"
+        );
         // TrackedBackend::drop asserts its provider is still alive at this point.
         drop(kv);
         assert_eq!(config.backend_drops.load(SeqCst), 1);

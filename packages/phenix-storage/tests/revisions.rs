@@ -287,7 +287,7 @@ fn legacy_backend_revision_capability_is_explicitly_unsupported() {
     assert!(matches!(
         session.get_revisioned(&address(), "k", &Text),
         Err(Error::UnsupportedCapability {
-            capability: Capability::CompareExchange
+            capability: Capability::RevisionedRead
         })
     ));
     assert!(matches!(

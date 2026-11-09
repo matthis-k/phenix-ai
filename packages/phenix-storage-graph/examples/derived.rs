@@ -57,13 +57,16 @@ pub const B: CellSpec<Amount> = CellSpec::project_state("demo.values/b");
 
 fn offers(registrar: &mut Registrar, operations: &[Operation]) -> Result<(), Failure> {
     for (id, spec) in [("a", A), ("b", B)] {
-        registrar.add(ResourceOffer::new(
-            id,
+        // Derived readers need atomic batches; writers do not need read support.
+        let request = if operations.contains(&Operation::Read) {
+            spec.request(operations.iter().copied())
+        } else {
             phenix_storage::scoped::ResourceRequest::new(
                 spec.resource_spec(),
                 operations.iter().copied(),
-            ),
-        ))?;
+            )
+        };
+        registrar.add(ResourceOffer::new(id, request))?;
     }
     Ok(())
 }

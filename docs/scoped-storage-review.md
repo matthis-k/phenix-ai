@@ -1,5 +1,7 @@
 # Scoped Storage Review
 
+> Historical review of the original scoped-storage API at the documented baseline. The later capability correction ([design](storage-capabilities-design.md), [critique](storage-capabilities-critique.md)) replaces the implied Read=>CAS rule and changes scoped `Kv::get` to return a plain value. Examples below remain historical before/after evidence for that earlier iteration, not the current consumer API.
+
 ## Scope And Baseline
 
 Comparison baseline: the exact fetched HEAD `eeb39b64` (locally resolved as

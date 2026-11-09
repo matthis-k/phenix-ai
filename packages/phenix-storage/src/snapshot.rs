@@ -412,7 +412,8 @@ impl Session {
             key,
             schema,
         };
-        SnapshotReader::new(vec![source.clone()], ReadConsistency::BestEffort)?;
+        // Typed cell binding promises coherent snapshots; reject incapable backends here.
+        SnapshotReader::new(vec![source.clone()], ReadConsistency::AtomicWithinMount)?;
         Ok(source)
     }
 }
