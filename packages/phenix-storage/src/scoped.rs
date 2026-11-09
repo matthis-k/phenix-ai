@@ -862,7 +862,7 @@ mod tests {
             .get("default")
             .unwrap()
             .unwrap();
-        assert_eq!(value.value.0, "selected");
+        assert_eq!(value.0, "selected");
         assert!(
             reader
                 .user()
@@ -935,7 +935,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "user"
         );
@@ -948,7 +947,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "project"
         );
@@ -1059,7 +1057,7 @@ mod tests {
                 .get("default")
                 .unwrap()
                 .unwrap();
-            assert_eq!(found.value.0, "persisted");
+            assert_eq!(found.0, "persisted");
         }
         std::fs::remove_file(path).unwrap();
     }
