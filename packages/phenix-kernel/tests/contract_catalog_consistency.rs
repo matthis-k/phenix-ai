@@ -1,6 +1,6 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
@@ -44,18 +44,10 @@ impl PluginInstance for Fixture {
                 id: "y".into(),
                 contract: y.clone(),
             })?;
-            registrar.add(GraphOffer {
-                id: "offer".into(),
-                producer: Key::new("provider", "compose"),
-                unit: "service".into(),
-                contract: Key::new("provider", "x"),
-            })?;
-            registrar.add(ContractRequirement {
-                id: "request".into(),
-                consumer: Key::new("provider", "consumer"),
-                contract: Key::new("provider", "y"),
-            })?;
+            
+            
             Contribution::new("consumer", |_| Ok(()))
+.import("request", Key::new("provider", "y"))
 .register(registrar)?;
         }
         let case = self.0;
@@ -81,6 +73,7 @@ impl PluginInstance for Fixture {
             })
 .after(Vec::new())
 .route(Vec::new())
+.offer("offer", "service", Key::new("provider", "x"))
 .register(registrar)
     }
 }
@@ -147,12 +140,7 @@ impl PluginInstance for HonestOffer {
             id: "x".into(),
             contract: contract("example/x@1", DeclaredValue::local::<i64>()),
         })?;
-        registrar.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: "service".into(),
-            contract: Key::new("provider", "x"),
-        })?;
+        
         Contribution::new("main", |context| {
                 let graph = &mut *context.graph;
                 graph.node("service", |v: i64| v + 1)?;
@@ -160,6 +148,7 @@ impl PluginInstance for HonestOffer {
             })
 .after(Vec::new())
 .route(Vec::new())
+.offer("offer", "service", Key::new("provider", "x"))
 .register(registrar)
     }
 }
