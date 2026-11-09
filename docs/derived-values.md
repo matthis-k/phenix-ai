@@ -4,15 +4,15 @@ Derived values are graph declarations over authorized Storage snapshots, not ano
 
 ## Complete Author Example
 
-This complete Rust example defines its domain codec, resource requests, contribution factory, plugin declarations and host demand function. The factory accepts an already host-provisioned `Arc<Storage>`: it neither grants access nor opens a backend. It can be compiled as a standalone example with the workspace crates as dependencies; it has no external omitted Rust definitions. Its empty `main` intentionally does not provision a host.
+This Rust example defines its domain codec, resource requests, contribution factory, plugin declarations and host demand function. The factory accepts an already host-provisioned `Arc<Storage>`: it neither grants access nor opens a backend. Its empty `main` intentionally does not provision a host. The Markdown example is not a doctest; the canonical executable and verification boundary are linked below.
 
 ```rust
 use std::sync::{Arc, OnceLock};
-use phenix_kernel::Contribution;
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use phenix_storage::{Codec, Operation, Schema};
 use phenix_storage::scoped::{CellSpec, ResourceRequest, Storage, Stored};
-use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, Observation, QuerySpec};
+use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, QuerySpec};
 use phenix_storage_plugin::ResourceOffer;
 
 #[derive(Clone)]
@@ -41,19 +41,18 @@ impl Codec for AmountCodec {
 pub const A: CellSpec<Amount> = CellSpec::project_state("demo.values/a");
 pub const B: CellSpec<Amount> = CellSpec::project_state("demo.values/b");
 
-#[derive(Default)]
-pub struct State {
-    pub observation: OnceLock<Observation>,
-    pub query: OnceLock<QuerySpec<i64>>,
+#[derive(Clone)]
+pub struct Queries {
+    pub query: QuerySpec<i64>,
 }
 fn text(e: impl std::fmt::Display) -> String { e.to_string() }
 
-pub fn make_contribution(storage: Arc<Storage>, state: Arc<State>) -> Contribution {
-    let activation = state.clone();
+pub fn make_contribution(storage: Arc<Storage>) -> Contribution {
     Contribution {
         id: "amounts".into(), requires: vec![],
         routes: vec!["amounts.values.refresh".into()],
-        compose: Box::new(move |graph| {
+        compose: Box::new(move |context| {
+            let graph = &mut *context.graph;
             let (a, b) = storage.bind((A.read(), B.read())).map_err(text)?;
             let group = graph.sources("amounts.values", (&a, &b)).map_err(text)?;
             let sum = graph.derive_from("amounts.sum", &group,
@@ -67,22 +66,16 @@ pub fn make_contribution(storage: Arc<Storage>, state: Arc<State>) -> Contributi
             let sink = graph.node("amounts.consumer", |v: i64| println!("{v}"))
                 .map_err(text)?;
             graph.connect(twice.output(), sink.inlet())?;
-            state.query.set(graph.query_spec("amounts.query", &both).map_err(text)?)
-                .map_err(|_| "query already composed")?;
-            state.observation.set(group.observation(16))
-                .map_err(|_| "observation already composed")?;
-            Ok(())
+            let query = graph.query_spec("amounts.query", &both).map_err(text)?;
+            let observation = group.observation(16);
+            context.export(Queries { query })?;
+            context.activate(move || observation.activate().map_err(text))
         }),
-        activate: Some(Box::new(move || {
-            activation.observation.get().ok_or("not composed")?
-                .activate().map_err(text)
-        })),
     }
 }
 
 pub struct AmountPlugin {
     pub storage: Arc<OnceLock<Arc<Storage>>>,
-    pub state: Arc<State>,
 }
 impl PluginInstance for AmountPlugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
@@ -92,36 +85,31 @@ impl PluginInstance for AmountPlugin {
             )))?;
         }
         let storage = self.storage.clone();
-        let state = self.state.clone();
         // Declarations precede host provisioning; resolve the slot during compose.
         registrar.add(Contribution {
             id: "amounts".into(), requires: vec![],
             routes: vec!["amounts.values.refresh".into()],
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
                 let contribution = make_contribution(
                     storage.get().ok_or("storage not provisioned")?.clone(),
-                    state.clone(),
                 );
-                (contribution.compose)(graph)
+                (contribution.compose)(context)
             }),
-            activate: Some(Box::new({
-                let state = self.state.clone();
-                move || state.observation.get().ok_or("not composed")?
-                    .activate().map_err(text)
-            })),
         })
     }
 }
 
 // Host calls this after DerivedRuntime::build and successful start().
-pub fn demand(runtime: &DerivedRuntime, state: &State) -> Result<i64, String> {
-    runtime.bind_query(state.query.get().ok_or("not composed")?)
+pub fn demand(runtime: &DerivedRuntime) -> Result<i64, String> {
+    let queries = runtime.kernel().export::<Queries>(&Key::new("amounts", "amounts"))
+        .ok_or("missing candidate Queries export")?;
+    runtime.bind_query(&queries.query)
         .map_err(text)?.query().map_err(text)
 }
 fn main() {}
 ```
 
-`A=3, B=5` gives sum `8`, diff `-2`, both `-16`, twice `16`. The consumer runs for observations AND demand: querying `both` refreshes its whole root, including `twice` and the consumer. The `OnceLock` state here is single-composition state; use fresh state when recomposing a plugin.
+`A=3, B=5` gives sum `8`, diff `-2`, both `-16`, twice `16`. The consumer runs for observations AND demand: querying `both` refreshes its whole root, including `twice` and the consumer. Register this plugin under catalog owner `amounts` for the export key shown. Activation and query exports belong to each composed candidate, not shared snapshot slots; the storage provisioning slot is separate host-owned setup state.
 
 ## Host Planning
 
@@ -137,7 +125,16 @@ The runnable [examples/derived.rs](../packages/phenix-storage-graph/examples/der
 2. Resolve `CellSpec::resource_spec().resolve(&identity)`. The trusted host fixes `StoragePolicy` with `BackendPlacement`, `ResourceBinding` and per-plugin `plugin_access`. Put A/B datasets on one physical mount for an atomic group. The example grants the writer only `Write`, readers only `Read`/`Subscribe`.
 3. Call `ResourceRequirements::collect(snapshots.clone(), &identity)`, then `PreparedStorage::prepare(requirements, identity, policy)?.activate()?`. Inject `active.views` into plugin-owned slots before graph composition. Host decisions must not be inferred from requests.
 4. Call `DerivedRuntime::build(name, snapshots, Arc::new(LocalExecutor))`, then `start()`. Kernel compiles and preflights routes before activating observations. `drain(max_polls)` or `run_until(&wake, on_event)` drives existing producers. Start does not itself execute the bootstrap wave.
-5. Bind the stored `QuerySpec` via `runtime.bind_query(&spec)?.query()?`. Binding does no payload IO and fires no waves; querying before start fails. Each call fires one ordinary demand wave.
+5. Retrieve the candidate's exported `QuerySpec` via `runtime.kernel().export`, then use `runtime.bind_query(&spec)?.query()?`. Binding does no payload IO and fires no waves; querying before start through DerivedRuntime fails. Each call fires one ordinary demand wave.
+
+For `KernelHost`, bind exports in `prepare_with` before producers start. Use
+`Generation::with_kernel` after publication to retrieve exports and call
+`QuerySpec::bind_engine(kernel.engine())?.query()`. Prepare with
+`DerivedRuntime::guard_executor(executor)` to retain nested-query protection on
+dispatch and worker threads. This guard is opt-in on the host path. The low-level
+engine adapter bypasses Kernel's start guard; do not query in the preparation hook.
+See [Kernel](kernel.md#host-publication) and the source-reviewed
+[host adapter tests](../packages/phenix-storage-graph/tests/host_derived.rs).
 
 The compact example and runnable example deliberately use `Amount`, not `CellSpec<i64>` with a fictitious primitive codec. Computed local `i64` outputs need no storage codec.
 
@@ -160,7 +157,7 @@ Values and tuple arities 1-4 use `Clone + Send + Sync + 'static`; stored formats
 | `DerivedRef<T>`, internal root | Typed authoring output and shared refresh lineage/source action, no computed cache or runtime borrow. |
 | `Observation` | Deferred subscription request; activated producer owns subscriptions, bounded tails and bootstrap. |
 | `QuerySpec<T>` | Explicit terminal tap action plus value/root metadata; no runtime reference. |
-| `DerivedRuntime`, `QueryHandle<'a, T>` | Kernel/deployment lifetime and dispatch guard; the handle borrows the runtime and records its exact physical source/tap IDs. |
+| `DerivedRuntime`, `QueryHandle<'a, T>` | Runtime owns Kernel and guards dispatch; query handle borrows the exact engine, optionally retaining the Kernel start guard, and records physical source/tap IDs. `QuerySpec::bind_engine` supports scoped host adapters without a storage dependency in Kernel. |
 
 Authority is fixed per binding/session. Binding validates read permission/schema without fetching values; observation separately requires `Subscribe`. Reads recheck the immutable authority and contract, but this is not live grant revocation. Host policy changes require new views/bindings. Resource/schema agreement does not make different Rust local endpoint types interchangeable. Native in-process plugins are not sandboxed by these grants.
 

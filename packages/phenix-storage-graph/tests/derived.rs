@@ -1,7 +1,7 @@
 use phenix_graph::{
     Deployment, Emission, Executor, GraphBuilder, InvocationCtx, Layout, LocalExecutor, NodeAction,
 };
-use phenix_kernel::{Activate, Compose, Contribution, WakeHandle};
+use phenix_kernel::{Activate, Contribution, WakeHandle};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
     Address, Backend, Codec, Grant, MemoryBackend, Operation, Registry, Revisioned, Schema, Scope,
@@ -216,9 +216,11 @@ fn invalid_producer_route_preflight_never_activates() {
     );
     assert_eq!(activated.load(Ordering::SeqCst), 0);
 }
+type ComposeGraph = dyn Fn(&mut GraphBuilder) -> Result<(), String> + Send + Sync;
+
 #[derive(Clone)]
 struct Plugin {
-    compose: Arc<Compose>,
+    compose: Arc<ComposeGraph>,
     activate: Option<Arc<Activate>>,
     routes: Vec<String>,
 }
@@ -230,8 +232,13 @@ impl PluginInstance for Plugin {
             id: "derive".into(),
             requires: vec![],
             routes: self.routes.clone(),
-            compose: Box::new(move |graph| compose(graph)),
-            activate: activate.map(|activate| Box::new(move || activate()) as Box<Activate>),
+            compose: Box::new(move |context| {
+                compose(context.graph)?;
+                if let Some(activate) = activate.clone() {
+                    context.activate(move || activate())?;
+                }
+                Ok(())
+            }),
         })
     }
 }

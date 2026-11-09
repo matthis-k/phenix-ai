@@ -1,8 +1,8 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor, Node, Value};
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, Kernel, Key,
+    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
 };
-use phenix_plugin::{ContributionHandle, Failure, PluginCatalog, PluginInstance, Registrar};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -80,34 +80,41 @@ mod provider {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             into.add(GraphOffer {
                 id: "service".into(),
+                producer: Key::new(into.owner(), "main"),
                 unit: self.path.clone(),
                 contract: Key::new("definition", "transform"),
             })?;
             let increment = self.increment;
             let claim = self.claim;
             let activations = self.activations.clone();
+            let path = if self.path == "does-not-exist" {
+                "service".into()
+            } else {
+                self.path.clone()
+            };
             into.add(Contribution {
                 id: "main".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     graph
                         .node(
-                            "service",
+                            &path,
                             Node::wire(move |request: Request| Response(request.0 + increment)),
                         )
                         .map_err(|e| e.to_string())?;
                     if claim {
                         graph
-                            .implements("service", &definition::contract())
+                            .implements(&path, &definition::contract())
                             .map_err(|e| e.to_string())?;
                     }
-                    Ok(())
+                    let activations = activations.clone();
+                    context.activate(move || {
+                        activations.fetch_add(1, Ordering::SeqCst);
+                        Ok(Box::new(Idle))
+                    })
                 }),
-                activate: Some(Box::new(move || {
-                    activations.fetch_add(1, Ordering::SeqCst);
-                    Ok(Box::new(Idle))
-                })),
             })
         }
     }
@@ -124,24 +131,23 @@ mod consumer {
     portable!(Request, "example/request");
     portable!(Response, "example/response");
     pub struct Plugin {
-        pub selected: ContributionHandle<GraphOffer>,
         pub observed: Arc<Mutex<Vec<i64>>>,
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             into.add(ContractRequirement {
                 id: "transform".into(),
-                contract: self.selected.contract.clone(),
-                offer: Key::new("provider", "service"),
+                consumer: Key::new("consumer", "main"),
+                contract: Key::new("definition", "transform"),
             })?;
-            let selected = self.selected.clone();
             let observed = self.observed.clone();
             into.add(Contribution {
                 id: "main".into(),
-                requires: vec![Key::new("provider", "main")],
+                requires: vec![],
                 routes: vec![],
-                activate: None,
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let selected = context.import("transform")?;
+                    let graph = &mut *context.graph;
                     let source = graph
                         .node("source", Node::wire(|request: Request| request))
                         .map_err(|e| e.to_string())?;
@@ -160,9 +166,7 @@ mod consumer {
                     // Lookup uses A's contract types, never B's implementation types.
                     // C's independently defined types cross both portable edges.
                     let (input, output) = {
-                        let bound = graph
-                            .bind_contract(&selected.unit, &definition::contract())
-                            .map_err(|e| e.to_string())?;
+                        let bound = selected.bind(graph).map_err(|e| e.to_string())?;
                         (
                             bound
                                 .wire_input::<definition::Request>("run", "value")
@@ -226,7 +230,6 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
         .load(
             &c,
             consumer::Plugin {
-                selected: original.get::<GraphOffer>("service").unwrap(),
                 observed: observed.clone(),
             },
         )
@@ -272,9 +275,9 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
 
     // Build a valid candidate before committing. This is host sequencing, not
     // an atomic plugin/kernel coordinator or an automatic generation redirect.
-    let staged = plugins
-        .prepare_reload(&b, provider(20, true, &drops, &activations))
-        .unwrap();
+    let mut renamed = provider(20, true, &drops, &activations);
+    renamed.path = "renamed-service".into();
+    let staged = plugins.prepare_reload(&b, renamed).unwrap();
     let candidate = staged.candidate().unwrap();
     let mut new = Kernel::build(
         "new",
@@ -304,14 +307,13 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
     );
     assert_eq!(*observed.lock().unwrap(), [12, 13, 24, 15]);
     drop(old);
-    // The consumer snapshot deliberately retains its selected old offer too.
-    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(drops.load(Ordering::SeqCst), 2);
     drop(new);
     assert_eq!(drops.load(Ordering::SeqCst), 3);
 }
 
 #[test]
-fn missing_paths_definitions_and_explicit_selections_fail_closed() {
+fn missing_paths_and_definitions_fail_closed() {
     let mut catalog = PluginCatalog::new();
     let a = catalog
         .register("definition", |_: ()| Ok(definition::Plugin))
@@ -339,7 +341,6 @@ fn missing_paths_definitions_and_explicit_selections_fail_closed() {
 
 struct RequirementPlugin {
     contract: GraphContract,
-    offer: Key,
 }
 impl PluginInstance for RequirementPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
@@ -349,8 +350,14 @@ impl PluginInstance for RequirementPlugin {
         })?;
         into.add(ContractRequirement {
             id: "request".into(),
+            consumer: Key::new(into.owner(), "main"),
             contract: Key::new(into.owner(), "requested"),
-            offer: self.offer.clone(),
+        })?;
+        into.add(Contribution {
+            id: "main".into(),
+            requires: vec![],
+            routes: vec![],
+            compose: Box::new(|_| Ok(())),
         })
     }
 }
@@ -379,13 +386,23 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
             &c,
             RequirementPlugin {
                 contract: definition::contract(),
-                offer: Key::new("provider", "absent"),
             },
         )
         .unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
+    let mut policy = ImportPolicy::default();
+    policy.selections.insert(
+        Key::new("consumer", "request"),
+        Key::new("provider", "absent"),
+    );
+    let error = Kernel::build_with_policy(
+        "host",
+        plugins.snapshots(),
+        Arc::new(LocalExecutor),
+        &policy,
+    )
+    .err()
+    .unwrap()
+    .to_string();
     assert!(error.contains("missing selected offer"), "{error}");
 
     let unrelated = GraphContract::new(
@@ -398,14 +415,13 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
             &c,
             RequirementPlugin {
                 contract: unrelated,
-                offer: Key::new("provider", "service"),
             },
         )
         .unwrap();
     let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
         .err()
         .unwrap();
-    assert!(error.contains("unrelated@1"), "{error}");
+    assert!(error.contains("missing eligible offer"), "{error}");
 
     let conflicting =
         GraphContract::new(definition::contract().id(), InterfaceShape::new()).unwrap();
@@ -414,7 +430,6 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
             &c,
             RequirementPlugin {
                 contract: conflicting,
-                offer: Key::new("provider", "service"),
             },
         )
         .unwrap();
@@ -432,8 +447,8 @@ impl PluginInstance for LateEdit {
             id: "main".into(),
             requires: vec![Key::new("provider", "main")],
             routes: vec![],
-            activate: None,
-            compose: Box::new(|graph| {
+            compose: Box::new(|context| {
+                let graph = &mut *context.graph;
                 // A later contributor can replace the entire builder. An early
                 // successful claim/inspection must not certify this final unit.
                 *graph = phenix_graph::GraphBuilder::new("late-edit");

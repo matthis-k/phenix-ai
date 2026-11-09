@@ -1,10 +1,13 @@
 //! In-process composition and producer lifecycle around the existing graph engine.
+pub mod host;
+
 use phenix_graph::{
     Deployment, Engine, Executor, GraphBuilder, GraphContract, TriggerId, TriggerSelector, Value,
     WaveReport,
 };
 use phenix_plugin::{ContributionHandle, PluginSnapshot};
 use std::{
+    any::Any,
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Condvar, Mutex},
 };
@@ -68,18 +71,81 @@ impl WakeHandle {
     }
 }
 
-pub type Compose = dyn Fn(&mut GraphBuilder) -> Result<(), String> + Send + Sync;
+pub type Compose = dyn Fn(&mut ComposeContext<'_>) -> Result<(), String> + Send + Sync;
 pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, String> + Send + Sync;
 
+/// Owned selection metadata. Projection uses the graph's authoritative contract checker.
+#[derive(Clone, Debug)]
+pub struct ResolvedImport {
+    pub offer: Key,
+    pub producer: Key,
+    unit: String,
+    contract: GraphContract,
+}
+
+impl ResolvedImport {
+    pub fn bind<'g>(
+        &self,
+        graph: &'g GraphBuilder,
+    ) -> Result<phenix_graph::BoundAuthoringUnit<'g>, phenix_graph::InterfaceError> {
+        graph.bind_contract(&self.unit, &self.contract)
+    }
+}
+
+pub struct ComposeContext<'a> {
+    pub graph: &'a mut GraphBuilder,
+    imports: &'a BTreeMap<String, ResolvedImport>,
+    artifacts: &'a mut BuildArtifacts,
+}
+
+#[derive(Default)]
+struct BuildArtifacts {
+    activate: Option<Box<Activate>>,
+    export: Option<Box<dyn Any + Send + Sync>>,
+}
+
+impl ComposeContext<'_> {
+    /// Register this candidate's producer factory, capturing its exact composed state.
+    /// Only one factory is allowed per contribution in each candidate.
+    pub fn activate(
+        &mut self,
+        factory: impl Fn() -> Result<Box<dyn Producer>, String> + Send + Sync + 'static,
+    ) -> Result<(), String> {
+        if self.artifacts.activate.is_some() {
+            return Err("candidate activation already registered".into());
+        }
+        self.artifacts.activate = Some(Box::new(factory));
+        Ok(())
+    }
+
+    /// Export one typed value owned by this candidate and scoped to its contribution key.
+    /// Bundle multiple values in a struct; retrieve it through Kernel::export.
+    pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), String> {
+        if self.artifacts.export.is_some() {
+            return Err("candidate export already registered".into());
+        }
+        self.artifacts.export = Some(Box::new(value));
+        Ok(())
+    }
+
+    /// Look up only this contribution's declared imports. The result owns its
+    /// metadata so endpoint projection need not hold a borrow of the context.
+    pub fn import(&self, id: &str) -> Result<ResolvedImport, String> {
+        self.imports
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("undeclared import: {id}"))
+    }
+}
+
 /// Shared Rust type registered by plugins through the existing Registrar.
-/// Composition uses GraphBuilder directly, including its named endpoint APIs.
+/// Low-level graph authoring remains available through the composition context.
 pub struct Contribution {
     pub id: String,
     pub requires: Vec<Key>,
     /// Public trigger names this contribution's producer may emit.
     pub routes: Vec<String>,
     pub compose: Box<Compose>,
-    pub activate: Option<Box<Activate>>,
 }
 
 impl phenix_plugin::Contribution for Contribution {
@@ -107,6 +173,8 @@ impl phenix_plugin::Contribution for ContractDefinition {
 /// Every offer is checked after all composition, including unused offers.
 pub struct GraphOffer {
     pub id: String,
+    /// Exact contribution responsible for creating the offered unit.
+    pub producer: Key,
     pub unit: String,
     pub contract: Key,
 }
@@ -121,14 +189,137 @@ impl phenix_plugin::Contribution for GraphOffer {
     }
 }
 
-/// An explicit host-selected offer. This validates the selected target; it does
-/// not discover providers, authorize access or insert edges. The consumer's
-/// compose closure must wire this offer's path and declare composition ordering
-/// through `Contribution::requires` when needed.
+/// A local declarative import. Only the trusted host can select its provider.
 pub struct ContractRequirement {
     pub id: String,
+    pub consumer: Key,
     pub contract: Key,
-    pub offer: Key,
+}
+
+/// Trusted host decisions, never plugin contributions. Denial wins over allowance.
+#[derive(Clone, Debug, Default)]
+pub struct ImportPolicy {
+    pub selections: BTreeMap<Key, Key>,
+    /// If present, only these (requirement, offer) pairs are eligible.
+    pub allow: Option<BTreeSet<(Key, Key)>>,
+    pub deny: BTreeSet<(Key, Key)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionError {
+    DuplicateOwner(String),
+    Invalid(String),
+    ConflictingDefinition {
+        definition: Key,
+        contract: String,
+    },
+    Composition {
+        contribution: Key,
+        cause: String,
+    },
+    Compilation {
+        cause: phenix_graph::CompileDiagnostic,
+    },
+    MissingUnit {
+        offer: Key,
+        unit: String,
+    },
+    WrongOrigin {
+        offer: Key,
+        producer: Box<Key>,
+        unit: String,
+    },
+    Interface {
+        offer: Option<Key>,
+        unit: String,
+        cause: Box<phenix_graph::InterfaceError>,
+    },
+    Missing {
+        requirement: Key,
+        contract: Key,
+    },
+    Ambiguous {
+        requirement: Key,
+        offers: Vec<Key>,
+    },
+    Ineligible {
+        requirement: Key,
+        offer: Key,
+        reason: Box<str>,
+    },
+    Cycle(Vec<Key>),
+}
+
+impl std::fmt::Display for ResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateOwner(owner) => write!(f, "duplicate snapshot owner: {owner}"),
+            Self::Invalid(message) => f.write_str(message),
+            Self::ConflictingDefinition {
+                definition,
+                contract,
+            } => write!(
+                f,
+                "conflicting contract definition at {definition:?}: {contract}"
+            ),
+            Self::Composition {
+                contribution,
+                cause,
+            } => write!(f, "composition of {contribution:?}: {cause}"),
+            Self::Compilation { cause } => cause.fmt(f),
+            Self::MissingUnit { offer, unit } => {
+                write!(f, "compiled unit not found for offer {offer:?}: {unit}")
+            }
+            Self::WrongOrigin {
+                offer,
+                producer,
+                unit,
+            } => write!(
+                f,
+                "offer {offer:?} at {unit}: producer ownership origin mismatch: {producer:?}; contribution generation origin mismatch"
+            ),
+            Self::Interface { offer, unit, cause } => match offer {
+                Some(offer) => write!(f, "compiled offer {offer:?} at {unit}: {cause}"),
+                None => write!(f, "host/graph contract catalog conflict: {cause}"),
+            },
+            Self::Missing {
+                requirement,
+                contract,
+            } => write!(
+                f,
+                "missing eligible offer for requirement {requirement:?}: {contract:?}"
+            ),
+            Self::Ambiguous {
+                requirement,
+                offers,
+            } => write!(f, "ambiguous requirement {requirement:?}: {offers:?}"),
+            Self::Ineligible {
+                requirement,
+                offer,
+                reason,
+            } => write!(
+                f,
+                "ineligible selection for requirement {requirement:?}, offer {offer:?}: {reason}"
+            ),
+            Self::Cycle(keys) => write!(f, "contribution dependency cycle: {keys:?}"),
+        }
+    }
+}
+
+impl std::error::Error for ResolutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Compilation { cause } => Some(cause),
+            Self::Interface { cause, .. } => Some(cause.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+impl From<String> for ResolutionError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
 }
 
 impl phenix_plugin::Contribution for ContractRequirement {
@@ -156,7 +347,8 @@ pub struct Kernel {
     // Drop clears producers first; field order then keeps leases alive past engine teardown.
     engine: Engine,
     producers: Vec<(Key, Box<dyn Producer>)>,
-    leases: Vec<ContributionHandle<Contribution>>,
+    artifacts: BTreeMap<Key, BuildArtifacts>,
+    _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
     started: bool,
     next_producer: usize,
@@ -179,7 +371,26 @@ impl Kernel {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         executor: Arc<dyn Executor>,
     ) -> Result<Self, String> {
+        Self::build_with_policy(name, snapshots, executor, &ImportPolicy::default())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Discover compatible offers, apply trusted eligibility and selections,
+    /// and order composers before invoking any plugin code. A unique eligible
+    /// offer is selected automatically; missing or ambiguous imports fail closed.
+    pub fn build_with_policy(
+        name: impl Into<String>,
+        snapshots: impl IntoIterator<Item = PluginSnapshot>,
+        executor: Arc<dyn Executor>,
+        policy: &ImportPolicy,
+    ) -> Result<Self, ResolutionError> {
         let snapshots: Vec<_> = snapshots.into_iter().collect();
+        let mut owners = BTreeSet::new();
+        for snapshot in &snapshots {
+            if !owners.insert(snapshot.name()) {
+                return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
+            }
+        }
         let mut definitions = BTreeMap::new();
         let mut offers = BTreeMap::new();
         let mut requirements = BTreeMap::new();
@@ -194,7 +405,7 @@ impl Kernel {
                                 .get::<$ty>(id)
                                 .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
                             if $map.insert(key.clone(), handle).is_some() {
-                                return Err(format!("duplicate contribution: {key:?}"));
+                                return Err(format!("duplicate contribution: {key:?}").into());
                             }
                             continue;
                         }
@@ -210,7 +421,7 @@ impl Kernel {
                     .get::<Contribution>(id)
                     .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
                 if pending.insert(key.clone(), handle).is_some() {
-                    return Err(format!("duplicate contribution: {key:?}"));
+                    return Err(format!("duplicate contribution: {key:?}").into());
                 }
             }
         }
@@ -220,10 +431,10 @@ impl Kernel {
                 identities.insert(definition.contract.id(), &definition.contract)
                 && previous != &definition.contract
             {
-                return Err(format!(
-                    "conflicting contract definition at {key:?}: {}",
-                    definition.contract.id()
-                ));
+                return Err(ResolutionError::ConflictingDefinition {
+                    definition: key.clone(),
+                    contract: definition.contract.id().into(),
+                });
             }
         }
         for (key, offer) in &offers {
@@ -231,7 +442,27 @@ impl Kernel {
                 return Err(format!(
                     "missing contract definition for offer {key:?}: {:?}",
                     offer.contract
-                ));
+                )
+                .into());
+            }
+            if offer.producer.owner != key.owner || !pending.contains_key(&offer.producer) {
+                return Err(ResolutionError::WrongOrigin {
+                    offer: key.clone(),
+                    producer: Box::new(offer.producer.clone()),
+                    unit: offer.unit.clone(),
+                });
+            }
+        }
+        let mut imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>> = BTreeMap::new();
+        let mut dependencies: BTreeMap<Key, BTreeSet<Key>> = pending
+            .iter()
+            .map(|(key, contribution)| {
+                (key.clone(), contribution.requires.iter().cloned().collect())
+            })
+            .collect();
+        for key in policy.selections.keys() {
+            if !requirements.contains_key(key) {
+                return Err(format!("host selection names unknown requirement: {key:?}").into());
             }
         }
         for (key, requirement) in &requirements {
@@ -239,105 +470,187 @@ impl Kernel {
                 return Err(format!(
                     "missing contract definition for requirement {key:?}: {:?}",
                     requirement.contract
-                ));
-            }
-            if !offers.contains_key(&requirement.offer) {
-                return Err(format!(
-                    "missing selected offer for requirement {key:?}: {:?}",
-                    requirement.offer
-                ));
-            }
-            // An offer advertises one named contract. Its unit may implement
-            // others, but a requirement cannot silently reinterpret the offer.
-            let requested = &definitions[&requirement.contract].contract;
-            let advertised = &definitions[&offers[&requirement.offer].contract].contract;
-            requested.check_definition(advertised).map_err(|error| {
-                format!(
-                    "requirement {key:?} selects offer {:?} advertising an incompatible contract: {error}",
-                    requirement.offer
                 )
-            })?;
+                .into());
+            }
+            if requirement.consumer.owner != key.owner
+                || !pending.contains_key(&requirement.consumer)
+            {
+                return Err(format!(
+                    "requirement {key:?}: invalid consumer ownership: {:?}",
+                    requirement.consumer
+                )
+                .into());
+            }
+            let requested = &definitions[&requirement.contract].contract;
+            let candidates: Vec<_> = offers
+                .iter()
+                .filter(|(offer_key, offer)| {
+                    let pair = (key.clone(), (*offer_key).clone());
+                    !policy.deny.contains(&pair)
+                        && policy
+                            .allow
+                            .as_ref()
+                            .is_none_or(|allow| allow.contains(&pair))
+                        && requested
+                            .check_definition(&definitions[&offer.contract].contract)
+                            .is_ok()
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            let selected = if let Some(selected) = policy.selections.get(key) {
+                if !candidates.contains(selected) {
+                    let reason = match offers.get(selected) {
+                        None => "missing selected offer".into(),
+                        Some(offer) => match requested
+                            .check_definition(&definitions[&offer.contract].contract)
+                        {
+                            Err(error) => {
+                                format!("offer advertising an incompatible contract: {error}")
+                            }
+                            Ok(()) => "offer denied by host eligibility policy".into(),
+                        },
+                    };
+                    return Err(ResolutionError::Ineligible {
+                        requirement: key.clone(),
+                        offer: selected.clone(),
+                        reason: reason.into(),
+                    });
+                }
+                selected.clone()
+            } else {
+                match candidates.as_slice() {
+                    [] => {
+                        return Err(ResolutionError::Missing {
+                            requirement: key.clone(),
+                            contract: requirement.contract.clone(),
+                        });
+                    }
+                    [selected] => selected.clone(),
+                    _ => {
+                        return Err(ResolutionError::Ambiguous {
+                            requirement: key.clone(),
+                            offers: candidates,
+                        });
+                    }
+                }
+            };
+            let offer = &offers[&selected];
+            // A composer can create its own provider before projecting a self-import.
+            if offer.producer != requirement.consumer {
+                dependencies
+                    .get_mut(&requirement.consumer)
+                    .unwrap()
+                    .insert(offer.producer.clone());
+            }
+            imports
+                .entry(requirement.consumer.clone())
+                .or_default()
+                .insert(
+                    requirement.id.clone(),
+                    ResolvedImport {
+                        offer: selected,
+                        producer: offer.producer.clone(),
+                        unit: offer.unit.clone(),
+                        contract: requested.clone(),
+                    },
+                );
         }
         for (key, contribution) in &pending {
             let mut dependencies = BTreeSet::new();
             for dependency in &contribution.requires {
                 if !dependencies.insert(dependency) {
-                    return Err(format!("duplicate dependency for {key:?}: {dependency:?}"));
+                    return Err(format!("duplicate dependency for {key:?}: {dependency:?}").into());
                 }
                 if !pending.contains_key(dependency) {
-                    return Err(format!("missing dependency for {key:?}: {dependency:?}"));
+                    return Err(format!("missing dependency for {key:?}: {dependency:?}").into());
                 }
             }
         }
         let mut resolved = BTreeSet::new();
+        // Distinct composers retain their exact plugin revision's ancestry.
+        let origins: BTreeMap<_, _> = pending
+            .iter()
+            .map(|(key, contribution)| (key.clone(), contribution.graph_origin().child()))
+            .collect();
         let mut leases = Vec::new();
         let mut keys = Vec::new();
         while !pending.is_empty() {
             let key = pending
                 .iter()
-                .find(|(_, c)| c.requires.iter().all(|k| resolved.contains(k)))
+                .find(|(key, _)| dependencies[*key].iter().all(|k| resolved.contains(k)))
                 .map(|(key, _)| key.clone())
-                .ok_or_else(|| "contribution dependency cycle".to_owned())?;
+                .ok_or_else(|| ResolutionError::Cycle(pending.keys().cloned().collect()))?;
             leases.push(pending.remove(&key).expect("selected pending contribution"));
             keys.push(key.clone());
             resolved.insert(key);
         }
-        // The builder is dropped before leases on composition/compile failure.
+        // Candidate artifacts and builder are dropped before leases on build failure.
+        let mut artifacts = BTreeMap::new();
         let mut graph = GraphBuilder::new(name);
-        for contribution in &leases {
-            graph.with_origin(contribution.graph_origin(), |graph| {
-                (contribution.compose)(graph)
-            })?;
+        let empty_imports = BTreeMap::new();
+        for (key, contribution) in keys.iter().zip(&leases) {
+            graph
+                .with_origin(&origins[key], |graph| {
+                    (contribution.compose)(&mut ComposeContext {
+                        graph,
+                        imports: imports.get(key).unwrap_or(&empty_imports),
+                        artifacts: artifacts.entry(key.clone()).or_default(),
+                    })
+                })
+                .map_err(|cause| ResolutionError::Composition {
+                    contribution: key.clone(),
+                    cause,
+                })?;
         }
         for (key, offer) in &offers {
             graph
                 .require_contract(&offer.unit, &definitions[&offer.contract].contract)
-                .map_err(|error| format!("offer {key:?} at {}: {error}", offer.unit))?;
+                .map_err(|cause| ResolutionError::Interface {
+                    offer: Some(key.clone()),
+                    unit: offer.unit.clone(),
+                    cause: Box::new(cause),
+                })?;
         }
-        for (key, requirement) in &requirements {
-            let offer = &offers[&requirement.offer];
-            graph
-                .require_contract(&offer.unit, &definitions[&requirement.contract].contract)
-                .map_err(|error| format!("requirement {key:?} at {}: {error}", offer.unit))?;
-        }
-        let compiled = graph.compile().map_err(|error| error.to_string())?;
+        let compiled = graph
+            .compile()
+            .map_err(|cause| ResolutionError::Compilation { cause })?;
         // Check all registered definitions against all compiled claims and
         // requests, including units with no offer or selected requirement.
         compiled
             .check_contract_catalog(definitions.values().map(|entry| &entry.contract))
-            .map_err(|error| format!("host/graph contract catalog conflict: {error}"))?;
+            .map_err(|cause| ResolutionError::Interface {
+                offer: None,
+                unit: cause.path.to_string(),
+                cause: Box::new(cause),
+            })?;
         for (key, offer) in &offers {
             let contract = &definitions[&offer.contract].contract;
-            let unit = compiled.find(&offer.unit).ok_or_else(|| {
-                format!("compiled unit not found for offer {key:?}: {}", offer.unit)
-            })?;
-            if unit.origin() != Some(offer.graph_origin()) {
-                return Err(format!(
-                    "compiled offer {key:?} at {}: contribution generation origin mismatch",
-                    offer.unit
-                ));
+            let unit = compiled
+                .find(&offer.unit)
+                .ok_or_else(|| ResolutionError::MissingUnit {
+                    offer: key.clone(),
+                    unit: offer.unit.clone(),
+                })?;
+            if unit.origin() != Some(&origins[&offer.producer]) {
+                return Err(ResolutionError::WrongOrigin {
+                    offer: key.clone(),
+                    producer: Box::new(offer.producer.clone()),
+                    unit: offer.unit.clone(),
+                });
             }
             contract
                 .check_implementation(&unit)
-                .map_err(|error| format!("compiled offer {key:?} at {}: {error}", offer.unit))?;
-        }
-        for (key, requirement) in &requirements {
-            let offer = &offers[&requirement.offer];
-            let contract = &definitions[&requirement.contract].contract;
-            let unit = compiled.find(&offer.unit).ok_or_else(|| {
-                format!(
-                    "compiled unit not found for requirement {key:?}: {}",
-                    offer.unit
-                )
-            })?;
-            contract.check_implementation(&unit).map_err(|error| {
-                format!("compiled requirement {key:?} at {}: {error}", offer.unit)
-            })?;
+                .map_err(|cause| ResolutionError::Interface {
+                    offer: Some(key.clone()),
+                    unit: offer.unit.clone(),
+                    cause: Box::new(cause),
+                })?;
         }
         let mut routes = BTreeMap::new();
         for (key, contribution) in keys.iter().zip(&leases) {
-            if contribution.activate.is_none() && !contribution.routes.is_empty() {
-                return Err(format!("routes declared without producer: {key:?}"));
+            if artifacts[key].activate.is_none() && !contribution.routes.is_empty() {
+                return Err(format!("routes declared without producer: {key:?}").into());
             }
             let mut selected = BTreeMap::new();
             for name in &contribution.routes {
@@ -345,7 +658,7 @@ impl Kernel {
                     .trigger(name)
                     .ok_or_else(|| format!("unknown producer route for {key:?}: {name:?}"))?;
                 if selected.insert(name.clone(), trigger).is_some() {
-                    return Err(format!("duplicate producer route for {key:?}: {name:?}"));
+                    return Err(format!("duplicate producer route for {key:?}: {name:?}").into());
                 }
             }
             routes.insert(key.clone(), selected);
@@ -354,7 +667,8 @@ impl Kernel {
         Ok(Self {
             engine,
             producers: Vec::new(),
-            leases,
+            artifacts,
+            _leases: leases,
             keys,
             started: false,
             next_producer: 0,
@@ -371,8 +685,8 @@ impl Kernel {
             return Err("kernel already started".into());
         }
         let mut producers = Vec::new();
-        for (key, contribution) in self.keys.iter().zip(&self.leases) {
-            if let Some(activate) = &contribution.activate {
+        for key in &self.keys {
+            if let Some(activate) = &self.artifacts[key].activate {
                 let producer = activate()?;
                 producers.push((key.clone(), producer));
             }
@@ -385,6 +699,12 @@ impl Kernel {
     /// Low-level engine access bypasses the kernel's started-state admission guard.
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// Retrieve this deployment's composed export, never a shared snapshot slot.
+    /// Missing keys and mismatched types return None.
+    pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
+        self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
     pub fn fire<T: TriggerSelector>(

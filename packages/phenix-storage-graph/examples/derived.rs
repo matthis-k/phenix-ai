@@ -2,14 +2,14 @@
 //! Run: cargo run -p phenix-storage-graph --example derived
 //! Notifications are registry-local invalidations, not a durable/cross-process feed.
 use phenix_graph::{LocalExecutor, Value};
-use phenix_kernel::Contribution;
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
     Codec, Operation, Revisioned, Schema,
     scoped::{BindingTarget, CellSpec, Identity, Storage, Stored, XdgPaths},
     snapshot::{ReadConsistency, SnapshotReader},
 };
-use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, Observation, QuerySpec};
+use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, QuerySpec};
 use phenix_storage_plugin::{
     BackendPlacement, PreparedStorage, ResourceBinding, ResourceOffer, ResourceRequirements,
     StoragePolicy,
@@ -88,8 +88,8 @@ pub mod writer {
                 id: "writer".into(),
                 requires: vec![],
                 routes: vec![],
-                activate: None,
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     let project = storage
                         .get()
                         .ok_or("writer storage not injected")?
@@ -127,8 +127,6 @@ pub mod reader {
     }
     #[derive(Default)]
     pub struct State {
-        pub observation: OnceLock<Observation>,
-        pub queries: OnceLock<Queries>,
         pub consumed: Log<i64>,
     }
     // Separate instances are separate plugins, each declaring and binding its own
@@ -144,12 +142,12 @@ pub mod reader {
             let name = self.name;
             let storage = self.storage.clone();
             let state = self.state.clone();
-            let activation = self.state.clone();
             registrar.add(Contribution {
                 id: name.into(),
                 requires: vec![],
                 routes: vec![format!("{name}.values.refresh")],
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     let (a, b) = storage
                         .get()
                         .ok_or("reader storage not injected")?
@@ -183,37 +181,25 @@ pub mod reader {
                         })
                         .map_err(text)?;
                     graph.connect(twice.output(), consumer.inlet())?;
-                    state
-                        .queries
-                        .set(Queries {
-                            sum: graph
-                                .query_spec(&format!("{name}.qsum"), &sum)
-                                .map_err(text)?,
-                            diff: graph
-                                .query_spec(&format!("{name}.qdiff"), &diff)
-                                .map_err(text)?,
-                            both: graph
-                                .query_spec(&format!("{name}.qboth"), &both)
-                                .map_err(text)?,
-                            twice: graph
-                                .query_spec(&format!("{name}.qtwice"), &twice)
-                                .map_err(text)?,
-                        })
-                        .map_err(|_| "queries already composed")?;
-                    state
-                        .observation
-                        .set(group.observation(16))
-                        .map_err(|_| "observation already composed")?;
+                    let queries = Queries {
+                        sum: graph
+                            .query_spec(&format!("{name}.qsum"), &sum)
+                            .map_err(text)?,
+                        diff: graph
+                            .query_spec(&format!("{name}.qdiff"), &diff)
+                            .map_err(text)?,
+                        both: graph
+                            .query_spec(&format!("{name}.qboth"), &both)
+                            .map_err(text)?,
+                        twice: graph
+                            .query_spec(&format!("{name}.qtwice"), &twice)
+                            .map_err(text)?,
+                    };
+                    let observation = group.observation(16);
+                    context.export(queries)?;
+                    context.activate(move || observation.activate().map_err(text))?;
                     Ok(())
                 }),
-                activate: Some(Box::new(move || {
-                    activation
-                        .observation
-                        .get()
-                        .ok_or("observation not composed")?
-                        .activate()
-                        .map_err(text)
-                })),
             })
         }
     }
@@ -394,9 +380,11 @@ impl Demo {
         ])
     }
     pub fn query_all(&self, reader: usize) -> Result<[i64; 4], String> {
-        let q = self.states[reader]
-            .queries
-            .get()
+        let name = ["derive", "subscriber"][reader];
+        let q = self
+            .runtime
+            .kernel()
+            .export::<reader::Queries>(&Key::new(name, name))
             .ok_or("queries not composed")?;
         let mut values = [0; 4];
         for (value, spec) in values.iter_mut().zip([&q.sum, &q.diff, &q.both, &q.twice]) {

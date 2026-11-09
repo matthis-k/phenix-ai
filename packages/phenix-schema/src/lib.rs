@@ -60,6 +60,31 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "manual distinct-descriptor reload retention measurement"]
+    fn distinct_descriptor_reload_retention() {
+        let mut retained_bytes = 0;
+        let mut previous = 0;
+        for count in [10, 100, 1_000, 10_000] {
+            let start = std::time::Instant::now();
+            for revision in previous..count {
+                let schema = Schema {
+                    name: format!("reload-probe/{revision}"),
+                    revision: 1,
+                    structure: "record{value:i64}".into(),
+                    codec: "i64-le-v1".into(),
+                };
+                retained_bytes += schema.intern().len();
+                // Dropping the descriptor cannot release its interned identity.
+            }
+            println!(
+                "distinct={count} retained_string_bytes={retained_bytes} batch_elapsed={:?}",
+                start.elapsed()
+            );
+            previous = count;
+        }
+    }
+
+    #[test]
     fn framing_and_all_contract_components_are_authoritative() {
         let base = Schema {
             name: "x".into(),

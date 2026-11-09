@@ -8,8 +8,11 @@
 //! bind this route; a missing, redirected or fan-out route fails before any wave.
 //! Reusing an action in multiple physical nodes is ambiguous and cannot be bound.
 //! Deliberately redeploying the same compiled graph is supported; each bound query
-//! borrows its owning runtime. Queries are host-only: dispatch of any node through
+//! borrows its owning engine. Queries are host-only: dispatch of any node through
 //! a DerivedRuntime rejects nested queries, including queries of another runtime.
+//! KernelHost generations use the same binding via [`QuerySpec::bind_engine`]
+//! inside `Generation::with_kernel`, and must use [`DerivedRuntime::guard_executor`]
+//! when preparing to enforce this rule on delegated execution threads too.
 //! Stored and derived inputs cannot be mixed in a tuple: explicitly declare one
 //! [`GraphDeriveExt::sources`] group and reuse it with `derive_from` instead.
 //! All values are local Rust types with `Clone + Send + Sync + 'static` bounds.

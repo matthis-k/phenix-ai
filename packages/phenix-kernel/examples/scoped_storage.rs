@@ -77,8 +77,8 @@ pub mod writer {
                 id: "writer".into(),
                 requires: vec![],
                 routes: vec![],
-                activate: None,
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     let kv = storage
                         .get()
                         .ok_or("writer storage not injected")?
@@ -159,7 +159,8 @@ pub mod observer {
                 id: "observer".into(),
                 requires: vec![],
                 routes: vec!["config_changed".into()],
-                compose: Box::new(move |graph| {
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     let kv = storage
                         .get()
                         .ok_or("observer storage not injected")?
@@ -175,23 +176,23 @@ pub mod observer {
                         .map_err(text)?;
                     let input = graph.expose_input("config_notice", node.inlet())?;
                     graph.trigger("config_changed", [input])?;
-                    Ok(())
+                    let source = source.clone();
+                    context.activate(move || {
+                        let subscription = source
+                            .get()
+                            .ok_or("observer storage not injected")?
+                            .project()
+                            .map_err(text)?
+                            .config::<ObservedConfig>("phenix.agent/settings")
+                            .map_err(text)?
+                            .changed(16)
+                            .map_err(text)?;
+                        Ok(Box::new(StorageBinding::new(
+                            subscription,
+                            "config_changed",
+                        )))
+                    })
                 }),
-                activate: Some(Box::new(move || {
-                    let subscription = source
-                        .get()
-                        .ok_or("observer storage not injected")?
-                        .project()
-                        .map_err(text)?
-                        .config::<ObservedConfig>("phenix.agent/settings")
-                        .map_err(text)?
-                        .changed(16)
-                        .map_err(text)?;
-                    Ok(Box::new(StorageBinding::new(
-                        subscription,
-                        "config_changed",
-                    )))
-                })),
             })
         }
     }
@@ -216,8 +217,9 @@ pub mod code_index {
             let storage = self.storage.clone();
             let results = self.results.clone();
             registrar.add(Contribution {
-                id: "index".into(), requires: vec![], routes: vec![], activate: None,
-                compose: Box::new(move |graph| {
+                id: "index".into(), requires: vec![], routes: vec![],
+                compose: Box::new(move |context| {
+                    let graph = &mut *context.graph;
                     let sql = storage.get().ok_or("index storage not injected")?.project().map_err(text)?
                         .sql(StorageClass::Data, "phenix.code/index").map_err(text)?;
                     let log = results.clone();

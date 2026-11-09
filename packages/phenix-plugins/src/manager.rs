@@ -6,7 +6,13 @@
 use crate::{Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
 use phenix_graph::{CompiledGraph, GraphContract, GraphOrigin};
-use std::{any::Any, collections::BTreeMap, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+    ops::Deref,
+    sync::Arc,
+};
 
 type Configuration = Box<dyn Any + Send>;
 type Constructor = dyn Fn(Configuration) -> Result<Box<dyn PluginInstance>, Failure> + Send + Sync;
@@ -153,7 +159,7 @@ impl PluginSnapshot {
     }
 
     /// Bind against the actual immutable compiled unit, requiring its explicit
-    /// graph-owned claim and this exact revision's composition origin.
+    /// graph-owned claim and composition ancestry from this exact revision.
     /// The handle pins this plugin revision, not the graph;
     /// callers must not reuse this validation for a different compiled graph.
     pub fn bind<C: Contribution>(
@@ -183,7 +189,10 @@ impl PluginSnapshot {
                 ),
             )
         })?;
-        if unit.origin() != Some(self.graph_origin()) {
+        if !unit
+            .origin()
+            .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
+        {
             return Err(Failure::new(
                 Code::Denied,
                 format!("compiled unit {path}: contribution generation origin mismatch"),
@@ -376,41 +385,95 @@ impl PluginSet {
     /// Reject stale stages to prevent an older candidate from overwriting
     /// a newer plugin instance. No state changes on failure.
     pub fn commit(&mut self, staged: StagedPlugin) -> Result<Option<PluginSnapshot>, Failure> {
-        if !Arc::ptr_eq(&self.set_identity, &staged.set_identity) {
-            return Err(Failure::new(
-                Code::Denied,
-                "stage belongs to a different plugin set",
-            ));
-        }
-        if self.next_revision != staged.expected_epoch
-            || self.expected_revision(&staged.name) != staged.expected_revision
-        {
-            return Err(Failure::new(Code::Denied, "stale plugin stage"));
+        Ok(self.commit_batch(vec![staged])?.pop().expect("one stage"))
+    }
+
+    /// Validate against one common epoch, including duplicate names, before any
+    /// mutation. A nonempty batch advances the set epoch once; revisions are
+    /// scoped to plugin names, so all replacements share that new epoch.
+    pub fn validate_batch(&self, stages: &[StagedPlugin]) -> Result<(), Failure> {
+        if stages.is_empty() {
+            return Ok(());
         }
         let next_revision = self.next_revision.checked_add(1).ok_or_else(|| {
             Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
         })?;
-        if staged
-            .candidate
-            .as_ref()
-            .is_some_and(|loaded| loaded.revision != next_revision)
-        {
-            return Err(Failure::new(
-                Code::InfrastructureFailure,
-                "candidate revision mismatch",
-            ));
-        }
-        self.next_revision = next_revision;
-        match staged.candidate {
-            Some(candidate) => {
-                self.loaded.insert(staged.name, candidate.clone());
-                Ok(Some(PluginSnapshot { loaded: candidate }))
+        let mut names = BTreeSet::new();
+        for staged in stages {
+            if !names.insert(&staged.name) {
+                return Err(Failure::new(Code::Denied, "duplicate plugin stage"));
             }
-            None => {
-                self.loaded.remove(&staged.name);
-                Ok(None)
+            if !Arc::ptr_eq(&self.set_identity, &staged.set_identity) {
+                return Err(Failure::new(
+                    Code::Denied,
+                    "stage belongs to a different plugin set",
+                ));
+            }
+            if self.next_revision != staged.expected_epoch
+                || self.expected_revision(&staged.name) != staged.expected_revision
+            {
+                return Err(Failure::new(Code::Denied, "stale plugin stage"));
+            }
+            if staged
+                .candidate
+                .as_ref()
+                .is_some_and(|loaded| loaded.revision != next_revision)
+            {
+                return Err(Failure::new(
+                    Code::InfrastructureFailure,
+                    "candidate revision mismatch",
+                ));
             }
         }
+        Ok(())
+    }
+
+    /// The exact post-commit inventory, without changing the live set.
+    pub fn candidate_snapshots(
+        &self,
+        stages: &[StagedPlugin],
+    ) -> Result<Vec<PluginSnapshot>, Failure> {
+        self.validate_batch(stages)?;
+        let mut snapshots: BTreeMap<_, _> = self
+            .snapshots()
+            .map(|snapshot| (snapshot.name().to_owned(), snapshot))
+            .collect();
+        for staged in stages {
+            match staged.candidate() {
+                Some(snapshot) => {
+                    snapshots.insert(staged.name.clone(), snapshot);
+                }
+                None => {
+                    snapshots.remove(&staged.name);
+                }
+            }
+        }
+        Ok(snapshots.into_values().collect())
+    }
+
+    /// All stages are validated before changing any member. On rejection the
+    /// entire live set is unchanged; dropping stages releases their candidates.
+    pub fn commit_batch(
+        &mut self,
+        stages: Vec<StagedPlugin>,
+    ) -> Result<Vec<Option<PluginSnapshot>>, Failure> {
+        self.validate_batch(&stages)?;
+        if !stages.is_empty() {
+            self.next_revision += 1; // overflow checked by validate_batch
+        }
+        Ok(stages
+            .into_iter()
+            .map(|staged| match staged.candidate {
+                Some(candidate) => {
+                    self.loaded.insert(staged.name, candidate.clone());
+                    Some(PluginSnapshot { loaded: candidate })
+                }
+                None => {
+                    self.loaded.remove(&staged.name);
+                    None
+                }
+            })
+            .collect())
     }
 
     /// Convenience for one-step loading. Use prepare_load/commit when loading
@@ -471,6 +534,45 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn exhausted_revision_rejects_factories_and_commits_without_mutation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let factory_calls = calls.clone();
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("example", move |value| {
+                factory_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Example {
+                    value,
+                    drops: Arc::default(),
+                })
+            })
+            .unwrap();
+        let other = catalog
+            .register("other", |_: ()| -> Result<Example, Failure> {
+                panic!("factory must not run after revision exhaustion")
+            })
+            .unwrap();
+        let mut set = catalog.instance();
+        set.next_revision = u64::MAX - 1;
+        let snapshot = set.load(&key, 1).unwrap();
+        assert_eq!(snapshot.revision(), u64::MAX);
+        assert!(set.prepare_reload(&key, 2).is_err());
+        assert!(set.prepare_load(&other, ()).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let unload = set.prepare_unload(&key).unwrap();
+        let error = set.commit_batch(vec![unload]).err().unwrap();
+        assert_eq!(error.code, Code::InfrastructureFailure);
+        assert_eq!(set.next_revision, u64::MAX);
+        assert_eq!(set.snapshots().count(), 1);
+        assert!(Arc::ptr_eq(
+            &snapshot.loaded,
+            &set.snapshot(&key).unwrap().loaded
+        ));
+        set.commit_batch(vec![]).unwrap();
+        assert_eq!(set.next_revision, u64::MAX);
+    }
+
     struct GraphPatch {
         name: String,
         value: i32,
@@ -510,6 +612,55 @@ mod tests {
             })?;
             into.add(ResourceOffer("storage".to_owned()))
         }
+    }
+
+    #[test]
+    fn batch_validation_is_atomic_and_candidate_inventory_is_exact() {
+        let mut catalog = PluginCatalog::new();
+        let make = |value| {
+            Ok(Example {
+                value,
+                drops: Arc::default(),
+            })
+        };
+        let a = catalog.register("alpha", make).unwrap();
+        let b = catalog.register("beta", make).unwrap();
+        let mut set = catalog.instance();
+        let stages = vec![
+            set.prepare_load(&a, 1).unwrap(),
+            set.prepare_load(&b, 2).unwrap(),
+        ];
+        assert_eq!(set.candidate_snapshots(&stages).unwrap().len(), 2);
+        assert_eq!(set.snapshots().count(), 0);
+        set.commit_batch(stages).unwrap();
+        assert_eq!(set.snapshot(&a).unwrap().revision(), 1);
+        assert_eq!(set.snapshot(&b).unwrap().revision(), 1);
+
+        let foreign = catalog.instance().prepare_load(&b, 9).unwrap();
+        let valid = set.prepare_reload(&a, 3).unwrap();
+        assert!(set.commit_batch(vec![valid, foreign]).is_err());
+        assert_eq!(set.snapshot(&a).unwrap().revision(), 1);
+        let duplicate = vec![
+            set.prepare_unload(&a).unwrap(),
+            set.prepare_reload(&a, 4).unwrap(),
+        ];
+        assert!(set.candidate_snapshots(&duplicate).is_err());
+        assert!(set.commit_batch(duplicate).is_err());
+        assert_eq!(set.snapshot(&a).unwrap().revision(), 1);
+
+        let stale = set.prepare_unload(&b).unwrap();
+        set.reload(&a, 5).unwrap();
+        let valid = set.prepare_unload(&a).unwrap();
+        assert!(set.commit_batch(vec![valid, stale]).is_err());
+        assert_eq!(set.snapshots().count(), 2);
+        let stages = vec![
+            set.prepare_unload(&a).unwrap(),
+            set.prepare_unload(&b).unwrap(),
+        ];
+        assert!(set.candidate_snapshots(&stages).unwrap().is_empty());
+        set.commit_batch(stages).unwrap();
+        assert_eq!(set.snapshots().count(), 0);
+        set.commit_batch(vec![]).unwrap();
     }
 
     #[test]

@@ -773,7 +773,7 @@ impl ModuleHandle {
             .inputs
             .get(name)
             .ok_or_else(|| format!("module input {name:?} not exported"))?;
-        if *actual != (type_name::<T>(), Some(TypeId::of::<T>())) {
+        if actual.1 != Some(TypeId::of::<T>()) {
             return Err(format!("module input {name:?} type mismatch"));
         }
         Ok(Input {
@@ -796,7 +796,7 @@ impl ModuleHandle {
             .outputs
             .get(name)
             .ok_or_else(|| format!("module output {name:?} not exported"))?;
-        if *actual != (type_name::<T>(), Some(TypeId::of::<T>())) {
+        if actual.1 != Some(TypeId::of::<T>()) {
             return Err(format!("module output {name:?} type mismatch"));
         }
         Ok(OutputRef {
@@ -810,6 +810,44 @@ impl ModuleHandle {
             local_type: Some(TypeId::of::<T>()),
             _type: PhantomData,
         })
+    }
+}
+
+#[cfg(test)]
+mod module_handle_tests {
+    use super::*;
+
+    #[test]
+    fn local_identity_ignores_diagnostic_labels_but_not_type_or_mode() {
+        let mut handle = ModuleHandle {
+            scope: 1,
+            declaration_id: 1,
+            name: "module".into(),
+            inputs: BTreeMap::new(),
+            input_slots: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+        };
+        for (name, identity) in [
+            ("renamed", ("diagnostic alias", Some(TypeId::of::<u64>()))),
+            (
+                "wrong_type",
+                (type_name::<u64>(), Some(TypeId::of::<i64>())),
+            ),
+            ("wire", (type_name::<u64>(), None)),
+        ] {
+            handle.inputs.insert(name.into(), identity);
+            handle
+                .input_slots
+                .insert((name.into(), "value".into()), name.into());
+            handle.outputs.insert(name.into(), identity);
+        }
+        assert!(handle.local_input::<u64>("renamed").is_ok());
+        assert!(handle.local_input_slot::<u64>("renamed", "value").is_ok());
+        assert!(handle.local_output::<u64>("renamed").is_ok());
+        for name in ["wrong_type", "wire", "missing"] {
+            assert!(handle.local_input::<u64>(name).is_err());
+            assert!(handle.local_output::<u64>(name).is_err());
+        }
     }
 }
 

@@ -49,7 +49,8 @@ impl PluginInstance for Plugin {
             id: "main".into(),
             requires: self.requires.clone(),
             routes: vec![name.clone()],
-            compose: Box::new(move |g| {
+            compose: Box::new(move |context| {
+                let g = &mut *context.graph;
                 log.lock().unwrap().push(format!("compose:{name}"));
                 if compile_fail {
                     *g = GraphBuilder::new("invalid").limits(CompileLimits {
@@ -66,31 +67,32 @@ impl PluginInstance for Plugin {
                     .map_err(|e| e.to_string())?;
                 let input = g.expose_input(format!("input_{name}"), n.inlet())?;
                 g.trigger(&name, [input])?;
-                Ok(())
+                let start_log = start_log.clone();
+                let start_name = start_name.clone();
+                context.activate(move || {
+                    start_log
+                        .lock()
+                        .unwrap()
+                        .push(format!("start:{start_name}"));
+                    if start_fail {
+                        return Err("startup failed".into());
+                    }
+                    Ok(Box::new(Source {
+                        _mark: Mark(format!("producer:{start_name}"), start_log.clone()),
+                        notices: VecDeque::from([
+                            Ok(Notice {
+                                trigger: start_name.clone(),
+                                values: vec![Value::local(1_i64)],
+                            }),
+                            Ok(Notice {
+                                trigger: "missing".into(),
+                                values: vec![],
+                            }),
+                            Err("poll failed".into()),
+                        ]),
+                    }))
+                })
             }),
-            activate: Some(Box::new(move || {
-                start_log
-                    .lock()
-                    .unwrap()
-                    .push(format!("start:{start_name}"));
-                if start_fail {
-                    return Err("startup failed".into());
-                }
-                Ok(Box::new(Source {
-                    _mark: Mark(format!("producer:{start_name}"), start_log.clone()),
-                    notices: VecDeque::from([
-                        Ok(Notice {
-                            trigger: start_name.clone(),
-                            values: vec![Value::local(1_i64)],
-                        }),
-                        Ok(Notice {
-                            trigger: "missing".into(),
-                            values: vec![],
-                        }),
-                        Err("poll failed".into()),
-                    ]),
-                }))
-            })),
         })
     }
 }
@@ -222,7 +224,7 @@ fn dependencies_fail_before_composition() {
         Kernel::build("test", selected, Arc::new(LocalExecutor))
             .err()
             .unwrap()
-            .contains("duplicate contribution")
+            .contains("duplicate snapshot owner")
     );
 }
 #[test]
@@ -337,18 +339,19 @@ impl PluginInstance for DriverPlugin {
             id: "driver".into(),
             requires: vec![],
             routes: self.routes.clone(),
-            compose: Box::new(|g| {
+            compose: Box::new(move |context| {
+                let g = &mut *context.graph;
                 let n = g.node("sink", |_: i64| ()).map_err(|e| e.to_string())?;
                 let input = g.expose_input("in", n.inlet())?;
                 g.trigger("run", [input])?;
-                Ok(())
+                let polls = polls.clone();
+                context.activate(move || {
+                    Ok(Box::new(WakeSource {
+                        polls: polls.clone(),
+                        wake: None,
+                    }))
+                })
             }),
-            activate: Some(Box::new(move || {
-                Ok(Box::new(WakeSource {
-                    polls: polls.clone(),
-                    wake: None,
-                }))
-            })),
         })
     }
 }

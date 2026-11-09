@@ -2,6 +2,17 @@
 
 ## Implementation Status
 
+**Historical report:** the commit-specific measurements, matrices and verification
+below describe PR #1251 and its stated revisions, not the current uncommitted
+composition iteration. For the current e91-based resolver/host implementation,
+API migrations and pending final verification, see
+[Contract Composition Iteration](contract-composition-iteration.md) and
+[Kernel](kernel.md). In particular, current Kernel discovers eligible providers,
+exposes consumer-local resolved imports, owns candidate-local activation/exports,
+and offers an optional prepare/bind/start/publish coordinator. Explicit Graph
+connections and trusted callback cleanup remain necessary; no arbitrary external
+effect rollback or automatic edge insertion is claimed.
+
 This is the implementation report for [draft PR #1251](https://github.com/matthis-k/phenix-ai/pull/1251), not a
 preimplementation proposal or a release acceptance certificate. C2, shape plus
 explicit claim, is implemented in Graph and integrated with Plugin and Kernel.
@@ -13,8 +24,8 @@ requested commands passed on implementation commit
 `2a95b8519ff162caa68fee8b844df6ca42e1e515`, including the full Nix check and
 [exact-head CI 42503290164](https://github.com/matthis-k/phenix-ai/actions/runs/42503290164).
 Q04 remains PARTIAL because schema interning is not bounded by the implementation.
-Kernel validates host-selected offers; it does not discover providers or wire
-consumers automatically. There is no atomic plugin/kernel activation coordinator.
+At that revision Kernel validated host-selected offers; it did not discover
+providers or wire consumers automatically and had no plugin/kernel activation coordinator.
 The weighted implementation assessment is **8.3/10**, not 9+ and not an override
 of these outstanding gates.
 
@@ -100,7 +111,7 @@ public boundary without a semantic ID. `GraphContract` adds explicit semantic
 identity and its required shape. A claim is stored directly as a `GraphContract`
 in `NodeTemplate::claims` or `ModuleDef::claims`; there is **no extra claim wrapper**.
 `ModuleDef::contract_requests` stores `(String, GraphContract)` final obligations.
-Kernel `ContractRequirement` references owner-qualified definition and offer keys;
+At the reported revision Kernel `ContractRequirement` referenced owner-qualified definition and offer keys;
 it is not a Graph claim and is not a storage requirement or grant.
 
 Actual shape is extracted from effective `ports`/`outputs`, or module public
@@ -177,7 +188,10 @@ Consuming a builder invalidates configuration through weak pending access.
 
 ### Origins And Generations
 
-`GraphOrigin(Arc<()>)` compares allocation identity via `Arc::ptr_eq`. Each staged
+The reported `GraphOrigin(Arc<()>)` compared allocation identity via `Arc::ptr_eq`.
+Current origins retain allocation identity plus parent ancestry: Kernel creates a
+distinct child per composer; plugin binding accepts exact revision ancestry while
+Kernel offer checks require the exact producer child. Each staged
 `Loaded` plugin generation receives a new token, including aborted candidates;
 equal names or numeric revisions in sibling sets are insufficient. Snapshot and
 contribution handle `graph_origin()` refer to this same token. The token alone
@@ -389,7 +403,12 @@ Existing unrelated graph/runtime APIs are not duplicated here.
 | `ContractRequirement { id: String, contract: Key, offer: Key }` (`graph.requirement`) | Kernel explicit host selection; no discovery, wiring or authorization. | T10 absent selection, unrelated semantic ID, conflicting definition. Requirement is not proof a closure wired its selected path. |
 | Kernel private `_snapshots: Vec<PluginSnapshot>` alongside existing composition `leases` | Kernel retains definition/offer/consumer code past engine/action teardown; producer-first drop remains. | T10 old/new behavior and drop counters; no atomic activation receipt or new scheduler. |
 
-## Kernel Policy Boundary
+## Historical Kernel Policy Boundary
+
+This section describes the original API. Current `GraphOffer` adds `producer`,
+`ContractRequirement` uses `consumer` instead of `offer`, `ImportPolicy` controls
+selection, and `ComposeContext` exposes local imports and candidate artifacts.
+The current coordinator and trust limits are documented in [Kernel](kernel.md).
 
 `Kernel::build(name, snapshots, executor)` collects typed definition/offer/
 requirement contributions, resolves references, rejects conflicting definitions,
@@ -462,7 +481,7 @@ node and module API. Its additional types separate genuinely different roles:
 wire descriptor, actual shape, semantic definition, historical snapshot,
 authoritative borrowed unit, restricted projection and composition origin.
 No plugin implementation descriptor or runtime wrapper node is introduced.
-Implementation checks and exact-head CI pass. Remaining limitations are manual
+The historical implementation checks and exact-head CI passed. Its remaining limitations were manual
 host-selected wiring, explicit activation sequencing, API complexity and unbounded
 schema interning, not missing origin/generation checks or regression verification.
 

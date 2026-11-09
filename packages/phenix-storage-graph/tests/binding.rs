@@ -58,7 +58,8 @@ impl PluginInstance for Observer {
             id: "observer".into(),
             requires: vec![],
             routes: vec![route.clone()],
-            compose: Box::new(move |graph| {
+            compose: Box::new(move |context| {
+                let graph = &mut *context.graph;
                 let observed = observed.clone();
                 let sink = graph
                     .node(&route, move |notice: Notice| {
@@ -67,14 +68,15 @@ impl PluginInstance for Observer {
                     .map_err(|e| e.to_string())?;
                 let input = graph.expose_input(&route, sink.inlet())?;
                 graph.trigger(&route, [input])?;
-                Ok(())
+                let session = session.clone();
+                let target = target.clone();
+                context.activate(move || {
+                    let subscription = session
+                        .subscribe(Scope::Mount("main".into()), 2)
+                        .map_err(|e| e.to_string())?;
+                    Ok(Box::new(StorageBinding::new(subscription, target.clone())))
+                })
             }),
-            activate: Some(Box::new(move || {
-                let subscription = session
-                    .subscribe(Scope::Mount("main".into()), 2)
-                    .map_err(|e| e.to_string())?;
-                Ok(Box::new(StorageBinding::new(subscription, target.clone())))
-            })),
         })
     }
 }
