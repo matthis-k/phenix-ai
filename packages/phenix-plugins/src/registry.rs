@@ -64,6 +64,30 @@ impl Registrar {
         });
         Ok(())
     }
+    /// Admit a bundle from the same owner atomically. Reject a late duplicate
+    /// or foreign owner without leaving a partial registration behind.
+    pub fn merge(&mut self, batch: Contributions) -> Result<(), Failure> {
+        let mut incoming = BTreeSet::new();
+        for entry in &batch.entries {
+            if entry.owner != self.owner {
+                return Err(Failure::new(Code::Denied, "foreign registrar owner"));
+            }
+            if self.names.contains(&(entry.kind, entry.id.clone()))
+                || !incoming.insert((entry.kind, entry.id.as_str()))
+            {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "duplicate contribution",
+                ));
+            }
+        }
+        for entry in batch.entries {
+            self.names.insert((entry.kind, entry.id.clone()));
+            self.entries.push(entry);
+        }
+        Ok(())
+    }
+
     pub fn finish(self) -> Contributions {
         let mut entries = self.entries;
         entries.sort_by(|a, b| (&a.owner, a.kind, &a.id).cmp(&(&b.owner, b.kind, &b.id)));
@@ -174,6 +198,32 @@ mod tests {
             ["alpha", "zeta"]
         );
     }
+    #[test]
+    fn registrar_merge_is_atomic_on_late_duplicate() {
+        let mut target = Registrar::new("alpha").unwrap();
+        target.add(Patch("existing")).unwrap();
+        let mut candidate = Registrar::new("alpha").unwrap();
+        candidate.add(Resource("new")).unwrap();
+        candidate.add(Patch("existing")).unwrap();
+        assert!(target.merge(candidate.finish()).is_err());
+        // A caught error must not reserve names or publish any bundle member.
+        target.add(Resource("new")).unwrap();
+        let inventory = target.finish();
+        assert_eq!(inventory.iter::<Resource>().count(), 1);
+        assert_eq!(inventory.iter::<Patch>().count(), 1);
+    }
+
+    #[test]
+    fn registrar_merge_rejects_foreign_owner_without_mutation() {
+        let mut target = Registrar::new("alpha").unwrap();
+        let mut candidate = Registrar::new("beta").unwrap();
+        candidate.add(Patch("foreign")).unwrap();
+        assert!(target.merge(candidate.finish()).is_err());
+        target.add(Patch("foreign")).unwrap();
+        let inventory = target.finish();
+        assert_eq!(inventory.keys().collect::<Vec<_>>(), [("alpha", "graph.patch", "foreign")]);
+    }
+
     #[test]
     fn invalid_names_fail() {
         assert!(Registrar::new("").is_err());
