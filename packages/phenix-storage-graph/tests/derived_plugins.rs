@@ -181,18 +181,15 @@ struct FailCandidate(Arc<AtomicBool>);
 impl PluginInstance for FailCandidate {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let fail = self.0.clone();
-        registrar.add(Contribution {
-            id: "fail".into(),
-            requires: vec![Key::new("derive", "derive")],
-            routes: vec![],
-            compose: Box::new(move |_| {
+        Contribution::new("fail", move |_| {
                 if fail.load(Ordering::SeqCst) {
                     Err("candidate rejected".into())
                 } else {
                     Ok(())
                 }
-            }),
-        })
+            })
+.after(vec![Key::new("derive", "derive")])
+.register(registrar)
     }
 }
 
@@ -202,11 +199,7 @@ struct SelectedReader(Arc<Mutex<Arc<scoped::Storage>>>);
 impl PluginInstance for SelectedReader {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let selected = self.0.clone();
-        registrar.add(Contribution {
-            id: "reader".into(),
-            requires: vec![],
-            routes: vec!["values.refresh".into()],
-            compose: Box::new(move |context| {
+        Contribution::new("reader", move |context| {
                 let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
                 let graph = &mut *context.graph;
                 let group = graph.sources("values", (&a, &b))?;
@@ -215,8 +208,9 @@ impl PluginInstance for SelectedReader {
                 let observation = group.observation(16);
                 context.export(query)?;
                 context.activate(move || observation.activate().map_err(Into::into))
-            }),
-        })
+            })
+.route(vec!["values.refresh".into()])
+.register(registrar)
     }
 }
 
@@ -282,15 +276,11 @@ fn starting_a_after_b_uses_as_exact_observation() {
 struct CompetingFactories;
 impl PluginInstance for CompetingFactories {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "competing".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|context| {
+        Contribution::new("competing", |context| {
                 context.activate(|| panic!("must not activate"))?;
                 context.activate(|| panic!("must not activate"))
-            }),
-        })
+            })
+.register(registrar)
     }
 }
 
