@@ -285,7 +285,7 @@ pub trait TypedKv: Send {
         _key: &str,
     ) -> Result<Option<Revisioned<Vec<u8>>>> {
         Err(Error::UnsupportedCapability {
-            capability: Capability::CompareExchange,
+            capability: Capability::RevisionedRead,
         })
     }
     /// Must atomically compare and mutate within this backend's resource boundary.
