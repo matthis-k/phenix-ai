@@ -1921,16 +1921,20 @@ mod tests {
         let mut declared = provider_config(false);
         declared.features.atomic_read_many = false;
         let snapshot = plugins.load(&handle, declared.clone()).unwrap();
-        let requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
-        let policy = policy(
-            &requirements,
+        let rejected_requirements = requirements(vec![("reader", spec.request([Operation::Read]))]);
+        let rejected_policy = policy(
+            &rejected_requirements,
             BackendPlacement::Offer {
                 snapshot,
                 id: "tracked".into(),
             },
         );
         assert!(matches!(
-            PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy),
+            PreparedStorage::prepare(
+                rejected_requirements,
+                Identity::user("alice").unwrap(),
+                rejected_policy,
+            ),
             Err(Error::UnsupportedCapability)
         ));
         assert_eq!(declared.opens.load(SeqCst), 0);
