@@ -74,28 +74,24 @@ pub mod writer {
             let storage = self.storage.clone();
             let writes = self.writes.clone();
             Contribution::new("writer", move |context| {
-                    let graph = &mut *context.graph;
-                    let kv = storage
-                        .get()
-                        .ok_or("writer storage not injected")?
-                        .project()?
-                        .config::<AgentConfig>("phenix.agent/settings")?;
-                    let log = writes.clone();
-                    let node = graph.node("save_config", move |update: Update| {
-                        log.lock().unwrap().push(
-                            kv.compare_exchange(
-                                "default",
-                                update.expected.as_ref(),
-                                &update.config,
-                            )
+                let graph = &mut *context.graph;
+                let kv = storage
+                    .get()
+                    .ok_or("writer storage not injected")?
+                    .project()?
+                    .config::<AgentConfig>("phenix.agent/settings")?;
+                let log = writes.clone();
+                let node = graph.node("save_config", move |update: Update| {
+                    log.lock().unwrap().push(
+                        kv.compare_exchange("default", update.expected.as_ref(), &update.config)
                             .map_err(text),
-                        );
-                    })?;
-                    let input = graph.expose_input("config_update", node.inlet())?;
-                    graph.trigger("configure", [input])?;
-                    Ok(())
-                })
-.register(registrar)
+                    );
+                })?;
+                let input = graph.expose_input("config_update", node.inlet())?;
+                graph.trigger("configure", [input])?;
+                Ok(())
+            })
+            .register(registrar)
         }
     }
 }
@@ -148,35 +144,35 @@ pub mod observer {
             let source = storage.clone();
             let reads = self.reads.clone();
             Contribution::new("observer", move |context| {
-                    let graph = &mut *context.graph;
-                    let kv = storage
+                let graph = &mut *context.graph;
+                let kv = storage
+                    .get()
+                    .ok_or("observer storage not injected")?
+                    .project()?
+                    .config::<ObservedConfig>("phenix.agent/settings")?;
+                let log = reads.clone();
+                let node =
+                    graph.node("refresh_config", move |_notice: phenix_storage::Notice| {
+                        log.lock().unwrap().push(kv.get("default").map_err(text));
+                    })?;
+                let input = graph.expose_input("config_notice", node.inlet())?;
+                graph.trigger("config_changed", [input])?;
+                let source = source.clone();
+                context.activate(move || {
+                    let subscription = source
                         .get()
                         .ok_or("observer storage not injected")?
                         .project()?
-                        .config::<ObservedConfig>("phenix.agent/settings")?;
-                    let log = reads.clone();
-                    let node =
-                        graph.node("refresh_config", move |_notice: phenix_storage::Notice| {
-                            log.lock().unwrap().push(kv.get("default").map_err(text));
-                        })?;
-                    let input = graph.expose_input("config_notice", node.inlet())?;
-                    graph.trigger("config_changed", [input])?;
-                    let source = source.clone();
-                    context.activate(move || {
-                        let subscription = source
-                            .get()
-                            .ok_or("observer storage not injected")?
-                            .project()?
-                            .config::<ObservedConfig>("phenix.agent/settings")?
-                            .changed(16)?;
-                        Ok(Box::new(StorageBinding::new(
-                            subscription,
-                            "config_changed",
-                        )))
-                    })
+                        .config::<ObservedConfig>("phenix.agent/settings")?
+                        .changed(16)?;
+                    Ok(Box::new(StorageBinding::new(
+                        subscription,
+                        "config_changed",
+                    )))
                 })
-.route(vec!["config_changed".into()])
-.register(registrar)
+            })
+            .route(vec!["config_changed".into()])
+            .register(registrar)
         }
     }
 }

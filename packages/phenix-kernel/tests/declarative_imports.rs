@@ -1,10 +1,7 @@
 use phenix_graph::{
     DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor, Value,
 };
-use phenix_kernel::{
-    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
-    ResolutionError,
-};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Kernel, Key, ResolutionError};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::BTreeSet;
 use std::sync::{
@@ -60,23 +57,23 @@ impl PluginInstance for Provider {
         })?;
         let config = self.clone();
         let implementation = Contribution::new(self.actual_composer, move |context| {
-                config.compositions.fetch_add(1, Ordering::SeqCst);
-                let graph = &mut *context.graph;
-                let increment = config.increment;
-                if config.module {
-                    let mut child = GraphBuilder::new(format!("module-{}", config.path));
-                    let node = child.node("private", move |v: i64| v + increment)?;
-                    child.expose_input_slot("run", "value", node.inlet())?;
-                    child.expose_output("value", node.output())?;
-                    child.implements_public(&contract(config.semantic))?;
-                    graph.instance(&config.path, &child.module())?;
-                } else {
-                    graph.node(&config.path, move |v: i64| v + increment)?;
-                    graph.implements(&config.path, &contract(config.semantic))?;
-                }
-                Ok(())
-            })
-.after(self.requires.clone());
+            config.compositions.fetch_add(1, Ordering::SeqCst);
+            let graph = &mut *context.graph;
+            let increment = config.increment;
+            if config.module {
+                let mut child = GraphBuilder::new(format!("module-{}", config.path));
+                let node = child.node("private", move |v: i64| v + increment)?;
+                child.expose_input_slot("run", "value", node.inlet())?;
+                child.expose_output("value", node.output())?;
+                child.implements_public(&contract(config.semantic))?;
+                graph.instance(&config.path, &child.module())?;
+            } else {
+                graph.node(&config.path, move |v: i64| v + increment)?;
+                graph.implements(&config.path, &contract(config.semantic))?;
+            }
+            Ok(())
+        })
+        .after(self.requires.clone());
         let implementation = if self.misattribute_offer {
             implementation
         } else {
@@ -107,27 +104,27 @@ impl PluginInstance for Consumer {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         let config = self.clone();
         Contribution::new("main", move |context| {
-                let selected = context.import("service")?;
-                assert!(context.import("undeclared").is_err());
-                config.compositions.fetch_add(1, Ordering::SeqCst);
-                let graph = &mut *context.graph;
-                let bound = selected.bind(graph)?;
-                assert!(bound.local_output::<i64>("private").is_err());
-                assert!(bound.local_output::<String>("value").is_err());
-                let input = bound.local_input::<i64>("run", "value")?;
-                let output = bound.local_output::<i64>("value")?;
-                let observed = config.observed.clone();
-                let sink = graph.node("sink", move |v: i64| {
-                    observed.lock().unwrap().push(v);
-                    v
-                })?;
-                graph.connect(output, sink.inlet())?;
-                let public = graph.expose_input("request", input)?;
-                graph.trigger("run", [public])?;
-                Ok(())
-            })
-.import("service", Key::new("z-provider", "definition"))
-.register(into)
+            let selected = context.import("service")?;
+            assert!(context.import("undeclared").is_err());
+            config.compositions.fetch_add(1, Ordering::SeqCst);
+            let graph = &mut *context.graph;
+            let bound = selected.bind(graph)?;
+            assert!(bound.local_output::<i64>("private").is_err());
+            assert!(bound.local_output::<String>("value").is_err());
+            let input = bound.local_input::<i64>("run", "value")?;
+            let output = bound.local_output::<i64>("value")?;
+            let observed = config.observed.clone();
+            let sink = graph.node("sink", move |v: i64| {
+                observed.lock().unwrap().push(v);
+                v
+            })?;
+            graph.connect(output, sink.inlet())?;
+            let public = graph.expose_input("request", input)?;
+            graph.trigger("run", [public])?;
+            Ok(())
+        })
+        .import("service", Key::new("z-provider", "definition"))
+        .register(into)
     }
 }
 
@@ -394,19 +391,19 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 contract: contract("service@1"),
             })?;
             Contribution::new("main", |cx| {
-                    let selected = cx.import("service")?;
-                    cx.graph.node("provider", |v: i64| v + 1)?;
-                    cx.graph.implements("provider", &contract("service@1"))?;
-                    let input = selected
-                        .bind(cx.graph)?
-                        .local_input::<i64>("run", "value")?;
-                    let public = cx.graph.expose_input("request", input)?;
-                    cx.graph.trigger("run", [public])?;
-                    Ok(())
-                })
-.offer("offer", "provider", Key::new("combined", "definition"))
-.import("service", Key::new("combined", "definition"))
-.register(into)
+                let selected = cx.import("service")?;
+                cx.graph.node("provider", |v: i64| v + 1)?;
+                cx.graph.implements("provider", &contract("service@1"))?;
+                let input = selected
+                    .bind(cx.graph)?
+                    .local_input::<i64>("run", "value")?;
+                let public = cx.graph.expose_input("request", input)?;
+                cx.graph.trigger("run", [public])?;
+                Ok(())
+            })
+            .offer("offer", "provider", Key::new("combined", "definition"))
+            .import("service", Key::new("combined", "definition"))
+            .register(into)
         }
     }
     let mut catalog = PluginCatalog::new();

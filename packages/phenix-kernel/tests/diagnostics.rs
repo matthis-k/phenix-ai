@@ -2,9 +2,7 @@ use phenix_graph::{
     CompileDiagnostic, CompilePhase, DeclaredValue, GraphContract, InterfaceError, InterfacePhase,
     InterfaceShape, LocalExecutor, TypeIdentity,
 };
-use phenix_kernel::{
-    BuildOptions, ContractDefinition, Contribution, Kernel, Key, ResolutionError,
-};
+use phenix_kernel::{BuildOptions, ContractDefinition, Contribution, Kernel, Key, ResolutionError};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{any::TypeId, error::Error, sync::Arc};
 
@@ -51,36 +49,34 @@ impl PluginInstance for Case {
         }
         let case = *self;
         let main = Contribution::new("main", move |context| match case {
-                Self::Composition => Err("composer failed".into()),
-                Self::Compilation => context
+            Self::Composition => Err("composer failed".into()),
+            Self::Compilation => context
+                .graph
+                .require_contract("missing", &contract)
+                .map_err(Into::into),
+            Self::Catalog => {
+                let different = GraphContract::new(
+                    contract.id(),
+                    InterfaceShape::new()
+                        .input_slot("run", "value", DeclaredValue::local::<i64>())
+                        .unwrap()
+                        .output("value", DeclaredValue::local::<i64>())
+                        .unwrap(),
+                )
+                .unwrap();
+                context.graph.node("service", |v: i64| v)?;
+                context
                     .graph
-                    .require_contract("missing", &contract)
-                    .map_err(Into::into),
-                Self::Catalog => {
-                    let different = GraphContract::new(
-                        contract.id(),
-                        InterfaceShape::new()
-                            .input_slot("run", "value", DeclaredValue::local::<i64>())
-                            .unwrap()
-                            .output("value", DeclaredValue::local::<i64>())
-                            .unwrap(),
-                    )
-                    .unwrap();
-                    context.graph.node("service", |v: i64| v)?;
-                    context
-                        .graph
-                        .implements("service", &different)
-                        .map_err(Into::into)
-                }
-                _ => Ok(()),
-            });
+                    .implements("service", &different)
+                    .map_err(Into::into)
+            }
+            _ => Ok(()),
+        });
         let main = match self {
             Self::WrongOrigin => main.offer("offer", "service", Key::new("plugin", "contract")),
-            Self::Interface => main.offer(
-                "offer",
-                "invalid/../path",
-                Key::new("plugin", "contract"),
-            ),
+            Self::Interface => {
+                main.offer("offer", "invalid/../path", Key::new("plugin", "contract"))
+            }
             _ => main,
         };
         main.register(into)

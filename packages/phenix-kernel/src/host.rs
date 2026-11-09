@@ -254,14 +254,14 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             let calls = self.0.clone();
             Contribution::new("source", move |context| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let calls = calls.clone();
+                context.activate(move || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    let calls = calls.clone();
-                    context.activate(move || {
-                        calls.fetch_add(1, Ordering::SeqCst);
-                        Ok(Box::new(Source))
-                    })
+                    Ok(Box::new(Source))
                 })
-.register(into)
+            })
+            .register(into)
         }
     }
 

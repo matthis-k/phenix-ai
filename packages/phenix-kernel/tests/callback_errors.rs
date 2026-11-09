@@ -34,18 +34,18 @@ impl PluginInstance for Plugin {
         let phase = self.0;
         let identity = self.1.clone();
         Contribution::new("callback", move |context| {
-                if matches!(phase, Phase::Compose) {
+            if matches!(phase, Phase::Compose) {
+                return Err(Box::new(Cause(identity.clone())));
+            }
+            let identity = identity.clone();
+            context.activate(move || {
+                if matches!(phase, Phase::Activate) {
                     return Err(Box::new(Cause(identity.clone())));
                 }
-                let identity = identity.clone();
-                context.activate(move || {
-                    if matches!(phase, Phase::Activate) {
-                        return Err(Box::new(Cause(identity.clone())));
-                    }
-                    Ok(Box::new(Source(identity.clone())))
-                })
+                Ok(Box::new(Source(identity.clone())))
             })
-.register(registrar)
+        })
+        .register(registrar)
     }
 }
 

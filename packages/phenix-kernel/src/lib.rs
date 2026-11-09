@@ -182,12 +182,7 @@ impl Contribution {
     }
 
     /// Advertise a unit this composer actually creates under a semantic contract.
-    pub fn offer(
-        mut self,
-        id: impl Into<String>,
-        unit: impl Into<String>,
-        contract: Key,
-    ) -> Self {
+    pub fn offer(mut self, id: impl Into<String>, unit: impl Into<String>, contract: Key) -> Self {
         self.offers.push((id.into(), unit.into(), contract));
         self
     }
@@ -199,7 +194,10 @@ impl Contribution {
     }
 
     /// Validate the entire declaration before adding any part of it.
-    pub fn register(self, into: &mut phenix_plugin::Registrar) -> Result<(), phenix_plugin::Failure> {
+    pub fn register(
+        self,
+        into: &mut phenix_plugin::Registrar,
+    ) -> Result<(), phenix_plugin::Failure> {
         let owner = into.owner().to_owned();
         let composer = Key::new(&owner, &self.id);
         let mut batch = phenix_plugin::Registrar::new(owner)?;

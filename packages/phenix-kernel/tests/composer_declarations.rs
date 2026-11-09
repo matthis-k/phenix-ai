@@ -87,10 +87,9 @@ fn two_offers_from_one_composer_are_selectable_and_change_execution() {
     ));
     for (offer, expected) in [("primary", 42), ("backup", 141)] {
         let mut policy = ImportPolicy::default();
-        policy.selections.insert(
-            Key::new("consumer", "model"),
-            Key::new("provider", offer),
-        );
+        policy
+            .selections
+            .insert(Key::new("consumer", "model"), Key::new("provider", offer));
         let mut kernel = Kernel::build_with_options(
             "host",
             plugins.snapshots(),
@@ -102,7 +101,12 @@ fn two_offers_from_one_composer_are_selectable_and_change_execution() {
         )
         .unwrap();
         kernel.start().unwrap();
-        assert!(kernel.fire("run", vec![Value::local(41_i64)]).unwrap().success());
+        assert!(
+            kernel
+                .fire("run", vec![Value::local(41_i64)])
+                .unwrap()
+                .success()
+        );
         assert_eq!(output.lock().unwrap().pop(), Some(expected));
     }
 }
@@ -141,7 +145,9 @@ fn duplicate_imports_across_composers_are_rejected_without_partial_insert() {
             .register(&mut registrar)
             .is_err()
     );
-    Contribution::new("b", |_| Ok(())).register(&mut registrar).unwrap();
+    Contribution::new("b", |_| Ok(()))
+        .register(&mut registrar)
+        .unwrap();
     assert_eq!(registrar.finish().keys().count(), 3);
 }
 

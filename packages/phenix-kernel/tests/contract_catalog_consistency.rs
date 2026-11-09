@@ -1,7 +1,5 @@
 use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor};
-use phenix_kernel::{
-    ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
-};
+use phenix_kernel::{ContractDefinition, Contribution, ImportPolicy, Kernel, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 
@@ -44,37 +42,36 @@ impl PluginInstance for Fixture {
                 id: "y".into(),
                 contract: y.clone(),
             })?;
-            
-            
+
             Contribution::new("consumer", |_| Ok(()))
-.import("request", Key::new("provider", "y"))
-.register(registrar)?;
+                .import("request", Key::new("provider", "y"))
+                .register(registrar)?;
         }
         let case = self.0;
         Contribution::new("compose", move |context| {
-                let graph = &mut *context.graph;
-                match case {
-                    Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
-                        graph.node("service", |v: i64| v + 1)?;
-                        graph.implements("service", &x)?;
-                        if matches!(case, Case::DifferentAdvertisedContract) {
-                            graph.implements("service", &y)?;
-                        }
-                    }
-                    Case::UnofferedGraphConflict => {
-                        graph.node("service", |v: i64| v.to_string())?;
-                        graph.implements(
-                            "service",
-                            &contract("example/x@1", DeclaredValue::local::<String>()),
-                        )?;
+            let graph = &mut *context.graph;
+            match case {
+                Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
+                    graph.node("service", |v: i64| v + 1)?;
+                    graph.implements("service", &x)?;
+                    if matches!(case, Case::DifferentAdvertisedContract) {
+                        graph.implements("service", &y)?;
                     }
                 }
-                Ok(())
-            })
-.after(Vec::new())
-.route(Vec::new())
-.offer("offer", "service", Key::new("provider", "x"))
-.register(registrar)
+                Case::UnofferedGraphConflict => {
+                    graph.node("service", |v: i64| v.to_string())?;
+                    graph.implements(
+                        "service",
+                        &contract("example/x@1", DeclaredValue::local::<String>()),
+                    )?;
+                }
+            }
+            Ok(())
+        })
+        .after(Vec::new())
+        .route(Vec::new())
+        .offer("offer", "service", Key::new("provider", "x"))
+        .register(registrar)
     }
 }
 
@@ -140,16 +137,16 @@ impl PluginInstance for HonestOffer {
             id: "x".into(),
             contract: contract("example/x@1", DeclaredValue::local::<i64>()),
         })?;
-        
+
         Contribution::new("main", |context| {
-                let graph = &mut *context.graph;
-                graph.node("service", |v: i64| v + 1)?;
-                Ok(())
-            })
-.after(Vec::new())
-.route(Vec::new())
-.offer("offer", "service", Key::new("provider", "x"))
-.register(registrar)
+            let graph = &mut *context.graph;
+            graph.node("service", |v: i64| v + 1)?;
+            Ok(())
+        })
+        .after(Vec::new())
+        .route(Vec::new())
+        .offer("offer", "service", Key::new("provider", "x"))
+        .register(registrar)
     }
 }
 
@@ -158,17 +155,17 @@ struct ForeignClaim;
 impl PluginInstance for ForeignClaim {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         Contribution::new("mutate", |context| {
-                let graph = &mut *context.graph;
-                graph
-                    .implements(
-                        "service",
-                        &contract("example/x@1", DeclaredValue::local::<i64>()),
-                    )
-                    .map_err(Into::into)
-            })
-.after(vec![Key::new("provider", "main")])
-.route(Vec::new())
-.register(registrar)
+            let graph = &mut *context.graph;
+            graph
+                .implements(
+                    "service",
+                    &contract("example/x@1", DeclaredValue::local::<i64>()),
+                )
+                .map_err(Into::into)
+        })
+        .after(vec![Key::new("provider", "main")])
+        .route(Vec::new())
+        .register(registrar)
     }
 }
 
