@@ -24,7 +24,12 @@ fn action_lookup_distinguishes_absent_unique_and_shared_allocations_without_exec
         graph
             .add(
                 name,
-                NodeTemplate::with_dyn_action(0, ports(), vec![], action.clone()),
+                NodeTemplate::with_dyn_action(
+                    0,
+                    ports(),
+                    OutputSlot::local::<()>(0),
+                    action.clone(),
+                ),
             )
             .unwrap();
     }
@@ -52,7 +57,7 @@ fn factory_action_lookup_matches_only_the_actual_instance_in_its_own_engine() {
     graph
         .add(
             "node",
-            NodeTemplate::with_action_factory(0, ports(), vec![], move || {
+            NodeTemplate::with_action_factory(0, ports(), OutputSlot::local::<()>(0), move || {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Noop(runs.clone())
             }),
@@ -82,7 +87,7 @@ fn trigger_inspection_preserves_value_arity_and_physical_fanout_without_admissio
             root.node(NodeTemplate::with_dyn_action(
                 id,
                 ports(),
-                vec![],
+                OutputSlot::local::<()>(0),
                 Arc::new(Noop(executions.clone())),
             ));
             InputAddr {

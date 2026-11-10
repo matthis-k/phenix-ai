@@ -11,10 +11,10 @@ use phenix_graph::{
 fn single_node_api_supports_wire_and_local_nodes_in_same_graph() {
     let mut graph = GraphBuilder::new("mixed-node-kinds");
     let wire = graph.node("wire", Node::wire(|n: i64| n + 1)).unwrap();
-    let local = graph.node("local", |n: i64| n * 2).unwrap();
-    // A wire/local connection requires a deliberate conversion, not an
-    // accidentally inferred or erased schema coercion.
-    assert!(graph.connect(wire.output(), local.inlet()).is_err());
+    graph.node("local", |n: i64| n * 2).unwrap();
+    // Typed mixed-mode connections fail to compile; symbolic connections must
+    // still reject the same mismatch at authoring time.
+    assert!(graph.connect("wire", "local").is_err());
     let ingress = graph.expose_input("request", wire.inlet()).unwrap();
     graph.expose_output("result", wire.output()).unwrap();
     graph.trigger("go", [ingress]).unwrap();

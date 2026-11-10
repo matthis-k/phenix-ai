@@ -157,14 +157,20 @@ mod consumer {
                     // Lookup uses A's contract types, never B's implementation types.
                     // C's independently defined types cross both portable edges.
                     let (input, output) = {
-                        let bound = selected.bind(graph)?;
+                        let bound = selected.bind(graph)?.operation()?;
                         (
-                            bound.wire_input::<definition::Request>("run", "value")?,
-                            bound.wire_output::<definition::Response>("value")?,
+                            bound
+                                .inlets::<definition::Request, phenix_graph::EncodedValue>()
+                                .port(phenix_graph::InletPort::<
+                                    definition::Request,
+                                    definition::Request,
+                                >::new("run"))
+                                .target()?,
+                            bound.output::<definition::Response, phenix_graph::EncodedValue>()?,
                         )
                     };
-                    graph.connect_wire(source.output(), input)?;
-                    graph.connect_wire(output, sink.inlet())?;
+                    graph.connect(source.output(), input)?;
+                    graph.connect(output, sink.inlet())?;
                     let input = graph.expose_input("request", source.inlet())?;
                     graph.trigger("run", [input])?;
                     Ok(())

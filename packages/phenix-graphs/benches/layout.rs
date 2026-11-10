@@ -1,8 +1,8 @@
 use phenix_graph::Deployment;
 use phenix_graph::ReportRetention;
 use phenix_graph::{
-    AllSameCohort, Atomic, Engine, FlattenTo, InputSlot, InvocationCtx, ModuleCatalog,
-    ModuleDefBuilder, ModuleTriggerTarget, NodeTemplate, OutputSchema, OutputSlot, Port,
+    AllSameCohort, Atomic, Engine, GraphBuilder, InputSlot, InvocationCtx, Layout, ModuleCatalog,
+    ModuleDefBuilder, ModuleTriggerTarget, Node, NodeTemplate, OutputSchema, OutputSlot, Port,
     PortLayoutAt, SelectedValues, Store, TypedPort, Value, emit,
 };
 use std::time::{Duration, Instant};
@@ -64,20 +64,12 @@ impl phenix_graph::IntoEmission for EventResult {
 }
 
 fn atomic_engine() -> Engine {
-    let mut module = ModuleDefBuilder::new("atomic-bench");
-    let node = module
-        .register("twice", NodeTemplate::function(twice))
-        .unwrap();
-    module
-        .export_input("value", vec![node.input::<i64>("run", "value")])
-        .unwrap();
-    module
-        .export_output("result", node.output::<i64>("value"))
-        .unwrap();
-    module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
-    let mut catalog = ModuleCatalog::new();
-    catalog.add(module.build()).unwrap();
-    Deployment::new(catalog.compile("atomic-bench").unwrap())
+    let mut graph = GraphBuilder::new("atomic-bench");
+    let node = graph.node("twice", Node::wire(twice)).unwrap();
+    let input = graph.expose_input("value", node.inlet()).unwrap();
+    graph.expose_output("result", node.output()).unwrap();
+    graph.trigger("run", [input]).unwrap();
+    Deployment::new(graph.compile().unwrap())
         .store(Store::new())
         .report_retention(ReportRetention::RetainPayloads)
         .build()
@@ -85,37 +77,37 @@ fn atomic_engine() -> Engine {
 }
 
 fn flattened_engine() -> Engine {
-    let mut module = ModuleDefBuilder::new("flattened-bench");
-    let node = module
-        .register(
+    let mut graph = GraphBuilder::new("flattened-bench");
+    let node = graph
+        .node(
             "sum",
-            NodeTemplate::with_input_layout::<FlattenTo<Pair, 1>, i64, _>(
-                "run",
-                phenix_graph::AllSameCohort,
-                sum,
-            )
-            .unwrap(),
+            Node::wire_layout(sum, Layout::<Pair>::wire_flatten_to::<1>()),
         )
         .unwrap();
-    module
-        .export_input("left", vec![node.input::<i64>("run", "left")])
+    let inlets = node
+        .inlets()
+        .port(phenix_graph::InletPort::<_, Pair>::new("run"));
+    let left = graph
+        .expose_input(
+            "left",
+            inlets
+                .field(phenix_graph::SlotField::<Pair, i64>::new("left"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
-    module
-        .export_input("right", vec![node.input::<i64>("run", "right")])
+    let right = graph
+        .expose_input(
+            "right",
+            inlets
+                .field(phenix_graph::SlotField::<Pair, i64>::new("right"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
-    module
-        .export_output("result", node.output::<i64>("value"))
-        .unwrap();
-    module.trigger(
-        1,
-        vec![
-            ModuleTriggerTarget::PublicInput(0),
-            ModuleTriggerTarget::PublicInput(1),
-        ],
-    );
-    let mut catalog = ModuleCatalog::new();
-    catalog.add(module.build()).unwrap();
-    Deployment::new(catalog.compile("flattened-bench").unwrap())
+    graph.expose_output("result", node.output()).unwrap();
+    graph.trigger("run", [left, right]).unwrap();
+    Deployment::new(graph.compile().unwrap())
         .store(Store::new())
         .report_retention(ReportRetention::RetainPayloads)
         .build()
@@ -127,16 +119,29 @@ fn erased_action_engine() -> Engine {
     let node = NodeTemplate::with_action(
         0,
         vec![Port::all(0, vec![InputSlot::immediate::<i64>(0).named("value")]).named("run")],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.arg::<i64>(0)? * 2)]),
     );
-    let node = module.register("twice", node).unwrap();
-    module
-        .export_input("value", vec![node.input::<i64>("run", "value")])
-        .unwrap();
-    module
-        .export_output("result", node.output::<i64>("value"))
-        .unwrap();
+    module.register("twice", node).unwrap();
+    module.input(
+        0,
+        "value",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "twice".into(),
+            port: "run".into(),
+            slot: "value".into(),
+        }],
+    );
+    module.output(
+        0,
+        "result",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "twice".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -158,16 +163,28 @@ fn multi_port_engine() -> Engine {
         }))
     });
     let mut module = ModuleDefBuilder::new("multi-port-bench");
-    let node = module.register("multi", action).unwrap();
-    module
-        .export_input("left", vec![node.input::<i64>("left", "value")])
-        .unwrap();
-    module
-        .export_input("right", vec![node.input::<i64>("right", "value")])
-        .unwrap();
-    module
-        .export_output("result", node.output::<i64>("value"))
-        .unwrap();
+    module.register("multi", action).unwrap();
+    for (id, port) in [(0, "left"), (1, "right")] {
+        module.input(
+            id,
+            port,
+            <i64 as phenix_graph::ContractValue>::wire_schema(),
+            vec![phenix_graph::ModuleInputTarget::NodeNamed {
+                node: "multi".into(),
+                port: port.into(),
+                slot: "value".into(),
+            }],
+        );
+    }
+    module.output(
+        0,
+        "result",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "multi".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     module.trigger(2, vec![ModuleTriggerTarget::PublicInput(1)]);
     let mut catalog = ModuleCatalog::new();

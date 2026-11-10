@@ -187,31 +187,29 @@ fn publication_count_assertion_does_not_require_payload_retention() {
 }
 
 #[test]
-fn duplicate_conditional_output_names_fail_compilation() {
+fn noncanonical_conditional_output_id_fails_compilation() {
     let mut graph = GraphBuilder::new("invalid-choice");
-    // Duplicate output names are illegal even through the low-level node
-    // declaration API; there is no special conditional node kind.
     use phenix_graph::{InputSlot, OutputSlot, Port};
-    let _choice = graph
-        .add(
-            "choice",
-            NodeTemplate::with_action(
-                0,
-                vec![Port::all(0, vec![InputSlot::local::<i64>(0).named("value")]).named("run")],
-                vec![
-                    OutputSlot::local::<i64>(0).named("same"),
-                    OutputSlot::local::<i64>(1).named("same"),
-                ],
-                |_ctx| Ok(vec![phenix_graph::emit_local(0, 0_i64)]),
-            ),
-        )
+    let template = NodeTemplate::with_action(
+        0,
+        vec![Port::all(0, vec![InputSlot::local::<i64>(0).named("value")]).named("run")],
+        OutputSlot::local::<i64>(1).named("result"),
+        |_ctx| Ok(vec![phenix_graph::emit_local(0, 0_i64)]),
+    );
+    graph.add("choice", template).unwrap();
+    let choice_input = graph
+        .discover("choice")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
-    let choice_input = graph.local_input::<i64>("choice", "run", "value").unwrap();
     let input = graph.expose_input("request", choice_input).unwrap();
     graph.trigger("run", [input]).unwrap();
     assert!(
         graph.compile().is_err(),
-        "duplicate output names must never alias"
+        "a logical output must use its canonical slot"
     );
 }
 

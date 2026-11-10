@@ -1,22 +1,22 @@
 //! Macro and macro-free syntax share PatchBuilder, symbolic addressing,
 //! PatchPlanner conflict resolution and the ordinary compiler/executor.
-use phenix_graph::Node;
 use phenix_graph::Output;
 use phenix_graph::{
-    Deployment, GraphAssembly, GraphBuilder, Layout, PatchBuilder, PatchError, PatchPlanner,
-    PatchSpec, PatchTarget, ReportRetention, Store, Value,
+    Deployment, GraphBuilder, PatchBuilder, PatchError, PatchPlanner, PatchSpec, PatchTarget,
+    ReportRetention, Value,
 };
 
 #[cfg(feature = "derive")]
-use phenix_graph::{LocalPortLayout, patch};
+use phenix_graph::{GraphAssembly, Layout, LocalPortLayout, Node, Store, patch};
 
-#[derive(Clone)]
-#[cfg_attr(feature = "derive", derive(LocalPortLayout))]
+#[cfg(feature = "derive")]
+#[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
 struct Pair {
     left: i64,
     right: i64,
 }
 
+#[cfg(feature = "derive")]
 fn run(planner: PatchPlanner, x: i64) -> i64 {
     let (built, _) = planner.build("diamond").unwrap();
     let report = Deployment::new(built.graph)

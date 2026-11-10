@@ -5,7 +5,7 @@ use phenix_graph::{
     PatchTarget, ReportRetention, Value,
 };
 
-#[derive(Clone, LocalPortLayout)]
+#[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
 struct Pair {
     left: i64,
     right: i64,

@@ -54,7 +54,11 @@ impl PluginInstance for Provider {
                 if config.module {
                     let mut child = GraphBuilder::new("implementation");
                     let node = child.node("private", |x: i64| x + 1)?;
-                    child.expose_input_slot("run", "value", node.inlet())?;
+                    child.expose_input_field(
+                        "run",
+                        phenix_graph::SlotField::<(), i64>::new("value"),
+                        node.inlet(),
+                    )?;
                     child.expose_output("value", node.output())?;
                     child.implements_public(&contract())?;
                     graph.instance("service", &child.module())?;

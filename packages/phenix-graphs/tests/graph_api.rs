@@ -67,7 +67,7 @@ fn graph(derive: bool, wiring_macro: bool) -> Arc<phenix_graph::CompiledGraph> {
     let source = NodeTemplate::with_action(
         1,
         vec![Port::all(0, vec![InputSlot::immediate::<i64>(0).named("value")]).named("start")],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.arg::<i64>(0)?)]),
     )
     .named("source")
@@ -77,7 +77,7 @@ fn graph(derive: bool, wiring_macro: bool) -> Arc<phenix_graph::CompiledGraph> {
     let double = NodeTemplate::new(
         3,
         vec![Port::all(0, vec![InputSlot::immediate::<i64>(0).named("value")]).named("run")],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.arg::<i64>(0)? * 2)]),
     )
     .named("double")
@@ -86,14 +86,14 @@ fn graph(derive: bool, wiring_macro: bool) -> Arc<phenix_graph::CompiledGraph> {
         NodeTemplate::with_action(
             2,
             vec![Port::for_layout::<DerivedArgs>(0, "run", AllSameCohort).unwrap()],
-            vec![OutputSlot::typed::<i64>(0).named("sum")],
+            OutputSlot::typed::<i64>(0).named("sum"),
             DerivedAdd { multiplier: 2 },
         )
     } else {
         NodeTemplate::with_action(
             2,
             vec![Port::for_layout::<ManualArgs>(0, "run", AllSameCohort).unwrap()],
-            vec![OutputSlot::typed::<i64>(0).named("sum")],
+            OutputSlot::typed::<i64>(0).named("sum"),
             ManualAdd { multiplier: 2 },
         )
     }
@@ -193,7 +193,7 @@ fn closure_decoder_and_struct_literal_port_are_supported_without_derive() {
     let node = NodeTemplate::with_action(
         1,
         vec![port],
-        vec![OutputSlot::typed::<i64>(0).named("sum")],
+        OutputSlot::typed::<i64>(0).named("sum"),
         ManualAdd { multiplier: 1 },
     )
     .named("adder")
@@ -251,17 +251,22 @@ struct OptionalArgs {
 #[test]
 fn derived_optional_fields_respect_selected_deliveries() {
     let run = Port::for_layout::<OptionalArgs>(0, "run", AnyOne).unwrap();
-    let node = NodeTemplate::with_action(1, vec![run], vec![], |ctx: InvocationCtx| {
-        let args = ctx.prepared::<OptionalArgs>()?;
-        assert_eq!(
-            *args,
-            OptionalArgs {
-                left: None,
-                right: Some(17)
-            }
-        );
-        Ok(vec![])
-    });
+    let node = NodeTemplate::with_action(
+        1,
+        vec![run],
+        OutputSlot::typed::<()>(0),
+        |ctx: InvocationCtx| {
+            let args = ctx.prepared::<OptionalArgs>()?;
+            assert_eq!(
+                *args,
+                OptionalArgs {
+                    left: None,
+                    right: Some(17)
+                }
+            );
+            Ok(vec![])
+        },
+    );
     let mut m = ModuleDefBuilder::new("optional");
     m.input(
         0,
@@ -339,7 +344,7 @@ fn compiler_rejects_duplicate_names_but_unambiguous_literal_definitions_work() {
             )
             .named("run"),
         ],
-        vec![OutputSlot::typed::<()>(0)],
+        OutputSlot::typed::<()>(0),
         |_ctx| Ok(vec![emit(0, ())]),
     );
     let mut m = ModuleDefBuilder::new("bad-names");
@@ -373,7 +378,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     let child_node = NodeTemplate::with_action(
         1,
         vec![Port::all(0, vec![InputSlot::immediate::<i64>(0).named("number")]).named("run")],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.arg::<i64>(0)? * 2)]),
     )
     .named("double")
@@ -398,7 +403,7 @@ fn named_module_boundaries_are_wired_without_numeric_ports() {
     let root_node = NodeTemplate::with_action(
         1,
         vec![Port::all(0, vec![InputSlot::immediate::<i64>(0).named("value")]).named("run")],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.arg::<i64>(0)?)]),
     )
     .named("source")

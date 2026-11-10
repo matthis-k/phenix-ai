@@ -107,10 +107,14 @@ impl PatchBuilder {
         replacement: R,
     ) -> &mut Self {
         let name = name.into();
+        // Node and Instance claims already overlap for the same public name.
         self.spec.writes.insert(match R::kind() {
             ReplacementKind::Node => PatchTarget::Node(name.clone()),
             ReplacementKind::Module => PatchTarget::Instance(name.clone()),
         });
+        self.spec
+            .writes
+            .insert(PatchTarget::IncidentConnections(name.clone()));
         self.edits
             .push(Box::new(move |g| g.replace(&name, replacement)));
         self

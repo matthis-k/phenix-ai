@@ -123,7 +123,16 @@ fn host_exports_bind_before_start_and_pin_exact_old_and_new_snapshots() {
     let old = host.publish(candidate).unwrap();
     let old_store = old_store.unwrap();
     assert_eq!(old_store.query(&old).unwrap(), 8);
-    assert_eq!(old.drain(16).len(), 1); // bootstrap, once
+    let events = old.drain(16); // bootstrap, once
+    assert_eq!(events.len(), 1);
+    let report = events[0].result.as_ref().unwrap();
+    assert!(report.success());
+    assert_eq!(
+        report.retention(),
+        phenix_graph::ReportRetention::TerminalOutputs
+    );
+    assert_eq!(report.publications().count(), 2); // Tap and unit-valued consumer.
+    assert_eq!(report.publication_events().len(), 4); // Source, compute, tap, consumer.
 
     let failed = host.prepare(
         vec![

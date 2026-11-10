@@ -22,7 +22,7 @@ impl IntoEmission for Scalar {
 #[test]
 fn typed_action_declares_one_output_and_publishes_one_payload() {
     let mut module = ModuleDefBuilder::new("typed-single-output");
-    let node = module
+    module
         .register(
             "increment",
             NodeTemplate::multi_port::<i64, Scalar, _>(
@@ -31,12 +31,25 @@ fn typed_action_declares_one_output_and_publishes_one_payload() {
             ),
         )
         .unwrap();
-    module
-        .export_input("request", vec![node.input::<i64>("run", "value")])
-        .unwrap();
-    module
-        .export_output("response", node.output::<i64>("value"))
-        .unwrap();
+    module.input(
+        0,
+        "request",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "increment".into(),
+            port: "run".into(),
+            slot: "value".into(),
+        }],
+    );
+    module.output(
+        0,
+        "response",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "increment".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -54,7 +67,7 @@ fn typed_action_declares_one_output_and_publishes_one_payload() {
 #[test]
 fn unit_action_publishes_unit_and_can_have_no_recipients() {
     let mut module = ModuleDefBuilder::new("typed-no-output");
-    let node = module
+    module
         .register(
             "observe",
             NodeTemplate::multi_port::<i64, (), _>(
@@ -63,9 +76,16 @@ fn unit_action_publishes_unit_and_can_have_no_recipients() {
             ),
         )
         .unwrap();
-    module
-        .export_input("request", vec![node.input::<i64>("run", "value")])
-        .unwrap();
+    module.input(
+        0,
+        "request",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "observe".into(),
+            port: "run".into(),
+            slot: "value".into(),
+        }],
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -109,10 +129,26 @@ fn structured_input_can_route_one_payload_without_a_special_node_kind() {
     graph.connect(router.output(), left.inlet()).unwrap();
     graph.connect(router.output(), right.inlet()).unwrap();
     let a = graph
-        .expose_input("a", router.local_slot::<i64>("0"))
+        .expose_input(
+            "a",
+            router
+                .inlets()
+                .port(phenix_graph::InletPort::<_, i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("0"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let b = graph
-        .expose_input("b", router.local_slot::<i64>("1"))
+        .expose_input(
+            "b",
+            router
+                .inlets()
+                .port(phenix_graph::InletPort::<_, i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("1"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     graph.trigger("run", [a, b]).unwrap();
 

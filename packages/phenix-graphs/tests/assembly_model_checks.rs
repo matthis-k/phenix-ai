@@ -56,10 +56,27 @@ fn nested_compilation_matches_independent_arithmetic_reference() {
             let child = parent.instance("child", &nested).unwrap();
             let bump = parent.node("bump", move |v: i64| v + delta).unwrap();
             parent
-                .connect(child.local_output::<i64>("result").unwrap(), bump.inlet())
+                .connect(
+                    child
+                        .operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()
+                        .unwrap(),
+                    bump.inlet(),
+                )
                 .unwrap();
             parent
-                .expose_input("request", child.local_input::<i64>("request").unwrap())
+                .expose_input(
+                    "request",
+                    child
+                        .operation()
+                        .unwrap()
+                        .inlets::<(), phenix_graph::LocalValue>()
+                        .port(phenix_graph::InletPort::<(), i64>::new("request"))
+                        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                        .target()
+                        .unwrap(),
+                )
                 .unwrap();
             parent.expose_output("result", bump.output()).unwrap();
             nested = parent.module();
@@ -67,10 +84,27 @@ fn nested_compilation_matches_independent_arithmetic_reference() {
         let mut graph = GraphBuilder::new(format!("root_{seed}"));
         let child = graph.instance("calculator", &nested).unwrap();
         let input = graph
-            .expose_input("request", child.local_input::<i64>("request").unwrap())
+            .expose_input(
+                "request",
+                child
+                    .operation()
+                    .unwrap()
+                    .inlets::<(), phenix_graph::LocalValue>()
+                    .port(phenix_graph::InletPort::<(), i64>::new("request"))
+                    .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                    .target()
+                    .unwrap(),
+            )
             .unwrap();
         graph
-            .expose_output("result", child.local_output::<i64>("result").unwrap())
+            .expose_output(
+                "result",
+                child
+                    .operation()
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()
+                    .unwrap(),
+            )
             .unwrap();
         let trigger = graph.trigger("compute", [input]).unwrap();
         let compiled = graph.compile().unwrap();

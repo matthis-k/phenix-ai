@@ -43,7 +43,11 @@ fn scoped_claims_on_imported_definitions_must_be_declared_on_the_package() {
     let mut child = GraphBuilder::new("child");
     let node = child.node("private", |v: i64| v + 1).unwrap();
     child
-        .expose_input_slot("run", "value", node.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            node.inlet(),
+        )
         .unwrap();
     child.expose_output("value", node.output()).unwrap();
     child.implements_public(&contract()).unwrap();
@@ -68,7 +72,11 @@ fn manual_graph_authoring_retains_definition_level_claim_edits() {
     let mut child = GraphBuilder::new("child");
     let node = child.node("private", |v: i64| v + 1).unwrap();
     child
-        .expose_input_slot("run", "value", node.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            node.inlet(),
+        )
         .unwrap();
     child.expose_output("value", node.output()).unwrap();
     let mut graph = GraphBuilder::new("host");

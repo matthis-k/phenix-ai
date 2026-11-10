@@ -9,7 +9,7 @@ use phenix_graph::{
     OutputSlot, Port, PortLayout, Store, TypedPort, Value,
 };
 
-#[derive(ContractValue, PortLayout)]
+#[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
 #[contract(schema = "example.add-args@1")]
 struct AddArgs {
     left: i32,
@@ -58,20 +58,20 @@ impl phenix_graph::IntoEmission for MaybeOutput {
     }
 }
 
-#[derive(ContractValue, PortLayout)]
+#[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
 #[contract(schema = "example.address@1")]
 struct Address {
     city: String,
     zip: u32,
 }
 
-#[derive(ContractValue, PortLayout)]
+#[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
 #[contract(schema = "example.metadata@1")]
 struct Metadata {
     revision: u64,
 }
 
-#[derive(ContractValue, PortLayout)]
+#[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
 #[contract(schema = "example.request@1")]
 struct Request {
     id: u64,
@@ -82,7 +82,7 @@ struct Request {
 }
 
 #[allow(dead_code)]
-#[derive(PortLayout)]
+#[derive(PortLayout, phenix_graph::InputFields)]
 struct ExplicitRequest {
     id: u64,
     #[port(flatten)]
@@ -93,13 +93,13 @@ struct ExplicitRequest {
 }
 
 #[allow(dead_code)]
-#[derive(PortLayout)]
+#[derive(PortLayout, phenix_graph::InputFields)]
 struct TupleEnvelope {
     pair: (i32, String),
 }
 
 #[allow(dead_code)]
-#[derive(PortLayout)]
+#[derive(PortLayout, phenix_graph::InputFields)]
 struct UnitEnvelope {
     signal: (),
 }
@@ -108,9 +108,7 @@ struct UnitEnvelope {
 fn ordinary_function_infers_atomic_input_and_output() {
     let mut graph = GraphBuilder::new("square");
     let square_node = graph.node("square", Node::wire(square)).unwrap();
-    let request = graph
-        .expose_input("request", square_node.slot::<i32>("value"))
-        .unwrap();
+    let request = graph.expose_input("request", square_node.inlet()).unwrap();
     graph.expose_output("result", square_node.output()).unwrap();
     graph.trigger("run", [request]).unwrap();
     let report = Deployment::new(graph.compile().unwrap())
@@ -137,11 +135,9 @@ fn graph_builder_connects_typed_endpoints_symbolically() {
     let mut graph = GraphBuilder::new("connected-functions");
     let square_node = graph.node("square", Node::wire(square)).unwrap();
     let increment_node = graph.node("increment", Node::wire(increment)).unwrap();
-    let request = graph
-        .expose_input("request", square_node.slot::<i32>("value"))
-        .unwrap();
+    let request = graph.expose_input("request", square_node.inlet()).unwrap();
     graph
-        .connect(square_node.output(), increment_node.slot::<i32>("value"))
+        .connect(square_node.output(), increment_node.inlet())
         .unwrap();
     graph
         .expose_output("result", increment_node.output())
@@ -178,20 +174,20 @@ fn typed_diamond_fanout_and_flattened_join_preserve_cohort() {
             Node::wire_layout(add, Layout::<AddArgs>::wire_fields()),
         )
         .unwrap();
-    let request = graph
-        .expose_input("request", source.slot::<i32>("value"))
+    let request = graph.expose_input("request", source.inlet()).unwrap();
+    graph.connect(source.output(), left.inlet()).unwrap();
+    graph.connect(source.output(), right.inlet()).unwrap();
+    graph
+        .connect(
+            left.output(),
+            join.inlet().field(AddArgs::SLOT_LEFT).target().unwrap(),
+        )
         .unwrap();
     graph
-        .connect(source.output(), left.slot::<i32>("value"))
-        .unwrap();
-    graph
-        .connect(source.output(), right.slot::<i32>("value"))
-        .unwrap();
-    graph
-        .connect(left.output(), join.slot::<i32>("left"))
-        .unwrap();
-    graph
-        .connect(right.output(), join.slot::<i32>("right"))
+        .connect(
+            right.output(),
+            join.inlet().field(AddArgs::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     graph.expose_output("result", join.output()).unwrap();
     graph.trigger("run", [request]).unwrap();
@@ -224,10 +220,16 @@ fn flattened_layout_reconstructs_the_original_argument() {
         )
         .unwrap();
     let left = graph
-        .expose_input("left", adder.slot::<i32>("left"))
+        .expose_input(
+            "left",
+            adder.inlet().field(AddArgs::SLOT_LEFT).target().unwrap(),
+        )
         .unwrap();
     let right = graph
-        .expose_input("right", adder.slot::<i32>("right"))
+        .expose_input(
+            "right",
+            adder.inlet().field(AddArgs::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     graph.expose_output("sum", adder.output()).unwrap();
     graph.trigger("run", [left, right]).unwrap();
@@ -325,18 +327,51 @@ fn bounded_flat_layout_reconstructs_nested_request_without_cloning() {
             Node::wire_layout(request_score, Layout::<Request>::wire_flatten_to::<2>()),
         )
         .unwrap();
-    let id = graph.expose_input("id", request.slot::<u64>("id")).unwrap();
+    let id = graph
+        .expose_input(
+            "id",
+            request.inlet().field(Request::SLOT_ID).target().unwrap(),
+        )
+        .unwrap();
     let city = graph
-        .expose_input("city", request.slot::<String>("address.city"))
+        .expose_input(
+            "city",
+            request
+                .inlet()
+                .field(Request::SLOT_ADDRESS.then(Address::SLOT_CITY))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let zip = graph
-        .expose_input("zip", request.slot::<u32>("address.zip"))
+        .expose_input(
+            "zip",
+            request
+                .inlet()
+                .field(Request::SLOT_ADDRESS.then(Address::SLOT_ZIP))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let priority = graph
-        .expose_input("priority", request.slot::<u8>("priority"))
+        .expose_input(
+            "priority",
+            request
+                .inlet()
+                .field(Request::SLOT_PRIORITY)
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let metadata = graph
-        .expose_input("metadata", request.slot::<Metadata>("metadata"))
+        .expose_input(
+            "metadata",
+            request
+                .inlet()
+                .field(Request::SLOT_METADATA)
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     graph.expose_output("score", request.output()).unwrap();
     graph
@@ -377,7 +412,7 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     let optional = phenix_graph::NodeTemplate::with_action(
         0,
         vec![Port::for_layout::<Atomic<i32>>(0, "run", AllSameCohort).unwrap()],
-        vec![OutputSlot::typed::<i32>(0).named("value")],
+        OutputSlot::typed::<i32>(0).named("value"),
         |mut ctx: phenix_graph::InvocationCtx| {
             let input = ctx.take_prepared::<i32>()?;
             Ok(positive(input)
@@ -387,13 +422,26 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
         },
     );
     let mut module = ModuleDefBuilder::new("optional");
-    let filter = module.register("filter", optional).unwrap();
-    module
-        .export_input("request", vec![filter.input::<i32>("run", "value")])
-        .unwrap();
-    module
-        .export_output("result", filter.output::<i32>("value"))
-        .unwrap();
+    module.register("filter", optional).unwrap();
+    module.input(
+        0,
+        "request",
+        <i32 as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "filter".into(),
+            port: "run".into(),
+            slot: "value".into(),
+        }],
+    );
+    module.output(
+        0,
+        "result",
+        <i32 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "filter".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -413,7 +461,7 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
     let parser = phenix_graph::NodeTemplate::with_action(
         0,
         vec![Port::for_layout::<Atomic<String>>(0, "run", AllSameCohort).unwrap()],
-        vec![OutputSlot::typed::<i32>(0).named("value")],
+        OutputSlot::typed::<i32>(0).named("value"),
         |mut ctx: phenix_graph::InvocationCtx| {
             let input = ctx.take_prepared::<String>()?;
             let parsed = parse(input).map_err(|error| error.to_string())?;
@@ -421,13 +469,26 @@ fn explicit_action_decides_when_to_emit_or_fail_without_interpreting_payload_typ
         },
     );
     let mut module = ModuleDefBuilder::new("fallible");
-    let parser = module.register("parse", parser).unwrap();
-    module
-        .export_input("request", vec![parser.input::<String>("run", "value")])
-        .unwrap();
-    module
-        .export_output("result", parser.output::<i32>("value"))
-        .unwrap();
+    module.register("parse", parser).unwrap();
+    module.input(
+        0,
+        "request",
+        <String as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "parse".into(),
+            port: "run".into(),
+            slot: "value".into(),
+        }],
+    );
+    module.output(
+        0,
+        "result",
+        <i32 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "parse".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = phenix_graph::ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -478,22 +539,48 @@ fn heterogeneous_ports_explicitly_dispatch_to_one_event_handler() {
         },
     );
     let mut module = ModuleDefBuilder::new("multi-port");
-    let processor = module.register("processor", node).unwrap();
-    module
-        .export_input("left", vec![processor.input::<i32>("add", "left")])
-        .unwrap();
-    module
-        .export_input("right", vec![processor.input::<i32>("add", "right")])
-        .unwrap();
-    module
-        .export_input("reset", vec![processor.input::<()>("reset", "value")])
-        .unwrap();
-    module
-        .export_input(
+    module.register("processor", node).unwrap();
+    for (id, name, schema, port, slot) in [
+        (
+            0,
+            "left",
+            <i32 as phenix_graph::ContractValue>::wire_schema(),
+            "add",
+            "left",
+        ),
+        (
+            1,
+            "right",
+            <i32 as phenix_graph::ContractValue>::wire_schema(),
+            "add",
+            "right",
+        ),
+        (
+            2,
+            "reset",
+            <() as phenix_graph::ContractValue>::wire_schema(),
+            "reset",
+            "value",
+        ),
+        (
+            3,
             "message",
-            vec![processor.input::<String>("message", "value")],
-        )
-        .unwrap();
+            <String as phenix_graph::ContractValue>::wire_schema(),
+            "message",
+            "value",
+        ),
+    ] {
+        module.input(
+            id,
+            name,
+            schema,
+            vec![phenix_graph::ModuleInputTarget::NodeNamed {
+                node: "processor".into(),
+                port: port.into(),
+                slot: slot.into(),
+            }],
+        );
+    }
     // The typed node publishes Option<i32> as a local payload. This test
     // inspects publications directly; no wire-only public module export is
     // needed (or valid for a local Option<i32> output).

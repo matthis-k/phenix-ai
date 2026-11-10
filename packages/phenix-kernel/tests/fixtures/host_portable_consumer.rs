@@ -1,4 +1,4 @@
-use phenix_graph::{ContractValue, Node, Schema};
+use phenix_graph::{ContractValue, EncodedValue, InletPort, Node, Schema, SlotField};
 use phenix_kernel::{ContractRequirement, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
@@ -48,13 +48,24 @@ impl PluginInstance for Plugin {
             compose: Box::new(move |context| {
                 let selected = context.import("transform")?;
                 let graph = &mut *context.graph;
-                let bound = selected.bind(graph)?;
+                let bound = selected.bind(graph)?.operation()?;
                 // Only contract-visible names and C's own Rust types are used.
-                assert!(bound.wire_output::<Response>("diagnostic").is_err());
-                assert!(bound.wire_input::<Request>("run", "extra").is_err());
-                let left = bound.wire_input::<Request>("run", "left")?;
-                let right = bound.wire_input::<Request>("run", "right")?;
-                let output = bound.wire_output::<Response>("value")?;
+                let run = bound
+                    .inlets::<Request, EncodedValue>()
+                    .port(InletPort::<Request, Request>::new("run"));
+                assert!(
+                    run.field(SlotField::<Request, Request>::new("extra"))
+                        .target()
+                        .is_err()
+                );
+                assert!(graph.discover("initial-module/inside/diagnostic").is_err());
+                let left = run
+                    .field(SlotField::<Request, Request>::new("left"))
+                    .target()?;
+                let right = run
+                    .field(SlotField::<Request, Request>::new("right"))
+                    .target()?;
+                let output = bound.output::<Response, EncodedValue>()?;
                 let sink = graph.node(
                     "consumer-sink",
                     Node::wire({
@@ -65,12 +76,12 @@ impl PluginInstance for Plugin {
                         }
                     }),
                 )?;
-                graph.connect_wire(output, sink.inlet())?;
+                graph.connect(output, sink.inlet())?;
                 let mut inputs = Vec::new();
                 for (name, target) in [("left", left), ("right", right)] {
                     let source =
                         graph.node(format!("consumer-{name}"), Node::wire(|v: Request| v))?;
-                    graph.connect_wire(source.output(), target)?;
+                    graph.connect(source.output(), target)?;
                     inputs.push(graph.expose_input(name, source.inlet())?);
                 }
                 graph.trigger("run", inputs)?;

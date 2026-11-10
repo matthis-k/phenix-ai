@@ -1,6 +1,23 @@
 //! Phenix standalone dataflow engine (Rust 2024).
 //! Graph definitions, composition, compilation and execution use one engine;
 //! optional derives and test fixtures are clients of that same implementation.
+//! Author graphs with `GraphBuilder` and typed node/module operations.
+//! Zero-argument nodes remain portless and run only on an explicit source trigger:
+//!
+//! ```
+//! use phenix_graph::{Deployment, GraphBuilder};
+//! let mut graph = GraphBuilder::new("source-example");
+//! let source = graph.node("source", || 42_i64).map_err(|e| e.to_string())?;
+//! let sink = graph.node("sink", |x: i64| x + 1).map_err(|e| e.to_string())?;
+//! graph.connect(source.output(), sink.inlet())?;
+//! graph.trigger("start", [source.operation().start()])?;
+//! let engine = Deployment::new(graph.compile().map_err(|e| e.to_string())?).build()?;
+//! let report = engine.fire("start", vec![])?;
+//! assert!(report.success());
+//! # Ok::<(), String>(())
+//! ```
+//!
+//! `ModuleDefBuilder` declares physical compiler structures, not typed endpoints.
 //! Expected `WaveError` values are successful negative-path test outcomes.
 //! Outside scope: preemptive task cancellation, replay, remote operations,
 //! transaction rollback, production ABI, automatic cycle recovery.
@@ -45,15 +62,20 @@ pub use output::{Destination, Output};
 pub mod testing;
 pub use authoring::{
     AssembledGraph, AssemblyChange, AssemblyRevision, ConnectionRoute, DeclaredValue,
-    FieldSelector, GraphAssembly, GraphBuilder, Input, Layout, LayoutMode, ModuleHandle,
-    ModulePackage, Node, NodeDefinition, NodeHandle, NodeSignature, OutputRef, PatchAnchor,
-    PatchBuilder, PatchDestination, PatchError, PatchPlanner, PatchResolution, PatchSource,
-    PatchSpec, PatchTarget, PlannedSplice, PortSelector, PublicInput, Replacement, ReplacementKind,
-    SlotField, SlotPath, SplicePosition, SupersededPatch,
+    DiscoveredOperation, EncodedValue, FieldSelector, GraphAssembly, GraphBuilder, InletLayout,
+    InletPort, InletView, Inlets, Input, InputInterface, Layout, LayoutMode, LocalValue, Module,
+    ModuleHandle, ModulePackage, NoPorts, Node, NodeDefinition, NodeHandle, NodeInputs,
+    NodeSignature, Operation, OutputRef, PatchAnchor, PatchBuilder, PatchDestination, PatchError,
+    PatchPlanner, PatchResolution, PatchSource, PatchSpec, PatchTarget, PlannedSplice,
+    PortInterface, PortSelector, Ports, PublicInlets, PublicInput, PublicView, Replacement,
+    ReplacementKind, SinglePort, SlotField, SlotPath, SourceStart, SplicePosition, SupersededPatch,
+    TypedModulePackage, ValueMode,
 };
 pub use deployment::{Deployment, ExecutionLimits};
 #[cfg(feature = "derive")]
-pub use phenix_port_args_derive::{ContractValue, LocalPortLayout, PortArgs, PortLayout, patch};
+pub use phenix_port_args_derive::{
+    ContractValue, InputFields, LocalPortLayout, PortArgs, PortLayout, patch,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -1053,6 +1075,9 @@ impl<T: Send + Sync + 'static> LocalPortLayoutAt<0> for T {
 pub trait InputLayout: Send + Sync + 'static {
     type Value: Send + 'static;
     fn slots() -> Result<Vec<InputSlot>, LayoutError>;
+    fn atomic_identity() -> Option<TypeIdentity> {
+        None
+    }
 }
 /// Decode a selected wire/legacy input without consuming the port's buffered
 /// values. This is not implemented for local move-only layouts.
@@ -1070,6 +1095,9 @@ pub struct FlattenTo<T, const DEPTH: usize>(PhantomData<fn() -> T>);
 pub struct DeepFlatten<T>(PhantomData<fn() -> T>);
 impl<T: ContractValue> InputLayout for Atomic<T> {
     type Value = T;
+    fn atomic_identity() -> Option<TypeIdentity> {
+        Some(InputSlot::deferred::<T>(0).identity())
+    }
     fn slots() -> Result<Vec<InputSlot>, LayoutError> {
         Ok(vec![InputSlot::deferred::<T>(0).named("value")])
     }
@@ -1125,6 +1153,9 @@ pub struct LocalFlattenTo<T, const DEPTH: usize>(PhantomData<fn() -> T>);
 pub struct LocalDeepFlatten<T>(PhantomData<fn() -> T>);
 impl<T: Send + Sync + 'static> InputLayout for LocalAtomic<T> {
     type Value = T;
+    fn atomic_identity() -> Option<TypeIdentity> {
+        Some(TypeIdentity::Local(TypeId::of::<T>()))
+    }
     fn slots() -> Result<Vec<InputSlot>, LayoutError> {
         Ok(vec![InputSlot::local::<T>(0).named("value")])
     }
@@ -1310,10 +1341,10 @@ local_tuple_deep!(A:0, B:1);
 local_tuple_deep!(A:0, B:1, C:2);
 local_tuple_deep!(A:0, B:1, C:2, D:3);
 
-/// A successful typed node has exactly one declared output slot, even if
-/// its payload is `()`. Sending to zero recipients is an output-routing
-/// decision, not the absence of a value. No Option-based output contract.
-/// A typed output is always slot zero, including unit-valued actions.
+/// Every node declares exactly one output slot, including unit-valued actions.
+/// An invocation may produce zero or one values. Producing no value is distinct
+/// from producing a value routed to zero recipients; plain `Option<T>` is data,
+/// not an optional output declaration. The output always uses slot zero.
 ///
 /// An absent output schema is deliberately not representable:
 ///
@@ -1965,7 +1996,7 @@ pub struct InvocationCtx {
     wave: WaveId,
     invocation: InvocationId,
     cohort: CohortId,
-    from_port: PortId,
+    from_port: Option<PortId>,
     args: InvocationArgs,
     store: Arc<Store>,
     grants: Vec<ResourceNeed>,
@@ -1980,8 +2011,10 @@ impl InvocationCtx {
     pub fn cohort_id(&self) -> u64 {
         self.cohort.0
     }
-    pub fn source_port_id(&self) -> u16 {
-        self.from_port.0
+    /// Physical input port for input-driven invocations; `None` for explicit
+    /// zero-input starts. Sources have empty raw arguments, not a unit slot.
+    pub fn source_port_id(&self) -> Option<u16> {
+        self.from_port.map(|port| port.0)
     }
 
     /// Take a prepared value once, without cloning or replacing it with fake raw
@@ -2262,7 +2295,9 @@ where
     F: Fn(E, &InvocationCtx) -> Result<O, String> + Send + Sync,
 {
     fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let port = ctx.source_port_id();
+        let port = ctx
+            .source_port_id()
+            .ok_or("typed input dispatch requires an input port")?;
         let dispatch = self
             .dispatch
             .get(&port)
@@ -2296,7 +2331,7 @@ pub struct NodeTemplate {
     declaring_scope: Option<u64>,
     declaration_id: u64,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     grants: Vec<ResourceNeed>,
     cohort_mode: CohortMode,
     logic_factory: Arc<NodeLogicFactory>,
@@ -2304,7 +2339,7 @@ pub struct NodeTemplate {
 fn node_action<A: NodeAction + 'static>(
     id: u16,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     cohort_mode: CohortMode,
     grants: Vec<ResourceNeed>,
     action: A,
@@ -2320,7 +2355,7 @@ fn node_action<A: NodeAction + 'static>(
         declaring_scope: None,
         declaration_id: 0,
         ports,
-        outputs,
+        output,
         grants,
         cohort_mode,
         logic_factory,
@@ -2329,7 +2364,7 @@ fn node_action<A: NodeAction + 'static>(
 fn node_action_with_factory<A, Factory>(
     id: u16,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     cohort_mode: CohortMode,
     grants: Vec<ResourceNeed>,
     factory: Factory,
@@ -2347,7 +2382,7 @@ where
         declaring_scope: None,
         declaration_id: 0,
         ports,
-        outputs,
+        output,
         grants,
         cohort_mode,
         logic_factory,
@@ -2356,7 +2391,7 @@ where
 fn node<F>(
     id: u16,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     cohort_mode: CohortMode,
     grants: Vec<ResourceNeed>,
     logic: F,
@@ -2364,13 +2399,13 @@ fn node<F>(
 where
     F: Fn(InvocationCtx) -> Result<Vec<Emission>, String> + Send + Sync + 'static,
 {
-    node_action(id, ports, outputs, cohort_mode, grants, logic)
+    node_action(id, ports, output, cohort_mode, grants, logic)
 }
 /// Construct a fresh logic closure for each physical instance produced by module expansion.
 fn node_with_factory<F, Factory>(
     id: u16,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     cohort_mode: CohortMode,
     grants: Vec<ResourceNeed>,
     factory: Factory,
@@ -2379,7 +2414,7 @@ where
     F: Fn(InvocationCtx) -> Result<Vec<Emission>, String> + Send + Sync + 'static,
     Factory: Fn() -> F + Send + Sync + 'static,
 {
-    node_action_with_factory(id, ports, outputs, cohort_mode, grants, factory)
+    node_action_with_factory(id, ports, output, cohort_mode, grants, factory)
 }
 struct PhysicalNode {
     id: NodeId,
@@ -2387,7 +2422,7 @@ struct PhysicalNode {
     declaring_scope: Option<u64>,
     declaration_id: u64,
     ports: Vec<Port>,
-    outputs: Vec<OutputSlot>,
+    output: OutputSlot,
     grants: Vec<ResourceNeed>,
     cohort_mode: CohortMode,
     logic_factory: Arc<NodeLogicFactory>,
@@ -2410,7 +2445,7 @@ impl NodeTemplate {
         Self::with_action(
             0,
             declarations,
-            vec![O::output_slot()],
+            O::output_slot(),
             MultiPortNodeAction {
                 dispatch,
                 handler,
@@ -2434,7 +2469,7 @@ impl NodeTemplate {
                     .named("run")
                     .with_args_builder(LayoutArgsBuilder::<Atomic<A>>(PhantomData)),
             ],
-            vec![OutputSlot::typed::<O>(0).named("value")],
+            OutputSlot::typed::<O>(0).named("value"),
             FunctionNodeAction::<A, O, F>(handler, PhantomData),
         )
     }
@@ -2453,7 +2488,7 @@ impl NodeTemplate {
         Self::with_action(
             0,
             vec![Port::all(0, vec![InputSlot::local::<A>(0).named("value")]).named("run")],
-            vec![OutputSlot::local::<O>(0).named("value")],
+            OutputSlot::local::<O>(0).named("value"),
             LocalFunctionNodeAction::<A, O, R, F>(handler, PhantomData),
         )
     }
@@ -2470,7 +2505,7 @@ impl NodeTemplate {
         Ok(Self::with_action(
             0,
             vec![Port::all(0, slots.clone()).named("run")],
-            vec![OutputSlot::local::<O>(0).named("value")],
+            OutputSlot::local::<O>(0).named("value"),
             LocalPreparedFunctionNodeAction::<L, O, R, F> {
                 handler,
                 slots,
@@ -2489,7 +2524,7 @@ impl NodeTemplate {
         Ok(Self::with_action(
             0,
             vec![Port::for_layout::<Flatten<A>>(0, "run", AllSameCohort)?],
-            vec![OutputSlot::typed::<O>(0).named("value")],
+            OutputSlot::typed::<O>(0).named("value"),
             FunctionNodeAction::<A, O, F>(handler, PhantomData),
         ))
     }
@@ -2516,12 +2551,12 @@ impl NodeTemplate {
         Ok(Self::with_action(
             0,
             vec![port],
-            vec![OutputSlot::typed::<O>(0).named("value")],
+            OutputSlot::typed::<O>(0).named("value"),
             FunctionNodeAction::<L::Value, O, F>(handler, PhantomData),
         ))
     }
 
-    /// General typed adapter for custom/multi-output handlers and layouts.
+    /// General typed adapter for contextual single-output handlers and layouts.
     pub fn with_layout<L, O, F>(
         port_name: impl Into<String>,
         policy: impl PortPolicy + 'static,
@@ -2536,7 +2571,7 @@ impl NodeTemplate {
         Ok(Self::with_action(
             0,
             vec![port],
-            vec![O::output_slot()],
+            O::output_slot(),
             ContextFunctionNodeAction::<L::Value, O, F>(handler, PhantomData),
         ))
     }
@@ -2558,7 +2593,7 @@ impl NodeTemplate {
         Ok(Self::with_action(
             0,
             vec![port],
-            vec![O::output_slot()],
+            O::output_slot(),
             TypedNodeAction::<A, O, F>(handler, PhantomData),
         ))
     }
@@ -2579,7 +2614,7 @@ impl NodeTemplate {
         Ok(Self::with_action_factory(
             0,
             vec![port],
-            vec![O::output_slot()],
+            O::output_slot(),
             move || TypedNodeAction::<A, O, F>(factory(), PhantomData),
         ))
     }
@@ -2591,45 +2626,45 @@ impl NodeTemplate {
             declaring_scope: self.declaring_scope,
             declaration_id: self.declaration_id,
             ports: self.ports.clone(),
-            outputs: self.outputs.clone(),
+            output: self.output.clone(),
             grants: self.grants.clone(),
             cohort_mode: self.cohort_mode,
             logic_factory: Arc::clone(&self.logic_factory),
         }
     }
-    pub fn new<F>(id: u16, ports: Vec<Port>, outputs: Vec<OutputSlot>, logic: F) -> Self
+    pub fn new<F>(id: u16, ports: Vec<Port>, output: OutputSlot, logic: F) -> Self
     where
         F: Fn(InvocationCtx) -> Result<Vec<Emission>, String> + Send + Sync + 'static,
     {
-        node(id, ports, outputs, CohortMode::Inherit, vec![], logic)
+        node(id, ports, output, CohortMode::Inherit, vec![], logic)
     }
     pub fn with_factory<F, Factory>(
         id: u16,
         ports: Vec<Port>,
-        outputs: Vec<OutputSlot>,
+        output: OutputSlot,
         factory: Factory,
     ) -> Self
     where
         F: Fn(InvocationCtx) -> Result<Vec<Emission>, String> + Send + Sync + 'static,
         Factory: Fn() -> F + Send + Sync + 'static,
     {
-        node_with_factory(id, ports, outputs, CohortMode::Inherit, vec![], factory)
+        node_with_factory(id, ports, output, CohortMode::Inherit, vec![], factory)
     }
     /// Declarative struct-literal form: `NodeTemplate::with_action(..., MyAction { ... })`.
     pub fn with_action<A: NodeAction + 'static>(
         id: u16,
         ports: Vec<Port>,
-        outputs: Vec<OutputSlot>,
+        output: OutputSlot,
         action: A,
     ) -> Self {
-        node_action(id, ports, outputs, CohortMode::Inherit, vec![], action)
+        node_action(id, ports, output, CohortMode::Inherit, vec![], action)
     }
     /// Accept an already-erased action selected dynamically by a plugin or registry.
     /// The Arc is intentionally shared by every physical instance of this template.
     pub fn with_dyn_action(
         id: u16,
         ports: Vec<Port>,
-        outputs: Vec<OutputSlot>,
+        output: OutputSlot,
         action: Arc<dyn NodeAction>,
     ) -> Self {
         let logic_factory: Arc<NodeLogicFactory> = Arc::new(move || Arc::clone(&action));
@@ -2641,7 +2676,7 @@ impl NodeTemplate {
             declaring_scope: None,
             declaration_id: 0,
             ports,
-            outputs,
+            output,
             grants: vec![],
             cohort_mode: CohortMode::Inherit,
             logic_factory,
@@ -2652,14 +2687,14 @@ impl NodeTemplate {
     pub fn with_action_factory<A, Factory>(
         id: u16,
         ports: Vec<Port>,
-        outputs: Vec<OutputSlot>,
+        output: OutputSlot,
         factory: Factory,
     ) -> Self
     where
         A: NodeAction + 'static,
         Factory: Fn() -> A + Send + Sync + 'static,
     {
-        node_action_with_factory(id, ports, outputs, CohortMode::Inherit, vec![], factory)
+        node_action_with_factory(id, ports, output, CohortMode::Inherit, vec![], factory)
     }
     /// Named input addressing is resolved at definition time, not by a macro.
     pub fn input(&self, port: &str, slot: &str) -> Result<InputAddr, String> {
@@ -2680,14 +2715,12 @@ impl NodeTemplate {
         })
     }
     pub fn output(&self, slot: &str) -> Result<OutputAddr, String> {
-        let slot = self
-            .outputs
-            .iter()
-            .find(|s| s.name.as_deref() == Some(slot))
-            .ok_or_else(|| format!("unknown output {slot:?}"))?;
+        if self.output.name.as_deref() != Some(slot) {
+            return Err(format!("unknown output {slot:?}"));
+        }
         Ok(OutputAddr {
             node: self.id,
-            slot: slot.id,
+            slot: self.output.id,
         })
     }
     pub fn input_handle<T: ContractValue>(
@@ -2719,7 +2752,7 @@ impl NodeTemplate {
     }
     pub fn output_handle<T: ContractValue>(&self, slot: &str) -> Result<OutputHandle<T>, String> {
         let address = self.output(slot)?;
-        let declared = self.outputs.iter().find(|s| s.id == address.slot).unwrap();
+        let declared = &self.output;
         if declared.schema != T::wire_schema() {
             return Err(format!(
                 "output {slot} schema {} differs from {}",
@@ -3104,6 +3137,8 @@ impl From<ModuleInstance> for NodeDef {
 pub enum ModuleTriggerTarget {
     PublicInput(u16),
     Internal(InputAddr),
+    /// A direct zero-input node or a no-public-input module operation.
+    Source(String),
 }
 #[derive(Clone, Debug)]
 pub struct ModuleTrigger {
@@ -3123,7 +3158,8 @@ pub struct ModuleDef {
     pub instances: Vec<ModuleInstance>,
     pub edges: Vec<ModuleEdge>,
     pub inputs: Vec<ModuleInput>,
-    pub outputs: Vec<ModuleOutput>,
+    /// Explicitly chosen source. Optional only for an uninstanced root container.
+    pub output: Option<ModuleOutput>,
 }
 /// A composition entry binds external triggers without modifying the module definition.
 #[derive(Clone)]
@@ -3140,43 +3176,6 @@ pub struct NamedNodeHandle {
     scope: u64,
     declaration_id: u64,
     name: String,
-}
-
-pub struct NamedInput<T: ContractValue> {
-    scope: u64,
-    declaration_id: u64,
-    node: String,
-    port: String,
-    slot: String,
-    _type: PhantomData<fn(T)>,
-}
-pub struct NamedOutput<T: ContractValue> {
-    scope: u64,
-    declaration_id: u64,
-    node: String,
-    output: String,
-    _type: PhantomData<fn() -> T>,
-}
-impl NamedNodeHandle {
-    pub fn input<T: ContractValue>(&self, port: &str, slot: &str) -> NamedInput<T> {
-        NamedInput {
-            scope: self.scope,
-            declaration_id: self.declaration_id,
-            node: self.name.clone(),
-            port: port.into(),
-            slot: slot.into(),
-            _type: PhantomData,
-        }
-    }
-    pub fn output<T: ContractValue>(&self, name: &str) -> NamedOutput<T> {
-        NamedOutput {
-            scope: self.scope,
-            declaration_id: self.declaration_id,
-            node: self.name.clone(),
-            output: name.into(),
-            _type: PhantomData,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -3196,7 +3195,7 @@ pub struct ModuleDefBuilder {
     edges: Vec<ModuleEdge>,
     next_connection: u32,
     inputs: Vec<ModuleInput>,
-    outputs: Vec<ModuleOutput>,
+    output: Option<ModuleOutput>,
     triggers: Vec<ModuleTrigger>,
 }
 impl Default for ModuleDefBuilder {
@@ -3215,7 +3214,7 @@ impl Default for ModuleDefBuilder {
             edges: vec![],
             next_connection: 0,
             inputs: vec![],
-            outputs: vec![],
+            output: None,
             triggers: vec![],
         }
     }
@@ -3294,7 +3293,7 @@ impl ModuleDefBuilder {
         node.name = Some(name);
         self.add(NodeDef::Node(node))
     }
-    /// Inference-first named registration; this stable handle is not a borrow.
+    /// Register a physical node template and retain its declaration identity.
     pub fn register(
         &mut self,
         name: impl Into<String>,
@@ -3307,181 +3306,6 @@ impl ModuleDefBuilder {
             declaration_id: self.nodes.last().expect("registered node").declaration_id,
             name,
         })
-    }
-
-    /// Inference-first ordinary function registration. `A` and `O` are inferred
-    /// from a function item or explicitly typed closure; `A` is transported as
-    /// one atomic contract value by default.
-    pub fn register_fn<A, O, F>(
-        &mut self,
-        name: impl Into<String>,
-        handler: F,
-    ) -> Result<NamedNodeHandle, ModuleNameError>
-    where
-        A: ContractValue,
-        O: ContractValue,
-        F: Fn(A) -> O + Send + Sync + 'static,
-    {
-        self.register(name, NodeTemplate::function(handler))
-    }
-
-    pub fn register_flattened<A, O, F>(
-        &mut self,
-        name: impl Into<String>,
-        handler: F,
-    ) -> Result<NamedNodeHandle, GraphBuildError>
-    where
-        A: PortLayout + PortLayoutAt<1>,
-        O: ContractValue,
-        F: Fn(A) -> O + Send + Sync + 'static,
-    {
-        Ok(self.register(name, NodeTemplate::flattened(handler)?)?)
-    }
-
-    fn verify_input<T: ContractValue>(&self, input: &NamedInput<T>) -> Result<(), String> {
-        if input.scope != self.scope {
-            return Err("input belongs to another declaration".into());
-        }
-        let node = self
-            .named_node(&input.node)
-            .ok_or_else(|| format!("unknown declaration node {:?}", input.node))?;
-        let address = node.input(&input.port, &input.slot)?;
-        if node.declaration_id != input.declaration_id {
-            return Err("input belongs to a stale or divergent declaration".into());
-        }
-        let actual = node
-            .ports
-            .iter()
-            .find(|port| port.id == address.port)
-            .unwrap()
-            .slots
-            .iter()
-            .find(|slot| slot.id == address.slot)
-            .unwrap()
-            .schema
-            .clone();
-        if actual != T::wire_schema() {
-            return Err(format!("typed input {:?} schema mismatch", input.slot));
-        }
-        Ok(())
-    }
-    fn verify_output<T: ContractValue>(&self, output: &NamedOutput<T>) -> Result<(), String> {
-        if output.scope != self.scope {
-            return Err("output belongs to another declaration".into());
-        }
-        let node = self
-            .named_node(&output.node)
-            .ok_or_else(|| format!("unknown declaration node {:?}", output.node))?;
-        let address = node.output(&output.output)?;
-        if node.declaration_id != output.declaration_id {
-            return Err("output belongs to a stale or divergent declaration".into());
-        }
-        let actual = node
-            .outputs
-            .iter()
-            .find(|slot| slot.id == address.slot)
-            .unwrap()
-            .schema
-            .clone();
-        if actual != T::wire_schema() {
-            return Err(format!("typed output {:?} schema mismatch", output.output));
-        }
-        Ok(())
-    }
-    /// Typed, scope-validated symbolic wiring; no compiled numeric endpoint is stored.
-    pub fn connect_decl<T: ContractValue>(
-        &mut self,
-        source: NamedOutput<T>,
-        target: NamedInput<T>,
-    ) -> Result<&mut Self, String> {
-        self.verify_output(&source)?;
-        self.verify_input(&target)?;
-        Ok(self.connect(
-            ModuleOutputSource::NodeNamed {
-                node: source.node,
-                output: source.output,
-            },
-            ModuleInputTarget::NodeNamed {
-                node: target.node,
-                port: target.port,
-                slot: target.slot,
-            },
-        ))
-    }
-    /// Public input fan-out is a structural declaration, not a new runtime node.
-    pub fn export_input<T: ContractValue>(
-        &mut self,
-        name: impl Into<String>,
-        targets: Vec<NamedInput<T>>,
-    ) -> Result<(), String> {
-        self.export_input_slot(name, "value", targets)
-    }
-    /// Export an exact public port/slot pair without introducing a runtime join.
-    pub fn export_input_slot<T: ContractValue>(
-        &mut self,
-        port: impl Into<String>,
-        slot: impl Into<String>,
-        targets: Vec<NamedInput<T>>,
-    ) -> Result<(), String> {
-        let port = port.into();
-        let slot = slot.into();
-        validate_name_segment(&port).map_err(|error| error.to_string())?;
-        validate_name_segment(&slot).map_err(|error| error.to_string())?;
-        let name = module_input_slot_name(&port, &slot);
-        if self
-            .inputs
-            .iter()
-            .any(|input| input.name == name || (input.port == port && input.slot == slot))
-        {
-            return Err("duplicate public input".into());
-        }
-        if targets.is_empty() {
-            return Err("public input needs at least one target".into());
-        }
-        for target in &targets {
-            self.verify_input(target)?;
-        }
-        let used: BTreeSet<u16> = self.inputs.iter().map(|port| port.id).collect();
-        let id = (0..=u16::MAX)
-            .find(|id| !used.contains(id))
-            .ok_or("public input IDs exhausted")?;
-        self.input_slot_with_identity(
-            id,
-            port,
-            slot,
-            T::wire_schema(),
-            None,
-            targets
-                .into_iter()
-                .map(|target| ModuleInputTarget::NodeNamed {
-                    node: target.node,
-                    port: target.port,
-                    slot: target.slot,
-                })
-                .collect(),
-        );
-        Ok(())
-    }
-    pub fn export_output<T: ContractValue>(
-        &mut self,
-        name: impl Into<String>,
-        source: NamedOutput<T>,
-    ) -> Result<(), String> {
-        self.verify_output(&source)?;
-        let used: BTreeSet<u16> = self.outputs.iter().map(|port| port.id).collect();
-        let id = (0..=u16::MAX)
-            .find(|id| !used.contains(id))
-            .ok_or("public output IDs exhausted")?;
-        self.output(
-            id,
-            name,
-            T::wire_schema(),
-            ModuleOutputSource::NodeNamed {
-                node: source.node,
-                output: source.output,
-            },
-        );
-        Ok(())
     }
 
     pub fn try_instance(
@@ -3549,7 +3373,8 @@ impl ModuleDefBuilder {
         local_type: Option<TypeId>,
         source: ModuleOutputSource,
     ) {
-        self.outputs.push(ModuleOutput {
+        assert!(self.output.is_none(), "module already has an output");
+        self.output = Some(ModuleOutput {
             id,
             name: name.into(),
             schema,
@@ -3593,10 +3418,10 @@ impl ModuleDefBuilder {
     /// use phenix_graph::{InputSlot, ModuleDefBuilder, NodeTemplate,
     ///     OutputSlot, Port, emit};
     /// let source = NodeTemplate::with_action(1, vec![],
-    ///     vec![OutputSlot::typed::<String>(0).named("text")], |_ctx| Ok(vec![emit(0, String::new())]));
+    ///     OutputSlot::typed::<String>(0).named("text"), |_ctx| Ok(vec![emit(0, String::new())]));
     /// let target = NodeTemplate::with_action(2,
     ///     vec![Port::all(0, vec![InputSlot::immediate::<i32>(0).named("number")]).named("run")],
-    ///     vec![OutputSlot::typed::<()>(0).named("value")], |_ctx| Ok(vec![emit(0, ())]));
+    ///     OutputSlot::typed::<()>(0).named("value"), |_ctx| Ok(vec![emit(0, ())]));
     /// let mut module = ModuleDefBuilder::new("wrong-types");
     /// module.connect_typed(source.output_handle::<String>("text").unwrap(),
     ///     target.input_handle::<i32>("run", "number").unwrap());
@@ -3702,7 +3527,7 @@ impl ModuleDefBuilder {
                 instances: self.instances,
                 edges: self.edges,
                 inputs: self.inputs,
-                outputs: self.outputs,
+                output: self.output,
             },
             triggers: self.triggers,
         }
@@ -3730,7 +3555,7 @@ struct ModuleInstanceProvenance {
     definition: String,
     instance_path: Vec<String>,
     inputs: BTreeMap<u16, Vec<InputAddr>>,
-    outputs: BTreeMap<u16, OutputAddr>,
+    output: Option<OutputAddr>,
 }
 #[derive(Clone)]
 enum NamedUnit {
@@ -3751,7 +3576,7 @@ struct CompiledMetadata {
     edges: BTreeMap<EdgeId, EdgeProvenance>,
     instances: Vec<ModuleInstanceProvenance>,
     inputs: BTreeMap<u16, Vec<InputAddr>>,
-    outputs: BTreeMap<u16, OutputAddr>,
+    output: Option<OutputAddr>,
     name_index: BTreeMap<String, NamedUnit>,
     trigger_names: BTreeMap<String, TriggerId>,
 }
@@ -3761,6 +3586,7 @@ struct FlatGraphBuilder {
     nodes: BTreeMap<NodeId, Arc<PhysicalNode>>,
     edges: Vec<Edge>,
     triggers: BTreeMap<TriggerId, Vec<Vec<InputAddr>>>,
+    source_triggers: BTreeMap<TriggerId, Vec<NodeId>>,
     metadata: CompiledMetadata,
 }
 impl FlatGraphBuilder {
@@ -3832,6 +3658,7 @@ impl FlatGraphBuilder {
             by_output: BTreeMap::new(),
             by_node: BTreeMap::new(),
             triggers: self.triggers,
+            source_triggers: self.source_triggers,
             order: BTreeMap::new(),
             metadata: Arc::new(self.metadata),
             composition_origins: BTreeMap::new(),
@@ -3840,8 +3667,6 @@ impl FlatGraphBuilder {
         for n in graph.nodes.values() {
             let mut port_ids = BTreeSet::new();
             let mut port_names = BTreeSet::new();
-            let mut output_ids = BTreeSet::new();
-            let mut output_names = BTreeSet::new();
             for p in &n.ports {
                 if !port_ids.insert(p.id) || p.slots.is_empty() {
                     return Err(format!("duplicate/empty port on {:?}", n.id));
@@ -3866,16 +3691,11 @@ impl FlatGraphBuilder {
                     }
                 }
             }
-            for s in &n.outputs {
-                if !output_ids.insert(s.id) {
-                    return Err("duplicate output slot".into());
-                }
-                if let Some(name) = &s.name {
-                    validate_name_segment(name).map_err(|e| e.to_string())?;
-                    if !output_names.insert(name.as_str()) {
-                        return Err(format!("duplicate output name {name:?}"));
-                    }
-                }
+            if n.output.id != SlotId(0) {
+                return Err("node output must use canonical slot 0".into());
+            }
+            if let Some(name) = &n.output.name {
+                validate_name_segment(name).map_err(|e| e.to_string())?;
             }
         }
         let mut edge_ids = BTreeSet::new();
@@ -4092,7 +3912,14 @@ impl ModuleCatalog {
                 .trigger_names
                 .insert(trigger.name.clone(), trigger.id);
             let mut targets = Vec::new();
+            let mut sources = BTreeSet::new();
             for target in &trigger.targets {
+                if let ModuleTriggerTarget::Source(name) = target {
+                    sources.extend(expander.source_roots(name).map_err(|error| {
+                        CompileDiagnostic::at(CompilePhase::Triggers, root, error)
+                    })?);
+                    continue;
+                }
                 let ModuleTriggerTarget::PublicInput(port) = target else {
                     return Err(CompileDiagnostic::at(
                         CompilePhase::Triggers,
@@ -4117,10 +3944,14 @@ impl ModuleCatalog {
                 targets.push(addresses);
             }
             expander.builder.triggers.insert(trigger.id, targets);
+            expander
+                .builder
+                .source_triggers
+                .insert(trigger.id, sources.into_iter().collect());
         }
         expander.metadata.root_definition = Some(root.to_owned());
         expander.metadata.inputs = expanded.inputs;
-        expander.metadata.outputs = expanded.outputs;
+        expander.metadata.output = expanded.output;
         interface::validate_metadata(&expander.metadata)
             .map_err(|error| CompileDiagnostic::at(CompilePhase::Index, root, error.to_string()))?;
         expander.builder.metadata = expander.metadata;
@@ -4134,7 +3965,7 @@ impl ModuleCatalog {
 #[derive(Default)]
 struct ExpandedScope {
     inputs: BTreeMap<u16, Vec<InputAddr>>,
-    outputs: BTreeMap<u16, OutputAddr>,
+    output: Option<OutputAddr>,
 }
 struct ModuleExpander<'a> {
     catalog: &'a ModuleCatalog,
@@ -4147,6 +3978,64 @@ struct ModuleExpander<'a> {
     limits: CompileLimits,
 }
 impl ModuleExpander<'_> {
+    fn source_roots(&self, name: &str) -> Result<BTreeSet<NodeId>, String> {
+        self.charge(1)?;
+        validate_name_segment(name).map_err(|error| error.to_string())?;
+        let (output, boundary) = match self.metadata.name_index.get(name) {
+            Some(NamedUnit::Node(id)) => {
+                if !self.builder.nodes[id].ports.is_empty() {
+                    return Err("source start requires a zero-input node".into());
+                }
+                return Ok(BTreeSet::from([*id]));
+            }
+            Some(NamedUnit::Module(lookup)) => {
+                let definition = &self.catalog.definitions[&lookup.definition];
+                if !definition.inputs.is_empty() {
+                    return Err("source start requires a module with no public inputs".into());
+                }
+                let instance = &self.metadata.instances[lookup.instance_metadata];
+                (
+                    instance
+                        .output
+                        .ok_or("source module has no public output")?,
+                    &lookup.instance_path,
+                )
+            }
+            None => return Err(format!("unknown source operation {name:?}")),
+        };
+        // Only producers inside this boundary that can contribute to its output
+        // are roots. Disconnected child sources remain dormant.
+        self.charge(self.builder.edges.len() as u64)?;
+        let mut upstream: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for edge in &self.builder.edges {
+            upstream
+                .entry(edge.to.node)
+                .or_default()
+                .push(edge.from.node);
+        }
+        let mut pending = vec![output.node];
+        let mut visited = BTreeSet::new();
+        let mut roots = BTreeSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node)
+                || !self.metadata.nodes[&node]
+                    .instance_path
+                    .starts_with(boundary)
+            {
+                continue;
+            }
+            self.charge(1)?;
+            if self.builder.nodes[&node].ports.is_empty() {
+                roots.insert(node);
+            }
+            pending.extend(upstream.get(&node).into_iter().flatten().copied());
+        }
+        if roots.is_empty() {
+            return Err("source module output has no reachable zero-input producer".into());
+        }
+        Ok(roots)
+    }
+
     fn expand_scope(
         &mut self,
         id: &str,
@@ -4188,7 +4077,7 @@ impl ModuleExpander<'_> {
                     .map(|port| port.targets.len() as u64)
                     .sum::<u64>(),
             )
-            .saturating_add(definition.outputs.len() as u64);
+            .saturating_add(u64::from(definition.output.is_some()));
         self.charge(work)?;
         stack.push(id.to_owned());
 
@@ -4274,13 +4163,18 @@ impl ModuleExpander<'_> {
                 definition: child_id.clone(),
                 instance_path: child_path,
                 inputs: BTreeMap::new(),
-                outputs: BTreeMap::new(),
+                output: None,
             });
             path.push(instance.name.clone());
             let expanded_child = self.expand_scope(&child_id, stack, path)?;
+            if expanded_child.output.is_none() {
+                return Err(format!(
+                    "instantiated module {child_id} needs an explicit output source"
+                ));
+            }
             path.pop();
             self.metadata.instances[instance_metadata].inputs = expanded_child.inputs.clone();
-            self.metadata.instances[instance_metadata].outputs = expanded_child.outputs.clone();
+            self.metadata.instances[instance_metadata].output = expanded_child.output;
             children.insert(instance.name.clone(), expanded_child);
         }
 
@@ -4401,12 +4295,7 @@ impl ModuleExpander<'_> {
                                 format!("unknown named node {node:?} in module {}", definition.id)
                             })?;
                         let addr = declaration.output(output)?;
-                        let kind = declaration
-                            .outputs
-                            .iter()
-                            .find(|slot| slot.id == addr.slot)
-                            .expect("validated named output")
-                            .identity();
+                        let kind = declaration.output.identity();
                         Ok((
                             OutputAddr {
                                 node: local_nodes[&declaration.id],
@@ -4426,10 +4315,8 @@ impl ModuleExpander<'_> {
                                     addr.node, definition.id
                                 )
                             })?;
-                        let slot = node
-                            .outputs
-                            .iter()
-                            .find(|slot| slot.id == addr.slot)
+                        let slot = Some(&node.output)
+                            .filter(|slot| slot.id == addr.slot && addr.slot == SlotId(0))
                             .ok_or_else(|| {
                                 format!("unknown local output {addr:?} in module {}", definition.id)
                             })?;
@@ -4451,18 +4338,14 @@ impl ModuleExpander<'_> {
                             })?;
                         let child_def = self.catalog.definitions.get(&instance.definition).unwrap();
                         let child_port = child_def
-                            .outputs
-                            .iter()
-                            .find(|output| output.name == *port)
+                            .output
+                            .as_ref()
+                            .filter(|output| output.name == *port)
                             .ok_or_else(|| {
                                 format!("unknown named output {port:?} on instance {name}")
                             })?;
-                        let addr = children
-                            .get(name)
-                            .unwrap()
-                            .outputs
-                            .get(&child_port.id)
-                            .ok_or_else(|| {
+                        let addr =
+                            children.get(name).unwrap().output.as_ref().ok_or_else(|| {
                                 format!("unresolved named output {port:?} on instance {name}")
                             })?;
                         Ok((*addr, child_port.identity()))
@@ -4477,21 +4360,16 @@ impl ModuleExpander<'_> {
                             })?;
                         let child_def = self.catalog.definitions.get(&instance.definition).unwrap();
                         let child_port = child_def
-                            .outputs
-                            .iter()
-                            .find(|output| output.id == *port)
+                            .output
+                            .as_ref()
+                            .filter(|output| output.id == *port)
                             .ok_or_else(|| {
                                 format!("unknown output port {port} on instance {name}")
                             })?;
                         let addr =
-                            children
-                                .get(name)
-                                .unwrap()
-                                .outputs
-                                .get(port)
-                                .ok_or_else(|| {
-                                    format!("unresolved output port {port} on instance {name}")
-                                })?;
+                            children.get(name).unwrap().output.as_ref().ok_or_else(|| {
+                                format!("unresolved output port {port} on instance {name}")
+                            })?;
                         Ok((*addr, child_port.identity()))
                     }
                 }
@@ -4499,10 +4377,8 @@ impl ModuleExpander<'_> {
 
         let mut expanded = ExpandedScope::default();
         let mut input_ids = BTreeSet::new();
-        let mut output_ids = BTreeSet::new();
         let mut input_names = BTreeSet::new();
         let mut input_slots = BTreeSet::new();
-        let mut output_names = BTreeSet::new();
         let mut ordered_inputs: Vec<_> = definition.inputs.iter().collect();
         ordered_inputs.sort_by_key(|input| input.id);
         for input in ordered_inputs {
@@ -4545,18 +4421,16 @@ impl ModuleExpander<'_> {
             }
             expanded.inputs.insert(input.id, addresses);
         }
-        let mut ordered_outputs: Vec<_> = definition.outputs.iter().collect();
-        ordered_outputs.sort_by_key(|output| output.id);
-        for output in ordered_outputs {
+        if let Some(output) = &definition.output {
             validate_name_segment(&output.name).map_err(|error| error.to_string())?;
-            if !output_ids.insert(output.id) || !output_names.insert(output.name.as_str()) {
-                return Err(format!("duplicate module public port {}", output.name));
+            if output.id != 0 {
+                return Err("module output must use canonical slot 0".into());
             }
             let (addr, kind) = resolve_output(&output.source)?;
             if kind != output.identity() {
                 return Err(format!("type mismatch on module output {}", output.name));
             }
-            expanded.outputs.insert(output.id, addr);
+            expanded.output = Some(addr);
         }
 
         // Preserve declaration-owned connection identity across reorder/edit.
@@ -4811,6 +4685,7 @@ pub struct CompiledGraph {
     by_output: BTreeMap<OutputAddr, Vec<Edge>>,
     by_node: BTreeMap<NodeId, Vec<Edge>>,
     triggers: BTreeMap<TriggerId, Vec<Vec<InputAddr>>>,
+    source_triggers: BTreeMap<TriggerId, Vec<NodeId>>,
     order: BTreeMap<NodeId, usize>,
     metadata: Arc<CompiledMetadata>,
     structural: OnceLock<StructuralIndex>,
@@ -4868,13 +4743,10 @@ impl<'g> NodeRef<'g> {
         })
     }
     pub fn output(&self, output: &str) -> Option<OutputAddr> {
-        let slot = self
-            .graph
-            .nodes
-            .get(&self.id)?
-            .outputs
-            .iter()
-            .find(|slot| slot.name.as_deref() == Some(output))?;
+        let slot = &self.graph.nodes.get(&self.id)?.output;
+        if slot.name.as_deref() != Some(output) {
+            return None;
+        }
         Some(OutputAddr {
             node: self.id,
             slot: slot.id,
@@ -4905,12 +4777,6 @@ impl<'g> NodeRef<'g> {
             .nodes
             .get(&self.id)
             .map_or(0, |node| node.ports.len())
-    }
-    pub fn output_count(&self) -> usize {
-        self.graph
-            .nodes
-            .get(&self.id)
-            .map_or(0, |node| node.outputs.len())
     }
     pub fn creates_fresh_cohort(&self) -> bool {
         self.graph
@@ -4958,15 +4824,18 @@ impl<'g> ModuleRef<'g> {
             local_type: port.local_type,
         })
     }
-    pub fn output_ports(&self) -> impl Iterator<Item = ModulePortInfo<'g>> + 'g {
-        self.definition().outputs.iter().map(|port| ModulePortInfo {
-            id: port.id,
-            name: port.name.as_str(),
-            port: port.name.as_str(),
-            slot: "value",
-            schema: port.schema.clone(),
-            local_type: port.local_type,
-        })
+    pub fn output_port(&self) -> Option<ModulePortInfo<'g>> {
+        self.definition()
+            .output
+            .as_ref()
+            .map(|port| ModulePortInfo {
+                id: port.id,
+                name: port.name.as_str(),
+                port: port.name.as_str(),
+                slot: "value",
+                schema: port.schema.clone(),
+                local_type: port.local_type,
+            })
     }
     pub fn resolved_input_targets(&self, port: u16) -> Option<Vec<ResolvedInputEndpoint>> {
         self.instance_metadata().inputs.get(&port).map(|targets| {
@@ -4980,10 +4849,10 @@ impl<'g> ModuleRef<'g> {
                 .collect()
         })
     }
-    pub fn resolved_output_source(&self, port: u16) -> Option<ResolvedOutputEndpoint> {
+    pub fn resolved_output_source(&self) -> Option<ResolvedOutputEndpoint> {
         self.instance_metadata()
-            .outputs
-            .get(&port)
+            .output
+            .as_ref()
             .map(|source| ResolvedOutputEndpoint {
                 node: source.node.0,
                 slot: source.slot.0,
@@ -5235,11 +5104,7 @@ impl CompiledGraph {
         };
         let output_label = |addr: OutputAddr| {
             let node = &self.nodes[&addr.node];
-            let slot = node
-                .outputs
-                .iter()
-                .find(|s| s.id == addr.slot)
-                .expect("compiled output slot exists");
+            let slot = &node.output;
             format!(
                 "{}.{}",
                 path(&names, addr.node),
@@ -5276,13 +5141,11 @@ impl CompiledGraph {
                     port.local_type.is_some()
                 ));
             }
-            let mut outputs = root.outputs.iter().collect::<Vec<_>>();
-            outputs.sort_by(|a, b| a.name.cmp(&b.name));
-            for port in outputs {
+            if let Some(port) = &root.output {
                 let source = self
                     .metadata
-                    .outputs
-                    .get(&port.id)
+                    .output
+                    .as_ref()
                     .map(|addr| output_label(*addr));
                 manifest.push(format!(
                     "public output {:?} {:?} local={} -> {source:?}",
@@ -5322,13 +5185,8 @@ impl CompiledGraph {
                     port.local_type.is_some()
                 ));
             }
-            let mut outputs = definition.outputs.iter().collect::<Vec<_>>();
-            outputs.sort_by(|a, b| a.name.cmp(&b.name));
-            for port in outputs {
-                let source = instance
-                    .outputs
-                    .get(&port.id)
-                    .map(|addr| output_label(*addr));
+            if let Some(port) = &definition.output {
+                let source = instance.output.as_ref().map(|addr| output_label(*addr));
                 manifest.push(format!(
                     " module output {:?} {:?} local={} -> {source:?}",
                     port.name,
@@ -5372,12 +5230,8 @@ impl CompiledGraph {
                     ));
                 }
             }
-            let mut outputs = node.outputs.iter().collect::<Vec<_>>();
-            outputs.sort_by(|a, b| {
-                (a.name.as_deref().unwrap_or(""), a.id)
-                    .cmp(&(b.name.as_deref().unwrap_or(""), b.id))
-            });
-            for slot in outputs {
+            {
+                let slot = &node.output;
                 manifest.push(format!(
                     " output {:?} {:?} local={}",
                     slot.name,
@@ -5429,12 +5283,24 @@ impl CompiledGraph {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
-                (name, targets)
+                let mut sources = self
+                    .source_triggers
+                    .get(id)
+                    .into_iter()
+                    .flatten()
+                    .map(|id| path(&names, *id))
+                    .collect::<Vec<_>>();
+                sources.sort();
+                (name, targets, sources)
             })
             .collect::<Vec<_>>();
         triggers.sort_by(|a, b| a.0.cmp(&b.0));
-        for (name, targets) in triggers {
-            manifest.push(format!("trigger {name:?} -> {targets:?}"));
+        for (name, targets, sources) in triggers {
+            let mut line = format!("trigger {name:?} -> {targets:?}");
+            if !sources.is_empty() {
+                line.push_str(&format!(" sources={sources:?}"));
+            }
+            manifest.push(line);
         }
         manifest.join("\n")
     }
@@ -5561,7 +5427,8 @@ impl CompiledGraph {
     fn output_slot(&self, addr: OutputAddr) -> Result<&OutputSlot, String> {
         self.nodes
             .get(&addr.node)
-            .and_then(|n| n.outputs.iter().find(|s| s.id == addr.slot))
+            .map(|n| &n.output)
+            .filter(|s| s.id == addr.slot && addr.slot == SlotId(0))
             .ok_or_else(|| format!("unknown output {addr:?}"))
     }
     #[cfg(test)]
@@ -5573,8 +5440,8 @@ impl CompiledGraph {
         self.metadata.edges.get(&edge)
     }
     #[cfg(test)]
-    fn module_output(&self, port: u16) -> Option<OutputAddr> {
-        self.metadata.outputs.get(&port).copied()
+    fn module_output(&self) -> Option<OutputAddr> {
+        self.metadata.output
     }
 }
 

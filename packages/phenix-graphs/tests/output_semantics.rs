@@ -190,7 +190,7 @@ fn node_action_failure_is_independent_of_payload_result_type() {
             NodeTemplate::new(
                 0,
                 vec![Port::all(0, vec![InputSlot::local::<i64>(0).named("value")]).named("run")],
-                vec![OutputSlot::local::<i64>(0).named("value")],
+                OutputSlot::local::<i64>(0).named("value"),
                 |mut ctx: InvocationCtx| {
                     let x = ctx.take_local::<i64>(0)?;
                     if x < 0 {
@@ -203,7 +203,12 @@ fn node_action_failure_is_independent_of_payload_result_type() {
         )
         .unwrap();
     let input = graph
-        .local_input::<i64>("validate", "run", "value")
+        .discover("validate")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
     let request = graph.expose_input("request", input).unwrap();
     graph.trigger("run", [request]).unwrap();

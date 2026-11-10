@@ -102,18 +102,12 @@ mod provider {
         NodeTemplate::with_action(
             500,
             vec![Port::new(0, inputs, AllSameCohort).named("run")],
-            vec![
-                OutputSlot::typed::<Response>(0).named("value"),
-                OutputSlot::typed::<Response>(1).named("diagnostic"),
-            ],
+            OutputSlot::typed::<Response>(0).named("value"),
             move |ctx: InvocationCtx| {
                 // Noncommutative arithmetic detects swapped named slots.
                 let left = ctx.arg::<Request>(0)?.0;
                 let right = ctx.arg::<Request>(1)?.0;
-                Ok(vec![
-                    emit(0, Response(left * 10 + right + increment)),
-                    emit(1, Response(-1)),
-                ])
+                Ok(vec![emit(0, Response(left * 10 + right + increment))])
             },
         )
     }
@@ -123,13 +117,22 @@ mod provider {
             .into_iter()
             .chain(extra.then_some("extra"))
         {
-            let input = graph.wire_input::<Request>(path, "run", slot)?;
-            graph.expose_input_slot("run", slot, input)?;
+            let input = graph
+                .discover(path)?
+                .inlets::<Request, phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<Request, Request>::new("run"))
+                .field(phenix_graph::SlotField::<Request, Request>::new(slot))
+                .target()?;
+            graph.expose_input_field(
+                "run",
+                phenix_graph::SlotField::<(), Request>::new(slot),
+                input,
+            )?;
         }
-        for name in ["value", "diagnostic"] {
-            let output = graph.wire_output::<Response>(path, name)?;
-            graph.expose_output(name, output)?;
-        }
+        let output = graph
+            .discover(path)?
+            .output::<Response, phenix_graph::EncodedValue>()?;
+        graph.expose_output("value", output)?;
         Ok(())
     }
 
@@ -157,6 +160,16 @@ mod provider {
                     if config.nested {
                         let mut child = GraphBuilder::new("private-module");
                         child.add("worker", template)?;
+                        let diagnostic = child.node(
+                            "diagnostic",
+                            phenix_graph::Node::wire(|_: Response| Response(-1)),
+                        )?;
+                        child.connect(
+                            child
+                                .discover("worker")?
+                                .output::<Response, phenix_graph::EncodedValue>()?,
+                            diagnostic.inlet(),
+                        )?;
                         expose(&mut child, "worker", extra)?;
                         let mut wrapper = GraphBuilder::new("wrapper");
                         wrapper.instance("inside", &child.module())?;

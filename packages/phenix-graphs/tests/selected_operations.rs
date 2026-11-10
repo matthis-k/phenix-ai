@@ -43,7 +43,7 @@ fn join() -> NodeTemplate {
     NodeTemplate::new(
         0,
         vec![input],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx| Ok(vec![emit(0, ctx.arg::<i64>(0)? + ctx.arg::<i64>(1)?)]),
     )
 }

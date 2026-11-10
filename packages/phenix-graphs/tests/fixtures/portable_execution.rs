@@ -19,7 +19,7 @@ fn relay<T: ContractValue>(id: u16) -> NodeTemplate {
             .named("run")
             .args::<T, _>(|values| values.get("value")),
         ],
-        vec![OutputSlot::typed::<T>(0).named("value")],
+        OutputSlot::typed::<T>(0).named("value"),
         |mut ctx: InvocationCtx| Ok(vec![emit(0, ctx.take_prepared::<T>()?)]),
     )
 }
@@ -36,12 +36,12 @@ fn main() {
     graph.add("provider", relay::<ProviderNumber>(1)).unwrap();
     graph.add("consumer", relay::<ConsumerNumber>(2)).unwrap();
     let source = graph
-        .wire_output::<ProviderNumber>("provider", "value")
+        .discover("provider").unwrap().output::<ProviderNumber, phenix_graph::EncodedValue >()
         .unwrap();
     let sink = graph
-        .wire_input::<ConsumerNumber>("consumer", "run", "value")
+        .discover("consumer").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), ConsumerNumber>::new("run")).field(phenix_graph::SlotField::<ConsumerNumber, ConsumerNumber>::new("value")).target()
         .unwrap();
-    graph.connect_wire(source, sink).unwrap();
+    graph.connect(source, sink).unwrap();
     let request = graph.expose_input("request", "provider").unwrap();
     graph.expose_output("result", "consumer").unwrap();
     graph.trigger("run", [request]).unwrap();

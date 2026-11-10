@@ -75,7 +75,7 @@ fn failed_layout_does_not_register_half_a_node() {
 #[cfg(feature = "derive")]
 #[test]
 fn derived_local_layout_uses_the_same_checked_slot_allocator() {
-    #[derive(phenix_graph::LocalPortLayout)]
+    #[derive(phenix_graph::LocalPortLayout, phenix_graph::InputFields)]
     // These fields exist solely to verify derived slot layout capacity.
     #[allow(dead_code)]
     struct TwoFields {
@@ -100,7 +100,7 @@ fn derived_local_layout_uses_the_same_checked_slot_allocator() {
 #[cfg(feature = "derive")]
 #[test]
 fn derived_wire_layout_uses_the_same_checked_slot_allocator() {
-    #[derive(phenix_graph::PortLayout)]
+    #[derive(phenix_graph::PortLayout, phenix_graph::InputFields)]
     // These fields exist solely to verify derived slot layout capacity.
     #[allow(dead_code)]
     struct TwoFields {
@@ -190,15 +190,22 @@ fn local_layout_shape_is_frozen_at_declaration_not_recomputed_per_invocation() {
         )
         .unwrap();
     let input = graph
-        .expose_input("value", node.local_slot::<i64>("value"))
+        .expose_input(
+            "value",
+            node.inlets()
+                .port(phenix_graph::InletPort::<_, i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     graph.trigger("run", [input]).unwrap();
-    assert_eq!(EXPANSIONS.load(Ordering::SeqCst), 1);
     let engine = Deployment::new(graph.compile().unwrap())
         .report_retention(ReportRetention::RetainPayloads)
         .store(Store::new())
         .build()
         .unwrap();
+    assert_eq!(EXPANSIONS.load(Ordering::SeqCst), 1);
     for x in [10_i64, 20_i64] {
         let report = engine.fire("run", vec![Value::local(x)]).unwrap();
         assert!(report.success(), "{:?}", report.error_messages());

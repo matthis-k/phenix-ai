@@ -174,7 +174,7 @@ When instantiating an authored module, explicitly forward its refresh input to a
 parent trigger with the original route name. Reusing actions identifies deployed
 endpoints, not a fingerprint of every intervening computation or user edit.
 
-Extraction checks successful wave status, exact deployed source/tap node and slot IDs, one retained terminal value, one root receipt, event counts and matching current wave/cohort. It rejects replayed payloads, wrong cohorts and compatible-looking publications from another endpoint. It never falls back to an older value.
+The source declares only its value output at slot 0. Extraction checks successful wave status, exact deployed source/tap node and slot IDs, one retained terminal value, exactly one publication event at each endpoint, and matching current wave/cohort. Scheduler-owned source publication metadata establishes the root cohort without retaining the source payload under `TerminalOutputs`. It rejects replayed terminal payloads, wrong cohorts and compatible-looking publications from another endpoint. It never falls back to an older value.
 
 Queries are host-only. `DerivedRuntime` wraps the supplied executor with a panic-safe guard on dispatch and execution threads; nested queries to the same or another runtime return `NestedQuery` before firing. This wrapper is not a scheduler: demand calls `Kernel::fire`, observations use normal producers. Use graph edges within node logic, not recursive queries. The guard applies to dispatch through this wrapper, not arbitrary unrelated engines or detached application threads.
 

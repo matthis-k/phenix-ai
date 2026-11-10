@@ -5,13 +5,13 @@ use phenix_graph::{
     LocalPortLayout, ModulePackage, ReportRetention, SlotField, Value,
 };
 
-#[derive(Clone, LocalPortLayout)]
+#[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
 struct Pair {
     left: i64,
     right: i64,
 }
 
-#[derive(Clone, LocalPortLayout)]
+#[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
 struct Request {
     #[port(flatten)]
     pair: Pair,
@@ -41,7 +41,11 @@ fn provider() -> ModulePackage {
     for key in [Pair::SLOT_LEFT, Pair::SLOT_RIGHT] {
         let path = Request::SLOT_PAIR.then(key);
         graph
-            .expose_input_field("request", path.clone(), node.field(path))
+            .expose_input_field(
+                "request",
+                path.clone(),
+                node.inlet().field(path).target().unwrap(),
+            )
             .unwrap();
     }
     graph.expose_output("result", node.output()).unwrap();
@@ -55,11 +59,25 @@ fn nested_grouped_paths_bind_connect_disconnect_export_and_trigger() {
     let inner = wrapper.instance("inner", &provider()).unwrap();
     for key in [Pair::SLOT_LEFT, Pair::SLOT_RIGHT] {
         let path = Request::SLOT_PAIR.then(key);
-        let input = inner.local_field("request", path.clone()).unwrap();
+        let input = inner
+            .operation()
+            .unwrap()
+            .inlets::<Request, phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+            .field(path.clone())
+            .target()
+            .unwrap();
         wrapper.expose_input_field("request", path, input).unwrap();
     }
     wrapper
-        .expose_output("result", inner.local_output::<i64>("result").unwrap())
+        .expose_output(
+            "result",
+            inner
+                .operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap(),
+        )
         .unwrap();
     wrapper.implements_public(&contract()).unwrap();
 
@@ -69,13 +87,21 @@ fn nested_grouped_paths_bind_connect_disconnect_export_and_trigger() {
     let right = graph.node("right", |x: i64| x).unwrap();
     // Endpoints own their declaration tokens. No tuple/block/clone of the binding is needed.
     let bound = graph.bind_contract("service", &contract()).unwrap();
-    let left_input = bound
-        .local_field("request", Request::SLOT_PAIR.then(Pair::SLOT_LEFT))
+    let operation = bound.operation().unwrap();
+    let request = operation
+        .inlets::<Request, phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<Request, Request>::new("request"));
+    let left_input = request
+        .field(Request::SLOT_PAIR.then(Pair::SLOT_LEFT))
+        .target()
         .unwrap();
-    let right_input = bound
-        .local_field("request", Request::SLOT_PAIR.then(Pair::SLOT_RIGHT))
+    let right_input = request
+        .field(Request::SLOT_PAIR.then(Pair::SLOT_RIGHT))
+        .target()
         .unwrap();
-    let result = bound.local_output::<i64>("result").unwrap();
+    let result = operation.output::<i64, phenix_graph::LocalValue>().unwrap();
+    drop(request);
+    drop(operation);
     graph.connect(left.output(), left_input.clone()).unwrap();
     assert!(graph.connect(left.output(), left_input.clone()).is_err());
     graph.disconnect(left.output(), left_input.clone()).unwrap();
@@ -84,10 +110,18 @@ fn nested_grouped_paths_bind_connect_disconnect_export_and_trigger() {
     graph.connect(right.output(), right_input).unwrap();
     graph.expose_output("result", result).unwrap();
     graph
-        .expose_input_slot("request", "pair.left", left.inlet())
+        .expose_input_field(
+            "request",
+            SlotField::<(), i64>::new("pair.left"),
+            left.inlet(),
+        )
         .unwrap();
     graph
-        .expose_input_slot("request", "pair.right", right.inlet())
+        .expose_input_field(
+            "request",
+            SlotField::<(), i64>::new("pair.right"),
+            right.inlet(),
+        )
         .unwrap();
     let left = graph.public_input_slot("request", "pair.left").unwrap();
     let right = graph.public_input_slot("request", "pair.right").unwrap();
@@ -121,7 +155,14 @@ fn duplicate_malformed_unpromised_and_wrong_type_paths_fail_without_mutation() {
     let mut graph = GraphBuilder::new("consumer");
     let service = graph.instance("service", &provider()).unwrap();
     let valid = Request::SLOT_PAIR.then(Pair::SLOT_LEFT);
-    let input = service.local_field("request", valid.clone()).unwrap();
+    let input = service
+        .operation()
+        .unwrap()
+        .inlets::<Request, phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+        .field(valid.clone())
+        .target()
+        .unwrap();
     graph
         .expose_input_field("request", valid.clone(), input.clone())
         .unwrap();
@@ -151,22 +192,46 @@ fn duplicate_malformed_unpromised_and_wrong_type_paths_fail_without_mutation() {
         "missing",
     ] {
         let key = SlotField::<Request, i64>::new(name);
-        assert!(service.local_field("request", key).is_err());
+        assert!(
+            service
+                .operation()
+                .unwrap()
+                .inlets::<Request, phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+                .field(key)
+                .target()
+                .is_err()
+        );
         let bound = graph.bind_contract("service", &contract()).unwrap();
         assert!(
             bound
-                .local_field("request", SlotField::<Request, i64>::new(name))
+                .operation()
+                .unwrap()
+                .inlets::<Request, phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+                .field(SlotField::<Request, i64>::new(name))
+                .target()
                 .is_err()
         );
     }
     assert!(
         service
-            .local_field("request", SlotField::<Request, bool>::new("pair.left"))
+            .operation()
+            .unwrap()
+            .inlets::<Request, phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+            .field(SlotField::<Request, bool>::new("pair.left"))
+            .target()
             .is_err()
     );
     assert!(
         service
-            .field("request", Request::SLOT_PAIR.then(Pair::SLOT_LEFT))
+            .operation()
+            .unwrap()
+            .inlets::<Request, phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<Request, Request>::new("request"))
+            .field(Request::SLOT_PAIR.then(Pair::SLOT_LEFT))
+            .target()
             .is_err()
     );
     assert!(
@@ -180,14 +245,14 @@ fn duplicate_malformed_unpromised_and_wrong_type_paths_fail_without_mutation() {
 #[test]
 fn wire_node_fields_export_without_raw_slot_lookup() {
     use phenix_graph::{ContractValue, Node, PortLayout};
-    #[derive(ContractValue, PortLayout)]
+    #[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
     #[contract(schema = "grouped/wire-pair@1")]
     struct WirePair {
         left: i64,
         right: i64,
     }
-    let left = SlotField::<WirePair, i64>::new("left");
-    let right = SlotField::<WirePair, i64>::new("right");
+    let left = WirePair::SLOT_LEFT;
+    let right = WirePair::SLOT_RIGHT;
     let mut graph = GraphBuilder::new("wire-node");
     let node = graph
         .node(
@@ -196,10 +261,14 @@ fn wire_node_fields_export_without_raw_slot_lookup() {
         )
         .unwrap();
     let left = graph
-        .expose_input_field("request", left, node.wire_field(left))
+        .expose_input_field("request", left, node.inlet().field(left).target().unwrap())
         .unwrap();
     let right = graph
-        .expose_input_field("request", right, node.wire_field(right))
+        .expose_input_field(
+            "request",
+            right,
+            node.inlet().field(right).target().unwrap(),
+        )
         .unwrap();
     let trigger = graph.trigger("run", [left, right]).unwrap();
     let report = Deployment::new(graph.compile().unwrap())

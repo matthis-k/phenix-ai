@@ -127,6 +127,15 @@ impl<T: Send + Sync + 'static> Output<T> {
     /// let target = sink.inlet();
     /// graph.node("source", move |x: i64| Output::to(&target, x)).unwrap();
     /// ```
+    /// Directed outputs emit local values, not encoded values, even when the
+    /// destination uses the same Rust type.
+    ///
+    /// ```compile_fail
+    /// use phenix_graph::{GraphBuilder, Node, Output};
+    /// let mut graph = GraphBuilder::new("encoded-target");
+    /// let sink = graph.node("sink", Node::wire(|x: i64| x)).unwrap();
+    /// let _ = Output::to(&sink.inlet(), 1_i64);
+    /// ```
     pub fn to(target: &Input<T>, value: T) -> Self {
         Self::new(
             value,

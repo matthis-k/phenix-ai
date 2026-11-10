@@ -47,17 +47,20 @@ fn check_replacement_footprint(is_module: bool) {
                         g.add("target", original_template)
                             .map_err(|e| e.to_string())?;
                     }
-                    *saved.borrow_mut() = Some((
-                        g.local_input::<i64>(
-                            "target",
-                            if is_module { "request" } else { "run" },
-                            "value",
-                        )?,
-                        g.local_output::<i64>(
-                            "target",
-                            if is_module { "result" } else { "value" },
-                        )?,
-                    ));
+                    let input = g
+                        .discover("target")?
+                        .inlets::<(), phenix_graph::LocalValue>()
+                        .port(phenix_graph::InletPort::<(), i64>::new(if is_module {
+                            "request"
+                        } else {
+                            "run"
+                        }))
+                        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                        .target()?;
+                    let output = g
+                        .discover("target")?
+                        .output::<i64, phenix_graph::LocalValue>()?;
+                    *saved.borrow_mut() = Some((input, output));
                     Ok(())
                 })
             },

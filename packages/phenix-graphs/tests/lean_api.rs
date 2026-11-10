@@ -1,10 +1,12 @@
 //! New ergonomic facade and backend boundary tests. Unlike the original tests,
 //! these use the single GraphBuilder declaration API.
+#[cfg(feature = "derive")]
+use phenix_graph::Layout;
 use phenix_graph::Output;
 use phenix_graph::ReportRetention;
 use phenix_graph::{
-    Deployment, EdgeAdapter, Emission, Executor, GraphBuilder, InvocationCtx, Layout, NodeAction,
-    Store, Value,
+    Deployment, EdgeAdapter, Emission, Executor, GraphBuilder, InvocationCtx, NodeAction, Store,
+    Value,
 };
 use std::sync::{
     Arc,
@@ -51,7 +53,7 @@ fn inferred_graph_builder_preserves_typed_links() {
 #[test]
 fn one_layout_type_and_flattens_to_original_domain_arg() {
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct AddArgs {
         left: i32,
         right: i32,
@@ -62,9 +64,17 @@ fn one_layout_type_and_flattens_to_original_domain_arg() {
         .unwrap()
         .input(Layout::fields())
         .unwrap();
-    let a = g.expose_input("a", plus.field(AddArgs::SLOT_LEFT)).unwrap();
+    let a = g
+        .expose_input(
+            "a",
+            plus.inlet().field(AddArgs::SLOT_LEFT).target().unwrap(),
+        )
+        .unwrap();
     let b = g
-        .expose_input("b", plus.field(AddArgs::SLOT_RIGHT))
+        .expose_input(
+            "b",
+            plus.inlet().field(AddArgs::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     g.expose_output("sum", plus.output()).unwrap();
     let trigger = g.trigger("add", [a, b]).unwrap();
@@ -152,12 +162,26 @@ fn module_instances_share_only_public_typed_endpoints() {
     let instance = root.instance("multiply", &definition).unwrap();
     let plus = root.node("plus", |value: i64| value + 2).unwrap();
     root.connect(
-        instance.local_output::<i64>("result").unwrap(),
+        instance
+            .operation()
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()
+            .unwrap(),
         plus.inlet(),
     )
     .unwrap();
     let public = root
-        .expose_input("number", instance.local_input::<i64>("number").unwrap())
+        .expose_input(
+            "number",
+            instance
+                .operation()
+                .unwrap()
+                .inlets::<(), phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("number"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     root.expose_output("out", plus.output()).unwrap();
     let fire = root.trigger("start", [public]).unwrap();
@@ -191,11 +215,21 @@ fn builder_rejects_cross_scope_and_invalid_slot_even_with_matching_type() {
     let node_b = b.node("b", increment).unwrap();
     assert!(b.connect(node_a.output(), node_b.inlet()).is_err());
     assert!(
-        a.expose_input("bad", node_a.slot::<i32>("missing"))
+        a.discover("a")
+            .unwrap()
+            .inlets::<(), phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<(), i32>::new("run"))
+            .field(phenix_graph::SlotField::<i32, i32>::new("missing"))
+            .target()
             .is_err()
     );
     assert!(
-        a.expose_input("request", node_a.slot::<String>("value"))
+        a.discover("a")
+            .unwrap()
+            .inlets::<(), phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<(), i32>::new("run"))
+            .field(phenix_graph::SlotField::<i32, String>::new("value"))
+            .target()
             .is_err()
     );
 }
@@ -477,7 +511,7 @@ fn invocation_ticket_cannot_complete_another_wave_or_engine() {
 #[test]
 fn structured_node_handle_does_not_require_an_atomic_input() {
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Args {
         left: i32,
         right: i32,
@@ -489,11 +523,17 @@ fn structured_node_handle_does_not_require_an_atomic_input() {
         .input(Layout::fields())
         .unwrap();
     assert!(
-        g.expose_input("invalid", add.local_slot::<i32>("value"))
+        add.operation()
+            .inlet()
+            .field(phenix_graph::SlotField::<Args, i32>::new("value"))
+            .target()
             .is_err()
     );
     assert!(
-        g.expose_input("left", add.local_slot::<i32>("left"))
+        add.operation()
+            .inlet()
+            .field(phenix_graph::SlotField::<Args, i32>::new("left"))
+            .target()
             .is_ok()
     );
 }
@@ -575,12 +615,12 @@ fn transport_panic_is_recorded_as_a_settled_failure() {
 #[test]
 fn codec_free_local_nested_flattening_and_generated_fields() {
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Address {
         city: String,
         zip: u32,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Request {
         id: u64,
         address: Address,
@@ -600,15 +640,36 @@ fn codec_free_local_nested_flattening_and_generated_fields() {
         .unwrap();
     // Immediate child field keys remain typed; deeper paths can be addressed
     // with the checked manual form until nested descriptor generation arrives.
-    let id = g.expose_input("id", n.field(Request::SLOT_ID)).unwrap();
+    let id = g
+        .expose_input("id", n.inlet().field(Request::SLOT_ID).target().unwrap())
+        .unwrap();
     let city = g
-        .expose_input("city", n.local_slot::<String>("address.city"))
+        .expose_input(
+            "city",
+            n.inlets()
+                .port(phenix_graph::InletPort::<_, String>::new("run"))
+                .field(phenix_graph::SlotField::<String, String>::new(
+                    "address.city",
+                ))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let zip = g
-        .expose_input("zip", n.local_slot::<u32>("address.zip"))
+        .expose_input(
+            "zip",
+            n.inlets()
+                .port(phenix_graph::InletPort::<_, u32>::new("run"))
+                .field(phenix_graph::SlotField::<u32, u32>::new("address.zip"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let meta = g
-        .expose_input("meta", n.field(Request::SLOT_METADATA))
+        .expose_input(
+            "meta",
+            n.inlet().field(Request::SLOT_METADATA).target().unwrap(),
+        )
         .unwrap();
     g.expose_output("text", n.output()).unwrap();
     let trigger = g.trigger("run", [id, city, zip, meta]).unwrap();
@@ -643,7 +704,7 @@ fn codec_free_local_nested_flattening_and_generated_fields() {
 #[test]
 fn codec_free_flattening_accepts_a_tuple_field() {
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Pair {
         #[port(flatten)]
         pair: (i32, String),
@@ -655,10 +716,24 @@ fn codec_free_flattening_accepts_a_tuple_field() {
         .input(Layout::flatten_to::<2>())
         .unwrap();
     let left = g
-        .expose_input("left", node.local_slot::<i32>("pair.0"))
+        .expose_input(
+            "left",
+            node.inlets()
+                .port(phenix_graph::InletPort::<_, i32>::new("run"))
+                .field(phenix_graph::SlotField::<i32, i32>::new("pair.0"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let right = g
-        .expose_input("right", node.local_slot::<String>("pair.1"))
+        .expose_input(
+            "right",
+            node.inlets()
+                .port(phenix_graph::InletPort::<_, String>::new("run"))
+                .field(phenix_graph::SlotField::<String, String>::new("pair.1"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let trigger = g.trigger("go", [left, right]).unwrap();
     let report = Deployment::new(g.compile().unwrap())

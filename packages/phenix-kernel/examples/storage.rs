@@ -1,4 +1,4 @@
-use phenix_graph::{GraphBuilder, LocalExecutor, Value};
+use phenix_graph::{LocalExecutor, Value};
 #[allow(dead_code)]
 #[path = "scoped_storage.rs"]
 mod scoped_storage;
@@ -104,7 +104,10 @@ impl PluginInstance for CounterPlugin {
             routes: vec![],
             compose: Box::new(move |context| {
                 let graph = &mut *context.graph;
-                let mut module = GraphBuilder::new("counter-module");
+                let mut module = phenix_graph::Module::new(
+                    "counter-module",
+                    phenix_graph::InputInterface::single(phenix_graph::Layout::<i64>::atomic())?,
+                )?;
                 let writer = counter.clone();
                 let write = module.node("write", move |value: i64| writer.write(value))?;
                 let reader = counter.clone();
@@ -112,20 +115,16 @@ impl PluginInstance for CounterPlugin {
                     written.and_then(|()| reader.read())
                 })?;
                 module.connect(write.output(), read.inlet())?;
-                module.expose_input("value", write.inlet())?;
-                module.expose_output("value", read.output())?;
-                let instance = graph.instance("counter", &module.module())?;
+                module.expose(module.inlet(), write.inlet())?;
+                let package = module.finish(read.output())?;
+                let instance = graph.instantiate("counter", &package)?;
                 let log = reads.clone();
                 let sink =
                     graph.node("read_result", move |value: Result<Option<i64>, String>| {
                         log.lock().unwrap().push(value);
                     })?;
-                graph.connect(
-                    instance.local_output::<Result<Option<i64>, String>>("value")?,
-                    sink.inlet(),
-                )?;
-                let input =
-                    graph.expose_input("counter_value", instance.local_input::<i64>("value")?)?;
+                graph.connect(instance.output(), sink.inlet())?;
+                let input = graph.expose_input("counter_value", instance.inlet())?;
                 graph.trigger("write_counter", [input])?;
                 Ok(())
             }),

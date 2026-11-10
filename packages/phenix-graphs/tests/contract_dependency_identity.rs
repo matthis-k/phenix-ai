@@ -18,7 +18,11 @@ fn service(name: &str) -> GraphBuilder {
     let mut graph = GraphBuilder::new(name);
     let node = graph.node("internal", |value: i64| value).unwrap();
     graph
-        .expose_input_slot("run", "value", node.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            node.inlet(),
+        )
         .unwrap();
     graph.expose_output("value", node.output()).unwrap();
     graph
@@ -27,6 +31,12 @@ fn service(name: &str) -> GraphBuilder {
 fn wrapper(name: &str, dependency: &ModulePackage) -> GraphBuilder {
     let mut graph = GraphBuilder::new(name);
     graph.instance("service", dependency).unwrap();
+    let output = graph
+        .discover("service")
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
+        .unwrap();
+    graph.expose_output("value", output).unwrap();
     graph
 }
 
@@ -175,7 +185,14 @@ fn module_replacement_retains_every_existing_contract_request_atomically() {
     }
     // A rejected replacement neither revokes existing handles nor imports its package.
     graph
-        .expose_output("still-valid", handle.local_output::<i64>("value").unwrap())
+        .expose_output(
+            "still-valid",
+            handle
+                .operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap(),
+        )
         .unwrap();
     let replacement = requested_service("missing-request", &[second.clone(), first.clone()]);
     graph.replace("service", &replacement).unwrap();

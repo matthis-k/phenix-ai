@@ -21,16 +21,7 @@ impl<V: Send + Sync + 'static, I: Send + Sync> NodeAction for ReadAction<V, I> {
         let _ = ctx.take_local::<RefreshCause>(0)?;
         let snapshot = self.reader.read().map_err(diagnostic)?;
         let values = (self.decode)(&self.inputs, snapshot.entries()).map_err(diagnostic)?;
-        Ok(vec![
-            emit_local(0, values),
-            emit_local(
-                1,
-                query::RootReceipt {
-                    wave: ctx.wave_id(),
-                    cohort: ctx.cohort_id(),
-                },
-            ),
-        ])
+        Ok(vec![emit_local(0, values)])
     }
 }
 pub(crate) fn action<I: StoredInputs>(
@@ -56,19 +47,24 @@ pub(crate) fn lower<I: StoredInputs>(
             vec![
                 Port::all(0, vec![InputSlot::local::<RefreshCause>(0).named("value")]).named("run"),
             ],
-            vec![
-                OutputSlot::local::<I::Values>(0).named("value"),
-                OutputSlot::local::<query::RootReceipt>(1).named("identity"),
-            ],
+            OutputSlot::local::<I::Values>(0).named("value"),
             root.action.clone(),
         ),
     )
     .map_err(|e| Error::Graph(e.to_string()))?;
-    let input = g.local_input::<RefreshCause>(name, "run", "value")?;
+    let input = g
+        .discover(name)?
+        .inlets::<RefreshCause, phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<RefreshCause, RefreshCause>::new(
+            "run",
+        ))
+        .target()?;
     let public = g.expose_input(&root.trigger, input)?;
     g.trigger(&root.trigger, [public])?;
     Ok(DerivedRef {
-        output: g.local_output(name, "value")?,
+        output: g
+            .discover(name)?
+            .output::<I::Values, phenix_graph::LocalValue>()?,
         root,
     })
 }

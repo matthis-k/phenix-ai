@@ -42,7 +42,7 @@ fn std_only_manual_graph_compiles_and_executes() {
     let node = NodeTemplate::with_action(
         1,
         vec![Port::for_layout::<Values>(0, "run", AllSameCohort).unwrap()],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| {
             let args = ctx.prepared::<Values>()?;
             Ok(vec![emit(0, args.number + 1)])
@@ -91,13 +91,26 @@ fn manual_input_layout_uses_the_same_erased_runtime_path_without_macros() {
         .named("custom-layout")
         .unwrap();
     let mut module = ModuleDefBuilder::new("manual-layout");
-    let node = module.register("custom-layout", node).unwrap();
-    module
-        .export_input("request", vec![node.input::<i64>("run", "custom.path")])
-        .unwrap();
-    module
-        .export_output("result", node.output::<i64>("value"))
-        .unwrap();
+    module.register("custom-layout", node).unwrap();
+    module.input(
+        0,
+        "request",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        vec![phenix_graph::ModuleInputTarget::NodeNamed {
+            node: "custom-layout".into(),
+            port: "run".into(),
+            slot: "custom.path".into(),
+        }],
+    );
+    module.output(
+        0,
+        "result",
+        <i64 as phenix_graph::ContractValue>::wire_schema(),
+        phenix_graph::ModuleOutputSource::NodeNamed {
+            node: "custom-layout".into(),
+            output: "value".into(),
+        },
+    );
     module.trigger(1, vec![ModuleTriggerTarget::PublicInput(0)]);
     let mut catalog = ModuleCatalog::new();
     catalog.add(module.build()).unwrap();
@@ -125,7 +138,7 @@ fn wrong_named_input_type_fails_before_execution() {
     let node = NodeTemplate::with_action(
         1,
         vec![Port::for_layout::<Values>(0, "run", AllSameCohort).unwrap()],
-        vec![],
+        OutputSlot::typed::<()>(0),
         |_ctx: InvocationCtx| Ok(vec![]),
     );
     assert!(node.input_handle::<String>("run", "number").is_err());
@@ -143,7 +156,7 @@ fn direct_module_struct_literal_compiles_without_builder() {
     let node = NodeTemplate::with_action(
         1,
         vec![Port::for_layout::<Values>(0, "run", AllSameCohort).unwrap()],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         |ctx: InvocationCtx| Ok(vec![emit(0, ctx.prepared::<Values>()?.number * 2)]),
     )
     .named("double")
@@ -166,13 +179,13 @@ fn direct_module_struct_literal_compiles_without_builder() {
                 local_type: None,
                 targets: vec![ModuleInputTarget::Node(input(1, 0, 0))],
             }],
-            outputs: vec![ModuleOutput {
+            output: Some(ModuleOutput {
                 id: 0,
                 name: "result".into(),
                 schema: i64::wire_schema(),
                 local_type: None,
                 source: ModuleOutputSource::Node(output(1, 0)),
-            }],
+            }),
         },
         triggers: vec![ModuleTrigger {
             id: TriggerId::new(1),
@@ -221,7 +234,7 @@ fn failed_typed_decoder_is_atomic_and_another_wave_can_succeed() {
     let node = NodeTemplate::with_action(
         1,
         vec![port],
-        vec![OutputSlot::typed::<i64>(0)],
+        OutputSlot::typed::<i64>(0),
         |ctx: InvocationCtx| Ok(vec![emit(0, *ctx.prepared::<i64>()?)]),
     );
     let mut m = ModuleDefBuilder::new("atomic-decode");
@@ -293,7 +306,7 @@ fn custom_policy_can_select_by_declared_input_name() {
     let node = NodeTemplate::with_action(
         1,
         vec![port],
-        vec![OutputSlot::typed::<i64>(0)],
+        OutputSlot::typed::<i64>(0),
         |ctx: InvocationCtx| Ok(vec![emit(0, *ctx.prepared::<i64>()?)]),
     );
     let mut m = ModuleDefBuilder::new("named-policy");

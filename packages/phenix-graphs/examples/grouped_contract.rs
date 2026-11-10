@@ -5,9 +5,8 @@ use phenix_graph::{
 };
 
 // Manual descriptors work without derives or a shared provider implementation type.
-struct Request;
-const LEFT: SlotField<Request, i64> = SlotField::new("pair.left");
-const RIGHT: SlotField<Request, i64> = SlotField::new("pair.right");
+const LEFT: SlotField<(i64, i64), i64> = SlotField::new("pair.left");
+const RIGHT: SlotField<(i64, i64), i64> = SlotField::new("pair.right");
 
 fn main() -> Result<(), String> {
     let contract = GraphContract::new(
@@ -31,9 +30,12 @@ fn main() -> Result<(), String> {
     let right = provider
         .node("right", |x: i64| -x)
         .map_err(|e| e.to_string())?;
-    provider.expose_input_field("request", LEFT, left.inlet())?;
-    provider.expose_input_field("request", RIGHT, right.inlet())?;
-    provider.expose_output("result", left.output())?;
+    provider.expose_input_field("request", LEFT, left.operation().inlet())?;
+    provider.expose_input_field("request", RIGHT, right.operation().inlet())?;
+    let output = provider
+        .discover("left")?
+        .output::<i64, phenix_graph::LocalValue>()?;
+    provider.expose_output("result", output)?;
     provider
         .implements_public(&contract)
         .map_err(|e| e.to_string())?;
@@ -43,15 +45,17 @@ fn main() -> Result<(), String> {
     let bound = graph
         .bind_contract("selected", &contract)
         .map_err(|e| e.to_string())?;
-    let left = bound
-        .local_field("request", LEFT)
+    let operation = bound.operation().map_err(|e| e.to_string())?;
+    let request = operation
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), (i64, i64)>::new("request"));
+    let left = request.field(LEFT).target().map_err(|e| e.to_string())?;
+    let right = request.field(RIGHT).target().map_err(|e| e.to_string())?;
+    let result = operation
+        .output::<i64, phenix_graph::LocalValue>()
         .map_err(|e| e.to_string())?;
-    let right = bound
-        .local_field("request", RIGHT)
-        .map_err(|e| e.to_string())?;
-    let result = bound
-        .local_output::<i64>("result")
-        .map_err(|e| e.to_string())?;
+    drop(request);
+    drop(operation);
     // Projected handles are owned; the graph borrow ends after the last projection.
     let left = graph.expose_input_field("request", LEFT, left)?;
     let right = graph.expose_input_field("request", RIGHT, right)?;

@@ -78,12 +78,22 @@ fn nested_module_endpoints_keep_the_owning_graph_after_binding_is_dropped() {
     let mut service = GraphBuilder::new("service");
     let worker = service.node("private", |x: i64| x).unwrap();
     service
-        .expose_input_slot("run", "value", worker.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            worker.inlet(),
+        )
         .unwrap();
     service.expose_output("value", worker.output()).unwrap();
     service.implements_public(&contract()).unwrap();
     let mut wrapper = GraphBuilder::new("wrapper");
     wrapper.instance("inner", &service.module()).unwrap();
+    let output = wrapper
+        .discover("inner")
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
+        .unwrap();
+    wrapper.expose_output("value", output).unwrap();
     let mut builder = GraphBuilder::new("root");
     builder.instance("outer", &wrapper.module()).unwrap();
     let old = builder.clone().compile().unwrap();
@@ -109,10 +119,13 @@ fn compiled_module_root_supports_uniform_inspection_and_checked_binding() {
     let mut module = GraphBuilder::new("service");
     let worker = module.node("private", |x: i64| x).unwrap();
     module
-        .expose_input_slot("run", "value", worker.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            worker.inlet(),
+        )
         .unwrap();
     module.expose_output("value", worker.output()).unwrap();
-    module.expose_output("debug", worker.output()).unwrap();
     module.implements_public(&contract()).unwrap();
     let compiled = module.clone().module().compile().unwrap();
     let replacement = module.module().compile().unwrap();
@@ -171,7 +184,11 @@ fn compiled_root_shape_does_not_imply_semantic_membership() {
     let mut module = GraphBuilder::new("unclaimed");
     let worker = module.node("private", |x: i64| x).unwrap();
     module
-        .expose_input_slot("run", "value", worker.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            worker.inlet(),
+        )
         .unwrap();
     module.expose_output("value", worker.output()).unwrap();
     let compiled = module.module().compile().unwrap();
