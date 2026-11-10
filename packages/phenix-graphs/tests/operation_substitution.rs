@@ -641,7 +641,7 @@ fn operation_write_does_not_authorize_unrelated_root_requests() {
             planner.apply(&mut assembly),
             Err(PatchError::UndeclaredWrite {
                 patch: "invalid".into(),
-                target: Box::new(PatchTarget::Instance(String::new())),
+                target: Box::new(PatchTarget::Graph),
             })
         );
         assert_eq!(assembly.revisions(), revisions);

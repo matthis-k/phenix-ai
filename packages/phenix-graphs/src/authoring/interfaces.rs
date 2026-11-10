@@ -2,55 +2,13 @@
 use super::*;
 use crate::interface::{self, sealed};
 
-pub(super) fn claim_changes(before: &GraphBuilder, after: &GraphBuilder) -> Vec<AssemblyChange> {
-    let mut changes = Vec::new();
-    for node in &after.module.nodes {
-        if let Some(old) = before.module.nodes.iter().find(|old| old.name == node.name)
-            && old.claims != node.claims
-        {
-            changes.push(AssemblyChange::NodeReplaced(
-                node.name.clone().unwrap_or_default(),
-            ));
-        }
-    }
-    if before.module.claims != after.module.claims
-        || before.module.contract_requests != after.module.contract_requests
-    {
-        changes.push(AssemblyChange::InstanceRebound(String::new()));
-    }
-    for instance in &after.module.instances {
-        // Nested declaration writes affect every alias, not unrelated packages.
-        let mut pending = vec![instance.definition.as_str()];
-        let mut visited = BTreeSet::new();
-        while let Some(id) = pending.pop() {
-            if !visited.insert(id) {
-                continue;
-            }
-            if let (Some(old), Some(new)) =
-                (before.dependencies.get(id), after.dependencies.get(id))
-            {
-                if old.definition.claims != new.definition.claims
-                    || old.definition.contract_requests != new.definition.contract_requests
-                    || old
-                        .definition
-                        .nodes
-                        .iter()
-                        .map(|n| (n.id, &n.claims))
-                        .ne(new.definition.nodes.iter().map(|n| (n.id, &n.claims)))
-                {
-                    changes.push(AssemblyChange::InstanceRebound(instance.name.clone()));
-                    break;
-                }
-                pending.extend(
-                    new.definition
-                        .instances
-                        .iter()
-                        .map(|i| i.definition.as_str()),
-                );
-            }
-        }
-    }
-    changes
+pub(super) fn stored_contract_eq(a: &GraphContract, b: &GraphContract) -> bool {
+    // same_shape checks port keys and unnamed identities; the public iterators
+    // additionally compare stored diagnostic text, even for local Rust types.
+    a.id() == b.id()
+        && a.required().same_shape(b.required())
+        && a.required().inputs().eq(b.required().inputs())
+        && a.required().output_value() == b.required().output_value()
 }
 
 pub(super) fn validate_node_replacement(

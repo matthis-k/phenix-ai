@@ -813,11 +813,6 @@ pub enum NodeState {
     Executing,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct ActivityCounts {
-    buffered_slots: usize,
-    admitted: usize,
-}
 #[derive(Clone, Copy, Debug)]
 struct ActiveInvocation {
     id: InvocationId,
@@ -825,52 +820,16 @@ struct ActiveInvocation {
     cohort: CohortId,
 }
 
-/// The sole dynamic coloring index. Dormant nodes are absent from `nodes`;
-/// partitions with zero active nodes are absent from `active_partitions`.
+/// Scheduling indexes and completion authority, without diagnostic aggregates.
 #[derive(Default)]
 struct WaveActivity {
     // All admission/progress facts are owned here, including issued tickets.
     dispatched: BTreeMap<InvocationId, ExecutionTicket>,
-    counts: BTreeMap<NodeId, ActivityCounts>,
-    nodes: BTreeSet<NodeId>,
     pending_ports: BTreeMap<PortKey, usize>, // number of nonempty input slots
     pending_by_partition: BTreeMap<PartitionId, BTreeSet<PortKey>>,
-    active_partitions: BTreeMap<PartitionId, usize>,
     producers: BTreeMap<PartitionId, BTreeMap<InvocationId, ActiveInvocation>>,
 }
 impl WaveActivity {
-    fn state(&self, node: NodeId) -> NodeState {
-        let counts = self.counts.get(&node).copied().unwrap_or_default();
-        if counts.admitted != 0 {
-            NodeState::Executing
-        } else if counts.buffered_slots != 0 {
-            NodeState::InputPending
-        } else {
-            NodeState::Dormant
-        }
-    }
-    fn refresh(&mut self, node: NodeId, partitions: &PartitionIndex) {
-        let active = self.state(node) != NodeState::Dormant;
-        let was_active = self.nodes.contains(&node);
-        if active == was_active {
-            return;
-        }
-        let region = partitions.region(node);
-        if active {
-            self.nodes.insert(node);
-            *self.active_partitions.entry(region).or_default() += 1;
-        } else {
-            self.nodes.remove(&node);
-            let count = self
-                .active_partitions
-                .get_mut(&region)
-                .expect("active partition was previously counted");
-            *count -= 1;
-            if *count == 0 {
-                self.active_partitions.remove(&region);
-            }
-        }
-    }
     fn input_occupied(&mut self, addr: InputAddr, partitions: &PartitionIndex) {
         let port = (addr.node, addr.port);
         let count = self.pending_ports.entry(port).or_default();
@@ -881,8 +840,6 @@ impl WaveActivity {
                 .insert(port);
         }
         *count += 1;
-        self.counts.entry(addr.node).or_default().buffered_slots += 1;
-        self.refresh(addr.node, partitions);
     }
     fn input_emptied(&mut self, addr: InputAddr, partitions: &PartitionIndex) {
         let port = (addr.node, addr.port);
@@ -903,14 +860,8 @@ impl WaveActivity {
                 self.pending_by_partition.remove(&region);
             }
         }
-        self.counts
-            .get_mut(&addr.node)
-            .expect("previously nonempty node")
-            .buffered_slots -= 1;
-        self.refresh(addr.node, partitions);
     }
     fn admitted(&mut self, invocation: ActiveInvocation, partitions: &PartitionIndex) {
-        self.counts.entry(invocation.node).or_default().admitted += 1;
         let region = partitions.region(invocation.node);
         assert!(
             self.producers
@@ -920,7 +871,6 @@ impl WaveActivity {
                 .is_none(),
             "invocation admitted only once"
         );
-        self.refresh(invocation.node, partitions);
     }
     fn finished(&mut self, invocation: InvocationId, node: NodeId, partitions: &PartitionIndex) {
         let region = partitions.region(node);
@@ -935,11 +885,6 @@ impl WaveActivity {
         if producers.is_empty() {
             self.producers.remove(&region);
         }
-        self.counts
-            .get_mut(&node)
-            .expect("admitted source")
-            .admitted -= 1;
-        self.refresh(node, partitions);
     }
 }
 

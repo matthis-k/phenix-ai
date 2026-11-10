@@ -2134,31 +2134,15 @@ pub trait NodeAction: Send + Sync {
     fn execute(&self, ctx: InvocationCtx) -> Result<Vec<Emission>, String>;
 }
 
-// Typed argument decoding, handler dispatch and output contract are bound by
-// one constructor, so the erased executor cannot be paired with the wrong A.
-struct TypedNodeAction<A, O, F>(F, PhantomData<fn(A) -> O>);
-impl<A, O, F> NodeAction for TypedNodeAction<A, O, F>
+// Preparation extracts admitted arguments; encoded decoding stays in the port.
+fn compose_action<A, P, F>(prepare: P, invoke: F) -> impl NodeAction
 where
-    A: PortArgs,
-    O: NodeOutput,
-    F: Fn(A, &InvocationCtx) -> Result<O, String> + Send + Sync,
+    P: Fn(&mut InvocationCtx) -> Result<A, String> + Send + Sync,
+    F: Fn(A, &InvocationCtx) -> Result<Option<Emission>, String> + Send + Sync,
 {
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let args = ctx.take_prepared::<A>()?;
-        (self.0)(args, &ctx).map(|output| vec![output.into_emission()])
-    }
-}
-
-struct FunctionNodeAction<A, O, F>(F, PhantomData<fn(A) -> O>);
-impl<A, O, F> NodeAction for FunctionNodeAction<A, O, F>
-where
-    A: Send + 'static,
-    O: ContractValue,
-    F: Fn(A) -> O + Send + Sync,
-{
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let args = ctx.take_prepared::<A>()?;
-        Ok(vec![emit(0, (self.0)(args))])
+    move |mut ctx: InvocationCtx| {
+        let args = prepare(&mut ctx)?;
+        Ok(invoke(args, &ctx)?.into_iter().collect())
     }
 }
 
@@ -2187,67 +2171,6 @@ impl<T: Send + Sync + 'static> LocalReturn<T> for T {
 impl<T: Send + Sync + 'static> LocalReturn<T> for output::Output<T> {
     fn into_local_emission(self) -> Option<Emission> {
         self.into_emission()
-    }
-}
-
-/// The *same* physical node action handles ordinary and directed local
-/// returns. Neither creates a second scheduler, output interpreter, or
-/// special node category; input ownership is shared as well.
-struct LocalFunctionNodeAction<A, O, R, F>(F, PhantomData<fn(A) -> (O, R)>);
-impl<A, O, R, F> NodeAction for LocalFunctionNodeAction<A, O, R, F>
-where
-    A: Clone + Send + Sync + 'static,
-    O: Send + Sync + 'static,
-    R: LocalReturn<O>,
-    F: Fn(A) -> R + Send + Sync,
-{
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let owned = ctx.take_local::<A>(0)?;
-        Ok((self.0)(owned).into_local_emission().into_iter().collect())
-    }
-}
-
-/// Local structural layouts consume selected values only after the port has
-/// committed a reservation. This permits move-only fields and avoids redundant
-/// Arc cloning by the pre-admission borrowed decoder.
-struct LocalPreparedFunctionNodeAction<L, O, R, F> {
-    handler: F,
-    slots: Vec<InputSlot>,
-    _types: PhantomData<fn(L) -> (O, R)>,
-}
-impl<L, O, R, F> NodeAction for LocalPreparedFunctionNodeAction<L, O, R, F>
-where
-    L: LocalInputLayout,
-    O: Send + Sync + 'static,
-    R: LocalReturn<O>,
-    F: Fn(L::Value) -> R + Send + Sync,
-{
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let InvocationArgs::Raw(raw) = std::mem::replace(&mut ctx.args, InvocationArgs::Taken)
-        else {
-            return Err("local layout requires atomically selected raw values".into());
-        };
-        // The schema is established once at authoring, never recomputed from
-        // arbitrary user layout code during an admitted invocation.
-        let mut owned = OwnedSelectedValues::new(raw, self.slots.clone());
-        let args = L::prepare_owned(&mut owned)?;
-        Ok((self.handler)(args)
-            .into_local_emission()
-            .into_iter()
-            .collect())
-    }
-}
-
-struct ContextFunctionNodeAction<A, O, F>(F, PhantomData<fn(A) -> O>);
-impl<A, O, F> NodeAction for ContextFunctionNodeAction<A, O, F>
-where
-    A: Send + 'static,
-    O: NodeOutput,
-    F: Fn(A, &InvocationCtx) -> Result<O, String> + Send + Sync,
-{
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let args = ctx.take_prepared::<A>()?;
-        (self.0)(args, &ctx).map(|output| vec![output.into_emission()])
     }
 }
 
@@ -2280,30 +2203,6 @@ impl<E: Send + 'static> TypedPort<E> {
             Ok(adapt(prepared))
         });
         Ok(Self { port, dispatch })
-    }
-}
-
-struct MultiPortNodeAction<E, O, F> {
-    dispatch: BTreeMap<u16, Arc<PortDispatch<E>>>,
-    handler: F,
-    _types: PhantomData<fn(E) -> O>,
-}
-impl<E, O, F> NodeAction for MultiPortNodeAction<E, O, F>
-where
-    E: Send + 'static,
-    O: NodeOutput,
-    F: Fn(E, &InvocationCtx) -> Result<O, String> + Send + Sync,
-{
-    fn execute(&self, mut ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        let port = ctx
-            .source_port_id()
-            .ok_or("typed input dispatch requires an input port")?;
-        let dispatch = self
-            .dispatch
-            .get(&port)
-            .ok_or_else(|| format!("no typed dispatch registered for input port {port}"))?;
-        let input = dispatch(&mut ctx)?;
-        (self.handler)(input, &ctx).map(|output| vec![output.into_emission()])
     }
 }
 
@@ -2446,11 +2345,18 @@ impl NodeTemplate {
             0,
             declarations,
             O::output_slot(),
-            MultiPortNodeAction {
-                dispatch,
-                handler,
-                _types: PhantomData,
-            },
+            compose_action(
+                move |ctx| {
+                    let port = ctx
+                        .source_port_id()
+                        .ok_or("typed input dispatch requires an input port")?;
+                    let dispatch = dispatch.get(&port).ok_or_else(|| {
+                        format!("no typed dispatch registered for input port {port}")
+                    })?;
+                    dispatch(ctx)
+                },
+                move |input, ctx| handler(input, ctx).map(|output| Some(output.into_emission())),
+            ),
         )
     }
 
@@ -2470,7 +2376,9 @@ impl NodeTemplate {
                     .with_args_builder(LayoutArgsBuilder::<Atomic<A>>(PhantomData)),
             ],
             OutputSlot::typed::<O>(0).named("value"),
-            FunctionNodeAction::<A, O, F>(handler, PhantomData),
+            compose_action(InvocationCtx::take_prepared::<A>, move |args, _| {
+                Ok(Some(emit(0, handler(args))))
+            }),
         )
     }
 
@@ -2489,7 +2397,10 @@ impl NodeTemplate {
             0,
             vec![Port::all(0, vec![InputSlot::local::<A>(0).named("value")]).named("run")],
             OutputSlot::local::<O>(0).named("value"),
-            LocalFunctionNodeAction::<A, O, R, F>(handler, PhantomData),
+            compose_action(
+                |ctx| ctx.take_local::<A>(0),
+                move |args, _| Ok(handler(args).into_local_emission()),
+            ),
         )
     }
 
@@ -2506,11 +2417,19 @@ impl NodeTemplate {
             0,
             vec![Port::all(0, slots.clone()).named("run")],
             OutputSlot::local::<O>(0).named("value"),
-            LocalPreparedFunctionNodeAction::<L, O, R, F> {
-                handler,
-                slots,
-                _types: PhantomData,
-            },
+            compose_action(
+                move |ctx| {
+                    let InvocationArgs::Raw(raw) =
+                        std::mem::replace(&mut ctx.args, InvocationArgs::Taken)
+                    else {
+                        return Err("local layout requires atomically selected raw values".into());
+                    };
+                    // Use the declaration's frozen schema after reservation.
+                    let mut owned = OwnedSelectedValues::new(raw, slots.clone());
+                    L::prepare_owned(&mut owned)
+                },
+                move |args, _| Ok(handler(args).into_local_emission()),
+            ),
         ))
     }
     /// Structural counterpart to `function`; the handler still receives the
@@ -2525,7 +2444,9 @@ impl NodeTemplate {
             0,
             vec![Port::for_layout::<Flatten<A>>(0, "run", AllSameCohort)?],
             OutputSlot::typed::<O>(0).named("value"),
-            FunctionNodeAction::<A, O, F>(handler, PhantomData),
+            compose_action(InvocationCtx::take_prepared::<A>, move |args, _| {
+                Ok(Some(emit(0, handler(args))))
+            }),
         ))
     }
 
@@ -2552,7 +2473,9 @@ impl NodeTemplate {
             0,
             vec![port],
             OutputSlot::typed::<O>(0).named("value"),
-            FunctionNodeAction::<L::Value, O, F>(handler, PhantomData),
+            compose_action(InvocationCtx::take_prepared::<L::Value>, move |args, _| {
+                Ok(Some(emit(0, handler(args))))
+            }),
         ))
     }
 
@@ -2572,7 +2495,10 @@ impl NodeTemplate {
             0,
             vec![port],
             O::output_slot(),
-            ContextFunctionNodeAction::<L::Value, O, F>(handler, PhantomData),
+            compose_action(
+                InvocationCtx::take_prepared::<L::Value>,
+                move |args, ctx| handler(args, ctx).map(|output| Some(output.into_emission())),
+            ),
         ))
     }
 
@@ -2589,13 +2515,7 @@ impl NodeTemplate {
         O: NodeOutput,
         F: Fn(A, &InvocationCtx) -> Result<O, String> + Send + Sync + 'static,
     {
-        let port = Port::for_layout::<A>(0, port_name, policy)?;
-        Ok(Self::with_action(
-            0,
-            vec![port],
-            O::output_slot(),
-            TypedNodeAction::<A, O, F>(handler, PhantomData),
-        ))
+        Self::with_layout::<A, O, F>(port_name, policy, handler)
     }
 
     /// Fresh typed handler and private state for each physical engine instance.
@@ -2615,7 +2535,12 @@ impl NodeTemplate {
             0,
             vec![port],
             O::output_slot(),
-            move || TypedNodeAction::<A, O, F>(factory(), PhantomData),
+            move || {
+                let handler = factory();
+                compose_action(InvocationCtx::take_prepared::<A>, move |args, ctx| {
+                    handler(args, ctx).map(|output| Some(output.into_emission()))
+                })
+            },
         ))
     }
 
@@ -3656,7 +3581,6 @@ impl FlatGraphBuilder {
         let mut graph = Graph {
             nodes: self.nodes,
             by_output: BTreeMap::new(),
-            by_node: BTreeMap::new(),
             triggers: self.triggers,
             source_triggers: self.source_triggers,
             order: BTreeMap::new(),
@@ -3718,7 +3642,6 @@ impl FlatGraphBuilder {
                 ));
             }
             graph.by_output.entry(e.from).or_default().push(e);
-            graph.by_node.entry(e.from.node).or_default().push(e);
         }
         graph.order = graph.topological_order();
         for groups in graph.triggers.values() {
@@ -4596,7 +4519,7 @@ impl PartitionIndex {
             .collect::<BTreeMap<_, _>>();
         let mut reverse_regions = vec![BTreeSet::new(); paths.len()];
         let mut forward_regions = vec![BTreeSet::new(); paths.len()];
-        for edge in graph.by_node.values().flatten() {
+        for edge in graph.by_output.values().flatten() {
             let from = node_partition[&edge.from.node];
             let to = node_partition[&edge.to.node];
             if from != to {
@@ -4652,7 +4575,7 @@ impl StructuralIndex {
     fn compile(graph: &CompiledGraph) -> Self {
         let mut incoming_by_node: BTreeMap<NodeId, Vec<Edge>> = BTreeMap::new();
         let mut incoming_by_port: BTreeMap<PortKey, Vec<Edge>> = BTreeMap::new();
-        for edges in graph.by_node.values() {
+        for edges in graph.by_output.values() {
             for &edge in edges {
                 incoming_by_node.entry(edge.to.node).or_default().push(edge);
                 incoming_by_port
@@ -4683,7 +4606,6 @@ pub struct CompiledGraph {
     composition_origins: BTreeMap<u64, GraphOrigin>,
     nodes: BTreeMap<NodeId, Arc<PhysicalNode>>,
     by_output: BTreeMap<OutputAddr, Vec<Edge>>,
-    by_node: BTreeMap<NodeId, Vec<Edge>>,
     triggers: BTreeMap<TriggerId, Vec<Vec<InputAddr>>>,
     source_triggers: BTreeMap<TriggerId, Vec<NodeId>>,
     order: BTreeMap<NodeId, usize>,
@@ -5333,7 +5255,7 @@ impl CompiledGraph {
         let mut successors: BTreeMap<NodeId, BTreeSet<NodeId>> =
             self.nodes.keys().map(|&n| (n, BTreeSet::new())).collect();
         let mut indegree: BTreeMap<NodeId, usize> = self.nodes.keys().map(|&n| (n, 0)).collect();
-        for edge in self.by_node.values().flat_map(|edges| edges.iter()) {
+        for edge in self.by_output.values().flat_map(|edges| edges.iter()) {
             if successors
                 .get_mut(&edge.from.node)
                 .unwrap()

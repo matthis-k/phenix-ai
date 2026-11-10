@@ -139,7 +139,10 @@ where
             0,
             Vec::new(),
             OutputSlot::local::<O>(0).named("value"),
-            move |_: InvocationCtx| Ok(vec![emit_local(0, (self.as_ref())())]),
+            compose_action(
+                |_| Ok(()),
+                move |(), _| Ok((self.as_ref())().into_local_emission()),
+            ),
         ))
     }
 
@@ -164,7 +167,10 @@ where
             0,
             Vec::new(),
             OutputSlot::local::<O>(0).named("value"),
-            move |_: InvocationCtx| Ok((self.as_ref())().into_emission().into_iter().collect()),
+            compose_action(
+                |_| Ok(()),
+                move |(), _| Ok((self.as_ref())().into_local_emission()),
+            ),
         ))
     }
 
@@ -1692,7 +1698,8 @@ pub struct GraphAssembly {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssemblyRevision {
     pub contributor: String,
-    /// Symbolic edit log, independent of flattened NodeId/EdgeId allocation.
+    /// Partial symbolic diagnostics, independent of flattened IDs. This legacy
+    /// vocabulary is not a complete write log or a source of patch authority.
     pub changes: Vec<AssemblyChange>,
     pub nodes_after: Vec<String>,
     pub instances_after: Vec<String>,
@@ -1740,7 +1747,7 @@ fn patch_connection_key(from: &ModuleOutputSource, to: &ModuleInputTarget) -> St
 }
 
 fn assembly_changes(before: &GraphBuilder, after: &GraphBuilder) -> Vec<AssemblyChange> {
-    let mut changes = interfaces::claim_changes(before, after);
+    let mut changes = Vec::new();
     for n in &after.module.nodes {
         let name = n.name.as_deref().unwrap_or("<unnamed>");
         match before.module.nodes.iter().find(|old| old.name == n.name) {
@@ -1839,14 +1846,15 @@ impl GraphAssembly {
             contributors: BTreeSet::new(),
         }
     }
-    /// Apply one whole contribution or patch atomically. Failures roll back all
-    /// of its node/edge/module edits and do not reserve the contributor name.
+    /// Apply one whole contribution or patch atomically. Failures discard its
+    /// candidate-owned edits and do not reserve the contributor name. Captured
+    /// handles into other pending stores and external effects are not isolated.
     /// Only successful contributions become part of the eventual compilation.
-    pub(crate) fn contribute<F>(
+    fn contribute<F>(
         &mut self,
         contributor: impl Into<String>,
         edit: F,
-    ) -> Result<(), String>
+    ) -> Result<Vec<observer::Requirement>, String>
     where
         F: FnOnce(&mut GraphBuilder) -> Result<(), String>,
     {
@@ -1860,10 +1868,13 @@ impl GraphAssembly {
             .as_ref()
             .expect("assembly not yet finished")
             .clone();
+        let before = self.builder.as_ref().expect("valid assembly");
+        let pending = before.pending.borrow().clone();
         edit(&mut next).map_err(|e| format!("contribution {contributor:?}: {e}"))?;
+        let observation = observer::observe(before, &pending, &next);
         let revision = AssemblyRevision {
             contributor: contributor.clone(),
-            changes: assembly_changes(self.builder.as_ref().expect("valid assembly"), &next),
+            changes: observation.events,
             nodes_after: next
                 .module
                 .nodes
@@ -1881,7 +1892,7 @@ impl GraphAssembly {
         self.builder = Some(next);
         self.revisions.push(revision);
         self.contributors.insert(contributor);
-        Ok(())
+        Ok(observation.required)
     }
     pub fn revisions(&self) -> &[AssemblyRevision] {
         &self.revisions
@@ -1898,6 +1909,7 @@ impl GraphAssembly {
 }
 
 mod addresses;
+mod observer;
 mod patching;
 mod provenance;
 pub use patching::{

@@ -2,6 +2,118 @@ use super::*;
 use crate::*;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
+impl WaveState<'_> {
+    fn node_state(&self, node: NodeId) -> NodeState {
+        if self
+            .activity
+            .producers
+            .values()
+            .any(|region| region.values().any(|producer| producer.node == node))
+        {
+            NodeState::Executing
+        } else if self
+            .buffers
+            .iter()
+            .any(|(addr, queue)| addr.node == node && !queue.is_empty())
+        {
+            NodeState::InputPending
+        } else {
+            NodeState::Dormant
+        }
+    }
+
+    fn active_nodes(&self) -> BTreeSet<NodeId> {
+        self.buffers
+            .iter()
+            .filter(|(_, queue)| !queue.is_empty())
+            .map(|(addr, _)| addr.node)
+            .chain(
+                self.activity
+                    .producers
+                    .values()
+                    .flat_map(|region| region.values().map(|p| p.node)),
+            )
+            .collect()
+    }
+
+    fn active_partitions(&self) -> BTreeMap<PartitionId, usize> {
+        let mut partitions = BTreeMap::new();
+        for node in self.active_nodes() {
+            *partitions
+                .entry(self.graph.structural().partitions.region(node))
+                .or_default() += 1;
+        }
+        partitions
+    }
+
+    // Manual drivers can have a popped invocation without a production ticket.
+    fn assert_activity_consistent(&self, manual: &[ActiveInvocation]) {
+        let partitions = &self.graph.structural().partitions;
+        let mut pending = BTreeMap::new();
+        let mut pending_by_partition: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+        for (addr, queue) in &self.buffers {
+            if !queue.is_empty() {
+                let port = (addr.node, addr.port);
+                *pending.entry(port).or_default() += 1;
+                pending_by_partition
+                    .entry(partitions.region(addr.node))
+                    .or_default()
+                    .insert(port);
+            }
+        }
+        assert_eq!(self.activity.pending_ports, pending);
+        assert_eq!(self.activity.pending_by_partition, pending_by_partition);
+
+        let work = self
+            .ready
+            .iter()
+            .map(|job| ActiveInvocation {
+                id: job.id,
+                node: job.node,
+                cohort: job.cohort,
+            })
+            .chain(
+                self.activity
+                    .dispatched
+                    .values()
+                    .map(|ticket| ActiveInvocation {
+                        id: ticket.id,
+                        node: ticket.node,
+                        cohort: ticket.cohort,
+                    }),
+            )
+            .chain(manual.iter().copied());
+        let mut expected: BTreeMap<_, BTreeMap<_, _>> = BTreeMap::new();
+        for job in work {
+            assert!(
+                expected
+                    .entry(partitions.region(job.node))
+                    .or_default()
+                    .insert(job.id, (job.node, job.cohort))
+                    .is_none(),
+                "work owned only once"
+            );
+        }
+        let actual: BTreeMap<_, BTreeMap<_, _>> = self
+            .activity
+            .producers
+            .iter()
+            .map(|(region, jobs)| {
+                (
+                    *region,
+                    jobs.iter()
+                        .map(|(id, job)| {
+                            assert_eq!(*id, job.id);
+                            (*id, (job.node, job.cohort))
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
 fn wrap(id: u16, name: &'static str) -> NodeTemplate {
     node(
         id,
@@ -8905,10 +9017,14 @@ mod partitioned_active_coloring_conformance {
         report: WaveReport,
         active_nodes: BTreeSet<NodeId>,
         active_partitions: BTreeMap<PartitionId, usize>,
-        pending_inputs: BTreeMap<InputAddr, Vec<Value>>,
+        pending_inputs: BTreeMap<InputAddr, Vec<(CohortId, Value)>>,
     }
 
-    fn run_capturing_activity(engine: &Engine, incoming: Vec<Incoming>) -> CapturedWave {
+    fn run_capturing_activity(
+        engine: &Engine,
+        incoming: Vec<Incoming>,
+        conservative: bool,
+    ) -> CapturedWave {
         let wave = WaveId(engine.next_wave.fetch_add(1, Ordering::Relaxed));
         let next_cohort = incoming
             .iter()
@@ -8920,7 +9036,14 @@ mod partitioned_active_coloring_conformance {
         let mut state = WaveState::new(&engine.graph, wave);
         state.next_cohort = next_cohort;
         assert!(state.deliver_batch(incoming));
+        state.assert_activity_consistent(&[]);
         while let Some(invocation) = state.ready.pop_front() {
+            let manual = [ActiveInvocation {
+                id: invocation.id,
+                node: invocation.node,
+                cohort: invocation.cohort,
+            }];
+            state.assert_activity_consistent(&manual);
             state.report.activations += 1;
             state.report.trace.executed.push(invocation.node);
             state
@@ -8949,14 +9072,21 @@ mod partitioned_active_coloring_conformance {
                 cohort: invocation.cohort,
                 result,
             });
+            state.assert_activity_consistent(&manual);
             state.activity.finished(
                 invocation.id,
                 invocation.node,
                 &engine.graph.structural().partitions,
             );
-            state.reevaluate_after_completion(invocation.node);
+            if conservative {
+                state.reevaluate_waiting();
+            } else {
+                state.reevaluate_after_completion(invocation.node);
+            }
+            state.assert_activity_consistent(&[]);
         }
         state.settle();
+        state.assert_activity_consistent(&[]);
         let pending_inputs = state
             .buffers
             .iter()
@@ -8966,15 +9096,17 @@ mod partitioned_active_coloring_conformance {
                     *address,
                     queue
                         .iter()
-                        .map(|delivery| delivery.value.clone())
+                        .map(|delivery| (delivery.cohort, delivery.value.clone()))
                         .collect(),
                 )
             })
             .collect();
+        let active_nodes = state.active_nodes();
+        let active_partitions = state.active_partitions();
         CapturedWave {
             report: state.report,
-            active_nodes: state.activity.nodes,
-            active_partitions: state.activity.active_partitions,
+            active_nodes,
+            active_partitions,
             pending_inputs,
         }
     }
@@ -9099,6 +9231,7 @@ mod partitioned_active_coloring_conformance {
                 cohort: CohortId(35),
                 value: enc("good".to_owned()),
             }],
+            false,
         );
         assert!(success_state.report.success());
         assert!(success_state.active_nodes.is_empty());
@@ -9111,6 +9244,7 @@ mod partitioned_active_coloring_conformance {
                 cohort: CohortId(36),
                 value: enc("skip".to_owned()),
             }],
+            false,
         );
         assert_eq!(
             skip_state.active_nodes,
@@ -9122,6 +9256,72 @@ mod partitioned_active_coloring_conformance {
             0,
             0
         )));
+    }
+
+    #[test]
+    fn targeted_and_conservative_reevaluation_match_with_independent_activity_checks() {
+        let mut saw_equal_payloads_in_distinct_pending_cohorts = false;
+        for graph in [
+            delayed_graph(true, false),
+            delayed_graph(true, true),
+            feedback_graph(true),
+        ] {
+            let engine = Deployment::new(Arc::clone(&graph))
+                .store(Store::default())
+                .report_retention(ReportRetention::RetainPayloads)
+                .build()
+                .unwrap();
+            for values in [
+                vec![(10, "good")],
+                vec![(11, "skip")],
+                vec![(12, "fail")],
+                vec![(20, "skip"), (30, "good")],
+                vec![(40, "skip"), (41, "skip")],
+            ] {
+                let incoming = || {
+                    values
+                        .iter()
+                        .map(|(cohort, value)| Incoming {
+                            to: input(logical_id(&graph, "source").0, 0, 0),
+                            cohort: CohortId(*cohort),
+                            value: enc((*value).to_owned()),
+                        })
+                        .collect()
+                };
+                let targeted = run_capturing_activity(&engine, incoming(), false);
+                let conservative = run_capturing_activity(&engine, incoming(), true);
+                assert_equivalent(&graph, &targeted.report, &graph, &conservative.report);
+                assert_eq!(targeted.active_nodes, conservative.active_nodes);
+                assert_eq!(targeted.active_partitions, conservative.active_partitions);
+                let pending = |wave: &CapturedWave| {
+                    wave.pending_inputs
+                        .iter()
+                        .map(|(addr, values)| {
+                            (
+                                *addr,
+                                values
+                                    .iter()
+                                    .map(|(cohort, value)| {
+                                        (*cohort, value.get::<String>().unwrap())
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                };
+                let targeted_pending = pending(&targeted);
+                assert_eq!(targeted_pending, pending(&conservative));
+                saw_equal_payloads_in_distinct_pending_cohorts |=
+                    targeted_pending.values().any(|queue| {
+                        queue.windows(2).any(|pair| {
+                            pair[0].0 == CohortId(40)
+                                && pair[1].0 == CohortId(41)
+                                && pair[0].1 == pair[1].1
+                        })
+                    });
+            }
+        }
+        assert!(saw_equal_payloads_in_distinct_pending_cohorts);
     }
 
     #[test]
@@ -9186,7 +9386,7 @@ mod partitioned_active_coloring_conformance {
                 value: enc("source".to_owned()),
             }]
         };
-        let first_wave = run_capturing_activity(&partitioned_engine, incoming());
+        let first_wave = run_capturing_activity(&partitioned_engine, incoming(), false);
         let partitioned_report = &first_wave.report;
         assert_equivalent(&flat, &flat_report, &partitioned, partitioned_report);
         assert!(
@@ -9224,7 +9424,7 @@ mod partitioned_active_coloring_conformance {
         assert!(first_wave.active_partitions.is_empty());
 
         // A new wave owns fresh buffers and color facts after explicit retirement.
-        let second_wave = run_capturing_activity(&partitioned_engine, incoming());
+        let second_wave = run_capturing_activity(&partitioned_engine, incoming(), false);
         assert_ne!(first_wave.report.wave_id(), second_wave.report.wave_id());
         assert!(second_wave.report.success());
         assert!(second_wave.pending_inputs.is_empty());
@@ -10071,6 +10271,7 @@ mod sparse_activity_partition_tests {
         }
     }
     fn finish_no_outputs(state: &mut WaveState<'_>) {
+        state.assert_activity_consistent(&[]);
         let job = state.ready.pop_front().expect("scheduled invocation");
         state.publish(Completion {
             id: job.id,
@@ -10083,6 +10284,157 @@ mod sparse_activity_partition_tests {
             .activity
             .finished(job.id, job.node, &state.graph.structural().partitions);
         state.reevaluate_after_completion(job.node);
+        state.assert_activity_consistent(&[]);
+    }
+
+    #[test]
+    fn activity_oracle_covers_queued_dispatched_completed_and_cancelled_work() {
+        let mut builder = FlatGraphBuilder::default();
+        builder.add_node(pair(1));
+        builder.add_node(pair(2));
+        let engine = Deployment::new(builder.build().unwrap()).build().unwrap();
+        let mut wave = engine
+            .start_incoming(
+                vec![
+                    incoming(1, 0, "a"),
+                    incoming(1, 1, "b"),
+                    incoming(1, 0, "c"),
+                    incoming(1, 1, "d"),
+                    incoming(1, 0, "pending"),
+                    incoming(2, 0, "other"),
+                ],
+                &[],
+            )
+            .unwrap();
+        let mut independent = engine
+            .start_incoming(vec![incoming(2, 0, "isolated")], &[])
+            .unwrap();
+        wave.state.assert_activity_consistent(&[]);
+        independent.state.assert_activity_consistent(&[]);
+        assert_eq!(wave.state.ready.len(), 2);
+        assert!(wave.state.activity.dispatched.is_empty());
+        assert_eq!(wave.state.node_state(NodeId(1)), NodeState::Executing);
+        assert_eq!(wave.state.active_nodes().len(), 2);
+        assert_eq!(
+            wave.state
+                .active_partitions()
+                .values()
+                .copied()
+                .sum::<usize>(),
+            2
+        );
+
+        let (first, _) = wave.next_ready().unwrap().into_parts();
+        wave.state.assert_activity_consistent(&[]);
+        assert_eq!(wave.state.ready.len(), 1);
+        assert_eq!(wave.state.activity.dispatched.len(), 1);
+        assert!(independent.complete(first, Ok(vec![])).is_err());
+        independent.state.assert_activity_consistent(&[]);
+        wave.complete(first, Ok(vec![])).unwrap();
+        wave.state.assert_activity_consistent(&[]);
+        assert_eq!(wave.state.node_state(NodeId(1)), NodeState::Executing);
+        assert!(wave.complete(first, Ok(vec![])).is_err());
+        wave.state.assert_activity_consistent(&[]);
+
+        let (second, _) = wave.next_ready().unwrap().into_parts();
+        wave.state.assert_activity_consistent(&[]);
+        wave.complete(second, Ok(vec![])).unwrap();
+        wave.state.assert_activity_consistent(&[]);
+        assert_eq!(wave.state.node_state(NodeId(1)), NodeState::InputPending);
+        assert!(!wave.state.reservations.is_empty());
+        assert_eq!(
+            wave.state.buffers.len(),
+            3,
+            "empty consumed queues remain allocated"
+        );
+        assert_eq!(
+            wave.state.activity.pending_ports[&(NodeId(1), PortId(0))],
+            1
+        );
+        wave.cancel();
+        wave.state.assert_activity_consistent(&[]);
+        assert!(wave.state.active_nodes().is_empty());
+        independent.state.assert_activity_consistent(&[]);
+        assert_eq!(
+            independent.state.node_state(NodeId(2)),
+            NodeState::InputPending
+        );
+
+        let mut cancelled = engine
+            .start_incoming(vec![incoming(1, 0, "a"), incoming(1, 1, "b")], &[])
+            .unwrap();
+        let (ticket, _) = cancelled.next_ready().unwrap().into_parts();
+        cancelled.state.assert_activity_consistent(&[]);
+        assert_eq!(cancelled.cancel(), &[ticket]);
+        cancelled.state.assert_activity_consistent(&[]);
+        assert!(cancelled.complete(ticket, Ok(vec![])).is_err());
+        cancelled.state.assert_activity_consistent(&[]);
+    }
+
+    #[test]
+    fn retained_adjacency_preserves_sparse_order_cycles_and_output_validation() {
+        let mut builder = FlatGraphBuilder::default();
+        for id in [7, 42, 99, 300, 500] {
+            let mut template = pair(id);
+            template.output = out(0, String::wire_schema());
+            builder.add_node(template);
+        }
+        // Duplicate node successors must contribute only one topological indegree.
+        builder.connect(output(7, 0), input(42, 0, 1));
+        builder.connect(output(7, 0), input(42, 0, 0));
+        builder.connect(output(300, 0), input(500, 0, 0));
+        builder.connect(output(500, 0), input(300, 0, 0));
+        let graph = builder.build().unwrap();
+        assert_eq!(
+            graph.order,
+            BTreeMap::from([
+                (NodeId(7), 0),
+                (NodeId(42), 1),
+                (NodeId(99), 2),
+                (NodeId(300), 3),
+                (NodeId(500), 4),
+            ])
+        );
+        let edges = &graph.by_output[&output(7, 0)];
+        assert_eq!(
+            edges.iter().map(|edge| edge.to).collect::<Vec<_>>(),
+            vec![input(42, 0, 1), input(42, 0, 0)]
+        );
+        assert_ne!(edges[0].id, edges[1].id);
+        assert!(!graph.by_output.contains_key(&output(99, 0)));
+        assert_eq!(
+            graph.can_reach_port(NodeId(300), (NodeId(500), PortId(0))),
+            (true, false)
+        );
+        assert_eq!(
+            graph.can_reach_port(NodeId(99), (NodeId(500), PortId(0))),
+            (false, false)
+        );
+        assert!(graph.output_slot(output(7, 1)).is_err());
+        let engine = Deployment::new(graph).build().unwrap();
+        assert!(
+            engine
+                .with_edge_adapter(output(7, 1), input(42, 0, 0), Arc::new(IdentityEdgeAdapter))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn consolidation_storage_measurements() {
+        use std::mem::size_of;
+        println!(
+            "Batch B bytes: CompiledGraph={}, WaveActivity={}, removed adjacency header={}, removed activity headers={}, Edge={}, removed counts value={}",
+            size_of::<CompiledGraph>(),
+            size_of::<WaveActivity>(),
+            size_of::<BTreeMap<NodeId, Vec<Edge>>>(),
+            size_of::<(
+                BTreeMap<NodeId, (usize, usize)>,
+                BTreeSet<NodeId>,
+                BTreeMap<PartitionId, usize>
+            )>(),
+            size_of::<Edge>(),
+            size_of::<(usize, usize)>()
+        );
     }
 
     #[test]
@@ -10092,23 +10444,23 @@ mod sparse_activity_partition_tests {
         let graph = builder.build().unwrap();
         let mut wave = WaveState::new(&graph, WaveId(1));
         let root = graph.structural().partitions.region(NodeId(1));
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Dormant);
-        assert!(wave.activity.active_partitions.is_empty());
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Dormant);
+        assert!(wave.active_partitions().is_empty());
 
         assert!(wave.deliver_batch(vec![incoming(1, 0, "left")]));
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::InputPending);
         assert_eq!(wave.activity.pending_ports[&(NodeId(1), PortId(0))], 1);
-        assert_eq!(wave.activity.active_partitions[&root], 1);
+        assert_eq!(wave.active_partitions()[&root], 1);
         assert!(wave.ready.is_empty());
 
         assert!(wave.deliver_batch(vec![incoming(1, 1, "right")]));
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Executing);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Executing);
         assert_eq!(wave.ready.len(), 1);
         assert!(wave.activity.pending_ports.is_empty());
         finish_no_outputs(&mut wave);
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Dormant);
-        assert!(wave.activity.nodes.is_empty());
-        assert!(wave.activity.active_partitions.is_empty());
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Dormant);
+        assert!(wave.active_nodes().is_empty());
+        assert!(wave.active_partitions().is_empty());
         assert!(!wave.reservations.is_empty(), "history is not activity");
     }
 
@@ -10122,17 +10474,17 @@ mod sparse_activity_partition_tests {
         assert_eq!(wave.ready.len(), 1);
         assert!(wave.deliver_batch(vec![incoming(1, 0, "next-a")]));
         assert_eq!(
-            wave.activity.state(NodeId(1)),
+            wave.node_state(NodeId(1)),
             NodeState::Executing,
             "pending input and an admitted invocation coexist"
         );
         finish_no_outputs(&mut wave);
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::InputPending);
         assert_eq!(wave.activity.pending_ports[&(NodeId(1), PortId(0))], 1);
         assert!(wave.deliver_batch(vec![incoming(1, 1, "next-b")]));
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Executing);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Executing);
         finish_no_outputs(&mut wave);
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Dormant);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Dormant);
         assert_eq!(wave.report.trace.invocations.len(), 2);
     }
 
@@ -10187,7 +10539,7 @@ mod sparse_activity_partition_tests {
         let graph = builder.build().unwrap();
 
         let mut activity = WaveState::new(&graph, WaveId(1));
-        assert_eq!(activity.activity.state(NodeId(2)), NodeState::Dormant);
+        assert_eq!(activity.node_state(NodeId(2)), NodeState::Dormant);
         assert!(activity.deliver_batch(vec![
             Incoming {
                 to: input(1, 0, 0),
@@ -10200,8 +10552,8 @@ mod sparse_activity_partition_tests {
                 value: enc("partial".to_owned())
             },
         ]));
-        assert_eq!(activity.activity.state(NodeId(2)), NodeState::InputPending);
-        assert_eq!(activity.activity.state(NodeId(1)), NodeState::Executing);
+        assert_eq!(activity.node_state(NodeId(2)), NodeState::InputPending);
+        assert_eq!(activity.node_state(NodeId(1)), NodeState::Executing);
         assert!(
             !activity
                 .activity
@@ -10563,7 +10915,7 @@ mod sparse_activity_partition_tests {
         let graph = builder.build().unwrap();
         let mut wave = WaveState::new(&graph, WaveId(1));
         assert!(wave.deliver_batch(vec![incoming(1, 0, "message")]));
-        assert_eq!(wave.activity.state(NodeId(2)), NodeState::Dormant);
+        assert_eq!(wave.node_state(NodeId(2)), NodeState::Dormant);
         let source = wave.ready.pop_front().unwrap();
         wave.publish(Completion {
             id: source.id,
@@ -10572,11 +10924,11 @@ mod sparse_activity_partition_tests {
             cohort: source.cohort,
             result: Ok(vec![emit(0, "message".to_owned())]),
         });
-        assert_eq!(wave.activity.state(NodeId(2)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(2)), NodeState::InputPending);
         wave.activity
             .finished(source.id, source.node, &graph.structural().partitions);
-        assert_eq!(wave.activity.state(NodeId(1)), NodeState::Dormant);
-        assert_eq!(wave.activity.state(NodeId(2)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(1)), NodeState::Dormant);
+        assert_eq!(wave.node_state(NodeId(2)), NodeState::InputPending);
     }
 
     #[test]
@@ -10626,8 +10978,8 @@ mod sparse_activity_partition_tests {
             incoming(2, 0, "candidate"),
             incoming(3, 0, "unrelated")
         ]));
-        assert_eq!(wave.activity.state(NodeId(2)), NodeState::InputPending);
-        assert_eq!(wave.activity.state(NodeId(3)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(2)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(3)), NodeState::InputPending);
         let checks_before = unrelated_checks.load(AtomicOrdering::SeqCst);
         assert!(checks_before > 0);
         let source = wave.ready.pop_front().unwrap();
@@ -10642,7 +10994,7 @@ mod sparse_activity_partition_tests {
             .finished(source.id, source.node, &graph.structural().partitions);
         wave.reevaluate_after_completion(source.node);
         assert_eq!(
-            wave.activity.state(NodeId(2)),
+            wave.node_state(NodeId(2)),
             NodeState::Executing,
             "target must wake when its source closes without emitting"
         );
@@ -10651,7 +11003,7 @@ mod sparse_activity_partition_tests {
             checks_before,
             "unrelated pending port must not be reconsidered"
         );
-        assert_eq!(wave.activity.state(NodeId(3)), NodeState::InputPending);
+        assert_eq!(wave.node_state(NodeId(3)), NodeState::InputPending);
     }
 
     #[test]
@@ -10747,7 +11099,7 @@ mod sparse_activity_partition_tests {
             cohort: CohortId(0),
             value: enc("x".to_owned())
         }]));
-        assert_eq!(wave.activity.active_partitions.len(), 1);
+        assert_eq!(wave.active_partitions().len(), 1);
         let producer = wave.ready.pop_front().unwrap();
         wave.publish(Completion {
             id: producer.id,
@@ -10756,19 +11108,15 @@ mod sparse_activity_partition_tests {
             cohort: producer.cohort,
             result: Ok(vec![emit(0, "x".to_owned())]),
         });
-        assert_eq!(wave.activity.state(middle), NodeState::Executing);
+        assert_eq!(wave.node_state(middle), NodeState::Executing);
         assert_eq!(
-            wave.activity.active_partitions.len(),
+            wave.active_partitions().len(),
             2,
             "newly activated child region joins the active index"
         );
         wave.activity.finished(producer.id, start, index);
-        assert_eq!(wave.activity.active_partitions.len(), 1);
-        assert!(
-            wave.activity
-                .active_partitions
-                .contains_key(&index.region(middle))
-        );
+        assert_eq!(wave.active_partitions().len(), 1);
+        assert!(wave.active_partitions().contains_key(&index.region(middle)));
     }
 
     #[test]
@@ -10825,7 +11173,12 @@ mod sparse_activity_partition_tests {
             if !visited.insert((node, refreshed)) {
                 continue;
             }
-            for edge in graph.by_node.get(&node).into_iter().flatten() {
+            for edge in graph
+                .by_output
+                .get(&output(node.0, 0))
+                .into_iter()
+                .flatten()
+            {
                 if (edge.to.node, edge.to.port) == target {
                     if refreshed {
                         reset = true;

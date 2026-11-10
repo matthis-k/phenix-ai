@@ -133,20 +133,45 @@ impl PatchTarget {
             _ => self == other,
         }
     }
-    fn observed(change: &AssemblyChange) -> Self {
-        match change {
-            AssemblyChange::NodeAdded(name) | AssemblyChange::NodeReplaced(name) => {
-                Self::Node(name.clone())
-            }
-            AssemblyChange::InstanceAdded(name) | AssemblyChange::InstanceRebound(name) => {
-                Self::Instance(name.clone())
-            }
-            AssemblyChange::ConnectionAdded(edge) | AssemblyChange::ConnectionRemoved(edge) => {
-                Self::Connection(edge.clone())
-            }
-            AssemblyChange::InputExposed(name) => Self::PublicInput(name.clone()),
-            AssemblyChange::OutputExposed(name) => Self::PublicOutput(name.clone()),
-            AssemblyChange::TriggerAdded(name) => Self::Trigger(name.clone()),
+    // Write authority is directional; conflict overlap must remain symmetric.
+    fn covers(&self, observed: &Self) -> bool {
+        use PatchTarget::*;
+        match (self, observed) {
+            (Graph, _) => true,
+            (_, Graph) => false,
+            (Node(a) | Instance(a), Node(b) | Instance(b)) => a == b,
+            (Connections, Connection(_)) => true,
+            (ConnectionPattern(pattern), Connection(key)) => ConnectionRoute::from_exact_key(key)
+                .is_some_and(|exact| {
+                    let matches = |a: &PortSelector, b: &PortSelector| {
+                        a.node == b.node
+                            && a.port.as_ref().is_none_or(|p| Some(p) == b.port.as_ref())
+                            && a.slot.as_ref().is_none_or(|s| Some(s) == b.slot.as_ref())
+                    };
+                    matches(&pattern.from, &exact.from) && matches(&pattern.to, &exact.to)
+                }),
+            (IncidentConnections(name), Connection(key)) => ConnectionRoute::from_exact_key(key)
+                .is_some_and(|r| r.from.node == *name || r.to.node == *name),
+            (Connection(a), Connection(b))
+            | (PublicInput(a), PublicInput(b))
+            | (PublicOutput(a), PublicOutput(b))
+            | (Trigger(a), Trigger(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl From<observer::Requirement> for PatchTarget {
+    fn from(value: observer::Requirement) -> Self {
+        use observer::Requirement as R;
+        match value {
+            R::Graph => Self::Graph,
+            R::Node(n) => Self::Node(n),
+            R::Instance(n) => Self::Instance(n),
+            R::Connection(n) => Self::Connection(n),
+            R::PublicInput(n) => Self::PublicInput(n),
+            R::PublicOutput(n) => Self::PublicOutput(n),
+            R::Trigger(n) => Self::Trigger(n),
         }
     }
 }
@@ -538,7 +563,8 @@ struct Contribution {
 }
 
 /// Deterministic conflict planning over an arbitrary set of contributors.
-/// `apply` atomically commits the whole selected plan to GraphAssembly.
+/// `apply` atomically commits the whole selected plan's candidate-owned state.
+/// Captured mutable state and handles into other builders are not isolated.
 #[derive(Default)]
 pub struct PatchPlanner {
     entries: BTreeMap<String, Contribution>,
@@ -735,86 +761,19 @@ impl PatchPlanner {
         for id in &plan.selected {
             let mut contribution = self.entries.remove(id).expect("selected patch exists");
             let edit = contribution.edit.take().expect("patch closure exists");
-            let before = draft.builder.as_ref().expect("unfinished assembly");
-            let root_claims = before.module.claims.clone();
-            let root_requests = before.module.contract_requests.clone();
-            let request_lifts =
-                before
-                    .module
-                    .instances
-                    .iter()
-                    .filter(|instance| {
-                        contribution.spec.writes.iter().any(|target| {
-                            target.overlaps(&PatchTarget::Node(instance.name.clone()))
-                        })
-                    })
-                    .map(|instance| {
-                        let requests = before.dependencies[&instance.definition]
-                            .definition
-                            .contract_requests
-                            .iter()
-                            .map(|(path, contract)| {
-                                let path = if path.is_empty() {
-                                    instance.name.clone()
-                                } else {
-                                    format!("{}/{path}", instance.name)
-                                };
-                                (path, contract.clone())
-                            })
-                            .collect::<Vec<_>>();
-                        (instance.name.clone(), requests)
-                    })
-                    .collect::<Vec<_>>();
-            draft
+            let required = draft
                 .contribute(id.clone(), |builder| edit(builder))
                 .map_err(|reason| PatchError::Apply {
                     patch: id.clone(),
                     reason,
                 })?;
-            let after = draft.builder.as_ref().expect("unfinished assembly");
-            let mut permitted_lifts = request_lifts
-                .into_iter()
-                .filter(|(name, _)| {
-                    after.module.named_node(name).is_some()
-                        && !after
-                            .module
-                            .instances
-                            .iter()
-                            .any(|instance| instance.name == *name)
-                })
-                .flat_map(|(_, requests)| requests)
-                .collect::<Vec<_>>();
-            // Lifting obligations is part of replacing that operation, not
-            // authority to edit the composite root's claims or other requests.
-            let requests_lifted = root_claims == after.module.claims
-                && after.module.contract_requests.starts_with(&root_requests)
-                && after.module.contract_requests[root_requests.len()..]
-                    .iter()
-                    .all(|request| {
-                        if let Some(index) = permitted_lifts
-                            .iter()
-                            .position(|allowed| allowed == request)
-                        {
-                            permitted_lifts.remove(index);
-                            true
-                        } else {
-                            false
-                        }
-                    });
-            let revision = draft
-                .revisions
-                .last()
-                .expect("successful contribution has revision");
-            for change in &revision.changes {
-                let target = PatchTarget::observed(change);
-                if target == PatchTarget::Instance(String::new()) && requests_lifted {
-                    continue;
-                }
+            for requirement in required {
+                let target = PatchTarget::from(requirement);
                 if !contribution
                     .spec
                     .writes
                     .iter()
-                    .any(|allowed| allowed.overlaps(&target))
+                    .any(|allowed| allowed.covers(&target))
                 {
                     return Err(PatchError::UndeclaredWrite {
                         patch: id.clone(),
@@ -858,5 +817,61 @@ impl PatchPlanner {
         let plan = self.apply(&mut assembly)?;
         let built = assembly.finish().map_err(PatchError::Compile)?;
         Ok((built, plan))
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn directional_coverage_is_not_conflict_overlap() {
+        let node = PatchTarget::Node("worker".into());
+        assert!(node.overlaps(&PatchTarget::Graph));
+        assert!(!node.covers(&PatchTarget::Graph));
+        assert!(PatchTarget::Graph.covers(&node));
+        assert!(node.covers(&PatchTarget::Instance("worker".into())));
+        assert!(!node.covers(&PatchTarget::Node("other".into())));
+        let exact = PatchTarget::edge_nodes("a.->:b", "value", "sink", "run", "value");
+        let pattern = ConnectionRoute {
+            from: PortSelector {
+                node: "a.->:b".into(),
+                port: Some("value".into()),
+                slot: None,
+            },
+            to: PortSelector {
+                node: "sink".into(),
+                port: Some("run".into()),
+                slot: Some("value".into()),
+            },
+        };
+        assert!(PatchTarget::ConnectionPattern(pattern.clone()).covers(&exact));
+        assert!(PatchTarget::IncidentConnections("a.->:b".into()).covers(&exact));
+        assert!(!PatchTarget::IncidentConnections("other".into()).covers(&exact));
+        let boundary = PatchTarget::edge_node_to_instance("a.->:b", "value", "sink", "run");
+        assert!(!PatchTarget::ConnectionPattern(pattern.clone()).covers(&boundary));
+        let mut source_slot = pattern;
+        source_slot.from.slot = Some("value".into());
+        assert!(!PatchTarget::ConnectionPattern(source_slot).covers(&exact));
+        let numeric = PatchTarget::connection(
+            ModuleOutputSource::Node(OutputAddr {
+                node: NodeId(1),
+                slot: SlotId(0),
+            }),
+            ModuleInputTarget::Node(InputAddr {
+                node: NodeId(2),
+                port: PortId(0),
+                slot: SlotId(0),
+            }),
+        );
+        assert!(numeric.covers(&numeric));
+        assert!(PatchTarget::Connections.covers(&numeric));
+        assert!(!PatchTarget::IncidentConnections("1".into()).covers(&numeric));
+        assert!(
+            !PatchTarget::Splice(PatchAnchor::nodes(
+                "a.->:b", "value", "sink", "run", "value"
+            ))
+            .covers(&exact)
+        );
     }
 }

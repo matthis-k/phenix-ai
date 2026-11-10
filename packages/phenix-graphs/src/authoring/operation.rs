@@ -939,39 +939,132 @@ impl<I, M> Module<I, M> {
         {
             return Err("public selector belongs to another module".into());
         }
-        if to.scope != self.graph.module.scope
-            || self.graph.target_declaration_id(&to.source)? != to.declaration_id
-        {
-            return Err("projection destination belongs to another or stale declaration".into());
-        }
-        if identity(&selected.schema, selected.local_type) != identity(&to.schema, to.local_type) {
-            return Err("projection type mismatch".into());
-        }
-        let target = self
-            .graph
-            .verify_target(&to.source, identity(&to.schema, to.local_type))?;
         let slot = if public.view.path.is_empty() {
             "value"
         } else {
             &public.view.path
         };
-        let name = module_input_slot_name(&public.view.port, slot);
-        if let Some(input) = self.graph.module.inputs.iter_mut().find(|i| i.name == name) {
-            if input.targets.contains(&target) {
-                return Err("duplicate public input projection".into());
-            }
-            input.targets.push(target);
-            return Ok(PublicInput {
-                scope: self.graph.module.scope,
-                declaration_id: self.graph.public_input_ids[&name],
-                id: input.id,
-                name,
-                schema: input.schema.clone(),
-                local_type: input.local_type,
-            });
+        let public = Address {
+            port: public.view.port.clone(),
+            slot: slot.into(),
+            value: DeclaredValue {
+                schema: selected.schema,
+                local_type: selected.local_type,
+            },
+            target: selected.source,
+        };
+        let target = self.preflight_projection(
+            &public,
+            to.scope,
+            to.declaration_id,
+            &to.source,
+            &DeclaredValue {
+                schema: to.schema,
+                local_type: to.local_type,
+            },
+        )?;
+        let name = module_input_slot_name(&public.port, &public.slot);
+        self.check_projection_capacity(usize::from(
+            !self
+                .graph
+                .module
+                .inputs
+                .iter()
+                .any(|input| input.name == name),
+        ))?;
+        Ok(self.commit_projection(public, target))
+    }
+
+    fn preflight_projection(
+        &self,
+        public: &Address,
+        scope: u64,
+        declaration_id: u64,
+        destination: &Target,
+        value: &DeclaredValue,
+    ) -> Result<ModuleInputTarget, String> {
+        if scope != self.graph.module.scope
+            || self.graph.target_declaration_id(destination)? != declaration_id
+        {
+            return Err("projection destination belongs to another or stale declaration".into());
         }
-        self.graph
-            .expose_input_typed(public.view.port, slot.into(), to)
+        let expected = identity(&public.value.schema, public.value.local_type);
+        if identity(&value.schema, value.local_type) != expected {
+            return Err(format!(
+                "input identity mismatch at {}.{}",
+                public.port, public.slot
+            ));
+        }
+        let target = self.graph.verify_target(destination, expected.clone())?;
+        let name = module_input_slot_name(&public.port, &public.slot);
+        if let Some(existing) = self.graph.module.inputs.iter().find(|i| i.name == name) {
+            if existing.port != public.port
+                || existing.slot != public.slot
+                || existing.identity() != expected
+            {
+                return Err(format!("incompatible existing public input {name:?}"));
+            }
+            if !self.graph.public_input_ids.contains_key(&name) {
+                return Err(format!(
+                    "existing public input {name:?} has no declaration token"
+                ));
+            }
+            if existing.targets.contains(&target) {
+                return Err(format!("duplicate public input projection {name:?}"));
+            }
+        }
+        Ok(target)
+    }
+
+    fn check_projection_capacity(&self, additions: usize) -> Result<(), String> {
+        let total = self
+            .graph
+            .module
+            .inputs
+            .len()
+            .checked_add(additions)
+            .ok_or("public input limit exceeded")?;
+        if total > 0 {
+            u16::try_from(total - 1).map_err(|_| "public input limit exceeded")?;
+        }
+        Ok(())
+    }
+
+    fn commit_projection(&mut self, public: Address, target: ModuleInputTarget) -> PublicInput {
+        let name = module_input_slot_name(&public.port, &public.slot);
+        if let Some(existing) = self.graph.module.inputs.iter_mut().find(|i| i.name == name) {
+            existing.targets.push(target);
+        } else {
+            let id = u16::try_from(self.graph.module.inputs.len())
+                .expect("public input capacity checked before commit");
+            self.graph.module.input_slot_with_identity(
+                id,
+                public.port,
+                public.slot,
+                public.value.schema,
+                public.value.local_type,
+                vec![target],
+            );
+            self.graph.public_input_ids.insert(
+                name.clone(),
+                NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed),
+            );
+        }
+        let input = self
+            .graph
+            .module
+            .inputs
+            .iter()
+            .find(|i| i.name == name)
+            .expect("projection committed");
+        PublicInput {
+            scope: self.graph.module.scope,
+            declaration_id: self.graph.public_input_ids[&name],
+            id: input.id,
+            name,
+            schema: input.schema.clone(),
+            local_type: input.local_type,
+        }
     }
     /// Expose every public input leaf to the corresponding leaf of a child
     /// operation with the same typed interface. Unlike implicit forwarding,
@@ -985,6 +1078,11 @@ impl<I, M> Module<I, M> {
     /// For partial mappings, different field names, or intentional fan-out to
     /// selected leaves, use `expose` instead.
     pub fn expose_matching(&mut self, child: Inlets<I, M>) -> Result<(), String> {
+        if self.public.inlets.book.scope != self.graph.module.scope
+            || self.public.inlets.book.declaration_id != self.graph.definition_id
+        {
+            return Err("public selector belongs to another module".into());
+        }
         if child.book.scope != self.graph.module.scope {
             return Err("projection source belongs to another graph builder".into());
         }
@@ -1013,32 +1111,15 @@ impl<I, M> Module<I, M> {
                         public.port, public.slot
                     )
                 })?;
-            let expected = identity(&public.value.schema, public.value.local_type);
-            let actual = identity(&child_leaf.value.schema, child_leaf.value.local_type);
-            if actual != expected {
-                return Err(format!(
-                    "input identity mismatch at {}.{}",
-                    public.port, public.slot
-                ));
-            }
-            if self.graph.target_declaration_id(&child_leaf.target)?
-                != child.book.declaration_id
-            {
-                return Err("projection source belongs to a stale declaration".into());
-            }
-            let target = self.graph.verify_target(&child_leaf.target, expected.clone())?;
+            let target = self.preflight_projection(
+                public,
+                child.book.scope,
+                child.book.declaration_id,
+                &child_leaf.target,
+                &child_leaf.value,
+            )?;
             let name = module_input_slot_name(&public.port, &public.slot);
-            if let Some(existing) = self.graph.module.inputs.iter().find(|i| i.name == name) {
-                if existing.port != public.port
-                    || existing.slot != public.slot
-                    || existing.identity() != expected
-                {
-                    return Err(format!("incompatible existing public input {name:?}"));
-                }
-                if existing.targets.contains(&target) {
-                    return Err(format!("duplicate public input projection {name:?}"));
-                }
-            } else {
+            if !self.graph.module.inputs.iter().any(|i| i.name == name) {
                 additions += 1;
             }
             planned.push((public.clone(), target));
@@ -1046,36 +1127,10 @@ impl<I, M> Module<I, M> {
         if !available.is_empty() {
             return Err("child exports undeclared input leaves".into());
         }
-        let total = self
-            .graph
-            .module
-            .inputs
-            .len()
-            .checked_add(additions)
-            .ok_or("public input limit exceeded")?;
-        if total > 0 {
-            u16::try_from(total - 1).map_err(|_| "public input limit exceeded")?;
-        }
+        self.check_projection_capacity(additions)?;
 
         for (public, target) in planned {
-            let name = module_input_slot_name(&public.port, &public.slot);
-            if let Some(existing) = self.graph.module.inputs.iter_mut().find(|i| i.name == name) {
-                existing.targets.push(target);
-            } else {
-                let id = u16::try_from(self.graph.module.inputs.len())
-                    .expect("public input capacity checked before commit");
-                self.graph.module.input_slot_with_identity(
-                    id,
-                    public.port,
-                    public.slot,
-                    public.value.schema,
-                    public.value.local_type,
-                    vec![target],
-                );
-                self.graph
-                    .public_input_ids
-                    .insert(name, NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed));
-            }
+            self.commit_projection(public, target);
         }
         Ok(())
     }
@@ -1189,5 +1244,88 @@ impl GraphBuilder {
             marker: PhantomData,
             modes: PhantomData,
         })
+    }
+}
+
+#[cfg(all(test, feature = "derive"))]
+mod projection_tests {
+    use super::*;
+
+    #[derive(Clone, LocalPortLayout, InputFields)]
+    struct Pair {
+        left: i64,
+        right: i64,
+    }
+
+    #[test]
+    fn projection_capacity_allows_last_id_and_rejects_atomic_overflow() {
+        let mut module = Module::new(
+            "capacity",
+            InputInterface::single(Layout::<Pair>::fields()).unwrap(),
+        )
+        .unwrap();
+        let child = module
+            .node("child", |x: Pair| x.left + x.right)
+            .unwrap()
+            .input(Layout::fields())
+            .unwrap();
+        let padding = module.node("padding", |x: i64| x).unwrap();
+        module.expose_input("padding", padding.inlet()).unwrap();
+        // Synthetic private fixture tests capacity without quadratic registration.
+        let filler = module.graph.module.inputs[0].clone();
+        module
+            .graph
+            .module
+            .inputs
+            .resize(usize::from(u16::MAX), filler);
+        let tokens = module.graph.public_input_ids.clone();
+        assert!(module.expose_matching(child.operation().inlets()).is_err());
+        assert_eq!(module.graph.module.inputs.len(), usize::from(u16::MAX));
+        assert_eq!(module.graph.public_input_ids, tokens);
+        let last = module
+            .expose(
+                module.inlet().field(Pair::SLOT_LEFT),
+                child.inlet().field(Pair::SLOT_LEFT).target().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(last.id(), u16::MAX);
+        let before = module.graph.public_input_ids.clone();
+        assert!(
+            module
+                .expose(
+                    module.inlet().field(Pair::SLOT_RIGHT),
+                    child.inlet().field(Pair::SLOT_RIGHT).target().unwrap(),
+                )
+                .is_err()
+        );
+        assert_eq!(module.graph.public_input_ids, before);
+        assert_eq!(module.graph.module.inputs.len(), usize::from(u16::MAX) + 1);
+    }
+
+    #[test]
+    fn projection_rejects_inconsistent_existing_metadata_and_missing_token() {
+        for corrupt in 0..3 {
+            let mut module = Module::new(
+                "metadata",
+                InputInterface::single(Layout::<i64>::atomic()).unwrap(),
+            )
+            .unwrap();
+            let first = module.node("first", |x: i64| x).unwrap();
+            let second = module.node("second", |x: i64| x).unwrap();
+            module.expose(module.inlet(), first.inlet()).unwrap();
+            match corrupt {
+                0 => module.graph.module.inputs[0].port = "wrong".into(),
+                1 => module.graph.module.inputs[0].slot = "wrong".into(),
+                _ => {
+                    module.graph.public_input_ids.remove("run");
+                }
+            }
+            let before = format!("{:?}", module.graph.module.inputs);
+            let tokens = module.graph.public_input_ids.clone();
+            assert!(module.expose(module.inlet(), second.inlet()).is_err());
+            assert!(module.expose_matching(second.operation().inlets()).is_err());
+            assert_eq!(before, format!("{:?}", module.graph.module.inputs));
+            assert_eq!(tokens, module.graph.public_input_ids);
+        }
     }
 }
