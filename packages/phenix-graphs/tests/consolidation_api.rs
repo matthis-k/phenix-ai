@@ -326,7 +326,7 @@ fn finite_cycle_repeated_activations() {
 fn documented_rust_excerpts_are_compiled_test_source() {
     let normalize = |text: &str| text.lines().map(str::trim).collect::<Vec<_>>().join("\n");
     let source = normalize(include_str!("consolidation_api.rs"));
-    let doc = include_str!("../../../docs/graph-consolidation-api.md");
+    let doc = include_str!("../API-EXAMPLES.md");
     let mut count = 0;
     for block in doc.split("```rust\n").skip(1) {
         let excerpt = block.split("```").next().unwrap().trim();

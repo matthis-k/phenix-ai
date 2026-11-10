@@ -115,6 +115,13 @@ and incremental command timings are explicitly diagnostic only.
 
 ## Delivery Evidence
 
+The first committed-head Nix run caught the API excerpt test importing a root
+document excluded by package-scoped source filtering. The canonical examples now
+live in `packages/phenix-graphs/API-EXAMPLES.md`, with a root documentation link.
+The drift test remains enabled and reads the packaged document. This is a build
+input correction, not an architectural or acceptance change. All exact-head gates
+must be rerun after the correction; the earlier Nix failures are not passes.
+
 The final commit must be tested without further source changes using all requested
 commands through `nix develop --command` where needed. New files must be tracked
 before Nix evaluation. The draft PR is based on
