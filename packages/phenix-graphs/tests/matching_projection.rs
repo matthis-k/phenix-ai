@@ -127,6 +127,15 @@ fn matching_projection_rejects_foreign_and_stale_interfaces() {
         .unwrap();
     assert!(module.expose_matching(elsewhere.operation().inlets()).is_err());
 
+    // Discovery is type-selectable: a caller may request the wrong owner type.
+    // The graph must still compare the entire actual leaf frontier.
+    module.node("impostor", |x: i64| x).unwrap();
+    let mismatched = module
+        .discover("impostor")
+        .unwrap()
+        .inlets::<SinglePort<Pair, LocalFlatten<Pair>>, LocalValue>();
+    assert!(module.expose_matching(mismatched).is_err());
+
     let stale = child.operation().inlets();
     let child = child.input(Layout::fields()).unwrap();
     assert!(module.expose_matching(stale).is_err());
