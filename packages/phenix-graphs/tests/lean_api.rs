@@ -1,10 +1,12 @@
 //! New ergonomic facade and backend boundary tests. Unlike the original tests,
 //! these use the single GraphBuilder declaration API.
+#[cfg(feature = "derive")]
+use phenix_graph::Layout;
 use phenix_graph::Output;
 use phenix_graph::ReportRetention;
 use phenix_graph::{
-    Deployment, EdgeAdapter, Emission, Executor, GraphBuilder, InvocationCtx, Layout, NodeAction,
-    Store, Value,
+    Deployment, EdgeAdapter, Emission, Executor, GraphBuilder, InvocationCtx, NodeAction, Store,
+    Value,
 };
 use std::sync::{
     Arc,

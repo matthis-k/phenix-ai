@@ -628,49 +628,50 @@ fn derive_local_port_layout(input: DeriveInput) -> syn::Result<Tokens> {
     })
 }
 
+fn derive_input_fields(input: DeriveInput) -> syn::Result<Tokens> {
+    let ident = &input.ident;
+    let Data::Struct(data) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            ident,
+            "InputFields requires a struct",
+        ));
+    };
+    let Fields::Named(fields) = &data.fields else {
+        return Err(syn::Error::new_spanned(
+            ident,
+            "InputFields requires named fields",
+        ));
+    };
+    let mut seen_keys = BTreeSet::new();
+    let mut keys = Vec::new();
+    for field in &fields.named {
+        let field_name = field.ident.as_ref().expect("named field");
+        let path_name = field_name.unraw().to_string();
+        let key = format!("SLOT_{}", path_name.to_uppercase());
+        if !seen_keys.insert(key.clone()) {
+            return Err(syn::Error::new_spanned(
+                field_name,
+                format!("generated slot constant {key} collides with another field"),
+            ));
+        }
+        let upper = syn::Ident::new(&key, field_name.span());
+        let ty = &field.ty;
+        keys.push(quote! {
+            pub const #upper: ::phenix_graph::SlotField<Self, #ty> =
+                ::phenix_graph::SlotField::new(#path_name);
+        });
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics #ident #ty_generics #where_clause { #(#keys)* }
+    })
+}
+
 /// Generate typed raw field descriptors independently of any layout or codec.
 /// Supports named structs, including generic structs, without adding trait bounds.
 #[proc_macro_derive(InputFields)]
 pub fn input_fields(input: TokenStream) -> TokenStream {
-    fn derive(input: DeriveInput) -> syn::Result<Tokens> {
-        let ident = &input.ident;
-        let Data::Struct(data) = &input.data else {
-            return Err(syn::Error::new_spanned(
-                ident,
-                "InputFields requires a struct",
-            ));
-        };
-        let Fields::Named(fields) = &data.fields else {
-            return Err(syn::Error::new_spanned(
-                ident,
-                "InputFields requires named fields",
-            ));
-        };
-        let mut seen_keys = BTreeSet::new();
-        let mut keys = Vec::new();
-        for field in &fields.named {
-            let field_name = field.ident.as_ref().expect("named field");
-            let path_name = field_name.unraw().to_string();
-            let key = format!("SLOT_{}", path_name.to_uppercase());
-            if !seen_keys.insert(key.clone()) {
-                return Err(syn::Error::new_spanned(
-                    field_name,
-                    format!("generated slot constant {key} collides with another field"),
-                ));
-            }
-            let upper = syn::Ident::new(&key, field_name.span());
-            let ty = &field.ty;
-            keys.push(quote! {
-                pub const #upper: ::phenix_graph::SlotField<Self, #ty> =
-                    ::phenix_graph::SlotField::new(#path_name);
-            });
-        }
-        let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-        Ok(quote! {
-            impl #impl_generics #ident #ty_generics #where_clause { #(#keys)* }
-        })
-    }
-    derive(parse_macro_input!(input as DeriveInput))
+    derive_input_fields(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -939,11 +940,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_layout_reports_generated_key_collisions() {
+    fn field_descriptors_report_generated_key_collisions() {
         let input = syn::parse_quote! {
             struct Collision { foo: i64, FOO: i64 }
         };
-        let error = derive_local_port_layout(input).unwrap_err().to_string();
+        let error = derive_input_fields(input).unwrap_err().to_string();
         assert_eq!(
             error,
             "generated slot constant SLOT_FOO collides with another field"
