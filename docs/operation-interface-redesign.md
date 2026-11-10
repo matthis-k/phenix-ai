@@ -10,7 +10,10 @@ modes and Store-derived publication provenance. The reference stack is PR #1255
 The exact delivered SHA and remote check URLs belong in the delivery report and
 draft PR; the baseline SHA is not implementation verification evidence.
 
-Acceptance remains **incomplete until final committed-head verification**. The
+Local committed-head verification has passed on implementation commit
+`7a8c2a3603e2c4e5b11a1ed6b6745c577fe6cb95`, following the implementation commit
+`5c7ce50724a66f16f10a21a9ac2fe0cb6c9ce559`. Remote exact-head CI and draft PR
+publication are recorded separately in the delivery report. The
 earlier report's missing typed interface, single-output enforcement, API removal
 and cross-kind substitution are implemented in source, not outstanding gaps.
 Review findings have been addressed through the iterations recorded below.
@@ -159,6 +162,7 @@ invariants, not new runtime state.
 | `InputInterface<I,M>` | Graph independent public port/layout metadata | Slot validation plus checked Module construction; no runtime container |
 | `PublicInlets<I,M>`, `PublicView<T,M>` | Module-owned public selectors | Not connection endpoints; projection checks owner/destination |
 | `SourceStart` | Graph root-admission handle | Scope/revision-checked start of an operation with no public ports; not a value endpoint |
+| `InputFields` derive | Optional Graph authoring macro | Single descriptor owner for local/encoded layouts; generic fields need no runtime/codec wrapper |
 | `Module<I,M>` | Authoring owner of builder and interface | Checked constructor, complete finish; Deref permits root-path overlap below |
 | `TypedModulePackage<I,O,IM,OM>` | Reusable compiler package with typed boundary | Instantiate and existing sealed Replacement; no runtime wrapper |
 | `DiscoveredOperation` | Checked erased boundary discovery | Caller chooses generic owner/mode; actual identity checked at leaves/output |
@@ -262,11 +266,15 @@ may quote old APIs only as clearly historical material.
 | `local_output` | Singular output, LocalValue | 0 | 0 | Rust tests/probes/fixtures/current docs | Removed |
 | `output_named` | Singular output | 0 | 0 | Rust source/tests/current docs | Removed |
 | `expose_input_slot` | Module projections / root field exposure | 0 | 0 | Rust tests/examples/fixtures/current docs | Removed |
+| `AtomicInput` | Actual LocalAtomic/Atomic layouts | 0 | 0 | Built-in/custom definitions, probes and docs | No redundant atomic marker or alias |
 | `NamedInput`, `NamedOutput` | Existing typed endpoints | 0 | 0 | Raw/manual tests | Duplicate structs removed |
 | NamedNodeHandle endpoint methods | Operation discovery | 0 endpoint methods | 0 endpoint calls | Manual/registration tests | Handle remains registration identity only (5 total symbol refs) |
 | `register_fn`, `register_flattened` | GraphBuilder node / raw templates | 0 | 0 | Entire searched Rust surface | Inference helpers removed |
 | `connect_decl` | Existing connection APIs | 0 | 0 | Entire searched Rust surface | No parallel helper |
 | `export_input`, `export_input_slot`, `export_output` | Projections / root exposure / explicit raw declarations | 0 | 0 | Entire searched Rust surface | No legacy Rust examples |
+| NodeHandle direct field/slot accessor families | inlet/port views then checked target | 0 obsolete methods | 0 obsolete calls | Local/encoded layout and ownership tests | No mode-specific second selector family |
+| ModuleHandle and bound-unit direct slot/field families | Shared operation projection | 0 obsolete methods | 0 obsolete calls | Nested, Kernel, portable and revision tests | Bound views revalidate authoritative contract |
+| ModulePackage plural outputs / NodeRef output_count | Singular compiler descriptor | 0 | 0 | Inspection, compiler and derived tests | No collection-shaped per-operation output API |
 | `ModuleInput` | Retained raw compiler metadata | 1 | 9 total refs | Compiler/manual tests retained | Physical record, not canonical interface |
 | `ModuleOutput` | Retained singular source metadata | 1 | 8 total refs | Compiler/manual tests retained | Optional only for raw container |
 | `ModuleInputTarget` | Retained raw target address | 1 | 200 total refs | Compiler/manual/substitution tests | Physical lowering representation |
@@ -287,7 +295,7 @@ after ongoing implementation changes.
 | Rust ownership mistaken for leaf/erased-layout proof | Explicit checked target; direct-view/owner compile-fail cases, dynamic limits documented |
 | Constructor/cardinality/mode failures hidden | Module::new returns Result; admission and missing-projection tests |
 | Replacement claims/origin/requests/unrelated handles | Candidate compile, explicit claims, revocation and substitution/patch regressions |
-| Workspace portable-host schema error assertion wording mismatch | Main reports assertion fixed and host tests subsequently passed; full workspace rerun pending |
+| Workspace portable-host schema error assertion wording mismatch | Distinct schema/mode errors retained; full workspace and cross-crate host tests pass |
 | Duplicate endpoint/helper paths | Removed Rust refs measured zero; raw compiler/root exposure paths explicitly flagged |
 | Descriptor split / abstraction economy | InputFields owns descriptors once; layouts no longer generate duplicate keys |
 | Atomic/cardinality panic paths | Atomic identity and named frontiers checked before handles; incomplete Module construction returns an error |
@@ -297,32 +305,59 @@ after ongoing implementation changes.
 | Broad replacement footprints | Exact incident-edge claims and constrained requirement lifting; disjoint replacement tests |
 | Premature unrelated requirement checks | Filtered validation clone; committed final obligations remain intact |
 
-Earlier provisional scores (authoring 6/10 to 6.5/10, architecture 7.5/10) rated a
-smaller partial slice, not this implementation. Debt-cleanup scores concern its
-earlier scope. A later independent reviewer and current numeric ratings are
-forthcoming; no target 9.5/10 or acceptance score is claimed.
+The final independent review found no new actionable issue in the source-routing,
+manifest, stale-start, cohort or replacement-obligation fixes. Its source-based
+ratings were **8.8/10 API and 8.9/10 architecture**, versus its baseline judgments
+of 7.5/10 and 8.1/10. An earlier reviewer used a stricter baseline scale of 5.5/10
+and 7/10. These subjective scores are not interchangeable measurements and do not
+claim the requested 9/10 target was reached. Remaining generic/marker complexity,
+raw compiler access and deliberate dynamic selection checks are the stated costs.
 
 ## Verification Gates
 
-This documentation pass inspected source and ran symbol/whitespace audits, not
-Cargo tests. Handoff reports Graph tests and doctests passed. A workspace run
-failed in portable-host schema-error wording; main fixed the assertion and reports
-the focused host suite passed. This is not a subsequent complete workspace pass.
+All new source and test files were tracked before committed-head flake checks.
+The following commands passed on `7a8c2a3603e2c4e5b11a1ed6b6745c577fe6cb95`.
+Cargo commands used `nix develop --command` for the repository toolchain.
 
-| Gate | Current Evidence | Final Commit Evidence |
-|---|---|---|
-| Baseline/branch | Git inspected: 5469c55b, impl/operation-interface-20261109; dirty work preserved | Final implementation SHA pending |
-| Typed/projection/substitution tests | Assertions inspected; Graph pass reported | Exact command/output pending |
-| Graph doctests / compile-fail | Pass reported; owner/view negatives inspected | Exact final configuration pending |
-| Workspace default tests | Host failure then focused host pass reported | Full rerun pending |
-| Workspace and isolated Graph no-default | Historical runs do not certify redesign; feature unification is not isolated proof | Pending |
-| Formatting / strict Clippy / examples / Nix | No new run by this documentation pass | Pending |
-| Obsolete Rust API audit | Zero references as measured above | Final recount pending |
-| Independent review / ratings | Iteration findings above; later reviewer forthcoming | Pending |
-| Final-head CI / benchmarks / long-run evidence | No current final commit or final-head artifact supplied | Pending; no performance claim |
+| Command | Result |
+|---|---|
+| `cargo fmt --all --check` | Passed |
+| `cargo test --workspace --locked` | Passed, including portable fixtures and doctests |
+| `cargo test --workspace --no-default-features --locked` | Passed; workspace dependency feature unification is not isolated no-derive proof |
+| `cargo test -p phenix-graph --no-default-features --locked` | Passed separately without derives or unused-code warnings |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `git diff --check` | Passed |
+| `nix flake check --keep-going` | All checks passed, including new tracked tests |
+| `cargo run --locked -p phenix-graph --example grouped_contract` | Passed |
+| `cargo run --locked -p phenix-kernel --example basic` | Passed |
+| `cargo run --locked -p phenix-storage-graph --example derived` | Passed |
+| `cargo bench -p phenix-graph --bench layout --bench ownership --locked` | Passed; diagnostic measurements only |
 
-Main must fill exact final source, commands, outputs and review disposition before
-acceptance. Residual risks are the raw compiler public path, dual exposure APIs,
-custom erased-layout trust, dynamic leaf/frontier checks and pending common
-descriptor derive. No new scheduler, native ABI guarantee, sandbox, action-effect
-rollback or universal behavioral substitution is claimed.
+The first Nix attempt exposed a stale collision test under the wrong derive owner;
+it was migrated to `InputFields` without dropping the negative assertion. Parallel
+Cargo verification attempts timed out on build-lock contention and are not counted
+as passes. Sequential reruns completed successfully. Existing ignored manual
+benchmarks and the ignored Store-Graph example remain ignored; no tests were
+disabled to obtain these results.
+
+The release ownership benchmark measured 1,000 TerminalOutputs runs in 203.65 ms
+with zero payload clones, and 1,000 RetainPayloads runs in 212.12 ms with 16,000
+payload clones. Layout runs measured 20,000 fires at 139.33 ms atomic, 199.46 ms
+flattened, 117.87 ms raw action and 145.97 ms multi-port on this machine. There is
+no controlled before/after performance claim.
+
+The local complete workspace log is
+`/home/matthisk/.local/share/opencode/tool-output/tool_1c31ef606001iNE3Y3W0sW8uvc`;
+workspace no-default is `tool_1c3216084001BiIfMcC7PDDFiB` in the same directory;
+isolated Graph no-default is `tool_1c32342de001y4f1dS78xt2IWq`. These are session
+artifacts, not remote attestations. Final delivered-head checks and remote CI
+URLs are reported with the draft PR.
+
+Residual boundaries are explicit: raw compiler construction is not a typed-only
+surface; custom erased layouts do not statically prove reconstruction behavior;
+structural leaves and dynamically replaced handles need Graph validation;
+cross-kind preflight still requires structurally valid existing topology and
+claims. Cancellation is cooperative and action side effects do not roll back.
+Manifests describe topology, not captured closure behavior. None of these imply a
+new scheduler, a native ABI guarantee, a sandbox, or universal behavioral
+equivalence between structurally compatible implementations.
