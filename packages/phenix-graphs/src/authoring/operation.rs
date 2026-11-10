@@ -973,6 +973,113 @@ impl<I, M> Module<I, M> {
         self.graph
             .expose_input_typed(public.view.port, slot.into(), to)
     }
+    /// Expose every public input leaf to the corresponding leaf of a child
+    /// operation with the same typed interface. Unlike implicit forwarding,
+    /// this is an explicit, authoring-only projection request.
+    ///
+    /// All names, type identities, declaration tokens, and existing targets
+    /// are checked before any projection is committed. The entire operation
+    /// fails atomically if a child has a different frontier, was replaced, or
+    /// has already been projected to the same destination.
+    ///
+    /// For partial mappings, different field names, or intentional fan-out to
+    /// selected leaves, use `expose` instead.
+    pub fn expose_matching(&mut self, child: Inlets<I, M>) -> Result<(), String> {
+        if child.book.scope != self.graph.module.scope {
+            return Err("projection source belongs to another graph builder".into());
+        }
+        let mut available = BTreeMap::new();
+        for leaf in child.book.inputs.iter() {
+            let key = (leaf.port.as_str(), leaf.slot.as_str());
+            if available.insert(key, leaf).is_some() {
+                return Err("child input interface has duplicate leaves".into());
+            }
+        }
+        if available.len() != self.public.inlets.book.inputs.len() {
+            return Err("child input frontier does not match the module interface".into());
+        }
+
+        // Validate the complete projection before modifying physical exports.
+        // Checking every declaration token here also prevents partial changes
+        // when one of several child leaves was replaced after discovery.
+        let mut planned = Vec::with_capacity(available.len());
+        let mut additions = 0usize;
+        for public in self.public.inlets.book.inputs.iter() {
+            let child_leaf = available
+                .remove(&(public.port.as_str(), public.slot.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "child is missing public input {}.{}",
+                        public.port, public.slot
+                    )
+                })?;
+            let expected = identity(&public.value.schema, public.value.local_type);
+            let actual = identity(&child_leaf.value.schema, child_leaf.value.local_type);
+            if actual != expected {
+                return Err(format!(
+                    "input identity mismatch at {}.{}",
+                    public.port, public.slot
+                ));
+            }
+            if self.graph.target_declaration_id(&child_leaf.target)?
+                != child.book.declaration_id
+            {
+                return Err("projection source belongs to a stale declaration".into());
+            }
+            let target = self.graph.verify_target(&child_leaf.target, expected.clone())?;
+            let name = module_input_slot_name(&public.port, &public.slot);
+            if let Some(existing) = self.graph.module.inputs.iter().find(|i| i.name == name) {
+                if existing.port != public.port
+                    || existing.slot != public.slot
+                    || existing.identity() != expected
+                {
+                    return Err(format!("incompatible existing public input {name:?}"));
+                }
+                if existing.targets.contains(&target) {
+                    return Err(format!("duplicate public input projection {name:?}"));
+                }
+            } else {
+                additions += 1;
+            }
+            planned.push((public.clone(), target));
+        }
+        if !available.is_empty() {
+            return Err("child exports undeclared input leaves".into());
+        }
+        let total = self
+            .graph
+            .module
+            .inputs
+            .len()
+            .checked_add(additions)
+            .ok_or("public input limit exceeded")?;
+        if total > 0 {
+            u16::try_from(total - 1).map_err(|_| "public input limit exceeded")?;
+        }
+
+        for (public, target) in planned {
+            let name = module_input_slot_name(&public.port, &public.slot);
+            if let Some(existing) = self.graph.module.inputs.iter_mut().find(|i| i.name == name) {
+                existing.targets.push(target);
+            } else {
+                let id = u16::try_from(self.graph.module.inputs.len())
+                    .expect("public input capacity checked before commit");
+                self.graph.module.input_slot_with_identity(
+                    id,
+                    public.port,
+                    public.slot,
+                    public.value.schema,
+                    public.value.local_type,
+                    vec![target],
+                );
+                self.graph
+                    .public_input_ids
+                    .insert(name, NEXT_DECLARATION_SCOPE.fetch_add(1, Ordering::Relaxed));
+            }
+        }
+        Ok(())
+    }
+
     pub fn finish<O: Send + Sync + 'static, OM>(
         mut self,
         output: OutputRef<O, OM>,
