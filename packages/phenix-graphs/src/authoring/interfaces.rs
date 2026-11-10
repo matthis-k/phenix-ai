@@ -57,7 +57,7 @@ pub(super) fn validate_node_replacement(
     old: &NodeTemplate,
     new: &NodeTemplate,
 ) -> Result<(), String> {
-    let shape = InterfaceShape::node_ports(&new.ports, &new.outputs).map_err(|e| e.to_string())?;
+    let shape = InterfaceShape::node_ports(&new.ports, &new.output).map_err(|e| e.to_string())?;
     for claim in &old.claims {
         let provided = new
             .claims
@@ -78,9 +78,9 @@ pub(super) fn validate_node_replacement(
 }
 pub(super) fn validate_module_replacement(old: &ModuleDef, new: &ModuleDef) -> Result<(), String> {
     let old_shape =
-        InterfaceShape::module_ports(&old.inputs, &old.outputs).map_err(|e| e.to_string())?;
+        InterfaceShape::module_ports(&old.inputs, &old.output).map_err(|e| e.to_string())?;
     let new_shape =
-        InterfaceShape::module_ports(&new.inputs, &new.outputs).map_err(|e| e.to_string())?;
+        InterfaceShape::module_ports(&new.inputs, &new.output).map_err(|e| e.to_string())?;
     if !old_shape.same_shape(&new_shape) {
         return Err("replacement changes complete public module shape".into());
     }
@@ -113,6 +113,7 @@ pub(super) fn validate_module_replacement(old: &ModuleDef, new: &ModuleDef) -> R
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct AuthoringUnit<'a> {
     graph: &'a GraphBuilder,
     path: String,
@@ -133,126 +134,31 @@ impl<'g> AuthoringUnit<'g> {
 
 /// Borrowed authoring access restricted to the endpoints promised by a contract.
 /// Handles own their declaration tokens and can be connected after this borrow ends.
+#[derive(Clone)]
 pub struct BoundAuthoringUnit<'g> {
     unit: AuthoringUnit<'g>,
     contract: GraphContract,
 }
-impl BoundAuthoringUnit<'_> {
-    /// Project a promised wire field using the same selector as node/module authoring.
-    pub fn wire_field<Owner, T: ContractValue>(
-        &self,
-        port: &str,
-        key: impl FieldSelector<Owner, T>,
-    ) -> Result<Input<T>, InterfaceError> {
-        self.wire_input(port, key.path())
+impl<'g> BoundAuthoringUnit<'g> {
+    /// Project the common operation API, restricted to promised contract leaves.
+    pub fn operation(&self) -> Result<BoundOperation<'g>, InterfaceError> {
+        self.operation_snapshot()?;
+        Ok(BoundOperation::new(self.clone()))
     }
-
-    /// Project a promised local field without exposing implementation-only endpoints.
-    pub fn local_field<Owner, T: Send + Sync + 'static>(
-        &self,
-        port: &str,
-        key: impl FieldSelector<Owner, T>,
-    ) -> Result<Input<T>, InterfaceError> {
-        self.local_input(port, key.path())
-    }
-
-    fn check_endpoint(
-        &self,
-        port: Option<&str>,
-        name: &str,
-        requested: TypeIdentity,
-    ) -> Result<(), InterfaceError> {
-        // Pending node layouts can change while this binding still borrows the graph.
+    pub(super) fn operation_snapshot(&self) -> Result<DiscoveredOperation, InterfaceError> {
+        self.unit.check_interface(&self.contract, true)?;
         self.unit
-            .check_interface(&self.contract, true)
-            .map_err(|e| {
-                e.context(
-                    InterfacePhase::Authoring,
-                    &self.unit.path,
-                    Some(self.contract.id()),
-                )
-            })?;
-        let required = self.contract.required();
-        let promised = match port {
-            Some(port) => required
-                .inputs()
-                .find(|(p, s, _)| *p == port && *s == name)
-                .map(|(_, _, v)| v),
-            None => required.outputs().find(|(n, _)| *n == name).map(|(_, v)| v),
-        };
-        let actual = promised.map(interface::value_identity);
-        if actual.as_ref() == Some(&requested) {
-            return Ok(());
-        }
-        let mut error = self.lookup_error(if actual.is_some() {
-            "requested type does not match contract endpoint".into()
-        } else {
-            "endpoint is not promised by contract".into()
-        });
-        error.endpoint = Some(
-            match port {
-                Some(port) => format!("input {port}.{name}"),
-                None => format!("output {name}"),
-            }
-            .into(),
-        );
-        error.expected = Some(requested);
-        error.actual = actual;
-        Err(error)
+            .graph
+            .discover(&self.unit.path)
+            .map(|operation| operation.restrict(self.contract.required()))
+            .map_err(|error| self.lookup_error(error))
     }
-
-    fn lookup_error(&self, message: String) -> InterfaceError {
+    pub(super) fn lookup_error(&self, message: String) -> InterfaceError {
         InterfaceError::new(message).context(
             InterfacePhase::Authoring,
             &self.unit.path,
             Some(self.contract.id()),
         )
-    }
-
-    pub fn wire_input<T: ContractValue>(
-        &self,
-        port: &str,
-        slot: &str,
-    ) -> Result<Input<T>, InterfaceError> {
-        self.check_endpoint(Some(port), slot, TypeIdentity::Wire(T::wire_schema()))?;
-        self.unit
-            .graph
-            .wire_input(&self.unit.path, port, slot)
-            .map_err(|e| self.lookup_error(e))
-    }
-
-    pub fn wire_output<T: ContractValue>(
-        &self,
-        name: &str,
-    ) -> Result<OutputRef<T>, InterfaceError> {
-        self.check_endpoint(None, name, TypeIdentity::Wire(T::wire_schema()))?;
-        self.unit
-            .graph
-            .wire_output(&self.unit.path, name)
-            .map_err(|e| self.lookup_error(e))
-    }
-
-    pub fn local_input<T: Send + Sync + 'static>(
-        &self,
-        port: &str,
-        slot: &str,
-    ) -> Result<Input<T>, InterfaceError> {
-        self.check_endpoint(Some(port), slot, TypeIdentity::Local(TypeId::of::<T>()))?;
-        self.unit
-            .graph
-            .local_input(&self.unit.path, port, slot)
-            .map_err(|e| self.lookup_error(e))
-    }
-
-    pub fn local_output<T: Send + Sync + 'static>(
-        &self,
-        name: &str,
-    ) -> Result<OutputRef<T>, InterfaceError> {
-        self.check_endpoint(None, name, TypeIdentity::Local(TypeId::of::<T>()))?;
-        self.unit
-            .graph
-            .local_output(&self.unit.path, name)
-            .map_err(|e| self.lookup_error(e))
     }
 }
 impl sealed::Sealed for AuthoringUnit<'_> {}
@@ -397,11 +303,11 @@ impl GraphBuilder {
                 instances: self.module.instances.clone(),
                 edges: self.module.edges.clone(),
                 inputs: self.module.inputs.clone(),
-                outputs: self.module.outputs.clone(),
+                output: self.module.output.clone(),
             };
             self.validate_inspected_boundary(root)?;
             return inspect(
-                InterfaceShape::module_ports(&self.module.inputs, &self.module.outputs)?,
+                InterfaceShape::module_ports(&self.module.inputs, &self.module.output)?,
                 &self.module.claims,
                 &self.module.id,
                 &[],
@@ -426,7 +332,7 @@ impl GraphBuilder {
                     node
                 };
                 return inspect(
-                    InterfaceShape::node_ports(&node.ports, &node.outputs)?,
+                    InterfaceShape::node_ports(&node.ports, &node.output)?,
                     &node.claims,
                     id,
                     &instances,
@@ -448,7 +354,7 @@ impl GraphBuilder {
         let def = def.ok_or_else(|| InterfaceError::new("unknown unit path"))?;
         self.validate_inspected_boundary(def.clone())?;
         inspect(
-            InterfaceShape::module_ports(&def.inputs, &def.outputs)?,
+            InterfaceShape::module_ports(&def.inputs, &def.output)?,
             &def.claims,
             &def.id,
             &instances,

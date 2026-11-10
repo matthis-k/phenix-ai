@@ -124,7 +124,7 @@ fn relay<T: ContractValue>(id: u16) -> NodeTemplate {
             .named("run")
             .args::<T, _>(|values| values.get("value")),
         ],
-        vec![OutputSlot::typed::<T>(0).named("value")],
+        OutputSlot::typed::<T>(0).named("value"),
         |mut ctx: InvocationCtx| Ok(vec![emit(0, ctx.take_prepared::<T>()?)]),
     )
 }
@@ -137,9 +137,18 @@ fn pair<T: ContractValue, U: ContractValue>() -> GraphBuilder {
 }
 
 fn connect<T: ContractValue, U: ContractValue>(graph: &mut GraphBuilder) -> Result<(), String> {
-    let source = graph.wire_output::<T>("source", "value")?;
-    let sink = graph.wire_input::<U>("sink", "run", "value")?;
-    graph.connect_wire(source, sink).map(|_| ())
+    let source = graph
+        .discover("source")
+        .unwrap()
+        .output::<T, phenix_graph::EncodedValue>()?;
+    let sink = graph
+        .discover("sink")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), U>::new("run"))
+        .field(phenix_graph::SlotField::<U, U>::new("value"))
+        .target()?;
+    graph.connect(source, sink).map(|_| ())
 }
 
 fn engine(mut graph: GraphBuilder) -> phenix_graph::Engine {
@@ -160,11 +169,20 @@ fn unrelated_manual_types_execute_and_roundtrip_vectors() {
     connect::<Sender, Receiver<0>>(&mut graph).unwrap();
     // Traverse the boundary in both directions, using each receiver's decoder.
     graph.add("return", relay::<Sender>(3)).unwrap();
-    let from = graph.wire_output::<Receiver<0>>("sink", "value").unwrap();
-    let to = graph
-        .wire_input::<Sender>("return", "run", "value")
+    let from = graph
+        .discover("sink")
+        .unwrap()
+        .output::<Receiver<0>, phenix_graph::EncodedValue>()
         .unwrap();
-    graph.connect_wire(from, to).unwrap();
+    let to = graph
+        .discover("return")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), Sender>::new("run"))
+        .field(phenix_graph::SlotField::<Sender, Sender>::new("value"))
+        .target()
+        .unwrap();
+    graph.connect(from, to).unwrap();
     let engine = engine(graph);
     for number in [i64::MIN, -1, 0, 1, 42, i64::MAX] {
         let bytes = number.to_le_bytes().to_vec();
@@ -197,7 +215,7 @@ fn malformed_receiver_decode_is_a_typed_atomic_wave_failure() {
                     )
                     .named("run"),
                 ],
-                vec![OutputSlot::typed::<Sender>(0).named("value")],
+                OutputSlot::typed::<Sender>(0).named("value"),
                 |ctx: InvocationCtx| Ok(vec![emit(0, EncodedLength(ctx.arg::<i64>(0)? as usize))]),
             ),
         )
@@ -294,50 +312,21 @@ fn overridden_wire_schema_must_agree_with_descriptor_at_both_ends() {
 }
 
 #[test]
-fn local_contract_values_are_not_wire_endpoints() {
-    for (local_source, local_sink) in [(true, false), (false, true), (true, true)] {
-        let mut graph = GraphBuilder::new("local");
-        if local_source {
-            graph
-                .add("source", NodeTemplate::local_function(|x: Sender| x))
-                .unwrap();
-        } else {
-            graph.add("source", relay::<Sender>(1)).unwrap();
-        }
-        if local_sink {
-            graph
-                .add("sink", NodeTemplate::local_function(|x: Receiver<0>| x))
-                .unwrap();
-        } else {
-            graph.add("sink", relay::<Receiver<0>>(2)).unwrap();
-        }
-        let source = if local_source {
-            graph.local_output::<Sender>("source", "value")
-        } else {
-            graph.wire_output::<Sender>("source", "value")
-        }
-        .unwrap();
-        let sink = if local_sink {
-            graph.local_input::<Receiver<0>>("sink", "run", "value")
-        } else {
-            graph.wire_input::<Receiver<0>>("sink", "run", "value")
-        }
-        .unwrap();
-        assert!(
-            graph
-                .connect_wire(source, sink)
-                .err()
-                .unwrap()
-                .contains("canonical wire endpoints")
-        );
-    }
-}
-
-#[test]
 fn ordinary_same_type_connect_still_executes() {
     let mut graph = pair::<Sender, Sender>();
-    let source = graph.wire_output::<Sender>("source", "value").unwrap();
-    let sink = graph.wire_input::<Sender>("sink", "run", "value").unwrap();
+    let source = graph
+        .discover("source")
+        .unwrap()
+        .output::<Sender, phenix_graph::EncodedValue>()
+        .unwrap();
+    let sink = graph
+        .discover("sink")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), Sender>::new("run"))
+        .field(phenix_graph::SlotField::<Sender, Sender>::new("value"))
+        .target()
+        .unwrap();
     graph.connect(source, sink).unwrap();
     let report = engine(graph)
         .fire("run", vec![Value::of(Sender(123))])
@@ -353,31 +342,74 @@ fn ordinary_same_type_connect_still_executes() {
 }
 
 #[test]
-fn ordinary_same_type_local_to_wire_is_rejected_at_authoring_time() {
-    let mut graph = GraphBuilder::new("mixed");
-    let source = graph.node("source", |x: Sender| x).unwrap().output();
-    graph.add("sink", relay::<Sender>(2)).unwrap();
-    let sink = graph.wire_input::<Sender>("sink", "run", "value").unwrap();
-    // The Rust types agree, so encoding identity must be checked dynamically.
-    assert!(graph.connect(source, sink).is_err());
+fn encoded_connections_preserve_duplicate_scope_and_disconnect_checks() {
+    let mut graph = pair::<Sender, Receiver<0>>();
+    let source = graph
+        .discover("source")
+        .unwrap()
+        .output::<Sender, phenix_graph::EncodedValue>()
+        .unwrap();
+    let sink = graph
+        .discover("sink")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), Receiver<0>>::new("run"))
+        .field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new(
+            "value",
+        ))
+        .target()
+        .unwrap();
+    graph.connect(source.clone(), sink.clone()).unwrap();
+    assert_eq!(
+        graph.connect(source.clone(), sink.clone()).err().unwrap(),
+        "duplicate connection"
+    );
+    let mut foreign = pair::<Sender, Receiver<0>>();
+    assert!(foreign.connect(source.clone(), sink.clone()).is_err());
+    assert!(foreign.disconnect(source.clone(), sink.clone()).is_err());
+    graph.disconnect(source.clone(), sink.clone()).unwrap();
+    assert_eq!(
+        graph
+            .disconnect(source.clone(), sink.clone())
+            .err()
+            .unwrap(),
+        "connection not found"
+    );
+    graph.connect(source, sink).unwrap();
+    let report = engine(graph)
+        .fire("run", vec![Value::of(Sender(7))])
+        .unwrap();
+    assert!(report.success(), "{:?}", report.error_messages());
 }
 
 #[test]
 fn stale_and_divergent_clone_endpoints_are_rejected() {
     for replace_source in [false, true] {
         let original = pair::<Sender, Receiver<0>>();
-        let source = original.wire_output::<Sender>("source", "value").unwrap();
+        let source = original
+            .discover("source")
+            .unwrap()
+            .output::<Sender, phenix_graph::EncodedValue>()
+            .unwrap();
         let sink = original
-            .wire_input::<Receiver<0>>("sink", "run", "value")
+            .discover("sink")
+            .unwrap()
+            .inlets::<(), phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<(), Receiver<0>>::new("run"))
+            .field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new(
+                "value",
+            ))
+            .target()
             .unwrap();
         let mut branch = original.clone();
-        branch.connect_wire(source.clone(), sink.clone()).unwrap();
+        branch.connect(source.clone(), sink.clone()).unwrap();
         if replace_source {
             branch.replace("source", relay::<Sender>(1)).unwrap();
         } else {
             branch.replace("sink", relay::<Receiver<0>>(2)).unwrap();
         }
-        assert!(branch.connect_wire(source, sink).is_err());
+        assert!(branch.connect(source.clone(), sink.clone()).is_err());
+        assert!(branch.disconnect(source, sink).is_err());
     }
     let base = GraphBuilder::new("siblings");
     let mut left = base.clone();
@@ -386,15 +418,26 @@ fn stale_and_divergent_clone_endpoints_are_rejected() {
         graph.add("source", relay::<Sender>(1)).unwrap();
         graph.add("sink", relay::<Receiver<0>>(2)).unwrap();
     }
-    let left_source = left.wire_output::<Sender>("source", "value").unwrap();
+    let left_source = left
+        .discover("source")
+        .unwrap()
+        .output::<Sender, phenix_graph::EncodedValue>()
+        .unwrap();
     let right_sink = right
-        .wire_input::<Receiver<0>>("sink", "run", "value")
+        .discover("sink")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), Receiver<0>>::new("run"))
+        .field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new(
+            "value",
+        ))
+        .target()
         .unwrap();
     assert!(
-        left.connect_wire(left_source.clone(), right_sink.clone())
+        left.connect(left_source.clone(), right_sink.clone())
             .is_err()
     );
-    assert!(right.connect_wire(left_source, right_sink).is_err());
+    assert!(right.connect(left_source, right_sink).is_err());
 }
 
 fn rustc_paths(output_dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -441,22 +484,47 @@ fn ordinary_connect_compile_checks_unrelated_endpoint_types() {
     for (case, endpoints, valid) in [
         (
             "same-wire",
-            "let mut g = pair::<Sender, Sender>(); let a = g.wire_output::<Sender>(\"source\", \"value\").unwrap(); let b = g.wire_input::<Sender>(\"sink\", \"run\", \"value\").unwrap();",
+            r#"let mut g = pair::<Sender, Sender>(); let a = g.discover("source").unwrap().output::<Sender, phenix_graph::EncodedValue>().unwrap(); let b = g.discover("sink").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), Sender>::new("run")).field(phenix_graph::SlotField::<Sender, Sender>::new("value")).target().unwrap();"#,
             true,
         ),
         (
             "unrelated-wire",
-            "let mut g = pair::<Sender, Receiver<0>>(); let a = g.wire_output::<Sender>(\"source\", \"value\").unwrap(); let b = g.wire_input::<Receiver<0>>(\"sink\", \"run\", \"value\").unwrap();",
-            false,
+            r#"let mut g = pair::<Sender, Receiver<0>>(); let a = g.discover("source").unwrap().output::<Sender, phenix_graph::EncodedValue>().unwrap(); let b = g.discover("sink").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), Receiver<0>>::new("run")).field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new("value")).target().unwrap();"#,
+            true,
         ),
         (
             "unrelated-local",
-            "let mut g = GraphBuilder::new(\"local\"); let a = g.node(\"a\", |x: Sender| x).unwrap().output(); let b = g.node(\"b\", |x: Receiver<0>| x).unwrap().inlet();",
+            r#"let mut g = GraphBuilder::new("local"); g.node("a", |x: Sender| x).unwrap(); g.node("b", |x: Receiver<0>| x).unwrap(); let a = g.discover("a").unwrap().output::<Sender, phenix_graph::LocalValue>().unwrap(); let b = g.discover("b").unwrap().inlets::<(), phenix_graph::LocalValue>().port(phenix_graph::InletPort::<(), Receiver<0>>::new("run")).field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new("value")).target().unwrap();"#,
+            false,
+        ),
+        (
+            "unrelated-local-lookup",
+            r#"let mut g = GraphBuilder::new("local"); g.node("a", |x: Sender| x).unwrap(); g.node("b", |x: Receiver<0>| x).unwrap(); let a = g.discover("a").unwrap().output::<Sender, phenix_graph::LocalValue>().unwrap(); let b = g.discover("b").unwrap().inlets::<(), phenix_graph::LocalValue>().port(phenix_graph::InletPort::<(), Receiver<0>>::new("run")).field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new("value")).target().unwrap();"#,
+            false,
+        ),
+        (
+            "same-local",
+            r#"let mut g = GraphBuilder::new("local"); g.node("a", |x: Sender| x).unwrap(); g.node("b", |x: Sender| x).unwrap(); let a = g.discover("a").unwrap().output::<Sender, phenix_graph::LocalValue>().unwrap(); let b = g.discover("b").unwrap().inlets::<(), phenix_graph::LocalValue>().port(phenix_graph::InletPort::<(), Sender>::new("run")).field(phenix_graph::SlotField::<Sender, Sender>::new("value")).target().unwrap();"#,
+            true,
+        ),
+        (
+            "same-type-local-to-wire",
+            r#"let mut g = pair::<Sender, Sender>(); g.node("local", |x: Sender| x).unwrap(); let a = g.discover("local").unwrap().output::<Sender, phenix_graph::LocalValue>().unwrap(); let b = g.discover("sink").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), Sender>::new("run")).field(phenix_graph::SlotField::<Sender, Sender>::new("value")).target().unwrap();"#,
+            false,
+        ),
+        (
+            "wire-to-local",
+            r#"let mut g = pair::<Sender, Sender>(); g.node("local", |x: Sender| x).unwrap(); let a = g.discover("source").unwrap().output::<Sender, phenix_graph::EncodedValue>().unwrap(); let b = g.discover("local").unwrap().inlets::<(), phenix_graph::LocalValue>().port(phenix_graph::InletPort::<(), Sender>::new("run")).field(phenix_graph::SlotField::<Sender, Sender>::new("value")).target().unwrap();"#,
+            false,
+        ),
+        (
+            "wire-node-to-local-node",
+            r#"let mut g = GraphBuilder::new("mixed"); g.node("wire", phenix_graph::Node::wire(|x: i64| x)).unwrap(); g.node("local", |x: i64| x).unwrap(); let a = g.discover("wire").unwrap().output::<i64, phenix_graph::EncodedValue>().unwrap(); let b = g.discover("local").unwrap().inlets::<(), phenix_graph::LocalValue>().port(phenix_graph::InletPort::<(), i64>::new("run")).field(phenix_graph::SlotField::<i64, i64>::new("value")).target().unwrap();"#,
             false,
         ),
         (
             "local-to-wire",
-            "let mut g = pair::<Sender, Receiver<0>>(); let a = g.node(\"local\", |x: Sender| x).unwrap().output(); let b = g.wire_input::<Receiver<0>>(\"sink\", \"run\", \"value\").unwrap();",
+            r#"let mut g = pair::<Sender, Receiver<0>>(); g.node("local", |x: Sender| x).unwrap(); let a = g.discover("local").unwrap().output::<Sender, phenix_graph::LocalValue>().unwrap(); let b = g.discover("sink").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), Receiver<0>>::new("run")).field(phenix_graph::SlotField::<Receiver<0>, Receiver<0>>::new("value")).target().unwrap();"#,
             false,
         ),
     ] {

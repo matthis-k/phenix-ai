@@ -72,7 +72,14 @@ fn local_atomic_layout_accepts_move_only_values() {
         )
         .unwrap();
     let input = graph
-        .expose_input("request", node.local_slot::<MoveOnly>("value"))
+        .expose_input(
+            "request",
+            node.inlets()
+                .port(phenix_graph::InletPort::<_, MoveOnly>::new("run"))
+                .field(phenix_graph::SlotField::<MoveOnly, MoveOnly>::new("value"))
+                .target()
+                .unwrap(),
+        )
         .unwrap();
     let trigger = graph.trigger("run", [input]).unwrap();
     let report = Deployment::new(graph.compile().unwrap())
@@ -205,12 +212,12 @@ mod layouts {
     struct MoveOnly {
         id: i32,
     }
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct Envelope {
         #[port(atomic)]
         payload: MoveOnly,
     }
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct Nested {
         envelope: Envelope,
     }
@@ -230,7 +237,10 @@ mod layouts {
         let input = graph
             .expose_input(
                 "payload",
-                node.field(Nested::SLOT_ENVELOPE.then(Envelope::SLOT_PAYLOAD)),
+                node.inlet()
+                    .field(Nested::SLOT_ENVELOPE.then(Envelope::SLOT_PAYLOAD))
+                    .target()
+                    .unwrap(),
             )
             .unwrap();
         let trigger = graph.trigger("run", [input]).unwrap();
@@ -252,7 +262,7 @@ mod layouts {
     struct SharedPayload {
         id: i32,
     }
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct SharedEnvelope {
         #[port(atomic)]
         payload: Arc<SharedPayload>,
@@ -282,12 +292,23 @@ mod layouts {
             )
             .unwrap();
         graph
-            .connect(producer.output(), first.field(SharedEnvelope::SLOT_PAYLOAD))
+            .connect(
+                producer.output(),
+                first
+                    .inlet()
+                    .field(SharedEnvelope::SLOT_PAYLOAD)
+                    .target()
+                    .unwrap(),
+            )
             .unwrap();
         graph
             .connect(
                 producer.output(),
-                second.field(SharedEnvelope::SLOT_PAYLOAD),
+                second
+                    .inlet()
+                    .field(SharedEnvelope::SLOT_PAYLOAD)
+                    .target()
+                    .unwrap(),
             )
             .unwrap();
         let ingress = graph.expose_input("request", producer.inlet()).unwrap();

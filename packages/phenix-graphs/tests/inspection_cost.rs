@@ -132,7 +132,11 @@ fn repeated_inspection() {
             service.implements_public(&contract).unwrap();
             let mut graph = GraphBuilder::new("root");
             graph.instance("service", &service.module()).unwrap();
-            let output = graph.local_output::<i64>("service", "value").unwrap();
+            let output = graph
+                .discover("service")
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap();
             graph.expose_output("value", output).unwrap();
             graph.implements_public(&contract).unwrap();
             let compiled = graph.clone().compile().unwrap();
@@ -146,9 +150,21 @@ fn repeated_inspection() {
                     contract.check_implementation(black_box(&view)).unwrap();
                 });
                 // Root typed endpoint lookup is currently unsupported; measure its rejection too.
-                assert_eq!(bound.local_output::<i64>("value").is_ok(), !path.is_empty());
+                assert_eq!(
+                    bound
+                        .operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()
+                        .is_ok(),
+                    !path.is_empty()
+                );
                 let output = median(|| {
-                    let _ = black_box(bound.local_output::<i64>("value"));
+                    let _ = black_box(
+                        bound
+                            .operation()
+                            .unwrap()
+                            .output::<i64, phenix_graph::LocalValue>(),
+                    );
                 });
                 let catalog = median(|| {
                     compiled.check_contract_catalog([&contract]).unwrap();

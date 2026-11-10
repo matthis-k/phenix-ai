@@ -62,7 +62,11 @@ impl PluginInstance for Plugin {
                 if config.module {
                     let mut module = GraphBuilder::new("implementation");
                     let node = module.node("private", |x: i64| x + 1)?;
-                    module.expose_input_slot("run", "value", node.inlet())?;
+                    module.expose_input_field(
+                        "run",
+                        phenix_graph::SlotField::<(), i64>::new("value"),
+                        node.inlet(),
+                    )?;
                     module.expose_output("value", node.output())?;
                     if config.claim {
                         module.implements_public(&contract())?;
@@ -178,7 +182,11 @@ impl PluginInstance for ForeignPlugin {
                 if module {
                     let mut child = GraphBuilder::new("replacement");
                     let node = child.node("private", |x: i64| x + 10)?;
-                    child.expose_input_slot("run", "value", node.inlet())?;
+                    child.expose_input_field(
+                        "run",
+                        phenix_graph::SlotField::<(), i64>::new("value"),
+                        node.inlet(),
+                    )?;
                     child.expose_output("value", node.output())?;
                     child.implements_public(&contract())?;
                     graph.replace("service", child.module())?;

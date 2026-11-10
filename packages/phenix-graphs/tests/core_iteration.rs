@@ -20,8 +20,7 @@ where
     g.connect(source.output(), left.inlet()).unwrap();
     g.connect(source.output(), right.inlet()).unwrap();
     let request = g.expose_input("request", source.inlet()).unwrap();
-    g.expose_output("left", left.output()).unwrap();
-    g.expose_output("right", right.output()).unwrap();
+    // The root graph is an execution container, not a multi-output operation.
     g.trigger("start", [request]).unwrap();
     let graph = g.compile().unwrap();
     let left_id = match graph.find("left").unwrap() {

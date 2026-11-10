@@ -106,6 +106,12 @@ fn module_boundary_origin_tracks_instantiation_not_definition_or_contract() {
     let mut nested = GraphBuilder::new("nested");
     nested.with_origin(&first, |graph| {
         graph.instance("service", &package).unwrap();
+        let output = graph
+            .discover("service")
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()
+            .unwrap();
+        graph.expose_output("response", output).unwrap();
     });
     let nested = nested.module();
     let mut graph = GraphBuilder::new("host");

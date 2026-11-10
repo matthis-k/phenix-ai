@@ -118,7 +118,11 @@ fn module_offers_use_the_same_compiled_unit_validation() {
     let mut module = GraphBuilder::new("service");
     let node = module.node("implementation", |x: i64| x).unwrap();
     module
-        .expose_input_slot("run", "value", node.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            node.inlet(),
+        )
         .unwrap();
     module.expose_output("value", node.output()).unwrap();
     module.implements_public(&required).unwrap();
@@ -154,7 +158,11 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
                     .node("private", move |x: i64| x + action.increment)
                     .unwrap();
                 child
-                    .expose_input_slot("run", "value", node.inlet())
+                    .expose_input_field(
+                        "run",
+                        phenix_graph::SlotField::<(), i64>::new("value"),
+                        node.inlet(),
+                    )
                     .unwrap();
                 child.expose_output("value", node.output()).unwrap();
                 child.implements_public(&required).unwrap();

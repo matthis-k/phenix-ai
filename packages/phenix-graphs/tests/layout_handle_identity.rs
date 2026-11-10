@@ -60,7 +60,7 @@ fn custom_move_only_atomic_layout_also_has_a_typed_inlet() {
 #[test]
 fn selected_fields_retain_typed_field_endpoints() {
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Pair {
         left: i64,
         right: i64,
@@ -74,10 +74,16 @@ fn selected_fields_retain_typed_field_endpoints() {
         .input(Layout::fields())
         .unwrap();
     graph
-        .connect(left.output(), sum.field(Pair::SLOT_LEFT))
+        .connect(
+            left.output(),
+            sum.inlet().field(Pair::SLOT_LEFT).target().unwrap(),
+        )
         .unwrap();
     graph
-        .connect(right.output(), sum.field(Pair::SLOT_RIGHT))
+        .connect(
+            right.output(),
+            sum.inlet().field(Pair::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     let left_in = graph.expose_input("a", left.inlet()).unwrap();
     let right_in = graph.expose_input("b", right.inlet()).unwrap();

@@ -215,8 +215,22 @@ fn module_rebinding_preserves_public_interface_and_external_connections() {
     let mut assembly = GraphAssembly::new("server");
     contribute(&mut assembly, "base", move |g| {
         let instance = g.instance("math", &first)?;
-        let start = g.expose_input("request", instance.local_input::<i64>("input")?)?;
-        g.expose_output("result", instance.local_output::<i64>("output")?)?;
+        let start = g.expose_input(
+            "request",
+            instance
+                .operation()?
+                .inlets::<(), phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("input"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()?,
+        )?;
+        g.expose_output(
+            "result",
+            instance
+                .operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()?,
+        )?;
         g.trigger("submit", [start])?;
         Ok(())
     })
@@ -390,12 +404,30 @@ fn later_contributor_can_patch_by_named_ports_without_original_handles() {
     })
     .unwrap();
     contribute(&mut assembly, "routing.patch", |g| {
-        let old_source = g.local_output::<i64>("a", "value")?;
-        let old_target = g.local_input::<i64>("b", "run", "value")?;
+        let old_source = g
+            .discover("a")
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()?;
+        let old_target = g
+            .discover("b")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+            .target()?;
         g.disconnect(old_source, old_target)?;
         let extra = g.node("extra", |x: i64| x + 10).unwrap();
-        let from_a = g.local_output::<i64>("a", "value")?;
-        let into_b = g.local_input::<i64>("b", "run", "value")?;
+        let from_a = g
+            .discover("a")
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()?;
+        let into_b = g
+            .discover("b")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+            .target()?;
         g.connect(from_a, extra.inlet())?;
         g.connect(extra.output(), into_b)?;
         Ok(())

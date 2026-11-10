@@ -25,7 +25,7 @@ struct Invocation {
     id: InvocationId,
     wave: WaveId,
     node: NodeId,
-    port: PortId,
+    port: Option<PortId>,
     cohort: CohortId,
     args: InvocationArgs,
 }
@@ -34,6 +34,7 @@ struct Incoming {
     cohort: CohortId,
     value: Value,
 }
+
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WaveError {
@@ -265,7 +266,7 @@ pub struct ExecutionTicket {
     wave: WaveId,
     id: InvocationId,
     node: NodeId,
-    port: PortId,
+    port: Option<PortId>,
     cohort: CohortId,
 }
 impl ExecutionTicket {
@@ -551,6 +552,7 @@ impl Engine {
     /// Resolve a named trigger's physical inputs without admitting a wave.
     /// Each outer entry corresponds to one supplied payload; its inner entries
     /// are all destinations receiving that payload, including module fan-out.
+    /// Source starts consume no payload and therefore add no entries here.
     pub fn trigger_targets(&self, name: &str) -> Option<&[Vec<InputAddr>]> {
         let id = self.graph.trigger(name)?;
         self.graph.triggers.get(&id).map(Vec::as_slice)
@@ -646,7 +648,8 @@ impl Engine {
         trigger: T,
         values: Vec<Value>,
     ) -> Result<WaveReport, String> {
-        self.run(self.trigger_inputs(trigger.resolve(&self.graph)?, values)?)
+        let id = trigger.resolve(&self.graph)?;
+        self.run_sources(self.trigger_inputs(id, values)?, self.source_targets(id))
     }
     /// Begin the same scheduler-driven wave without dispatching actions yet.
     /// The trigger accepts either an authoring handle or its public name.
@@ -655,7 +658,15 @@ impl Engine {
         trigger: T,
         values: Vec<Value>,
     ) -> Result<ExecutionSession<'_>, String> {
-        self.start_incoming(self.trigger_inputs(trigger.resolve(&self.graph)?, values)?)
+        let id = trigger.resolve(&self.graph)?;
+        self.start_incoming(self.trigger_inputs(id, values)?, self.source_targets(id))
+    }
+    fn source_targets(&self, id: TriggerId) -> &[NodeId] {
+        self.graph
+            .source_triggers
+            .get(&id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
     fn trigger_inputs(&self, id: TriggerId, values: Vec<Value>) -> Result<Vec<Incoming>, String> {
         let targets = self.graph.triggers.get(&id).ok_or("unknown trigger")?;
@@ -674,7 +685,11 @@ impl Engine {
             })
             .collect())
     }
-    fn start_incoming(&self, incoming: Vec<Incoming>) -> Result<ExecutionSession<'_>, String> {
+    fn start_incoming(
+        &self,
+        incoming: Vec<Incoming>,
+        sources: &[NodeId],
+    ) -> Result<ExecutionSession<'_>, String> {
         // Preflight entire trigger event: invalid ingress cannot partially start.
         let mut counts: BTreeMap<InputAddr, usize> = BTreeMap::new();
         for x in &incoming {
@@ -698,6 +713,27 @@ impl Engine {
         let mut state = WaveState::new(&self.graph, wave);
         state.report.retention = self.report_retention;
         state.next_cohort = next_cohort;
+        for &node in sources {
+            let invocation = Invocation {
+                id: InvocationId(state.next_invocation),
+                wave,
+                node,
+                port: None,
+                cohort: CohortId(0),
+                args: InvocationArgs::Raw(BTreeMap::new()),
+            };
+            state.next_invocation += 1;
+            state.report.trace.invocations.push(node);
+            state.activity.admitted(
+                ActiveInvocation {
+                    id: invocation.id,
+                    node,
+                    cohort: invocation.cohort,
+                },
+                &self.graph.structural().partitions,
+            );
+            state.ready.push_back(invocation);
+        }
         assert!(
             state.deliver_batch(incoming),
             "preflighted ingress must be valid"
@@ -713,8 +749,16 @@ impl Engine {
             max_activations: self.max_activations,
         })
     }
+    #[cfg(test)]
     fn run(&self, incoming: Vec<Incoming>) -> Result<WaveReport, String> {
-        let mut session = self.start_incoming(incoming)?;
+        self.run_sources(incoming, &[])
+    }
+    fn run_sources(
+        &self,
+        incoming: Vec<Incoming>,
+        sources: &[NodeId],
+    ) -> Result<WaveReport, String> {
+        let mut session = self.start_incoming(incoming, sources)?;
         while let Some(ready) = session.next_ready() {
             let (ticket, ctx) = ready.into_parts();
             let Some(action) = session.action(ticket) else {
@@ -755,7 +799,7 @@ impl Engine {
 struct Completion {
     id: InvocationId,
     node: NodeId,
-    port: PortId,
+    port: Option<PortId>,
     cohort: CohortId,
     result: Result<Vec<Emission>, String>,
 }
@@ -1380,7 +1424,7 @@ impl<'a> WaveState<'a> {
                 id: InvocationId(self.next_invocation),
                 wave: self.report.wave,
                 node,
-                port: port_id,
+                port: Some(port_id),
                 cohort: selected_cohort,
                 args,
             };
@@ -1418,28 +1462,27 @@ impl<'a> WaveState<'a> {
                 return;
             }
         };
-        // Output batches are one value per output slot, validated before ANY
-        // publication. Missing outputs are ordinary, not fabricated messages.
-        let mut seen = BTreeSet::new();
-        for em in &emissions {
-            if !seen.insert(em.slot)
-                || !n
-                    .outputs
-                    .iter()
-                    .any(|o| o.id == em.slot && o.identity() == em.value.identity())
-            {
-                let message = format!("invalid/duplicate output {:?}", em.slot);
-                self.report
-                    .errors
-                    .push(WaveError::InvalidOutput(completion.node, message.clone()));
-                self.record_settled(
-                    completion.id,
-                    completion.node,
-                    completion.cohort,
-                    SettledOutcome::Failed(message),
-                );
-                return;
-            }
+        // Executor results are untrusted. Validate the whole zero-or-one batch
+        // before routing or publishing anything.
+        if emissions.len() > 1
+            || emissions.iter().any(|em| {
+                em.slot.get() != 0
+                    || em.slot != n.output.id
+                    || n.output.identity() != em.value.identity()
+            })
+        {
+            let message =
+                "expected zero or one correctly typed emission at output slot 0".to_string();
+            self.report
+                .errors
+                .push(WaveError::InvalidOutput(completion.node, message.clone()));
+            self.record_settled(
+                completion.id,
+                completion.node,
+                completion.cohort,
+                SettledOutcome::Failed(message),
+            );
+            return;
         }
         let cohort = match n.cohort_mode {
             CohortMode::Inherit => completion.cohort,
@@ -1617,9 +1660,9 @@ impl<'a> WaveState<'a> {
         let delivered_outputs: BTreeSet<OutputAddr> =
             edge_deliveries.iter().map(|event| event.from).collect();
         self.report.delivery_events.extend(edge_deliveries);
-        if let Some(record) = self
-            .reservations
-            .get_mut(&(completion.node, completion.port))
+        if let Some(record) = completion
+            .port
+            .and_then(|port| self.reservations.get_mut(&(completion.node, port)))
             .and_then(|records| records.iter_mut().find(|r| r.invocation == completion.id))
         {
             record.completed = true;

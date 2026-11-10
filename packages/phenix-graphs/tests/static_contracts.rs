@@ -17,7 +17,7 @@ fn zero_input_source_claim_is_accepted_with_an_addressable_output() {
     let mut source = NodeTemplate::with_action(
         1,
         vec![],
-        vec![OutputSlot::local::<i64>(0).named("value")],
+        OutputSlot::local::<i64>(0).named("value"),
         |_ctx: InvocationCtx| Ok(Vec::new()),
     )
     .named("source")
@@ -36,7 +36,9 @@ fn zero_input_source_claim_is_accepted_with_an_addressable_output() {
     graph
         .bind_contract("source", &required)
         .unwrap()
-        .local_output::<i64>("value")
+        .operation()
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
         .unwrap();
 
     let compiled = graph.compile().unwrap();
@@ -49,11 +51,13 @@ fn zero_input_source_claim_is_accepted_with_an_addressable_output() {
 }
 
 #[test]
-fn zero_output_sink_claim_is_accepted_and_executes_with_an_addressable_input() {
+fn non_emitting_sink_claim_is_accepted_and_executes_with_an_addressable_input() {
     let required = GraphContract::new(
         "test/sink@1",
         InterfaceShape::new()
             .input_slot("run", "value", DeclaredValue::local::<i64>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<()>())
             .unwrap(),
     )
     .unwrap();
@@ -67,7 +71,7 @@ fn zero_output_sink_claim_is_accepted_and_executes_with_an_addressable_input() {
             )
             .named("run"),
         ],
-        vec![],
+        OutputSlot::local::<()>(0).named("value"),
         |_ctx: InvocationCtx| Ok(Vec::new()),
     )
     .named("sink")
@@ -79,14 +83,18 @@ fn zero_output_sink_claim_is_accepted_and_executes_with_an_addressable_input() {
     graph.add("sink", sink).unwrap();
     let view = graph.inspect("sink").unwrap();
     let snapshot = view.inspect().unwrap();
-    assert_eq!(snapshot.shape.outputs().count(), 0);
-    assert!(required.required().same_shape(&snapshot.shape));
+    assert!(snapshot.shape.output_value().is_some());
     required.check_shape(&view).unwrap();
     required.check_implementation(&view).unwrap();
     let input = graph
         .bind_contract("sink", &required)
         .unwrap()
-        .local_input::<i64>("run", "value")
+        .operation()
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
     let input = graph.expose_input("request", input).unwrap();
     graph.trigger("run", [input]).unwrap();
@@ -108,12 +116,34 @@ fn zero_output_sink_claim_is_accepted_and_executes_with_an_addressable_input() {
 }
 
 #[test]
-fn empty_actual_module_needs_a_claim_despite_equal_shape() {
-    let required = GraphContract::new("test/empty@1", InterfaceShape::new()).unwrap();
-    let mut graph = GraphBuilder::new("root");
-    graph
-        .instance("empty", &GraphBuilder::new("empty").module())
+fn zero_input_module_needs_a_claim_despite_equal_single_output_shape() {
+    let required = GraphContract::new(
+        "test/empty@1",
+        InterfaceShape::new()
+            .output("value", DeclaredValue::local::<()>())
+            .unwrap(),
+    )
+    .unwrap();
+    let mut empty = GraphBuilder::new("empty");
+    empty
+        .add(
+            "source",
+            NodeTemplate::with_action(
+                0,
+                vec![],
+                OutputSlot::local::<()>(0).named("value"),
+                |_ctx: InvocationCtx| Ok(Vec::new()),
+            ),
+        )
         .unwrap();
+    let output = empty
+        .discover("source")
+        .unwrap()
+        .output::<(), phenix_graph::LocalValue>()
+        .unwrap();
+    empty.expose_output("value", output).unwrap();
+    let mut graph = GraphBuilder::new("root");
+    graph.instance("empty", &empty.module()).unwrap();
     let view = graph.inspect("empty").unwrap();
     assert!(
         required
@@ -188,7 +218,7 @@ fn equal_static_shapes_and_claims_do_not_promise_readiness_or_emission() {
                 )
                 .named("run"),
             ],
-            vec![OutputSlot::local::<i64>(0).named("value")],
+            OutputSlot::local::<i64>(0).named("value"),
             |_ctx: InvocationCtx| Ok(Vec::new()),
         );
         template.claims.push(required.clone());
@@ -202,8 +232,22 @@ fn equal_static_shapes_and_claims_do_not_promise_readiness_or_emission() {
         );
         required.check_shape(&view).unwrap();
         required.check_implementation(&view).unwrap();
-        let left = graph.local_input::<i64>("worker", "run", "left").unwrap();
-        let right = graph.local_input::<i64>("worker", "run", "right").unwrap();
+        let left = graph
+            .discover("worker")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("left"))
+            .target()
+            .unwrap();
+        let right = graph
+            .discover("worker")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("right"))
+            .target()
+            .unwrap();
         let left = graph.expose_input("left", left).unwrap();
         let right = graph.expose_input("right", right).unwrap();
         graph.trigger("left", [left.clone()]).unwrap();
@@ -251,6 +295,8 @@ fn contract_claim_does_not_grant_access_to_an_existing_store_resource() {
         "test/reader@1",
         InterfaceShape::new()
             .input_slot("run", "value", DeclaredValue::local::<i64>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<()>())
             .unwrap(),
     )
     .unwrap();
@@ -265,7 +311,7 @@ fn contract_claim_does_not_grant_access_to_an_existing_store_resource() {
                 )
                 .named("run"),
             ],
-            vec![],
+            OutputSlot::local::<()>(0).named("value"),
             move |ctx: InvocationCtx| {
                 let result = ctx.read::<i64, _>("counter", |value| *value);
                 if granted {
@@ -282,7 +328,14 @@ fn contract_claim_does_not_grant_access_to_an_existing_store_resource() {
         template.claims.push(required.clone());
         let mut graph = GraphBuilder::new("root");
         graph.add("reader", template).unwrap();
-        let input = graph.local_input::<i64>("reader", "run", "value").unwrap();
+        let input = graph
+            .discover("reader")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+            .target()
+            .unwrap();
         let input = graph.expose_input("request", input).unwrap();
         graph.trigger("run", [input]).unwrap();
         let compiled = graph.compile().unwrap();

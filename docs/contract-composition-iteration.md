@@ -2,6 +2,41 @@
 
 ## Scope And Status
 
+### Current Operation Redesign
+
+Current baseline: `5469c55b27ff0e6e9072f9ca923f29a854f3bafd`, branch
+`impl/operation-interface-20261109`, preserving prior uncommitted changes. Final
+implementation commit and independent review are forthcoming, not known here.
+The [operation implementation record](operation-interface-redesign.md) supersedes
+this report's authoring API/status and owns current gates and the removal ledger.
+The remaining e91-based matrices, measurements, ratings and verification ledger
+below are historical composition-iteration evidence, not current redesign passes.
+
+Current consumers bind with `selected.bind(graph)?.operation()?`, then use typed
+port/field views with checked `.target()?` and singular `output::<T,Mode>()?`.
+The independently compiled Kernel host consumer uses the same path. Kernel still
+discovers/selects providers and orders composition; Graph alone validates actual
+shape/claims. Current contracts require exact single-output presence/name/identity,
+not output inclusion or hidden diagnostic extensions. Root Graph exposure and
+typed Module projection coexist, and raw compiler representations remain public;
+these are explicit residual surface risks, not removed compatibility shims.
+
+Source now contains typed Node/Module operations, explicit public layouts and
+projections, zero-or-one scheduler emission validation and cross-kind replacement
+through existing `graph.replace` using typed packages or `NodeTemplate`. Candidate
+compilation, explicit claims, origin/request obligations and handle revocation
+remain authoritative. Rust owner typing does not prove a custom erased physical
+multi-port reconstruction; structural frontier selection remains dynamically
+checked. No runtime operation wrapper or multi-invocation atomicity is added.
+
+Handoff reports Graph tests and doctests passed. The workspace run failed on a
+host portable schema-error wording assertion; main corrected it and reports the
+host suite passed. A full final workspace rerun, feature matrix, exact commit
+evidence and later independent reviewer ratings remain pending. This documentation
+pass does not rerun those tests or certify completion.
+
+### Historical Composition Snapshot
+
 R01 supersedes this report's schema-interning limitation: canonical identities now
 use reclaimable `Arc<str>` ownership throughout Graph, with no global strong cache
 or static-string compatibility API. Manual wire values require complete descriptors,
@@ -88,7 +123,7 @@ pass**, except the explicitly recorded inspection benchmark. Historical checks i
 
 | Key | Source / Existing Test Evidence |
 |---|---|
-| G | [interface.rs](../packages/phenix-graphs/src/interface.rs): sealed unit views, exact inputs, output inclusion, semantic claims, compiled binding and catalog validation. |
+| G | [interface.rs](../packages/phenix-graphs/src/interface.rs): sealed unit views, exact inputs, semantic claims, compiled binding and catalog validation. Output inclusion described this historical snapshot only; current output matching is exact. |
 | A | [authoring/interfaces.rs](../packages/phenix-graphs/src/authoring/interfaces.rs): effective layouts, full-shape revalidation on each bound endpoint projection, claim ownership and replacement obligations. |
 | A-test | [canonical_interfaces.rs](../packages/phenix-graphs/tests/canonical_interfaces.rs): `retained_authoring_binding_rechecks_full_contract_after_layout_change`; [authoring.rs](../packages/phenix-graphs/src/authoring.rs) unit test `local_identity_ignores_diagnostic_labels_but_not_type_or_mode`. |
 | L | [authoring.rs](../packages/phenix-graphs/src/authoring.rs), [provenance.rs](../packages/phenix-graphs/src/provenance.rs): declaration tokens, local `TypeId`, origin ancestry, replacement and assembly transactions. |
@@ -122,7 +157,7 @@ not a planned-design PASS. No unsafe casts, placeholders or adapter nodes were a
 | Works with ordinary nodes | PASS: R/W execute node offers. | PARTIAL: existing symbolic node connections; external links absent. | PARTIAL: nodes can be packaged; adapter not implemented. |
 | Works with nested subgraphs | PASS: two-level nested provider in W. | PARTIAL: existing expansion; no external reference variant. | PARTIAL: nested modules already supported; adapter resolution absent. |
 | Supports named multi-slot ports | PASS: W noncommutative left/right execution. | PARTIAL: typed slots exist; unresolved selectors need design. | PARTIAL: module slots exist; wrapper construction untested. |
-| Supports independent portable Rust types | PASS: W independently compiled C codecs. | PARTIAL: connect_wire reusable after linking; no linker test. | PARTIAL: wire module ports reusable; no adapter test. |
+| Supports independent portable Rust types | PASS: W independently compiled C codecs. | PARTIAL: connect on encoded endpoints reusable after linking; no linker test. | PARTIAL: wire module ports reusable; no adapter test. |
 | Preserves strict local TypeId safety | PASS: G/L and local diagnostic-label regression. | PARTIAL: existing local identity reusable; unresolved identity untested. | PARTIAL: existing module TypeId validation reusable. |
 | No additional Graph executor semantics | PASS: K inserts ordinary connections, H only gates admission. | PARTIAL: linking could be compile-only; no implementation. | PARTIAL: existing module executor sufficient, wrappers unimplemented. |
 | No duplicated compatibility checker | PASS: K delegates to G. | PARTIAL: G can be reused; linker absent. | PARTIAL: G can validate adapters; adapter absent. |
@@ -130,7 +165,7 @@ not a planned-design PASS. No unsafe casts, placeholders or adapter nodes were a
 | Inferred composition dependency ordering | PASS: producer Key resolves order; R. | UNKNOWN: linker dependency extraction prototype needed. | UNKNOWN: adapter ownership resolver needed. |
 | Supports deterministic host selection | PASS: ImportPolicy and R/W switches. | UNKNOWN: selection/link integration needed. | UNKNOWN: selection/instance integration needed. |
 | Fails on ambiguity without host policy | PASS: structured Ambiguous; R before callbacks. | UNKNOWN: no candidate resolver. | UNKNOWN: no candidate resolver. |
-| Does not expose unpromised outputs | PASS: bound projection hides diagnostic output; W. | UNKNOWN: symbolic visibility implementation needed. | PARTIAL: explicit exports restrict shape; adapter absent. |
+| Does not expose unpromised outputs | Historical PASS: bound projection hid diagnostic extensions; current W has one output and rejects unpromised input/private access. | UNKNOWN: symbolic visibility implementation needed. | PARTIAL: explicit exports restrict shape; adapter absent. |
 | Detects missing providers early | PASS: Missing before composition; R. | UNKNOWN: missing-link diagnostic prototype. | UNKNOWN: missing-adapter diagnostic prototype. |
 | Detects dependency cycles | PASS: R includes inferred import cycle. | UNKNOWN: link-cycle experiment needed. | UNKNOWN: adapter dependency-cycle experiment needed. |
 | Supports provider replacement | PASS: W path-changing node/module reload. | PARTIAL: existing replacement engine reusable; links untested. | PARTIAL: exact module replacement exists; host adapter untested. |
@@ -168,7 +203,7 @@ record logical progress rather than independently published snapshots.
 | Nested module provider support | PASS: G baseline. | PASS: R. | PASS: W two nested levels. | PASS: W. |
 | Named multi-slot input support | PASS: module_slots baseline. | PASS: same endpoint API. | PASS: W left/right arithmetic. | PASS: W. |
 | Independent portable Rust types | PASS: portable_wire baseline. | PASS: graph_contracts C. | PASS: Cargo-isolated C W. | PASS: W. |
-| Contract-restricted endpoint views | PASS: G/A baseline. | PASS: R private output rejection. | PASS: W harmless extra output hidden. | PASS: A/W. |
+| Contract-restricted endpoint views | Historical PASS: G/A baseline. | Historical PASS: R private output rejection. | Historical PASS: W extra output hidden. | Current A/W uses one output and promised-only input/private-boundary checks; final redesign rerun pending. |
 | Local Rust type safety preserved | PASS: L baseline. | PASS: local R execution. | PASS: label/TypeId regression. | PASS: L/A-test. |
 | Generation-safe provider imports | PARTIAL: borrowed compiled bindings. | PASS: final producer origin + lineage. | PASS: H old/new graphs pin leases. | PASS: O/Q/W; raw addresses remain low-level. |
 | Atomic visible generation publication | FAIL: separate commit/start/swap. | FAIL: no coordinator yet. | PASS: H/P batch and pointer transition. | PASS: T/Q/W under serialized host ownership. |
@@ -229,9 +264,9 @@ declaration combination. `GraphBuilder` remains intentionally mutable and truste
 | require_contract | Stores final obligation, not early certificate; malformed path rejects | A/G; compiler validates after all edits, including late edits. |
 | replace node | Complete numeric/named signature exact; old claims explicitly retained, new claims validated; token/origin replaced only on success | A/L; failed replacement retains pending state/handles. |
 | replace module instance | Complete public shape/grouping exact; claims and requests retained; dependency conflicts reject before mutation; new instance token/origin | A/L; public equivalence does not prove private behavior. |
-| connect/connect_wire | Scope, declaration tokens, actual endpoint identity and duplicate edge checks before insertion; wire additionally requires full descriptors | L; no Local/Wire coercion, no ABI cast. |
+| connect | Scope, declaration tokens, actual endpoint identity and duplicate edge checks before insertion; encoded endpoints additionally require full descriptors | L; no Local/Wire coercion, no ABI cast. |
 | disconnect | Scope/tokens/type/actual endpoints validated; missing edge returns error | L; topology mutation does not acquire semantic membership. |
-| expose_input/expose_input_slot/expose_output; symbolic/low-level exports | Token and actual identity checks; distinct public pairs and routing keys; expander validates fanout/source consistency | L/G; literal dots are not implicit grouping. |
+| Root expose_input/expose_input_field/expose_output; typed Module expose/finish | Token and actual identity checks; explicit interface projections; expander validates fanout/source consistency | Current dual authoring path remains a residual risk; literal dots are not implicit grouping. |
 | trigger/public-input lookup/directed destination | Current public input/declaration identity and actual destinations resolved | L/G; route names preflighted again by K before startup. |
 | patch/splice/assembly transaction | Clone-then-apply; declared write footprints include claims/requests/replacements; error discards candidate edits | L and authoring/patching.rs; existing patch_lineage tests; callback external effects not rolled back. |
 | with_origin | Restores previous scope on normal return/error/unwind; no relabel of existing units | authoring/provenance.rs; trusted host may explicitly create scopes. |
@@ -249,9 +284,9 @@ declaration combination. `GraphBuilder` remains intentionally mutable and truste
 | F09 Expensive authoring inspection | Measured 10/100/1000 and repeated nested instances below. Removed duplicate bind/implements scans. No stale cache; final compile authoritative. |
 | F10 Schema interning lifecycle | S uses Box::leak with process-lifetime static identities. Deferred foundational Arc/owned identity migration: &'static str and Copy assumptions permeate Graph schemas/layouts. No memory bound claimed and no fake eviction of live static references. Distinct-descriptor reload probe below confirms linear retained string bytes; full plugin reload RSS profiling remains deferred. |
 | F11 Structured diagnostics | ResolutionError now preserves CompileDiagnostic, InterfaceError, contribution/offer/unit/origin context; lifecycle has Plugins/Build/Binding/Start/StaleCandidate phases. Callback/plugin String causes remain partial. diagnostics.rs tests machine-readable fields. |
-| F12 ContractValue naming / portability | Source review: trait concerns serialization, not semantic membership. Kept name to avoid rename-only churn. Explicit descriptors required by connect_wire; nominal fallback does not certify portable cross-type interoperability. Local endpoints require no codec. No codecs rewritten. |
+| F12 ContractValue naming / portability | Source review: trait concerns serialization, not semantic membership. Kept name to avoid rename-only churn. Explicit descriptors required by connect on encoded endpoints; nominal fallback does not certify portable cross-type interoperability. Local endpoints require no codec. No codecs rewritten. |
 | F13 Inspection allocations | UnitSnapshot remains owned; measured inspect versus inspect+snapshot separately. Full bound projection revalidation repairs live-layout correctness. Borrowed compiled view hierarchy deferred: no allocation profile justifies complexity yet. |
-| F14 Replacement policy | Retained exact complete boundary by default. Contract output inclusion is intentionally weaker than replacement compatibility. Existing edges/exports/claims/requests/lineage tests justify no usage-aware replacement mechanism. Provider switching uses a fresh candidate graph. |
+| F14 Replacement policy | Historical contract output inclusion is superseded by exact single-output shape matching. Existing graph.replace now also supports cross-kind edits through candidate compilation, claims/requests/origin preservation and revocation. Kernel provider switching still builds a fresh candidate graph. |
 | F15 Provenance versus authorization | Origins are trusted attribution, including revision ancestry; no sandbox/capability claim. Host allow/deny and Store grants are independent and tested in R/Q/E. Explicit trusted patching remains possible; no blanket foreign-mutation prohibition. |
 | F16 Derived-value integration | Preserved atomic snapshots, cells, source groups/chains/diamonds, deferred observation and no nested query execution. E fixes shared composition state; Q integrates exact-engine host queries. Host uses explicit guarded executor; low-level engine bypasses remain documented. |
 
@@ -389,7 +424,7 @@ This is a worktree inventory, not a claim that this documentation pass authored 
 | Derived regressions | `packages/phenix-storage-graph/tests/{binding.rs,derived.rs,derived_plugins.rs,host_derived.rs}`: migrated APIs and candidate isolation/host query coverage. |
 | Documentation | This new report; `docs/kernel.md`, `docs/graph-interface-contracts.md`, `docs/derived-values.md`: current API/lifecycle corrections and historical-evidence boundaries. |
 
-## Verification Ledger
+## Historical Verification Ledger
 
 Cargo commands below run through `nix develop --command`. All listed successful
 checks exercised the integrated source; exact committed-head reruns and hosted CI

@@ -21,9 +21,15 @@ fn main() {
                 let finish = graph
                     .node("finish", |x: i64| x * 2)
                     .map_err(|e| e.to_string())?;
-                let from = graph.local_output::<i64>("model", "value")?;
-                graph.connect(from, finish.inlet())?;
-                graph.expose_output("result", finish.output())?;
+                let from = graph
+                    .discover("model")
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()?;
+                graph.connect(from, finish.operation().inlet())?;
+                let output = graph
+                    .discover("finish")?
+                    .output::<i64, phenix_graph::LocalValue>()?;
+                graph.expose_output("result", output)?;
                 Ok(())
             },
         ))
@@ -41,8 +47,11 @@ fn main() {
                 let model = graph
                     .node("model", |x: i64| x + 10)
                     .map_err(|e| e.to_string())?;
-                let from = graph.local_output::<i64>("accept", "value")?;
-                graph.connect(from, model.inlet())?;
+                let from = graph
+                    .discover("accept")
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()?;
+                graph.connect(from, model.operation().inlet())?;
                 Ok(())
             },
         ))
@@ -59,7 +68,7 @@ fn main() {
                 let accept = graph
                     .node("accept", |x: i64| x + 1)
                     .map_err(|e| e.to_string())?;
-                let input = graph.expose_input("request", accept.inlet())?;
+                let input = graph.expose_input("request", accept.operation().inlet())?;
                 graph.trigger("run", [input])?;
                 Ok(())
             },

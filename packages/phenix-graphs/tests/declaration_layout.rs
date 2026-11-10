@@ -7,7 +7,7 @@ use phenix_graph::{
     Value,
 };
 
-#[derive(Clone, LocalPortLayout)]
+#[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
 struct AddArgs {
     left: i64,
     right: i64,
@@ -22,10 +22,16 @@ fn field_layout_is_inferred_from_handler_arguments() {
         .input(Layout::fields())
         .unwrap();
     let left = graph
-        .expose_input("left", d.field(AddArgs::SLOT_LEFT))
+        .expose_input(
+            "left",
+            d.inlet().field(AddArgs::SLOT_LEFT).target().unwrap(),
+        )
         .unwrap();
     let right = graph
-        .expose_input("right", d.field(AddArgs::SLOT_RIGHT))
+        .expose_input(
+            "right",
+            d.inlet().field(AddArgs::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     graph.trigger("run", [left, right]).unwrap();
     let engine = Deployment::new(graph.compile().unwrap())
@@ -86,11 +92,17 @@ fn a_configured_layout_is_visible_to_later_connections() {
         .input(Layout::fields())
         .unwrap();
     graph
-        .connect(source.output(), sum.field(AddArgs::SLOT_LEFT))
+        .connect(
+            source.output(),
+            sum.inlet().field(AddArgs::SLOT_LEFT).target().unwrap(),
+        )
         .unwrap();
     let req = graph.expose_input("request", source.inlet()).unwrap();
     let other = graph
-        .expose_input("other", sum.field(AddArgs::SLOT_RIGHT))
+        .expose_input(
+            "other",
+            sum.inlet().field(AddArgs::SLOT_RIGHT).target().unwrap(),
+        )
         .unwrap();
     graph.trigger("run", [req, other]).unwrap();
     // Compilation proves that the pending layout and symbolic connections
@@ -106,8 +118,26 @@ fn independent_graph_clones_do_not_share_pending_layout_edits() {
     let configured = d.input(Layout::fields()).unwrap();
     assert_eq!(configured.name(), "d");
     // Snapshot taken before the edit still has the original atomic slot.
-    assert!(other.local_input::<AddArgs>("d", "run", "value").is_ok());
-    assert!(graph.local_input::<AddArgs>("d", "run", "value").is_err());
+    assert!(
+        other
+            .discover("d")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), AddArgs>::new("run"))
+            .field(phenix_graph::SlotField::<AddArgs, AddArgs>::new("value"))
+            .target()
+            .is_ok()
+    );
+    assert!(
+        graph
+            .discover("d")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), AddArgs>::new("run"))
+            .field(phenix_graph::SlotField::<AddArgs, AddArgs>::new("value"))
+            .target()
+            .is_err()
+    );
     graph.compile().unwrap();
     other.compile().unwrap();
 }

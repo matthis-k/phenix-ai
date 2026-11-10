@@ -5,11 +5,33 @@ use phenix_graph::{
     NodeTemplate, PortLayout, ReportRetention, Value,
 };
 
-#[derive(ContractValue, PortLayout)]
+#[derive(ContractValue, PortLayout, phenix_graph::InputFields)]
 #[contract(schema = "test.module-slots.args@1")]
 struct Args {
     left: i64,
     right: i64,
+}
+
+fn selected_input<T, M>(
+    graph: &GraphBuilder,
+    operation: &str,
+    port: &'static str,
+    slot: &'static str,
+) -> Result<phenix_graph::Input<T, M>, String>
+where
+    T: Send + Sync + 'static,
+    M: phenix_graph::ValueMode<T>,
+{
+    let view = graph
+        .discover(operation)?
+        .inlets::<(), M>()
+        .port(phenix_graph::InletPort::<(), T>::new(port));
+    if slot.is_empty() {
+        view.target()
+    } else {
+        view.field(phenix_graph::SlotField::<T, T>::new(slot))
+            .target()
+    }
 }
 
 fn calculator(name: &str, alternative: bool) -> ModulePackage {
@@ -28,10 +50,18 @@ fn calculator(name: &str, alternative: bool) -> ModulePackage {
         )
         .unwrap();
     for slot in ["left", "right"] {
-        let target = graph.wire_input::<i64>("private", "run", slot).unwrap();
-        graph.expose_input_slot("run", slot, target).unwrap();
+        let target =
+            selected_input::<i64, phenix_graph::EncodedValue>(&graph, "private", "run", slot)
+                .unwrap();
+        graph
+            .expose_input_field("run", phenix_graph::SlotField::<(), i64>::new(slot), target)
+            .unwrap();
     }
-    let output = graph.wire_output::<i64>("private", "value").unwrap();
+    let output = graph
+        .discover("private")
+        .unwrap()
+        .output::<i64, phenix_graph::EncodedValue>()
+        .unwrap();
     if alternative {
         graph
             .add("relay", NodeTemplate::function(|value: i64| value))
@@ -39,13 +69,24 @@ fn calculator(name: &str, alternative: bool) -> ModulePackage {
         graph
             .connect(
                 output,
-                graph.wire_input::<i64>("relay", "run", "value").unwrap(),
+                graph
+                    .discover("relay")
+                    .unwrap()
+                    .inlets::<(), phenix_graph::EncodedValue>()
+                    .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                    .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                    .target()
+                    .unwrap(),
             )
             .unwrap();
         graph
             .expose_output(
                 "result",
-                graph.wire_output::<i64>("relay", "value").unwrap(),
+                graph
+                    .discover("relay")
+                    .unwrap()
+                    .output::<i64, phenix_graph::EncodedValue>()
+                    .unwrap(),
             )
             .unwrap();
     } else {
@@ -56,18 +97,26 @@ fn calculator(name: &str, alternative: bool) -> ModulePackage {
 
 fn nested(name: &str, child: &ModulePackage) -> ModulePackage {
     let mut graph = GraphBuilder::new(name);
-    let instance = graph.instance("inner", child).unwrap();
+    graph.instance("inner", child).unwrap();
     for slot in ["left", "right"] {
         graph
-            .expose_input_slot(
+            .expose_input_field(
                 "run",
-                slot,
-                instance.input_slot::<i64>("run", slot).unwrap(),
+                phenix_graph::SlotField::<(), i64>::new(slot),
+                selected_input::<i64, phenix_graph::EncodedValue>(&graph, "inner", "run", slot)
+                    .unwrap(),
             )
             .unwrap();
     }
     graph
-        .expose_output("result", instance.output::<i64>("result").unwrap())
+        .expose_output(
+            "result",
+            graph
+                .discover("inner")
+                .unwrap()
+                .output::<i64, phenix_graph::EncodedValue>()
+                .unwrap(),
+        )
         .unwrap();
     graph.module()
 }
@@ -77,15 +126,16 @@ fn nested_calculators_route_real_public_slots_in_a_wave() {
     let first = nested("first-wrapper", &calculator("direct", false));
     let second = nested("second-wrapper", &calculator("alternative", true));
     let mut graph = GraphBuilder::new("root");
-    let a = graph.instance("first", &first).unwrap();
-    let b = graph.instance("second", &second).unwrap();
-    assert!(a.input::<i64>("run").is_err());
-    assert!(a.input_slot::<i64>("run", "private").is_err());
+    graph.instance("first", &first).unwrap();
+    graph.instance("second", &second).unwrap();
     assert!(
-        graph
-            .wire_input::<i64>("first/inner/private", "run", "left")
+        selected_input::<i64, phenix_graph::EncodedValue>(&graph, "first", "run", "value").is_err()
+    );
+    assert!(
+        selected_input::<i64, phenix_graph::EncodedValue>(&graph, "first", "run", "private")
             .is_err()
     );
+    assert!(graph.discover("first/inner/private").is_err());
     graph
         .add("left", NodeTemplate::function(|x: i64| x))
         .unwrap();
@@ -99,42 +149,88 @@ fn nested_calculators_route_real_public_slots_in_a_wave() {
         )
         .unwrap();
     for slot in ["left", "right"] {
-        let output = graph.wire_output::<i64>(slot, "value").unwrap();
+        let output = graph
+            .discover(slot)
+            .unwrap()
+            .output::<i64, phenix_graph::EncodedValue>()
+            .unwrap();
         graph
             .connect(
                 output,
-                graph.wire_input::<i64>("first", "run", slot).unwrap(),
+                selected_input::<i64, phenix_graph::EncodedValue>(&graph, "first", "run", slot)
+                    .unwrap(),
             )
             .unwrap();
         graph
             .connect(
-                graph.wire_output::<i64>(slot, "value").unwrap(),
-                b.input_slot::<i64>("run", slot).unwrap(),
+                graph
+                    .discover(slot)
+                    .unwrap()
+                    .output::<i64, phenix_graph::EncodedValue>()
+                    .unwrap(),
+                selected_input::<i64, phenix_graph::EncodedValue>(&graph, "second", "run", slot)
+                    .unwrap(),
             )
             .unwrap();
     }
     graph
         .connect(
-            a.output::<i64>("result").unwrap(),
-            graph.wire_input::<i64>("sum", "run", "left").unwrap(),
+            graph
+                .discover("first")
+                .unwrap()
+                .output::<i64, phenix_graph::EncodedValue>()
+                .unwrap(),
+            graph
+                .discover("sum")
+                .unwrap()
+                .inlets::<(), phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("left"))
+                .target()
+                .unwrap(),
         )
         .unwrap();
     graph
         .connect(
-            b.output::<i64>("result").unwrap(),
-            graph.wire_input::<i64>("sum", "run", "right").unwrap(),
+            graph
+                .discover("second")
+                .unwrap()
+                .output::<i64, phenix_graph::EncodedValue>()
+                .unwrap(),
+            graph
+                .discover("sum")
+                .unwrap()
+                .inlets::<(), phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("right"))
+                .target()
+                .unwrap(),
         )
         .unwrap();
     let left = graph
         .expose_input(
             "left",
-            graph.wire_input::<i64>("left", "run", "value").unwrap(),
+            graph
+                .discover("left")
+                .unwrap()
+                .inlets::<(), phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
         )
         .unwrap();
     let right = graph
         .expose_input(
             "right",
-            graph.wire_input::<i64>("right", "run", "value").unwrap(),
+            graph
+                .discover("right")
+                .unwrap()
+                .inlets::<(), phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
         )
         .unwrap();
     let trigger = graph.trigger("calculate", [left, right]).unwrap();
@@ -171,35 +267,61 @@ fn public_metadata_is_literal_and_grouping_adds_no_barrier() {
     let left = child.node("left", |x: i64| x + 1).unwrap();
     let right = child.node("right", |x: i64| x + 2).unwrap();
     child
-        .expose_input_slot("run.with.dots", "left.with.dots", left.inlet())
+        .expose_input_field(
+            "run.with.dots",
+            phenix_graph::SlotField::<(), i64>::new("left.with.dots"),
+            left.inlet(),
+        )
         .unwrap();
     child
-        .expose_input_slot("run.with.dots", "right", right.inlet())
+        .expose_input_field(
+            "run.with.dots",
+            phenix_graph::SlotField::<(), i64>::new("right"),
+            right.inlet(),
+        )
         .unwrap();
+    child.expose_output("result", left.output()).unwrap();
     assert!(
         child
-            .expose_input_slot("run.with.dots", "right", right.inlet())
+            .expose_input_field(
+                "run.with.dots",
+                phenix_graph::SlotField::<(), i64>::new("right"),
+                right.inlet()
+            )
             .is_err()
     );
     let package = child.module();
     let mut graph = GraphBuilder::new("root");
-    let instance = graph.instance("unit", &package).unwrap();
+    graph.instance("unit", &package).unwrap();
     assert!(
-        instance
-            .local_input_slot::<i64>("run", "with.dots.left.with.dots")
-            .is_err()
+        selected_input::<i64, phenix_graph::LocalValue>(
+            &graph,
+            "unit",
+            "run",
+            "with.dots.left.with.dots",
+        )
+        .is_err()
     );
     let input = graph
         .expose_input(
             "request",
-            instance
-                .local_input_slot::<i64>("run.with.dots", "left.with.dots")
-                .unwrap(),
+            selected_input::<i64, phenix_graph::LocalValue>(
+                &graph,
+                "unit",
+                "run.with.dots",
+                "left.with.dots",
+            )
+            .unwrap(),
         )
         .unwrap();
     assert!(
         graph
-            .local_input::<i64>("unit", "run.with.dots", "right")
+            .discover("unit")
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run.with.dots"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("right"))
+            .target()
             .is_ok()
     );
     let trigger = graph.trigger("left-only", [input]).unwrap();
@@ -227,7 +349,11 @@ fn replacement_checks_grouped_metadata() {
     let mut child = GraphBuilder::new("grouped");
     let node = child.node("private", |x: i64| x).unwrap();
     child
-        .expose_input_slot("run", "left", node.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("left"),
+            node.inlet(),
+        )
         .unwrap();
     let grouped = child.module();
     let mut replacement = GraphBuilder::new("flat");
@@ -242,20 +368,24 @@ fn replacement_checks_grouped_metadata() {
 }
 
 #[test]
-fn low_level_exports_default_and_explicit_metadata() {
-    let mut builder = ModuleDefBuilder::new("low-level");
-    let node = builder.register_fn("private", |x: i64| x).unwrap();
+fn typed_exports_default_and_explicit_metadata() {
+    let mut builder = GraphBuilder::new("typed-metadata");
+    let node = builder.node("private", |x: i64| x).unwrap();
     builder
-        .export_input("literal.dotted", vec![node.input::<i64>("run", "value")])
+        .expose_input("literal.dotted", node.inlet())
         .unwrap();
     builder
-        .export_input_slot("run", "left", vec![node.input::<i64>("run", "value")])
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("left"),
+            node.inlet(),
+        )
         .unwrap();
-    let entry = builder.build();
-    assert_eq!(entry.definition.inputs[0].port, "literal.dotted");
-    assert_eq!(entry.definition.inputs[0].slot, "value");
-    assert_eq!(entry.definition.inputs[1].port, "run");
-    assert_eq!(entry.definition.inputs[1].slot, "left");
+    let package = builder.module();
+    assert_eq!(package.inputs()[0].port, "literal.dotted");
+    assert_eq!(package.inputs()[0].slot, "value");
+    assert_eq!(package.inputs()[1].port, "run");
+    assert_eq!(package.inputs()[1].slot, "left");
 }
 
 #[test]
@@ -265,24 +395,52 @@ fn existing_single_input_apis_keep_value_slot_semantics() {
         .add("private", NodeTemplate::function(|x: i64| x + 1))
         .unwrap();
     child.expose_input("request.with.dots", "private").unwrap();
+    let output = child
+        .discover("private")
+        .unwrap()
+        .output::<i64, phenix_graph::EncodedValue>()
+        .unwrap();
+    child.expose_output("result", output).unwrap();
     let package = child.module();
     let mut graph = GraphBuilder::new("root");
-    let instance = graph.instance("unit", &package).unwrap();
-    assert!(instance.input::<i64>("request.with.dots").is_ok());
+    graph.instance("unit", &package).unwrap();
     assert!(
-        instance
-            .input_slot::<i64>("request.with.dots", "value")
-            .is_ok()
+        selected_input::<i64, phenix_graph::EncodedValue>(
+            &graph,
+            "unit",
+            "request.with.dots",
+            "value",
+        )
+        .is_ok()
     );
     assert!(
-        graph
-            .wire_input::<i64>("unit", "request.with.dots", "")
+        selected_input::<i64, phenix_graph::EncodedValue>(
+            &graph,
+            "unit",
+            "request.with.dots",
+            "value",
+        )
+        .is_ok()
+    );
+    assert!(
+        selected_input::<i64, phenix_graph::EncodedValue>(&graph, "unit", "request.with.dots", "",)
             .is_ok()
     );
     let target = graph
-        .wire_input::<i64>("unit", "request.with.dots", "value")
+        .discover("unit")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("request.with.dots"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
-    let input = graph.expose_input_slot("run", "left", target).unwrap();
+    let input = graph
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("left"),
+            target,
+        )
+        .unwrap();
     let trigger = graph.trigger("run", [input]).unwrap();
     let report = Deployment::new(graph.compile().unwrap())
         .report_retention(ReportRetention::RetainPayloads)
@@ -297,13 +455,21 @@ fn existing_single_input_apis_keep_value_slot_semantics() {
 #[test]
 fn compiler_rejects_duplicate_public_pairs_with_distinct_routing_keys() {
     let mut builder = ModuleDefBuilder::new("duplicate");
-    let node = builder.register_fn("private", |x: i64| x).unwrap();
     builder
-        .export_input("one", vec![node.input::<i64>("run", "value")])
+        .register("private", NodeTemplate::function(|x: i64| x))
         .unwrap();
-    builder
-        .export_input("two", vec![node.input::<i64>("run", "value")])
-        .unwrap();
+    for (id, name) in [(0, "one"), (1, "two")] {
+        builder.input(
+            id,
+            name,
+            <i64 as phenix_graph::ContractValue>::wire_schema(),
+            vec![phenix_graph::ModuleInputTarget::NodeNamed {
+                node: "private".into(),
+                port: "run".into(),
+                slot: "value".into(),
+            }],
+        );
+    }
     let mut entry = builder.build();
     entry.definition.inputs[1].port = "one".into();
     let mut catalog = phenix_graph::ModuleCatalog::new();
@@ -345,15 +511,34 @@ fn escaped_literals_and_grouped_slots_route_independently_through_nested_modules
                     child
                         .expose_input(
                             port,
-                            child.wire_input::<i64>(&node, "run", "value").unwrap(),
+                            child
+                                .discover(&node)
+                                .unwrap()
+                                .inlets::<(), phenix_graph::EncodedValue>()
+                                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                                .target()
+                                .unwrap(),
                         )
                         .unwrap();
                 }
                 assert!(child.public_input(port).is_ok());
             } else {
-                child.expose_input_slot(port, slot, node.as_str()).unwrap();
+                child
+                    .expose_input_address(port, slot, node.as_str())
+                    .unwrap();
             }
         }
+        child
+            .expose_output(
+                "result",
+                child
+                    .discover("node-0")
+                    .unwrap()
+                    .output::<i64, phenix_graph::EncodedValue>()
+                    .unwrap(),
+            )
+            .unwrap();
         let package = child.module();
         let keys: std::collections::BTreeSet<_> =
             package.inputs().iter().map(|input| &input.name).collect();
@@ -373,23 +558,57 @@ fn escaped_literals_and_grouped_slots_route_independently_through_nested_modules
             }
         }
         let mut wrapper = GraphBuilder::new("collision-wrapper");
-        let inner = wrapper.instance("inner", &package).unwrap();
+        wrapper.instance("inner", &package).unwrap();
         for (port, slot) in COLLISION_PAIRS {
-            let target = inner.input_slot::<i64>(port, slot).unwrap();
+            let target =
+                selected_input::<i64, phenix_graph::EncodedValue>(&wrapper, "inner", port, slot)
+                    .unwrap();
             if slot == "value" {
-                assert!(inner.input::<i64>(port).is_ok());
-                assert!(wrapper.wire_input::<i64>("inner", port, "").is_ok());
+                assert!(
+                    selected_input::<i64, phenix_graph::EncodedValue>(
+                        &wrapper, "inner", port, "value",
+                    )
+                    .is_ok()
+                );
+                assert!(
+                    selected_input::<i64, phenix_graph::EncodedValue>(&wrapper, "inner", port, "",)
+                        .is_ok()
+                );
             }
-            wrapper.expose_input_slot(port, slot, target).unwrap();
+            wrapper
+                .expose_input_field(port, phenix_graph::SlotField::<(), i64>::new(slot), target)
+                .unwrap();
         }
+        wrapper
+            .expose_output(
+                "result",
+                wrapper
+                    .discover("inner")
+                    .unwrap()
+                    .output::<i64, phenix_graph::EncodedValue>()
+                    .unwrap(),
+            )
+            .unwrap();
         let wrapper = wrapper.module();
         let mut root = GraphBuilder::new("collision-root");
-        let outer = root.instance("outer", &wrapper).unwrap();
+        root.instance("outer", &wrapper).unwrap();
         let mut inputs = Vec::new();
         for (port, slot) in COLLISION_PAIRS {
-            assert!(outer.input_slot::<i64>(port, slot).is_ok());
-            let target = root.wire_input::<i64>("outer", port, slot).unwrap();
-            inputs.push(root.expose_input_slot(port, slot, target).unwrap());
+            assert!(
+                selected_input::<i64, phenix_graph::EncodedValue>(&root, "outer", port, slot,)
+                    .is_ok()
+            );
+            let target =
+                selected_input::<i64, phenix_graph::EncodedValue>(&root, "outer", port, slot)
+                    .unwrap();
+            inputs.push(
+                root.expose_input_field(
+                    port,
+                    phenix_graph::SlotField::<(), i64>::new(slot),
+                    target,
+                )
+                .unwrap(),
+            );
         }
         // Literal string trigger lookup must find the escaped default, not a grouped key.
         root.trigger("literal", ["__slot_3:runleft"]).unwrap();
@@ -421,16 +640,23 @@ fn low_level_escaped_literals_and_grouped_slots_execute_without_key_collisions()
         if reverse {
             pairs.reverse();
         }
-        for (i, (port, slot)) in pairs.iter().copied().enumerate() {
-            let node = builder
-                .register_fn(format!("node-{i}"), move |x: i64| x + i as i64 * 100)
+        for (i, (port, _slot)) in pairs.iter().copied().enumerate() {
+            builder
+                .register(
+                    format!("node-{i}"),
+                    NodeTemplate::function(move |x: i64| x + i as i64 * 100),
+                )
                 .unwrap();
-            let targets = vec![node.input::<i64>("run", "value")];
-            if slot == "value" {
-                builder.export_input(port, targets).unwrap();
-            } else {
-                builder.export_input_slot(port, slot, targets).unwrap();
-            }
+            builder.input(
+                i as u16,
+                port,
+                <i64 as phenix_graph::ContractValue>::wire_schema(),
+                vec![phenix_graph::ModuleInputTarget::NodeNamed {
+                    node: format!("node-{i}"),
+                    port: "run".into(),
+                    slot: "value".into(),
+                }],
+            );
         }
         builder.trigger(
             1,
@@ -438,7 +664,15 @@ fn low_level_escaped_literals_and_grouped_slots_execute_without_key_collisions()
                 .map(phenix_graph::ModuleTriggerTarget::PublicInput)
                 .collect(),
         );
-        let entry = builder.build();
+        let mut entry = builder.build();
+        for (input, (port, slot)) in entry.definition.inputs.iter_mut().zip(&pairs) {
+            input.slot = (*slot).into();
+            input.name = if *slot == "value" && !port.starts_with("__slot_") {
+                (*port).into()
+            } else {
+                format!("__slot_{}:{}:{port}{slot}", port.len(), slot.len())
+            };
+        }
         let keys: std::collections::BTreeSet<_> = entry
             .definition
             .inputs

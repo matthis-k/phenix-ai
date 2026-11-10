@@ -61,10 +61,21 @@ fn typed_unit_output_can_feed_a_wire_typed_consumer() {
         )
         .unwrap();
     let sink = graph.node("sink", Node::wire(|_: ()| 42_i64)).unwrap();
-    let wire_output = graph.wire_output::<()>("source", "value").unwrap();
-    graph.connect(wire_output, sink.inlet()).unwrap();
-    let wire_input = graph.wire_input::<i64>("source", "run", "value").unwrap();
-    let request = graph.expose_input("request", wire_input).unwrap();
+    let source_output = graph
+        .discover("source")
+        .unwrap()
+        .output::<(), phenix_graph::EncodedValue>()
+        .unwrap();
+    graph.connect(source_output, sink.inlet()).unwrap();
+    let source_input = graph
+        .discover("source")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
+        .unwrap();
+    let request = graph.expose_input("request", source_input).unwrap();
     graph.trigger("run", [request]).unwrap();
 
     let report = phenix_graph::Deployment::new(graph.compile().unwrap())

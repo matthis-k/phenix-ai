@@ -47,7 +47,7 @@ fn argument_type_is_its_input_layout_without_an_adapter_wrapper() {
             NodeTemplate::with_action(
                 0,
                 vec![Port::for_layout::<PairArgs>(0, "run", AllSameCohort).unwrap()],
-                vec![OutputSlot::typed::<i64>(0).named("value")],
+                OutputSlot::typed::<i64>(0).named("value"),
                 |mut ctx: InvocationCtx| {
                     let args = ctx.take_prepared::<PairArgs>()?;
                     Ok(vec![emit(0, args.left + args.right)])
@@ -55,8 +55,22 @@ fn argument_type_is_its_input_layout_without_an_adapter_wrapper() {
             ),
         )
         .unwrap();
-    let left = graph.wire_input::<i64>("sum", "run", "left").unwrap();
-    let right = graph.wire_input::<i64>("sum", "run", "right").unwrap();
+    let left = graph
+        .discover("sum")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("left"))
+        .target()
+        .unwrap();
+    let right = graph
+        .discover("sum")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("right"))
+        .target()
+        .unwrap();
     let left = graph.expose_input("left", left).unwrap();
     let right = graph.expose_input("right", right).unwrap();
     graph.trigger("calculate", [left, right]).unwrap();
@@ -97,10 +111,21 @@ fn one_low_level_local_function_handles_directed_returns() {
             }),
         )
         .unwrap();
-    let source = graph.local_output::<i64>("router", "value").unwrap();
+    let source = graph
+        .discover("router")
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
+        .unwrap();
     graph.connect(source.clone(), yes.inlet()).unwrap();
     graph.connect(source, no.inlet()).unwrap();
-    let input = graph.local_input::<i64>("router", "run", "value").unwrap();
+    let input = graph
+        .discover("router")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
+        .unwrap();
     let input = graph.expose_input("request", input).unwrap();
     graph.trigger("run", [input]).unwrap();
 

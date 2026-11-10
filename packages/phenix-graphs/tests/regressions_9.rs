@@ -98,39 +98,39 @@ fn edge_adapter_failures_are_attributed_to_edges() {
 mod nested {
     use super::*;
     use phenix_graph::LocalPortLayout;
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L9 {
         value: i32,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L8 {
         inner: L9,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L7 {
         inner: L8,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L6 {
         inner: L7,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L5 {
         inner: L6,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L4 {
         inner: L5,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L3 {
         inner: L4,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L2 {
         inner: L3,
     }
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct L1 {
         inner: L2,
     }
@@ -148,17 +148,20 @@ mod nested {
         let ingress = g
             .expose_input(
                 "leaf",
-                n.field(
-                    L1::SLOT_INNER
-                        .then(L2::SLOT_INNER)
-                        .then(L3::SLOT_INNER)
-                        .then(L4::SLOT_INNER)
-                        .then(L5::SLOT_INNER)
-                        .then(L6::SLOT_INNER)
-                        .then(L7::SLOT_INNER)
-                        .then(L8::SLOT_INNER)
-                        .then(L9::SLOT_VALUE),
-                ),
+                n.inlet()
+                    .field(
+                        L1::SLOT_INNER
+                            .then(L2::SLOT_INNER)
+                            .then(L3::SLOT_INNER)
+                            .then(L4::SLOT_INNER)
+                            .then(L5::SLOT_INNER)
+                            .then(L6::SLOT_INNER)
+                            .then(L7::SLOT_INNER)
+                            .then(L8::SLOT_INNER)
+                            .then(L9::SLOT_VALUE),
+                    )
+                    .target()
+                    .unwrap(),
             )
             .unwrap();
         g.expose_output("answer", n.output()).unwrap();
@@ -188,7 +191,13 @@ mod nested {
             .input(Layout::flatten_to::<2>())
             .unwrap();
         let ingress = g
-            .expose_input("nested", n.field(L1::SLOT_INNER.then(L2::SLOT_INNER)))
+            .expose_input(
+                "nested",
+                n.inlet()
+                    .field(L1::SLOT_INNER.then(L2::SLOT_INNER))
+                    .target()
+                    .unwrap(),
+            )
             .unwrap();
         let trigger = g.trigger("go", [ingress]).unwrap();
         let value = L3 {
@@ -218,12 +227,12 @@ mod nested {
         );
     }
 
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct Address {
         city: String,
         zip: u32,
     }
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct Order {
         #[port(flatten)]
         address: Address,
@@ -244,14 +253,26 @@ mod nested {
         let city = g
             .expose_input(
                 "city",
-                n.field(Order::SLOT_ADDRESS.then(Address::SLOT_CITY)),
+                n.inlet()
+                    .field(Order::SLOT_ADDRESS.then(Address::SLOT_CITY))
+                    .target()
+                    .unwrap(),
             )
             .unwrap();
         let zip = g
-            .expose_input("zip", n.field(Order::SLOT_ADDRESS.then(Address::SLOT_ZIP)))
+            .expose_input(
+                "zip",
+                n.inlet()
+                    .field(Order::SLOT_ADDRESS.then(Address::SLOT_ZIP))
+                    .target()
+                    .unwrap(),
+            )
             .unwrap();
         let amount = g
-            .expose_input("amount", n.field(Order::SLOT_AMOUNT))
+            .expose_input(
+                "amount",
+                n.inlet().field(Order::SLOT_AMOUNT).target().unwrap(),
+            )
             .unwrap();
         let fire = g.trigger("go", [city, zip, amount]).unwrap();
         let report = Deployment::new(g.compile().unwrap())
@@ -275,7 +296,7 @@ mod nested {
         );
     }
 
-    #[derive(LocalPortLayout)]
+    #[derive(LocalPortLayout, phenix_graph::InputFields)]
     struct WithTuple {
         point: (i32, i32),
     }
@@ -291,8 +312,26 @@ mod nested {
                 ),
             )
             .unwrap();
-        let a = g.expose_input("x", n.local_slot::<i32>("point.0")).unwrap();
-        let b = g.expose_input("y", n.local_slot::<i32>("point.1")).unwrap();
+        let a = g
+            .expose_input(
+                "x",
+                n.inlets()
+                    .port(phenix_graph::InletPort::<_, i32>::new("run"))
+                    .field(phenix_graph::SlotField::<i32, i32>::new("point.0"))
+                    .target()
+                    .unwrap(),
+            )
+            .unwrap();
+        let b = g
+            .expose_input(
+                "y",
+                n.inlets()
+                    .port(phenix_graph::InletPort::<_, i32>::new("run"))
+                    .field(phenix_graph::SlotField::<i32, i32>::new("point.1"))
+                    .target()
+                    .unwrap(),
+            )
+            .unwrap();
         let fire = g.trigger("go", [a, b]).unwrap();
         let result = Deployment::new(g.compile().unwrap())
             .store(Store::new())

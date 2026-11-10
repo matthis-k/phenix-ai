@@ -3,6 +3,44 @@
 Date: 2026-11-09. Base: `2b6b545dd000b40c2c535cefe0c50b87b9ea5283`.
 Branch: `impl/debt-cleanup-stacked-20261109`. PR: pending.
 
+## Current Redesign Context
+
+The base/branch above identifies the earlier debt-cleanup task, not the current
+operation redesign branch. Current baseline is
+`5469c55b27ff0e6e9072f9ca923f29a854f3bafd`, branch
+`impl/operation-interface-20261109`, with prior uncommitted work preserved. The
+final implementation commit is forthcoming and unknown. The
+[operation implementation record](operation-interface-redesign.md) owns the
+current architecture/type audit, complete API-removal ledger and final gates.
+
+Typed operation views, independent public Module layouts/projections, singular
+Node/Module output enforcement, scheduler zero-or-one emission admission and
+cross-kind edits through existing `graph.replace` are present in source. Old
+representation-specific endpoint methods, grouped exposure spelling, duplicate
+named endpoint structs, NamedNodeHandle endpoint methods and raw inference/export
+helpers have zero obsolete Rust references in the measured packages/examples/docs
+surface. Raw `ModuleInput`, `ModuleOutput`, `ModuleInputTarget`,
+`ModuleOutputSource` and `ModuleDefBuilder` remain physical compiler API, not new
+canonical wrappers. Root exposure and typed Module exposure remain dual paths.
+
+R12/R14's intermediate field helper examples below are superseded for ordinary
+operation authoring by `inlets().port(...).field(...).target()?` and one `output()`.
+`Module::new` now returns Result. Owner typing rejects unrelated descriptors but
+does not prove custom erased per-port reconstruction or static frontier validity.
+Current LocalPortLayout derive emits SLOT descriptors; encoded descriptors are
+manual pending main's common derive. No runtime port/module/operation wrapper,
+readiness barrier or atomicity across separate projection invocations is claimed.
+
+Handoff reports Graph tests/doctests passed. Workspace testing encountered a host
+portable schema-error wording assertion; main fixed it and reports the host suite
+passed. Final workspace/feature/tooling checks, exact commit evidence and the
+later independent operation reviewer/ratings remain pending. Earlier measurements,
+review findings and numeric debt-cleanup assessments below retain their original
+scope; they are not current redesign acceptance or a fresh independent rating.
+R08/R10/R15 remain qualified as below. This documentation pass runs no Cargo tests.
+
+## Debt-Cleanup Scope
+
 This shared-repository final report inventories the current implementation, tests
 and evidence. The implementation includes tracked and untracked worktree files;
 its disposition remains provisional until the combined implementation is committed
@@ -315,8 +353,8 @@ coverage as indicated; additions to an existing file are called out explicitly.
   lineage and local/wire checks. Nested field paths are complete slot names, not
   a new punctuation grammar or an implicit readiness barrier.
 - **Failure and smallest correction:** grouped consumers repeated raw names and
-  symbolic dotted shorthand could not unambiguously split arbitrary port/slot
-  pairs. `expose_input_field`, module/bound field projections and
+   symbolic dotted shorthand could not unambiguously split arbitrary port/slot
+   pairs. The intermediate cleanup used `expose_input_field`, module/bound field projections and
   `public_input_slot` delegate to exact existing slot lookup. `public_input(name)`
   continues to mean the literal `(name, "value")` pair.
 - **Evidence:** new `packages/phenix-graphs/tests/grouped_authoring.rs` and
@@ -326,7 +364,11 @@ coverage as indicated; additions to an existing file are called out explicitly.
   stale/divergent declaration coverage. See `docs/grouped-authoring.md`.
 - **Disposition:** corrected typed/exact-slot path. Symbolic dotted shorthand is
   intentionally not extended. Grouping alone adds no join/readiness policy, and
-  manually constructed selectors still require runtime declaration validation.
+   manually constructed selectors still require runtime declaration validation.
+
+Current operation addressing supersedes the intermediate module/bound helpers:
+use owner-typed views and explicit checked `target()`. Root `expose_input_field`
+remains alongside typed `Module::expose`; the overlap is a residual API risk.
 
 ### R13: Portable Codec Evidence And Generator Hygiene
 
@@ -402,7 +444,7 @@ does not retain a nominal legacy fallback.
 | Callback failures | String causes; host start formatted to String | Owned `CallbackError`, source-preserving phase envelopes; `LifecycleError::Start(StartError)` | plugin `src/error.rs`; kernel `src/lib.rs`, `host.rs` |
 | Wave limits | No finite productive-cycle dispatch cutoff | Default 1024; deployment/engine override; structured exhaustion report | Graph `src/deployment.rs`, `src/scheduler.rs` |
 | Incremental authoring | Derived operations cloned growing builder state | Restricted `GraphBuilder::additions` / `GraphAdditions` | Graph `src/authoring/additions.rs`; storage-graph derived source/query |
-| Grouped authoring | Raw `expose_input_slot` / input-slot names and scoped binding idioms | `expose_input_field`, `local_field`/`wire_field`, `public_input_slot`; existing handles | Graph `src/authoring.rs`, `authoring/interfaces.rs`, `authoring/addresses.rs` |
+| Grouped authoring | Historical raw input-slot names, representation-specific field helpers and scoped binding idioms | Operation `inlets().port(...).field(...).target()?`, singular output; explicit Module interface/expose/finish; root exposure retained | Graph `src/authoring/operation.rs`, `authoring/interfaces.rs`, `authoring/addresses.rs` |
 | Backend construction | `mount_boxed` validates only after caller created backend | `mount_with` reserves before factory; `mount_sqlite`/`mount_offer` use it | storage `src/lib.rs`; storage-plugin `src/lib.rs` |
 
 Primitive and record payload bytes are intended to remain unchanged, but full

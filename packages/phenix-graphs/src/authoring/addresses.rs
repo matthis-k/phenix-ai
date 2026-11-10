@@ -37,14 +37,14 @@ impl GraphBuilder {
         let (name, specified, is_instance) = self.path_owner(path, "out")?;
         if is_instance {
             let entry = self.dependency_for_instance(name)?;
-            let outputs = &entry.definition.outputs;
-            let output = match specified {
-                Some(selected) => outputs
-                    .iter()
-                    .find(|p| p.name == selected)
-                    .ok_or_else(|| format!("unknown module output {path:?}"))?,
-                None => exactly_one(outputs, path, "output")?,
-            };
+            let output = entry
+                .definition
+                .output
+                .as_ref()
+                .ok_or_else(|| format!("module {name:?} has no output"))?;
+            if specified.is_some_and(|selected| selected != output.name) {
+                return Err(format!("unknown module output {path:?}"));
+            }
             Ok((
                 Source::Instance {
                     name: name.into(),
@@ -59,12 +59,10 @@ impl GraphBuilder {
                 .or_else(|| self.module.named_node(name))
                 .ok_or_else(|| format!("unknown source node {name:?}"))?;
             let output = match specified {
-                Some(selected) => node
-                    .outputs
-                    .iter()
-                    .find(|p| p.name.as_deref() == Some(selected))
-                    .ok_or_else(|| format!("unknown node output {path:?}"))?,
-                None => exactly_one(&node.outputs, path, "output")?,
+                Some(selected) if node.output.name.as_deref() != Some(selected) => {
+                    return Err(format!("unknown node output {path:?}"));
+                }
+                _ => &node.output,
             };
             let named = output.name.as_deref().ok_or_else(|| {
                 format!("unnamed output on {name:?} cannot be symbolically addressed")
@@ -243,14 +241,12 @@ impl GraphBuilder {
         let (source, kind) = self.source_path(from)?;
         let resolved = self.verify_source(&source, kind.clone())?;
         validate_name_segment(name).map_err(|err| err.to_string())?;
-        if self.module.outputs.iter().any(|output| output.name == name) {
-            return Err(format!("duplicate public output {name:?}"));
+        if self.module.output.is_some() {
+            return Err("module already has a public output".into());
         }
-        let id =
-            u16::try_from(self.module.outputs.len()).map_err(|_| "public output limit exceeded")?;
         let (schema, local_type) = self.source_identity(kind, &source)?;
         self.module
-            .output_with_identity(id, name, schema, local_type, resolved);
+            .output_with_identity(0, name, schema, local_type, resolved);
         Ok(())
     }
 
@@ -304,18 +300,17 @@ impl GraphBuilder {
                     .get(node)
                     .or_else(|| self.module.named_node(node))
                     .ok_or("node missing")?;
-                let p = n
-                    .outputs
-                    .iter()
-                    .find(|p| p.name.as_deref() == Some(output))
-                    .ok_or("output missing")?;
+                let p = &n.output;
+                if p.name.as_deref() != Some(output) {
+                    return Err("output missing".into());
+                }
                 Ok((p.schema.clone(), p.local_type))
             }
             Source::Instance { name, port } => {
                 let entry = self.dependency_for_instance(name)?;
                 let p = entry
                     .definition
-                    .outputs
+                    .output
                     .iter()
                     .find(|p| &p.name == port)
                     .ok_or("output missing")?;

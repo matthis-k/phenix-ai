@@ -142,14 +142,17 @@ macro_rules! tuples {
                     let join = format!("{name}.join");
                     g.add(&join, NodeTemplate::with_action_factory(0,
                         vec![Port::all(0, vec![$(InputSlot::local::<$T>($i).named(stringify!($i))),+]).named("run")],
-                        vec![OutputSlot::local::<($($T,)+)>(0).named("value")],
+                        OutputSlot::local::<($($T,)+)>(0).named("value"),
                         || Join(|mut ctx: InvocationCtx| Ok(vec![emit_local(0, ($(ctx.take_local::<$T>($i)?,)+))])),
                     )).map_err(|e| Error::Graph(e.to_string()))?;
-                    $(g.connect(self.$i.output(), g.local_input::<$T>(&join, "run", stringify!($i))?)?;)+
+                    $(g.connect(self.$i.output(), g.discover(&join)?
+                        .inlets::<Self, phenix_graph::LocalValue>()
+                        .port(phenix_graph::InletPort::<Self, Self>::new("run"))
+                        .field(phenix_graph::SlotField::<Self, $T>::new(stringify!($i))).target()?)?;)+
                     let function = function.clone();
                     let node = g.node(name, move |values: ($($T,)+)| function($(values.$i),+))
                         .map_err(|e| Error::Graph(e.to_string()))?;
-                    g.connect(g.local_output::<($($T,)+)>(&join, "value")?, node.inlet())?;
+                    g.connect(g.discover(&join)?.output::<($($T,)+), phenix_graph::LocalValue>()?, node.inlet())?;
                     Ok(DerivedRef { output: node.output(), root: root.clone() })
                 })
             }

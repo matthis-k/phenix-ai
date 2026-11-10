@@ -26,7 +26,7 @@ This is a record of implementation/review passes, not a claim of three independe
 | Runtime | `DerivedRuntime` pins Kernel lifetime and guards dispatch, delegating once to the supplied executor. It is not a new scheduler; queries use `Kernel::fire`. |
 | Membership | Generic Engine pointer lookup requires one physical source and one tap and captures their exact IDs. Trigger inspection also validates the exclusive source ingress before any wave. No compiler/scheduler changes or new third-party dependencies. |
 | Deployment reuse | Shared stateless source/tap `with_dyn_action` allocations permit compatible authored-module redeployment; new incompatible recomposition rejects the old spec. Multiple physical instances sharing actions reject as ambiguous. |
-| Query receipt | Exact source slot 1 and tap slot 0, successful report, payload/event cardinality and current wave/cohort; identities asserted by payloads alone are not trusted. |
+| Query provenance | Exact source slot 0 and tap slot 0, successful report, one retained terminal payload and one event per endpoint, current terminal wave/cohort and matching scheduler-owned source/tap cohorts; no source payload retention is required. |
 | Cycles | Immutable topological derived construction makes derived cycles unconstructible. An undefined-variable compile-fail doctest is not a cycle detector. General Graph loops are unchanged. |
 | Value ownership | Graph inputs/outputs use `Clone + Send + Sync + 'static`; codecs in stored graph inputs require `Send + Sync`. Bound-cell cloning shares handles/codecs; value delivery/query return may clone. |
 

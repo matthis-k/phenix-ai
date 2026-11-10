@@ -18,7 +18,11 @@ fn module(name: &str) -> ModulePackage {
     let mut graph = GraphBuilder::new(name);
     let worker = graph.node("private", |x: i64| x).unwrap();
     graph
-        .expose_input_slot("run", "value", worker.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            worker.inlet(),
+        )
         .unwrap();
     graph.expose_output("value", worker.output()).unwrap();
     graph.implements_public(&contract()).unwrap();
@@ -67,14 +71,16 @@ fn shape_has_no_semantic_identity_and_membership_requires_claim() {
 }
 
 #[test]
-fn exact_definition_and_output_subset_matching_are_distinct() {
+fn exact_definition_and_single_output_shape_matching_are_distinct() {
     let required = contract();
-    let actual = required
-        .required()
-        .clone()
-        .output("debug", DeclaredValue::local::<String>())
+    let mut actual = InterfaceShape::new();
+    for (port, slot, value) in required.required().inputs() {
+        actual = actual.input_slot(port, slot, value).unwrap();
+    }
+    let actual = actual
+        .output("value", DeclaredValue::local::<String>())
         .unwrap();
-    required.required().check_shape(&actual).unwrap();
+    assert!(required.required().check_shape(&actual).is_err());
     assert!(!required.required().same_shape(&actual));
     let changed = GraphContract::new(required.id(), actual).unwrap();
     assert!(required.check_definition(&changed).is_err());
@@ -167,6 +173,12 @@ fn root_claim_survives_packaging_and_nested_instances() {
     let package = module("service");
     let mut wrapper = GraphBuilder::new("wrapper");
     wrapper.instance("inside", &package).unwrap();
+    let output = wrapper
+        .discover("inside")
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
+        .unwrap();
+    wrapper.expose_output("value", output).unwrap();
     let wrapper = wrapper.module();
     let mut graph = GraphBuilder::new("root");
     graph.instance("one", &wrapper).unwrap();
@@ -245,12 +257,14 @@ fn low_level_claims_and_same_id_conflicts_are_checked_finally() {
 
     let mut graph = GraphBuilder::new("root");
     graph.node("one", |x: i64| x).unwrap();
-    graph.node("two", |x: i64| x).unwrap();
+    graph.node("two", |x: i64| x > 0).unwrap();
     graph.implements("one", &contract()).unwrap();
     let conflicting = GraphContract::new(
         contract().id(),
         InterfaceShape::new()
             .input_slot("run", "value", DeclaredValue::local::<i64>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<bool>())
             .unwrap(),
     )
     .unwrap();
@@ -287,8 +301,49 @@ fn final_requests_require_actual_claim_and_definition() {
 #[test]
 fn definitions_conflict_across_modules_and_final_requests() {
     let first = module("first");
-    let conflicting = GraphContract::new(contract().id(), InterfaceShape::new()).unwrap();
+    let conflicting = GraphContract::new(
+        contract().id(),
+        InterfaceShape::new()
+            .input_slot("run", "value", DeclaredValue::local::<()>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<bool>())
+            .unwrap(),
+    )
+    .unwrap();
+    use phenix_graph::{InputSlot, InvocationCtx, OutputSlot, Port};
     let mut second = GraphBuilder::new("second");
+    second
+        .add(
+            "alternate",
+            NodeTemplate::with_action(
+                0,
+                vec![Port::all(0, vec![InputSlot::local::<()>(0).named("value")]).named("run")],
+                OutputSlot::local::<bool>(0).named("value"),
+                |_ctx: InvocationCtx| Ok(Vec::new()),
+            ),
+        )
+        .unwrap();
+    let output = second
+        .discover("alternate")
+        .unwrap()
+        .output::<bool, phenix_graph::LocalValue>()
+        .unwrap();
+    let input = second
+        .discover("alternate")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), ()>::new("run"))
+        .field(phenix_graph::SlotField::<(), ()>::new("value"))
+        .target()
+        .unwrap();
+    second
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), ()>::new("value"),
+            input,
+        )
+        .unwrap();
+    second.expose_output("value", output).unwrap();
     second.implements_public(&conflicting).unwrap();
     let second = second.module();
     let mut graph = GraphBuilder::new("root");
@@ -374,10 +429,7 @@ fn bound_lookup_hides_actual_extensions_and_shapes_cover_multiple_ports() {
             )
             .named("extra"),
         ],
-        vec![
-            OutputSlot::local::<i64>(0).named("reply"),
-            OutputSlot::local::<String>(1).named("debug"),
-        ],
+        OutputSlot::local::<i64>(0).named("reply"),
         |_ctx: InvocationCtx| Ok(Vec::new()),
     );
     let contract = GraphContract::new(
@@ -398,22 +450,97 @@ fn bound_lookup_hides_actual_extensions_and_shapes_cover_multiple_ports() {
     graph.implements("multi", &contract).unwrap();
     let actual = inspect(&graph.inspect("multi").unwrap());
     assert_eq!(actual.shape.inputs().count(), 3);
-    assert_eq!(actual.shape.outputs().count(), 2);
+    assert_eq!(actual.shape.output_value().unwrap().0, Some("reply"));
     let bound = graph
         .inspect("multi")
         .unwrap()
         .bind_contract(&contract)
         .unwrap();
-    assert!(bound.local_input::<i64>("run", "left").is_ok());
-    assert!(bound.local_input::<bool>("run", "flag").is_ok());
-    assert!(bound.local_input::<String>("extra", "value").is_ok());
-    assert!(bound.local_output::<i64>("reply").is_ok());
-    assert!(bound.local_output::<String>("debug").is_err());
-    assert!(bound.local_output::<bool>("reply").is_err());
-    assert!(bound.local_input::<bool>("run", "left").is_err());
-    assert!(bound.local_input::<i64>("run", "unpromised").is_err());
-    assert!(bound.wire_output::<i64>("reply").is_err());
-    assert!(graph.local_output::<String>("multi", "debug").is_ok());
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("left"))
+            .target()
+            .is_ok()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), bool>::new("run"))
+            .field(phenix_graph::SlotField::<bool, bool>::new("flag"))
+            .target()
+            .is_ok()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), String>::new("extra"))
+            .field(phenix_graph::SlotField::<String, String>::new("value"))
+            .target()
+            .is_ok()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()
+            .is_ok()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .output::<String, phenix_graph::LocalValue>()
+            .is_err()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .output::<bool, phenix_graph::LocalValue>()
+            .is_err()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), bool>::new("run"))
+            .field(phenix_graph::SlotField::<bool, bool>::new("left"))
+            .target()
+            .is_err()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("run"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("unpromised"))
+            .target()
+            .is_err()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .output::<i64, phenix_graph::EncodedValue>()
+            .is_err()
+    );
+    assert!(
+        graph
+            .discover("multi")
+            .unwrap()
+            .output::<String, phenix_graph::LocalValue>()
+            .is_err()
+    );
     let compiled = graph.compile().unwrap();
     assert_eq!(
         actual.shape,
@@ -468,38 +595,69 @@ fn authoring_wire_binding_limits_endpoints_and_connects_nodes_and_nested_modules
             )
             .named("run"),
         ],
-        vec![
-            OutputSlot::typed::<Number>(0).named("value"),
-            OutputSlot::typed::<bool>(1).named("debug"),
-        ],
+        OutputSlot::typed::<Number>(0).named("value"),
         |_ctx: InvocationCtx| Ok(Vec::new()),
     );
     let mut service = GraphBuilder::new("service");
     service.add("private", template.clone()).unwrap();
     service.implements("private", &required).unwrap();
     let input = service
-        .wire_input::<Number>("private", "run", "value")
+        .discover("private")
+        .unwrap()
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), Number>::new("run"))
+        .field(phenix_graph::SlotField::<Number, Number>::new("value"))
+        .target()
         .unwrap();
-    let output = service.wire_output::<Number>("private", "value").unwrap();
-    let debug = service.wire_output::<bool>("private", "debug").unwrap();
-    service.expose_input_slot("run", "value", input).unwrap();
+    let output = service
+        .discover("private")
+        .unwrap()
+        .output::<Number, phenix_graph::EncodedValue>()
+        .unwrap();
+    service
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), Number>::new("value"),
+            input,
+        )
+        .unwrap();
     service.expose_output("value", output).unwrap();
-    service.expose_output("debug", debug).unwrap();
     service.implements_public(&required).unwrap();
     let mut wrapper = GraphBuilder::new("wrapper");
     wrapper.instance("inside", &service.module()).unwrap();
-    let (input, output, debug) = {
+    let (input, output) = {
         let bound = wrapper.bind_contract("inside", &required).unwrap();
-        assert!(bound.wire_output::<bool>("debug").is_err());
+        assert!(
+            bound
+                .operation()
+                .unwrap()
+                .output::<bool, phenix_graph::EncodedValue>()
+                .is_err()
+        );
         (
-            bound.wire_input::<Number>("run", "value").unwrap(),
-            bound.wire_output::<Number>("value").unwrap(),
-            wrapper.wire_output::<bool>("inside", "debug").unwrap(),
+            bound
+                .operation()
+                .unwrap()
+                .inlets::<(), phenix_graph::EncodedValue>()
+                .port(phenix_graph::InletPort::<(), Number>::new("run"))
+                .field(phenix_graph::SlotField::<Number, Number>::new("value"))
+                .target()
+                .unwrap(),
+            bound
+                .operation()
+                .unwrap()
+                .output::<Number, phenix_graph::EncodedValue>()
+                .unwrap(),
         )
     };
-    wrapper.expose_input_slot("run", "value", input).unwrap();
+    wrapper
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), Number>::new("value"),
+            input,
+        )
+        .unwrap();
     wrapper.expose_output("value", output).unwrap();
-    wrapper.expose_output("debug", debug).unwrap();
     wrapper.implements_public(&required).unwrap();
 
     let mut graph = GraphBuilder::new("root");
@@ -515,31 +673,101 @@ fn authoring_wire_binding_limits_endpoints_and_connects_nodes_and_nested_modules
             .unwrap();
         let (input, output) = {
             let bound = graph.bind_contract(path, &required).unwrap();
-            let error = bound.wire_output::<bool>("debug").err().unwrap();
+            let error = bound
+                .operation()
+                .unwrap()
+                .output::<bool, phenix_graph::EncodedValue>()
+                .err()
+                .unwrap();
             assert_eq!(error.phase, InterfacePhase::Authoring);
             assert_eq!(error.path.as_ref(), path);
             assert_eq!(error.contract.as_deref(), Some(required.id()));
-            assert_eq!(error.endpoint.as_deref(), Some("output debug"));
-            assert!(bound.wire_input::<Number>("run", "other").is_err());
-            assert!(bound.wire_input::<bool>("run", "value").is_err());
-            assert!(bound.wire_output::<bool>("value").is_err());
-            assert!(bound.local_input::<i64>("run", "value").is_err());
-            assert!(bound.local_output::<i64>("value").is_err());
+            assert_eq!(error.endpoint.as_deref(), Some("output value"));
+            assert!(
+                bound
+                    .operation()
+                    .unwrap()
+                    .inlets::<(), phenix_graph::EncodedValue>()
+                    .port(phenix_graph::InletPort::<(), Number>::new("run"))
+                    .field(phenix_graph::SlotField::<Number, Number>::new("other"))
+                    .target()
+                    .is_err()
+            );
+            assert!(
+                bound
+                    .operation()
+                    .unwrap()
+                    .inlets::<(), phenix_graph::EncodedValue>()
+                    .port(phenix_graph::InletPort::<(), bool>::new("run"))
+                    .field(phenix_graph::SlotField::<bool, bool>::new("value"))
+                    .target()
+                    .is_err()
+            );
+            assert!(
+                bound
+                    .operation()
+                    .unwrap()
+                    .output::<bool, phenix_graph::EncodedValue>()
+                    .is_err()
+            );
+            assert!(
+                bound
+                    .operation()
+                    .unwrap()
+                    .inlets::<(), phenix_graph::LocalValue>()
+                    .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                    .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                    .target()
+                    .is_err()
+            );
+            assert!(
+                bound
+                    .operation()
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()
+                    .is_err()
+            );
             (
-                bound.wire_input::<Number>("run", "value").unwrap(),
-                bound.wire_output::<Number>("value").unwrap(),
+                bound
+                    .operation()
+                    .unwrap()
+                    .inlets::<(), phenix_graph::EncodedValue>()
+                    .port(phenix_graph::InletPort::<(), Number>::new("run"))
+                    .field(phenix_graph::SlotField::<Number, Number>::new("value"))
+                    .target()
+                    .unwrap(),
+                bound
+                    .operation()
+                    .unwrap()
+                    .output::<Number, phenix_graph::EncodedValue>()
+                    .unwrap(),
             )
         };
-        assert!(graph.wire_output::<bool>(path, "debug").is_ok());
-        graph.connect_wire(source.output(), input).unwrap();
-        graph.connect_wire(output, sink.inlet()).unwrap();
+        assert!(
+            graph
+                .discover(path)
+                .unwrap()
+                .output::<bool, phenix_graph::EncodedValue>()
+                .is_err()
+        );
+        graph.connect(source.output(), input).unwrap();
+        graph.connect(output, sink.inlet()).unwrap();
     }
     // Inspection may see nested declarations; binding must not bypass authoring privacy.
-    for path in ["nested/inside", "nested/inside/private"] {
-        let bound = graph.bind_contract(path, &required).unwrap();
-        assert!(bound.wire_input::<Number>("run", "value").is_err());
-        assert!(bound.wire_output::<Number>("value").is_err());
-    }
+    assert!(
+        graph
+            .bind_contract("nested/inside", &required)
+            .unwrap()
+            .operation()
+            .is_err()
+    );
+    assert!(
+        graph
+            .bind_contract("nested/inside/private", &required)
+            .unwrap()
+            .operation()
+            .is_err()
+    );
     graph.compile().unwrap();
 }
 
@@ -551,21 +779,43 @@ fn authoring_bound_handles_retain_declaration_revision_checks() {
     let (input, output) = {
         let bound = graph.bind_contract("worker", &contract()).unwrap();
         (
-            bound.local_input::<i64>("run", "value").unwrap(),
-            bound.local_output::<i64>("value").unwrap(),
+            bound
+                .operation()
+                .unwrap()
+                .inlets::<(), phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<(), i64>::new("run"))
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
+            bound
+                .operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap(),
         )
     };
     let mut replacement = NodeTemplate::local_function::<i64, i64, i64, _>(|x| x);
     replacement.claims.push(contract());
     graph.replace("worker", replacement).unwrap();
-    let fresh_input = graph.local_input::<i64>("worker", "run", "value").unwrap();
-    let fresh_output = graph.local_output::<i64>("worker", "value").unwrap();
+    let fresh_input = graph
+        .discover("worker")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
+        .unwrap();
+    let fresh_output = graph
+        .discover("worker")
+        .unwrap()
+        .output::<i64, phenix_graph::LocalValue>()
+        .unwrap();
     assert!(graph.connect(output, fresh_input).is_err());
     assert!(graph.connect(fresh_output, input).is_err());
 }
 
 #[test]
-fn h07_shape_matching_requires_exact_named_inputs_but_allows_extra_outputs() {
+fn h07_shape_matching_requires_exact_named_inputs_and_exactly_one_output() {
     let required = contract();
     let inputs = required.required();
     let extra_port = inputs
@@ -588,14 +838,21 @@ fn h07_shape_matching_requires_exact_named_inputs_but_allows_extra_outputs() {
         assert!(inputs.check_shape(&actual).is_err());
         assert!(!inputs.same_shape(&actual));
     }
-    inputs
-        .check_shape(
-            &inputs
-                .clone()
-                .output("debug", DeclaredValue::local::<bool>())
-                .unwrap(),
-        )
+    assert!(
+        inputs
+            .clone()
+            .output("debug", DeclaredValue::local::<bool>())
+            .is_err()
+    );
+    let mut changed = InterfaceShape::new();
+    for (port, slot, value) in inputs.inputs() {
+        changed = changed.input_slot(port, slot, value).unwrap();
+    }
+    let changed = changed
+        .output("value", DeclaredValue::local::<bool>())
         .unwrap();
+    assert!(inputs.check_shape(&changed).is_err());
+    assert!(!inputs.same_shape(&changed));
 }
 
 #[test]
@@ -633,7 +890,7 @@ fn h07_actual_node_checks_and_final_claims_reject_extra_inputs() {
         let template = NodeTemplate::with_action(
             1,
             ports,
-            vec![OutputSlot::local::<i64>(0).named("value")],
+            OutputSlot::local::<i64>(0).named("value"),
             |_ctx: InvocationCtx| Ok(Vec::new()),
         );
         let mut graph = GraphBuilder::new("root");
@@ -666,12 +923,16 @@ fn h07_actual_module_checks_reject_extra_public_ports_and_slots() {
         let first = module.node("first", |x: i64| x).unwrap();
         let second = module.node("second", |x: i64| x).unwrap();
         module
-            .expose_input_slot("run", "value", first.inlet())
+            .expose_input_field(
+                "run",
+                phenix_graph::SlotField::<(), i64>::new("value"),
+                first.inlet(),
+            )
             .unwrap();
         module
-            .expose_input_slot(
+            .expose_input_field(
                 if extra_port { "extra" } else { "run" },
-                if extra_port { "value" } else { "extra" },
+                phenix_graph::SlotField::<(), i64>::new(if extra_port { "value" } else { "extra" }),
                 second.inlet(),
             )
             .unwrap();
@@ -714,15 +975,14 @@ fn graph_contract_structural_and_semantic_checks_are_distinct_on_real_units() {
     required
         .check_implementation(&compiled.find("worker").unwrap())
         .unwrap();
-    let different_definition = GraphContract::new(
-        required.id(),
-        required
-            .required()
-            .clone()
-            .output("debug", DeclaredValue::local::<bool>())
-            .unwrap(),
-    )
-    .unwrap();
+    let mut different_shape = InterfaceShape::new();
+    for (port, slot, value) in required.required().inputs() {
+        different_shape = different_shape.input_slot(port, slot, value).unwrap();
+    }
+    let different_shape = different_shape
+        .output("value", DeclaredValue::local::<bool>())
+        .unwrap();
+    let different_definition = GraphContract::new(required.id(), different_shape).unwrap();
     assert!(
         different_definition
             .check_implementation(&compiled.find("worker").unwrap())
@@ -737,6 +997,8 @@ fn contradictory_same_id_claims_cannot_pass_authoring_implementation_checks() {
         required.id(),
         InterfaceShape::new()
             .input_slot("run", "value", DeclaredValue::local::<i64>())
+            .unwrap()
+            .output("value", DeclaredValue::local::<bool>())
             .unwrap(),
     )
     .unwrap();
@@ -780,7 +1042,7 @@ fn endpoint_names_follow_graph_rules_instead_of_contract_id_rules() {
             )
             .named("run port"),
         ],
-        vec![OutputSlot::local::<i64>(0).named("reply value")],
+        OutputSlot::local::<i64>(0).named("reply value"),
         |_ctx: InvocationCtx| Ok(Vec::new()),
     );
     let mut graph = GraphBuilder::new("root");
@@ -823,7 +1085,7 @@ fn invalid_claim_never_activates_an_action_factory() {
             )
             .named("run"),
         ],
-        vec![OutputSlot::typed::<i64>(0).named("value")],
+        OutputSlot::typed::<i64>(0).named("value"),
         move || {
             counter.fetch_add(1, Ordering::SeqCst);
             |_ctx: InvocationCtx| Ok(Vec::new())
@@ -861,7 +1123,11 @@ fn module_replacement_rejects_claim_removal_without_mutation() {
     let mut replacement = GraphBuilder::new("replacement");
     let n = replacement.node("different", |x: i64| x).unwrap();
     replacement
-        .expose_input_slot("run", "value", n.inlet())
+        .expose_input_field(
+            "run",
+            phenix_graph::SlotField::<(), i64>::new("value"),
+            n.inlet(),
+        )
         .unwrap();
     replacement.expose_output("value", n.output()).unwrap();
     let mut graph = GraphBuilder::new("root");
@@ -879,7 +1145,7 @@ fn module_replacement_rejects_claim_removal_without_mutation() {
 #[test]
 fn invalid_pending_module_boundary_returns_contextual_error() {
     use phenix_graph::{Layout, LocalPortLayout};
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Pair {
         left: i64,
         right: i64,
@@ -900,7 +1166,7 @@ fn invalid_pending_module_boundary_returns_contextual_error() {
 #[test]
 fn inspection_reads_pending_layout_and_final_compile_rechecks_claim() {
     use phenix_graph::{Layout, LocalPortLayout};
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Pair {
         left: i64,
         right: i64,
@@ -925,7 +1191,7 @@ fn inspection_reads_pending_layout_and_final_compile_rechecks_claim() {
 #[test]
 fn retained_authoring_binding_rechecks_full_contract_after_layout_change() {
     use phenix_graph::{Layout, LocalPortLayout};
-    #[derive(Clone, LocalPortLayout)]
+    #[derive(Clone, LocalPortLayout, phenix_graph::InputFields)]
     struct Pair {
         left: i64,
         right: i64,
@@ -937,17 +1203,36 @@ fn retained_authoring_binding_rechecks_full_contract_after_layout_change() {
     graph.implements("worker", &contract).unwrap();
     let view = graph.inspect("worker").unwrap();
     let bound = graph.bind_contract("worker", &contract).unwrap();
-    assert!(bound.local_input::<Pair>("run", "value").is_ok());
-    assert!(bound.local_output::<i64>("value").is_ok());
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), Pair>::new("run"))
+            .field(phenix_graph::SlotField::<Pair, Pair>::new("value"))
+            .target()
+            .is_ok()
+    );
+    assert!(
+        bound
+            .operation()
+            .unwrap()
+            .output::<i64, phenix_graph::LocalValue>()
+            .is_ok()
+    );
 
     let _node = node.input(Layout::fields()).unwrap();
     assert_eq!(inspect(&view).shape.inputs().count(), 2);
     // The output itself still exists, but the complete input contract is broken.
-    let error = bound.local_output::<i64>("value").err().unwrap();
+    let error = bound
+        .operation()
+        .and_then(|operation| operation.output::<i64, phenix_graph::LocalValue>())
+        .err()
+        .unwrap();
     assert_eq!(error.phase, InterfacePhase::Authoring);
     assert_eq!(error.path.as_ref(), "worker");
     assert_eq!(error.contract.as_deref(), Some("pair@1"));
-    assert!(bound.local_input::<Pair>("run", "value").is_err());
+    assert!(bound.operation().is_err());
     assert!(graph.bind_contract("worker", &contract).is_err());
     assert!(view.bind_contract(&contract).is_err());
 }

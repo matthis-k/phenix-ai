@@ -2,9 +2,21 @@
 
 ## Implementation Status
 
+Current operation redesign snapshot: baseline `5469c55b`, branch
+`impl/operation-interface-20261109`, prior uncommitted work preserved. The final
+implementation commit is forthcoming and unknown. Typed operations, explicit
+Module projections, single-output scheduler validation and cross-kind
+`graph.replace` are present in source; final tests and independent review remain
+pending. The [current implementation record](operation-interface-redesign.md)
+owns the removal ledger, type/invariant audit and verification table.
+
 **Historical report:** the commit-specific measurements, matrices and verification
-below describe PR #1251 and its stated revisions, not the current uncommitted
-composition iteration. For the current e91-based resolver/host implementation,
+below describe PR #1251 and its stated revisions, not the current operation
+interface. The API snippets and ownership inventory below are historical and
+must not be used as current authoring examples. For the current typed operation
+API and its implementation status, see [Typed Operation Interfaces](grouped-authoring.md)
+and [Operation Interface Redesign](operation-interface-redesign.md). For the
+current e91-based resolver/host implementation,
 API migrations and pending final verification, see
 [Contract Composition Iteration](contract-composition-iteration.md) and
 [Kernel](kernel.md). In particular, current Kernel discovers eligible providers,
@@ -31,11 +43,11 @@ providers or wire consumers automatically and had no plugin/kernel activation co
 The weighted implementation assessment is **8.3/10**, not 9+ and not an override
 of these outstanding gates.
 
-H07 requires that **inputs match exactly**,
-including port sets, slot sets and identities. Additional actual outputs are
-allowed for contract satisfaction. Additional inputs are not. Complete public
-replacement and same-ID contract-definition equality are stricter than output
-subset satisfaction.
+At the PR #1251 snapshot described by this historical report, H07 required that
+**inputs match exactly** and permitted output extensions. That policy has since
+been superseded: current operation contracts require the complete single-output
+interface to match. The earlier output-subset discussion below is historical
+only.
 
 ## Evidence Index
 
@@ -126,10 +138,11 @@ Local/Wire coercion.
 
 `InterfaceShape::check_shape(required, actual)` is expressed in Rust as
 `required.check_shape(&actual)`. It requires exactly the same named input ports,
-slots and identities and exactly the same unnamed input map. Required outputs
-must be present with equal identity; additional actual named/unnamed outputs are
-allowed. `same_shape` checks both directions, so replacement cannot add or remove
-public outputs. `GraphContract::check_shape` is structural only;
+slots and identities and exactly the same unnamed input map. At this historical
+revision, required outputs had to be present with equal identity and extra
+outputs were allowed. Current `check_shape` instead requires matching singular
+output presence/name/identity; there is no output-extension policy. `same_shape`
+checks both directions. `GraphContract::check_shape` is structural only;
 `check_implementation` additionally requires an explicit, exactly matching
 definition. Every same-ID claim on that unit is checked, not just the first.
 
@@ -225,7 +238,7 @@ Explicitly extracted raw addresses have no provenance and are not validated hand
 
 ### Portable Connections
 
-`connect_wire<T, U>` requires equal `schema()` descriptors (name, revision,
+`connect` on encoded endpoints requires equal `schema()` descriptors (name, revision,
 structure and codec) and nonempty name, structure and codec. Both actual
 endpoints must be canonical Wire endpoints matching that descriptor. It then
 delegates to ordinary typed connection validation, preserving scope, declaration
@@ -241,7 +254,7 @@ separately as `libportable_provider.rlib` and `libportable_consumer.rlib`, then
 links and runs
 [`fixtures/portable_execution.rs`](../packages/phenix-graphs/tests/fixtures/portable_execution.rs).
 The harness asserts distinct Rust `TypeId`s but equal full
-descriptors, connects the independently defined types with `connect_wire`, and
+descriptors, connects the independently defined types with `connect`, and
 executes six value vectors through the real deployment, checking both invocations
 and the consumer's decoded publication. This is separate-compilation execution
 evidence, not just two declarations within one test crate or a native ABI claim.
@@ -249,8 +262,8 @@ evidence, not just two declarations within one test crate or a native ABI claim.
 R01 removes `ContractValue::SCHEMA`, `schema_descriptor()` and nominal fallback.
 Manual implementations must provide `schema()`; primitives also provide complete
 descriptors. `wire_schema()` returns the descriptor's canonical `Arc<str>` identity.
-Ordinary typed connections still require the same Rust endpoint type; portable
-cross-type connections explicitly validate complete descriptors.
+Local typed connections require the same Rust endpoint type; encoded connections
+allow different Rust types and validate complete descriptors through `connect`.
 
 R01 replaces process-lifetime interning with reclaimable `Arc<str>` identities
 throughout graph declarations, values, interfaces, diagnostics and compiled
@@ -263,10 +276,11 @@ below describing nominal compatibility or unbounded interning are historical and
 superseded by R01. No per-wave semantic contract matcher is added.
 The existing directed destination lineage check does run when selections resolve.
 
-## Actual API
+## Historical API (PR #1251)
 
-The following signatures are implemented, not the former `graph.unit` /
-`UnitError` / bare-address sketches. Supporting method bodies are omitted.
+The following signatures were implemented at PR #1251, rather than its earlier
+`graph.unit` / `UnitError` / bare-address sketches. This is a historical inventory,
+not current operation API guidance. Supporting method bodies are omitted.
 
 ```rust
 pub trait GraphUnit: sealed::Sealed {
@@ -282,9 +296,8 @@ pub fn require_contract(&mut self, path: &str, contract: &GraphContract)
     -> Result<(), InterfaceError>;
 pub fn bind_contract(&self, path: &str, contract: &GraphContract)
     -> Result<BoundAuthoringUnit<'_>, InterfaceError>;
-pub fn connect_wire<T: ContractValue, U: ContractValue>(
-    &mut self, from: OutputRef<T>, to: Input<U>,
-) -> Result<&mut Self, String>;
+pub fn connect<A, B>(&mut self, from: A, to: B) -> Result<&mut Self, String>
+where (A, B): ConnectEndpoints;
 pub fn with_origin<R>(&mut self, origin: &GraphOrigin,
     compose: impl FnOnce(&mut Self) -> R) -> R;
 // FindResult<'g>, NodeRef<'g>, ModuleRef<'g>: consuming receiver
@@ -306,7 +319,7 @@ the same name on different owners. Both `AuthoringUnit` and `BoundAuthoringUnit`
 are re-exported from `phenix_graph::authoring` and the `phenix_graph` crate root;
 callers may name either borrowed view type directly or use type inference.
 
-### Node And Module Example
+### Historical Node And Module Example (PR #1251)
 
 This macro-free example uses the same calls as T1's
 `shape_has_no_semantic_identity_and_membership_requires_claim`,
@@ -355,15 +368,15 @@ fn main() {
 }
 ```
 
-For portable types use `Node::wire`, `DeclaredValue::wire`, bound
-`wire_input::<T>`/`wire_output::<T>` and `connect_wire`. T1's
+At that historical revision portable types used `Node::wire`, `DeclaredValue::wire`, bound
+`wire_input::<T>`/`wire_output::<T>` and `connect`. T1's
 `authoring_wire_binding_limits_endpoints_and_connects_nodes_and_nested_modules`
 provides concrete node and nested-module examples. T10 defines three independent
 sets of request/response types and wires both edges without importing the
 provider's implementation types. A plain `request` slot is not manufactured by
 an ordinary closure; custom slots require a real layout or low-level declaration.
 
-### Public Ownership Inventory
+### Historical Public Ownership Inventory (PR #1251)
 
 This inventory includes new public types, methods and declaration fields, plus
 private state added to public owners where that state enforces a public invariant.
@@ -379,22 +392,21 @@ Existing unrelated graph/runtime APIs are not duplicated here.
 | `UnitSnapshot { shape, claims: Vec<GraphContract>, provenance }`, `check_contract(&GraphContract) -> Result<(), InterfaceError>` | Graph owned historical inspection data. Public fields allow data construction, not sealed-unit attestation. | T1 absent/contradictory claims; final compiler rechecks rather than trusting snapshots. |
 | `GraphUnit::inspect` | Graph sealed object-safe trait on `AuthoringUnit`, `CompiledGraph`, `FindResult`, `NodeRef`, `ModuleRef`. | T1 dynamic inspection, T3 compiled root; two compile-fail doctests reject external implementations and `NodeHandle` as unit. |
 | `AuthoringUnit<'a> { graph: &'a GraphBuilder, path: String }`, consuming `bind_contract` | Graph borrowed effective view, no cached shape. | A overlays pending layouts; T1 late-layout revalidation and missing-path tests. |
-| `BoundAuthoringUnit { unit, contract }`; `wire_input<T: ContractValue>`, `wire_output<T: ContractValue>`, `local_input<T: Send + Sync + 'static>`, `local_output<T: Send + Sync + 'static>` | Graph borrowed projection, re-exported at the crate root; typed outputs are `OutputRef<T>`, inputs `Input<T>`, all return `InterfaceError`. | Checks promised name/type then normal authoring accessibility; T1 wrong type, extra debug output, private nested access and revision revocation. |
+| `BoundAuthoringUnit { unit, contract }`; `wire_input<T: ContractValue>`, `wire_output<T: ContractValue>`, `local_input<T: Send + Sync + 'static>`, `local_output<T: Send + Sync + 'static>` | Graph borrowed projection, re-exported at the crate root; encoded outputs are `OutputRef<T, EncodedValue>`, inputs `Input<T, EncodedValue>`; local endpoints default to `LocalValue`. All return `InterfaceError`. | Checks promised name/type then normal authoring accessibility; T1 wrong type, extra debug output, private nested access and revision revocation. |
 | `GraphBuilder::{inspect, implements, implements_public, require_contract, bind_contract}` | Graph authoring; requirements store paths for final checking, not early certification. | T1 final requests and claims; T5 transitive identity; A claim footprint ledger. |
 | `NodeTemplate::claims: Vec<GraphContract>`; private `composition_origin`, `declaration_id` | Graph declaration owns explicit promises and handler lineage; layout retarget preserves claims/origin, replacement requires new explicit claims. | T1 low-level claims and explicit replacement; T4 origins; T8 late layout. |
 | `ModuleDef::{claims, contract_requests, declaration_ids: BTreeMap<String, u64>}`; corresponding private builder storage | Graph reusable declaration owns obligations and instance lineage; raw literals may use an empty ID map without typed handles. | T5 retained requests; T8 direct literal; T2 low-level handles. No plugin-owned actual shape. |
 | `ModuleInput::{port: String, slot: String}` alongside existing `name`, ID, identity and targets | Graph actual public boundary, not a free-floating annotation. | T6 literal dots, duplicate pairs and collision routing; G fanout identity checks. |
 | `GraphBuilder::expose_input_slot<E: InputEndpoint>(port: impl Into<String>, slot: impl Into<String>, to: E) -> Result<PublicInput, String>` | Graph exact public grouping without a wrapper node. | T6 independent slot waves and duplicates. Plain exposure still defaults to value. |
 | `InputEndpoint::expose_slot(self, &mut GraphBuilder, String, String) -> Result<PublicInput, String>`; `expose` default delegates with `"value"` | Graph existing sealed endpoint trait extended for typed and symbolic grouping. | T6 both exposure paths; addresses.rs resolves actual accessible endpoints. |
-| `ModuleDefBuilder::export_input_slot<T: ContractValue>(port, slot, Vec<NamedInput<T>>) -> Result<(), String>` | Graph macro-free low-level grouped export; `port`/`slot` accept `impl Into<String>`. | T6 low-level defaults and escaped collisions; checks nonempty targets before writing. |
-| `ModuleHandle::{input_slot<T: ContractValue>, local_input_slot<T: Send + Sync + 'static>}` returning `Result<Input<T>, String>` | Graph typed boundary access with private `input_slots: BTreeMap<(String, String), String>` and declaration token. | T6 nested real routing; T2 stale module handles. Existing single-name access means value slot. |
+| `ModuleHandle::{input_slot<T: ContractValue>, local_input_slot<T: Send + Sync + 'static>}` returning `Result<Input<T, EncodedValue>, String>` and `Result<Input<T>, String>` respectively | Graph typed boundary access with private `input_slots: BTreeMap<(String, String), String>` and declaration token. | T6 nested real routing; T2 stale module handles. Existing single-name access means value slot. |
 | `ModulePortInfo::{port_name, slot_name}(&self) -> &str` | Graph compiled inspection metadata; existing `name()` remains routing key. | T6 resolved left/right targets; outputs report their output name and value slot. |
-| `GraphBuilder::connect_wire<T, U>` | Graph explicit portable connector, no implicit widening of ordinary connect. | T7 independent execution, all descriptor mismatch dimensions, legacy/local/stale rejection. |
+| `GraphBuilder::connect` | Graph connection verb for local, encoded and symbolic endpoints. Local Rust types must agree; encoded Rust types may differ when canonical descriptors agree. | T7 independent execution, descriptor mismatch dimensions, compile-time local/mixed-mode rejection and stale rejection. |
 | `BoundUnit<'g> { graph: &'g CompiledGraph, path: String, contract: GraphContract }`, `Clone`, `input`, `output` | Graph compiled projection; private state ties lookup to one immutable graph and promised names. | T1 extension hiding; T3 named/nested/root bindings. |
 | `BoundInput<'g> { unit, endpoint: String, targets: Vec<InputAddr> }`, `resolve`; `BoundOutput<'g> { unit, endpoint: String, source: OutputAddr }`, `resolve` | Graph endpoint projections retain binding borrow and diagnostic context rather than returning unowned addresses immediately. | T3 graph pointer checks, including numerically equal addresses in different graphs and same-Arc acceptance. |
 | `bind_contract` on compiled root and compiled named views | Graph validation against actual immutable metadata; signatures above. | T3 root path is empty but not selected by `find`; T1 node/module parity. |
 | `GraphOrigin`, `Default`, `Clone`, `PartialEq`, `Eq`; `GraphBuilder::with_origin`; `FindResult::origin() -> Option<&GraphOrigin>` | Graph opaque allocation identity supplied by trusted composition host. | T4 restoration, non-relabel, module versus node attribution; T9 rejects sibling/aborted origins. |
-| Private `declaration_id` in `Input`, `OutputRef`, `NodeHandle`, `PublicInput`, `ModuleHandle`, `NamedNodeHandle`, `NamedInput`, `NamedOutput`; physical node/instance metadata and directed `DestinationTarget` | Graph revision lineage is necessary because equal scopes/names/types are insufficient after clones/replacements. | T2, T8 and T1 bound revision tests. `Output::to` now carries lineage to final destination resolution, not semantic matching. |
+| Private `declaration_id` in `Input`, `OutputRef`, `NodeHandle`, `PublicInput`, `ModuleHandle`, `NamedNodeHandle`; physical node/instance metadata and directed `DestinationTarget` | Graph revision lineage is necessary because equal scopes/names/types are insufficient after clones/replacements. `NamedNodeHandle` retains registration identity only, without endpoint projection. | T2, T8 and T1 bound revision tests. `Output::to` now carries lineage to final destination resolution, not semantic matching. |
 | Private GraphBuilder `public_input_ids`, fresh clone `definition_id`, dependency `identities`, isolated pending Rc; package/compiled `composition_origins`, builder `active_origin` | Graph preserves inherited replay but prevents divergent package deduplication and origin loss. | T2 clone preflight; T5 both import orders and ancestor refresh; T4 packaging. |
 | `Contribution::graph_unit(&self) -> Option<&str>` default `None` | Plugin locator only; registry no longer stores implementation bounds. Existing `KIND` and `id` remain. | T9 missing locator/path and actual node/module binding. |
 | `PluginSnapshot::graph_origin`, `ContributionHandle<C>::graph_origin` | Plugin exposes Loaded's private Graph origin; existing Arc-backed handles retain implementation/factory lifetime. | T9 same numeric revision across sets/candidates rejects; T10 unload/drop counters. |
@@ -421,7 +433,7 @@ routes, then builds one deployment. Producer activation is still `Kernel::start`
 Host-selected offers are a deliberate policy boundary, but this is **not full
 implementation of a requirement that Kernel itself resolves providers and wires
 consumers**. The host selects the `Key`; the consumer closure must use the same
-offer path and explicitly call `connect`/`connect_wire`. Changing only a requirement
+offer path and explicitly call `connect`. Changing only a requirement
 does not change captured wiring. Native code can wire a different path; validation
 does not prove otherwise. T10 is real A-definition/B-provider/C-consumer execution,
 not evidence of automatic resolution or automatic edge insertion. This is an
@@ -438,7 +450,8 @@ graphs remain pinned and do not redirect to new providers after reload/unload.
 
 ## Candidate Comparison
 
-Only C2 APIs above are actual. The alternatives below are **proposed**, with
+At the historical PR #1251 revision only C2 was implemented. The alternatives
+below are historical **proposals**, not current authoring examples, with
 missing attachment/projection/adapter machinery explicitly identified. They use
 ordinary closure `run.value` / output `value`, not fictitious default request ports.
 
@@ -558,6 +571,10 @@ same-ID conflicts. Those are FAILs for the semantic task, not cosmetic deduction
 
 ## Horizontal Gates
 
+This entire matrix is historical PR #1251 evidence. In particular H08's output
+extension policy is superseded by exact single-output matching. Its PASS labels
+and later weighted scores are not current redesign verification or ratings.
+
 The matrix preserves the requested H01-H23 and Q01-Q05 criteria. PASS means
 implemented with the cited source/tests and exact-commit verification below,
 **not** complete mission acceptance. PARTIAL names a missing implementation,
@@ -576,7 +593,7 @@ verification of those designs.
 | H07 Exact inputs | PARTIAL: implement exact named/unnamed input comparison and regressions. | PASS: I `check_shape`; T1 three `h07_*` tests reject extra/missing named ports/slots on actual nodes/modules; I unnamed H07 map/identity test. | PARTIAL: adapters need exact erased input validation, tests absent. | PARTIAL: exact structural comparison feasible, candidate tests absent. |
 | H08 Required outputs extra allowed | PARTIAL: separate satisfaction from exact bounds-definition/replacement equality. | PASS: I output inclusion versus `same_shape`; T1 output-subset/debug-extension test and bound extension hiding. | PARTIAL: generated promised outputs plus erased extension matching missing. | PARTIAL: output inclusion feasible, independent structural matcher unverified. |
 | H09 No local TypeId wire coercion | PARTIAL: preserve identity distinctions in new bounds extraction/binding, tests missing. | PASS: I identity checks, A typed projections, B connector; I local/wire tests, T1 distinct local types/wrong binding, T7 actual local endpoint rejection. | PARTIAL: typed/erased adapter identity enforcement missing. | PARTIAL: structural identity distinction feasible but not candidate-tested. |
-| H10 Explicit safe portable unrelated Rust types execute | PARTIAL: descriptor-aware cross-type connector missing. | PASS: B `connect_wire`; T7 `independently_compiled_portable_crates_execute` builds provider/consumer rlibs and executes the linked harness; bidirectional codecs/descriptor negatives/native decode failure and T10 A/B/C execution add coverage. | PARTIAL: descriptor-based cross-type adapter/connector missing. | PARTIAL: descriptor connector feasible, candidate execution unimplemented. |
+| H10 Explicit safe portable unrelated Rust types execute | PARTIAL: descriptor-aware cross-type connector missing. | PASS: B `connect` on encoded endpoints; T7 `independently_compiled_portable_crates_execute` builds provider/consumer rlibs and executes the linked harness; bidirectional codecs/descriptor negatives/native decode failure and T10 A/B/C execution add coverage. | PARTIAL: descriptor-based cross-type adapter/connector missing. | PARTIAL: descriptor connector feasible, candidate execution unimplemented. |
 | H11 Nominal legacy no portable certification | PARTIAL: strict descriptor path separate from nominal legacy missing. | PASS: B requires explicit `Some` descriptors/canonical Wire endpoints; T7 equal-SCHEMA legacy/overridden-identity rejection; ordinary same-type baseline retained. | PARTIAL: nominal-versus-structural adapter admission missing. | PARTIAL: legacy rejection possible structurally, candidate tests missing. |
 | H12 Bound only promised endpoints | PARTIAL: restricted bounds projection missing. | PASS: A/I promised-name/type projections; T1 debug/private/wrong-type negatives and authoring connections, T3 restricted root/nested compiled projections. | PARTIAL: sealed promised-only adapters not implemented. | PARTIAL: shape-bound projection possible but missing. |
 | H13 Replacements protect all edges exports used extra | PARTIAL: exact complete public replacement plus claim/request retention missing. | PASS: B compares complete node numeric/name/identity signatures and module public maps, A exact shape/obligations; T1 explicit replacement and rollback, T5 requests, T6 grouping; existing assembly replacement tests preserve external edges/exports. Output extensions are not ignored by replacement. | PARTIAL: generated replacement must protect full actual boundary, not only adapter methods; missing tests. | PARTIAL: exact structural replacement feasible, candidate integration/regressions missing. |

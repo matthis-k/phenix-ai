@@ -178,13 +178,6 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
     }
 }
 
-// The source's second, terminal output records the actual refresh cohort, without
-// retaining source values. Expected endpoints come from the owning Engine, not
-// from identities claimed by publications or from factory registration counts.
-pub(crate) struct RootReceipt {
-    pub(crate) wave: u64,
-    pub(crate) cohort: u64,
-}
 struct Terminal<T> {
     wave: u64,
     cohort: u64,
@@ -222,34 +215,27 @@ fn extract<T: Clone + Send + Sync + 'static>(
     let terminal = publication
         .borrow::<Terminal<T>>()
         .ok_or(Error::InvalidPublication)?;
-    let receipts: Vec<_> = report
-        .publications()
-        .filter(|p| p.source_node_id() == root_node && p.source_slot_id() == 1)
+    // Scheduler-owned metadata survives even when the source payload is not retained.
+    // Expected endpoints come from the owning Engine, not from payload claims.
+    let sources: Vec<_> = report
+        .publication_events()
+        .iter()
+        .filter(|e| e.from.node_id() == root_node && e.from.slot_id() == 0)
         .collect();
-    if receipts.len() != 1 {
+    if sources.len() != 1 {
         return Err(Error::InvalidPublication);
     }
-    let source = &receipts[0];
-    let receipt = source
-        .borrow::<RootReceipt>()
-        .ok_or(Error::InvalidPublication)?;
+    let taps: Vec<_> = report
+        .publication_events()
+        .iter()
+        .filter(|e| e.from.node_id() == tap_node && e.from.slot_id() == 0)
+        .collect();
+    if taps.len() != 1 {
+        return Err(Error::InvalidPublication);
+    }
     if terminal.wave != report.wave_id()
         || terminal.cohort != publication.cohort_id()
-        || receipt.wave != report.wave_id()
-        || receipt.cohort != source.cohort_id()
-        || receipt.cohort != terminal.cohort
-        || report
-            .publication_events()
-            .iter()
-            .filter(|e| e.from.node_id() == tap_node && e.from.slot_id() == 0)
-            .count()
-            != 1
-        || report
-            .publication_events()
-            .iter()
-            .filter(|e| e.from.node_id() == root_node && e.from.slot_id() == 1)
-            .count()
-            != 1
+        || sources[0].cohort != taps[0].cohort
     {
         return Err(Error::InvalidPublication);
     }
@@ -271,12 +257,18 @@ pub(crate) fn lower<T: Clone + Send + Sync + 'static>(
             NodeTemplate::with_dyn_action(
                 0,
                 vec![Port::all(0, vec![InputSlot::local::<T>(0).named("value")]).named("run")],
-                vec![OutputSlot::local::<Terminal<T>>(0).named("value")],
+                OutputSlot::local::<Terminal<T>>(0).named("value"),
                 spec.action.clone(),
             ),
         )
         .map_err(|e| Error::Graph(e.to_string()))?;
-        g.connect(value.output(), g.local_input::<T>(name, "run", "value")?)?;
+        g.connect(
+            value.output(),
+            g.discover(name)?
+                .inlets::<T, phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<T, T>::new("run"))
+                .target()?,
+        )?;
         Ok(())
     })?;
     Ok(spec)

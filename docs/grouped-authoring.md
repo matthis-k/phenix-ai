@@ -1,115 +1,212 @@
-# Grouped Endpoint Authoring
+# Typed Operation Interfaces
 
-R12 uses Graph's existing `(port, slot)` endpoint identity for every grouped
-input. A nested field path is the complete slot name, not a new endpoint-string
-grammar. R14 keeps provider/consumer code on the existing builder and owned
-`Input<T>`/`OutputRef<T>` handles. There is no new owner, adapter module, scheduler,
-or compatibility layer.
+## Current Model
 
-## Before
+This guide describes the uncommitted operation redesign on
+`impl/operation-interface-20261109`, based on `5469c55b`. Final-commit tests and
+independent review remain pending; see the [implementation record](operation-interface-redesign.md)
+for the removal ledger and verification gates.
 
-Provider exports repeated raw slot strings, even when typed field descriptors
-already existed:
+An `Operation<I, O, InputMode, OutputMode>` is authoring metadata over a Node
+declaration or a public Module boundary. It does not execute and does not survive
+compilation. Both implementations expose `inlets()` and one `output()` through
+the same checked endpoint types. Modules flatten through the existing compiler.
 
-```rust,ignore
-let left = Request::SLOT_PAIR.then(Pair::SLOT_LEFT);
-graph.expose_input_slot("request", "pair.left", node.field(left))?;
-```
+An input layout describes the slot frontier of one port. An interface declares
+which ports are visible. A Module projection maps a public leaf to one or more
+existing physical input targets. Graph edges retain dataflow; physical input
+ports retain readiness and buffering policy. Public grouping adds no runtime
+port, join, buffer, barrier, or scheduler.
 
-Consumers repeated the same strings and often introduced an unnecessary scope
-to release the borrowed binding:
-
-```rust,ignore
-let (left, right, result) = {
-    let bound = graph.inspect("selected")?.bind_contract(&contract)?;
-    (
-        bound.local_input::<i64>("request", "pair.left")?,
-        bound.local_input::<i64>("request", "pair.right")?,
-        bound.local_output::<i64>("result")?,
-    )
-};
-let left = graph.expose_input_slot("request", "pair.left", left)?;
-let right = graph.expose_input_slot("request", "pair.right", right)?;
-```
-
-`graph.connect("source", "selected.in.request.pair.left")` is not an
-alternative for arbitrary module pairs: punctuation cannot unambiguously split
-literal port and slot names. This symbolic shorthand has not been extended.
-
-## After
-
-Provider authoring uses the same typed selector for the exported name and its
-destination. The destination's leaf type must match the selector in Rust:
+For a portless source feeding a one-port atomic node, the inferred API is:
 
 ```rust,ignore
-let left = Request::SLOT_PAIR.then(Pair::SLOT_LEFT);
-graph.expose_input_field("request", left.clone(), node.field(left))?;
+let source = graph.node("source", || 42_i64)?;
+let sink = graph.node("sink", |x: i64| x + 1)?;
+graph.connect(source.output(), sink.inlet())?;
+graph.trigger("start", [source.operation().start()])?;
+// After deployment: engine.fire("start", vec![])?;
 ```
 
-Consumers bind directly and project owned endpoints. Rust ends the graph borrow
-after the last use of `bound`; no block, tuple, explicit drop, or binding clone is
-required:
+A zero-argument closure has the `NoPorts` input interface: no physical input
+port, no unit slot, and no `inlet()` shorthand. It runs only when explicitly
+started, once per firing of its trigger, through the ordinary scheduler queue.
+Source starts consume no trigger payloads. Existing `PublicInput` triggers keep
+their payload arity and behavior. Cancellation and activation budgets apply to
+source invocations exactly as to input-driven invocations.
+
+The same `.start()` selector works on an instantiated `Module<NoPorts>` operation.
+Compilation selects the zero-input child producers reachable upstream from its
+exposed output, including nested children. Disconnected sources remain dormant;
+there is no module runtime wrapper or hidden activation node. Reachability is
+structural, not conditional: normal output selection controls subsequent delivery.
+Modules whose output has no reachable zero-input producer reject activation.
+
+Raw actions now observe `InvocationCtx::source_port_id() -> Option<u16>`: `None`
+for a source start and `Some(port)` for input-driven work. Port-specific dispatch
+must guard `Some(port)` rather than assuming every invocation has an input port.
+Source arguments are an empty raw argument map, not a prepared unit value.
+
+Structured ports return addressable views. A view is not itself a delivery
+endpoint: `target()` succeeds only for an exact leaf in the selected layout.
+Directly connecting a structural view is a compile error; resolving its leaf is
+an explicit runtime check, not compile-time frontier proof.
 
 ```rust,ignore
-let bound = graph.bind_contract("selected", &contract)?;
-let left = bound.local_field("request", Request::SLOT_PAIR.then(Pair::SLOT_LEFT))?;
-let right = bound.local_field("request", Request::SLOT_PAIR.then(Pair::SLOT_RIGHT))?;
-let result = bound.local_output::<i64>("result")?;
-let left = graph.expose_input_field("request", Request::SLOT_PAIR.then(Pair::SLOT_LEFT), left)?;
-let right = graph.expose_input_field("request", Request::SLOT_PAIR.then(Pair::SLOT_RIGHT), right)?;
-graph.expose_output("result", result)?;
-graph.trigger("run", [left, right])?;
+#[derive(Clone, LocalPortLayout, InputFields)]
+struct AddArgs { left: i64, right: i64 }
+
+let add = graph
+    .node("add", |x: AddArgs| x.left + x.right)?
+    .input(Layout::fields())?;
+graph.connect(
+    left.output(),
+    add.inlet().field(AddArgs::SLOT_LEFT).target()?,
+)?;
 ```
 
-`ModuleHandle::local_field` and `ModuleHandle::field` select local and wire
-exports respectively. `BoundAuthoringUnit::local_field` and `wire_field` project
-only endpoints promised by the contract. `NodeHandle::field` and `wire_field`
-select local and wire layout fields without raw slot lookup. All delegate to the existing exact
-slot lookup and identity checks. `SlotField::then`/`SlotPath::then` retain the
-root and leaf types across nested fields. Descriptors can also be authored
-manually with `SlotField::new`; derives are optional and do not certify that a
-field exists. Nonexistent/malformed paths and wrong type/mode still fail against
-the actual declaration. Local and wire identities are never coerced.
-Descriptor `Copy`/`Clone` implementations place no corresponding bounds on their
-phantom owner or leaf types; reusing metadata never requires cloning domain values.
+Nested fields are selected by composing typed descriptors. Manual descriptors
+remain available for custom layouts; Graph validates them against the actual
+declaration and chosen layout. Atomic, fields, bounded-depth, deep, and custom
+layouts all use the same view and endpoint representation.
 
-For contributions that did not retain export handles,
-`graph.public_input_slot("request", "pair.left")?` returns the exact public
-input for trigger authoring. `public_input("request")` still means the literal
-`("request", "value")` pair, not an arbitrary slot or a grouped barrier. Public
-routing-key encoding is not exposed as an authoring convention.
+The optional `InputFields` derive owns the typed `SLOT_*` descriptors for named
+structs, including generic structs. Use it alongside `LocalPortLayout` for local
+authoring or `PortLayout` for encoded authoring; a type deriving both layouts
+derives `InputFields` only once. Neither layout derive generates descriptors.
+Compose nested fields with `Request::SLOT_ADDRESS.then(Address::SLOT_CITY)`.
+Descriptors use raw Rust field names (without `r#`), independent of atomic/flatten
+directives and codec or `PortArgs` slot renames. Resolving a descriptor still
+validates the selected layout's actual frontier. Without the `derive` feature,
+manual `SlotField` descriptors remain available. Layout selections are
+frozen in admitted address books. Node reconfiguration creates a new revision;
+old endpoints are rejected on use rather than statically revoked by Rust.
 
-## Executable Evidence
+## Modules
 
-- `cargo run --locked -p phenix-graph --example grouped_contract`: macro-free
-  provider and contract-restricted consumer, independent grouped routes, no
-  extra ownership wrappers. Also runs with `--no-default-features`.
-- `cargo test --locked -p phenix-graph --test grouped_authoring`: derived nested
-  `SlotPath`, two module levels, contract checks, noncommutative execution,
-  duplicate connect/export, disconnect/reconnect, malformed and wrong-type
-  selectors, and exact public-slot trigger lookup.
-- `cargo test --locked -p phenix-graph --no-default-features --test grouped_wire_authoring`:
-  manually declared wire layout and selectors, nested exports, promised-only
-  projection, wrong local/wire mode and type rejection, and subtraction.
+Declare the public layout independently of child operations. Project each public
+leaf explicitly and select exactly one output source when finishing the Module:
 
-Grouping alone adds no readiness policy. Local layouts that take owned fields
-must not retain intermediate payload owners; the local execution regression
-uses `ReportRetention::TerminalOutputs`. Wire layouts decode their own values
-and can retain payloads. Existing scope, declaration-revision, replacement,
-privacy, duplicate-edge, and final compiler checks remain authoritative.
+```rust,ignore
+let interface = InputInterface::single(Layout::<FArgs>::fields())?;
+let mut f = Module::new("f", interface)?;
+let a = f.node("a", |x: AArgs| x.first + x.second)?
+    .input(Layout::fields())?;
+let b = f.node("b", |x: i64| x * 3)?;
 
-## Verification
+f.connect(
+    b.output(),
+    a.inlet().field(AArgs::SLOT_SECOND).target()?,
+)?;
+f.expose(
+    f.inlet().field(FArgs::SLOT_X),
+    a.inlet().field(AArgs::SLOT_FIRST).target()?,
+)?;
+f.expose(f.inlet().field(FArgs::SLOT_Y), b.inlet())?;
+let package = f.finish(a.output())?;
 
-Locally verified for this change:
+let f = graph.instantiate("f", &package)?;
+graph.connect(external.output(), f.inlet().field(FArgs::SLOT_X).target()?)?;
+```
 
-- Full `cargo test --locked -p phenix-graph --quiet`, including doctests.
-- `cargo clippy --locked -p phenix-graph --all-targets -- -D warnings` through
-  `nix develop`.
-- No-default-feature `grouped_wire_authoring` and `canonical_interfaces` tests.
-- The executable example with and without default features.
-- Targeted rustfmt check and `git diff --check`.
+The public layout need not equal any child layout. `B -> A.second` remains an
+internal edge; only `A.first` is visible through `x`. A public leaf may project
+to several compatible destinations, but repeated identical destinations are
+rejected. Exposing multiple children through a port does not combine their
+readiness policies.
 
-The full no-default-feature suite was attempted but is blocked by ungated derives
-in the separately added `tests/portable_codec.rs` (`ContractValue`, `PortArgs`,
-`PortLayout`, and `LocalPortLayout` macros are absent in that configuration).
-That test file was not changed by this authoring task.
+For a statically declared multi-port operation, the owner type of each port
+descriptor prevents using it with a different interface:
+
+```rust,ignore
+struct ServicePorts;
+impl PortInterface for ServicePorts {
+    const PORT_COUNT: Option<usize> = Some(2);
+}
+const REQUEST: InletPort<ServicePorts, i64> = InletPort::new("request");
+const CANCEL: InletPort<ServicePorts, bool> = InletPort::new("cancel");
+let request = operation.inlets().port(REQUEST);
+let cancel = operation.inlets().port(CANCEL);
+graph.connect(request_source.output(), request.target()?)?;
+graph.connect(cancel_source.output(), cancel.target()?)?;
+```
+
+Only `SinglePort<...>` exposes `inlet()`. `NoPorts` and custom multi-port
+interfaces do not implement that shorthand. Port cardinality and slot layout are
+checked against declarations; the compiler remains responsible for full public
+projection resolution and physical graph validation.
+
+Rust descriptor ownership does not prove reconstruction or behavior of a custom
+erased physical multi-port definition. Custom `PortInterface` validation and
+actual leaf checks remain necessary. The root Graph is a container with an
+optional exposed result, not an operation. Its `expose_input`,
+`expose_input_field` and `expose_output` coexist with typed Module projection.
+That dual path, reachable through Module's builder Deref, is a residual API risk;
+`finish` rejects inputs outside the declared interface.
+
+The public `ModuleInput`, `ModuleOutput`, `ModuleInputTarget`,
+`ModuleOutputSource` and `ModuleDefBuilder` remain raw physical compiler API, not
+alternate typed operation wrappers. Use explicit typed Modules for public
+layout/projection authoring. The raw API remains available for compiler/manual
+declarations and differs from a typed-only canonical surface.
+
+## Contracts And Encodings
+
+Contract-bound authoring uses the same addressing surface. It retains a borrow of
+Graph authority and revalidates the complete effective contract when resolving a
+leaf, so a pending layout change cannot leave a stale unrestricted view:
+
+```rust,ignore
+let bound = graph.bind_contract("model", &contract)?;
+let model = bound.operation()?;
+let request = model.inlets::<(), EncodedValue>()
+    .port(InletPort::<(), Request>::new("run"))
+    .field(SlotField::<Request, Request>::new("value"))
+    .target()?;
+graph.connect(caller_request.output(), request)?;
+```
+
+`caller_request` must be encoded for the shown encoded destination.
+Locally represented endpoints use Rust type identity. Encoded endpoints
+use complete canonical schema/codec identity and may connect independently
+compiled Rust types. Local-to-encoded wiring is rejected unless an explicit
+conversion operation performs that transformation. Graph owns compatibility;
+Kernel delegates contract imports to Graph.
+
+An operation has one output; its action may emit zero or one correctly typed
+payload at slot 0. Fanout shares that payload, conditional routing selects edges,
+and distinct tuple members require explicit projection operations. Those are
+separate invocations, not one atomic multi-invocation emission. Scheduler batch
+atomicity does not roll back action side effects.
+
+Existing `graph.replace` accepts compatible Nodes or Modules using a
+`NodeTemplate` or owned/borrowed `TypedModulePackage`. Cross-kind replacement
+compiles a candidate, requires complete shape and explicit matching claims,
+preserves origin/request obligations and revokes old handles on success. Failed
+replacement preserves the original graph. Equal shape is not behavioral proof.
+
+## Historical Migration
+
+This section names superseded APIs only to explain the migration. They are not
+current examples or supported alternatives. Previous grouped guides and the
+PR #1251 inventory used string/slot and representation-specific endpoint
+accessors; those authoring methods have been removed from current Graph code.
+The low-level compiler still has physical `InputSlot` and declaration metadata,
+but those are not Node/Module operation endpoints.
+
+## Evidence
+
+- `module_projection_semantics`: typed `F(x,y) = A(x,B(y))`, A/B/C-to-D with bias,
+  nested/repeated Modules, a bare Node with the same public shape, physical node
+  counts, and independent projected child scheduling.
+- `typed_operations`: atomic and structured views, non-leaf rejection, depth and
+  custom frontiers, zero and multi-port definitions, per-port projections,
+  contract restriction/revalidation, stale declaration handles, local/encoded
+  mode independence, and compile-fail cases.
+- `grouped_wire_authoring`: independent portable Rust definitions, typed nested
+  selectors, contract-restricted projection, and encoded/local mismatch checks.
+- `module_slots`: literal dotted boundary names and independent grouped routes.
+- `operation_substitution`: existing replacement verb across kinds, candidate
+  rollback, explicit claims, origins, requests, revocation and patch provenance.
+
+These are source-derived coverage references, not a final-head pass assertion.

@@ -1,6 +1,4 @@
-use phenix_graph::{
-    Deployment, GraphBuilder, ModuleDefBuilder, ModulePackage, NodeTemplate, Output, Store, Value,
-};
+use phenix_graph::{Deployment, GraphBuilder, ModulePackage, NodeTemplate, Output, Store, Value};
 
 fn module(name: &str) -> ModulePackage {
     let mut graph = GraphBuilder::new(name);
@@ -8,6 +6,18 @@ fn module(name: &str) -> ModulePackage {
     graph.expose_input("request", node.inlet()).unwrap();
     graph.expose_output("result", node.output()).unwrap();
     graph.module()
+}
+
+fn module_input(
+    instance: &phenix_graph::ModuleHandle,
+    port: &'static str,
+) -> Result<phenix_graph::Input<i64, phenix_graph::LocalValue>, String> {
+    instance
+        .operation()?
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new(port))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
 }
 
 #[test]
@@ -62,7 +72,14 @@ fn same_shape_node_replacement_revokes_cached_and_newly_projected_endpoints() {
     assert!(branch.expose_output("stale", old_output).is_err());
     graph.connect(source.output(), old_input.clone()).unwrap();
     assert!(branch.disconnect(source.output(), old_input).is_err());
-    let fresh = branch.local_input::<i64>("sink", "run", "value").unwrap();
+    let fresh = branch
+        .discover("sink")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
+        .unwrap();
     assert!(graph.expose_input("foreign", fresh.clone()).is_err());
     branch.connect(source.output(), fresh).unwrap();
     branch.compile().unwrap();
@@ -79,31 +96,48 @@ fn module_handles_are_revoked_on_replacement_and_isolated_between_siblings() {
     sibling.instance("same", &first).unwrap();
     assert!(
         sibling
-            .expose_input("foreign", old.local_input::<i64>("request").unwrap())
+            .expose_input("foreign", module_input(&old, "request").unwrap())
             .is_err()
     );
     let mut branch = original.clone();
     branch
-        .expose_output("inherited", old.local_output::<i64>("result").unwrap())
+        .expose_output(
+            "inherited",
+            old.operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap(),
+        )
         .unwrap();
     branch.replace("same", &second).unwrap();
     assert!(
         branch
-            .expose_input("stale", old.local_input::<i64>("request").unwrap())
+            .expose_input("stale", module_input(&old, "request").unwrap())
             .is_err()
     );
     assert!(
         branch
-            .expose_output("stale", old.local_output::<i64>("result").unwrap())
+            .expose_output(
+                "stale",
+                old.operation()
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()
+                    .unwrap()
+            )
             .is_err()
     );
     let fresh = branch
-        .local_input::<i64>("same", "request", "value")
+        .discover("same")
+        .unwrap()
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("request"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
     assert!(original.expose_input("foreign", fresh.clone()).is_err());
     branch.expose_input("fresh", fresh).unwrap();
     original
-        .expose_input("valid", old.local_input::<i64>("request").unwrap())
+        .expose_input("valid", module_input(&old, "request").unwrap())
         .unwrap();
     branch.compile().unwrap();
     original.compile().unwrap();
@@ -113,7 +147,8 @@ fn module_handles_are_revoked_on_replacement_and_isolated_between_siblings() {
 fn cloned_definition_packages_are_not_conflated_even_without_edits() {
     for edited in [false, true] {
         let mut definition = GraphBuilder::new("definition");
-        definition.node("n", |x: i64| x).unwrap();
+        let node = definition.node("n", |x: i64| x).unwrap();
+        definition.expose_output("value", node.output()).unwrap();
         let mut clone = definition.clone();
         if edited {
             clone
@@ -137,25 +172,29 @@ fn cloned_definition_packages_are_not_conflated_even_without_edits() {
 }
 
 #[test]
-fn low_level_named_handles_reject_same_name_sibling_declarations() {
-    let mut original = ModuleDefBuilder::new("low-level");
+fn discovered_operations_reject_same_name_sibling_declarations() {
+    let mut original = GraphBuilder::new("discovered-lineage");
     let mut sibling = original.clone();
-    let first = original.register_fn("same", |x: i64| x).unwrap();
-    let second = sibling.register_fn("same", |x: i64| x).unwrap();
+    original.node("same", |x: i64| x).unwrap();
+    let second = sibling.node("same", |x: i64| x).unwrap();
+    let first = original.discover("same").unwrap();
     assert!(
         sibling
-            .connect_decl(first.output::<i64>("value"), second.input("run", "value"))
+            .connect(
+                first.output::<i64, phenix_graph::LocalValue>().unwrap(),
+                second.inlet()
+            )
             .is_err()
     );
-    assert!(
-        sibling
-            .export_input("foreign", vec![first.input::<i64>("run", "value")])
-            .is_err()
-    );
-    let mut inherited = original.clone();
-    inherited
-        .export_input("valid", vec![first.input::<i64>("run", "value")])
+    let input = first
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new("run"))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
         .unwrap();
+    assert!(sibling.expose_input("foreign", input.clone()).is_err());
+    let mut inherited = original.clone();
+    inherited.expose_input("valid", input).unwrap();
 }
 
 #[test]
@@ -167,11 +206,8 @@ fn directed_output_checks_declaration_lineage_for_nodes_and_modules() {
             let mut original = GraphBuilder::new("routing");
             let mut branch = original.clone();
             let target = if is_module {
-                original
-                    .instance("sink", &package)
-                    .unwrap()
-                    .local_input::<i64>("request")
-                    .unwrap()
+                let instance = original.instance("sink", &package).unwrap();
+                module_input(&instance, "request").unwrap()
             } else {
                 original.node("sink", |x: i64| x).unwrap().inlet()
             };

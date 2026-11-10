@@ -327,6 +327,7 @@ fn prefix_matches_flattened_module_descendants_not_sibling_names() {
     let mut child = GraphBuilder::new("worker-module");
     let worker = child.node("process", |x: i64| x).unwrap();
     child.expose_input("in", worker.inlet()).unwrap();
+    child.expose_output("result", worker.output()).unwrap();
     let child = child.module();
 
     let mut g = GraphBuilder::new("nested-prefix");
@@ -335,10 +336,30 @@ fn prefix_matches_flattened_module_descendants_not_sibling_names() {
     let source = g
         .node("source", |x: i64| Output::to_prefix("workers", x))
         .unwrap();
-    g.connect(source.output(), selected.local_input::<i64>("in").unwrap())
-        .unwrap();
-    g.connect(source.output(), excluded.local_input::<i64>("in").unwrap())
-        .unwrap();
+    g.connect(
+        source.output(),
+        selected
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("in"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+            .target()
+            .unwrap(),
+    )
+    .unwrap();
+    g.connect(
+        source.output(),
+        excluded
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), i64>::new("in"))
+            .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+            .target()
+            .unwrap(),
+    )
+    .unwrap();
     let input = g.expose_input("request", source.inlet()).unwrap();
     g.trigger("go", [input]).unwrap();
     let f = fixture(g);

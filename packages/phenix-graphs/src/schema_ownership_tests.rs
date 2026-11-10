@@ -25,7 +25,7 @@ fn repeated_unloads_release_graph_metadata_actions_values_and_reports() {
                     )
                     .named("run"),
                 ],
-                vec![OutputSlot::new(0, schema.clone()).named("value")],
+                OutputSlot::new(0, schema.clone()).named("value"),
                 move |_: InvocationCtx| {
                     Ok(vec![Emission {
                         slot: SlotId(0),
@@ -36,8 +36,8 @@ fn repeated_unloads_release_graph_metadata_actions_values_and_reports() {
             );
             let cloned_template = template.clone();
             assert!(Arc::ptr_eq(
-                &template.outputs[0].schema,
-                &cloned_template.outputs[0].schema
+                &template.output.schema,
+                &cloned_template.output.schema
             ));
             let mut builder = GraphBuilder::new("reload");
             builder.add("worker", template).unwrap();

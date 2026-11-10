@@ -13,8 +13,6 @@ fn base() -> PatchBuilder {
         .node("left", |x: i64| x * 2)
         .node("right", |x: i64| x * 3)
         .expose_input("request", "source")
-        .expose_output("left_result", "left")
-        .expose_output("right_result", "right")
         .trigger("go", &["request"]);
     base.connect("source.out.value", "left.in.run.value")
         .unwrap();

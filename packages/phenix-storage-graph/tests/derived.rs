@@ -1,5 +1,6 @@
 use phenix_graph::{
-    Deployment, Emission, Executor, GraphBuilder, InvocationCtx, Layout, LocalExecutor, NodeAction,
+    Deployment, Emission, Executor, GraphBuilder, InletPort, InvocationCtx, Layout, LocalExecutor,
+    LocalValue, NodeAction,
 };
 use phenix_kernel::{Activate, Contribution, WakeHandle};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
@@ -180,6 +181,55 @@ fn one_batch_per_query_no_build_binding_reads_and_runtime_native_denial_recovers
         Err(Error::WrongGeneration)
     ));
     assert_eq!(reads.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn source_has_one_physical_output_and_query_needs_only_terminal_payloads() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let mut graph = GraphBuilder::new("single-output");
+    let sum = graph.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
+    let spec = graph.query_spec("query", &sum).unwrap();
+    let compiled = graph.compile().unwrap();
+    assert_eq!(compiled.physical_node_count(), 3);
+    let Some(phenix_graph::FindResult::Node(source)) = compiled.find("sum.sources") else {
+        panic!("missing physical source");
+    };
+    let output = source.output("value").unwrap();
+    assert_eq!(output.slot_id(), 0);
+    let engine = Deployment::new(compiled)
+        .report_retention(phenix_graph::ReportRetention::TerminalOutputs)
+        .build()
+        .unwrap();
+    let report = engine
+        .fire(
+            sum.refresh_route(),
+            vec![phenix_graph::Value::local(RefreshCause::Demand)],
+        )
+        .unwrap();
+    assert!(report.success());
+    assert_eq!(
+        report.retention(),
+        phenix_graph::ReportRetention::TerminalOutputs
+    );
+    assert_eq!(report.publications().count(), 1);
+    assert!(
+        report
+            .publications()
+            .all(|p| p.source_node_id() != output.node_id())
+    );
+    assert_eq!(
+        report
+            .publication_events()
+            .iter()
+            .filter(|e| e.from == output)
+            .count(),
+        1
+    );
+    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 8);
+    f.put(&f.a, 4);
+    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 9);
 }
 
 #[test]
@@ -866,9 +916,9 @@ fn zero_and_multiple_publications_never_return_an_old_result() {
                 "{result:?}"
             );
         } else {
-            // The ordinary engine rejects duplicate slots before a successful report.
+            // Malformed multi-emission completion is rejected before any publication.
             assert!(
-                matches!(result, Err(Error::Wave(ref e)) if e.join(" ").contains("duplicate output")),
+                matches!(result, Err(Error::Wave(ref e)) if e.join(" ").contains("expected zero or one")),
                 "{result:?}"
             );
         }
@@ -890,7 +940,13 @@ fn terminal_multiple_cohorts_and_single_wrong_cohort_fail_validation() {
                 let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
                 *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
                 if !keep_direct {
-                    g.disconnect(sum.output(), g.local_input::<i64>("query", "run", "value")?)?;
+                    g.disconnect(
+                        sum.output(),
+                        g.discover("query")?
+                            .inlets::<i64, LocalValue>()
+                            .port(InletPort::<i64, i64>::new("run"))
+                            .target()?,
+                    )?;
                 }
                 // Deliberately modify ordinary topology after declaring the terminal tap:
                 // it now receives the same value under two distinct, valid cohorts.
@@ -899,10 +955,19 @@ fn terminal_multiple_cohorts_and_single_wrong_cohort_fail_validation() {
                     phenix_graph::NodeTemplate::local_function::<i64, i64, i64, _>(|v| v)
                         .with_fresh_cohort(),
                 )?;
-                g.connect(sum.output(), g.local_input::<i64>("fresh", "run", "value")?)?;
                 g.connect(
-                    g.local_output::<i64>("fresh", "value")?,
-                    g.local_input::<i64>("query", "run", "value")?,
+                    sum.output(),
+                    g.discover("fresh")?
+                        .inlets::<i64, LocalValue>()
+                        .port(InletPort::<i64, i64>::new("run"))
+                        .target()?,
+                )?;
+                g.connect(
+                    g.discover("fresh")?.output::<i64, LocalValue>()?,
+                    g.discover("query")?
+                        .inlets::<i64, LocalValue>()
+                        .port(InletPort::<i64, i64>::new("run"))
+                        .target()?,
                 )?;
                 Ok(())
             }),
@@ -1149,6 +1214,7 @@ fn shared_actions_in_two_module_instances_are_ambiguous() {
             let mut child = GraphBuilder::new("child");
             let sum = child.derive("sum", (&a, &b), |a, b| a + b)?;
             *specs.lock().unwrap() = Some(child.query_spec("query", &sum)?);
+            child.expose_output("value", sum.output())?;
             let module = child.module();
             g.instance("one", &module)?;
             g.instance("two", &module)?;
@@ -1397,10 +1463,19 @@ fn an_authored_module_can_be_deliberately_redeployed_and_each_query_pins_its_run
     let sum = child.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
     let spec = child.query_spec("query", &sum).unwrap();
     let route = sum.refresh_route().to_owned();
+    child.expose_output("value", sum.output()).unwrap();
     let module = child.module();
     let plugin = demand(move |g| {
-        let instance = g.instance("authored", &module)?;
-        let input = g.expose_input(&route, instance.local_input::<RefreshCause>(&route)?)?;
+        g.instance("authored", &module)?;
+        let input = g.expose_input(
+            &route,
+            g.discover("authored")?
+                .inlets::<RefreshCause, LocalValue>()
+                .port(InletPort::<RefreshCause, RefreshCause>::new(
+                    "sum.sources.refresh",
+                ))
+                .target()?,
+        )?;
         g.trigger(&route, [input])?;
         Ok(())
     });
@@ -1435,12 +1510,13 @@ fn query_binding_preflights_missing_misdirected_and_multi_target_module_routes()
         let spec = child.query_spec("query", &sum).unwrap();
         let route = sum.refresh_route().to_owned();
         let expected_route = route.clone();
+        child.expose_output("value", sum.output()).unwrap();
         let module = child.module();
         let effects = Arc::new(AtomicUsize::new(0));
         let calls = effects.clone();
         let mut runtime = build(
             demand(move |g| {
-                let instance = g.instance("authored", &module)?;
+                g.instance("authored", &module)?;
                 if mode == "missing" {
                     return Ok(());
                 }
@@ -1456,7 +1532,15 @@ fn query_binding_preflights_missing_misdirected_and_multi_target_module_routes()
                     })?;
                     g.expose_input("unrelated", node.inlet())?
                 };
-                let root = g.expose_input("root", instance.local_input::<RefreshCause>(&route)?)?;
+                let root = g.expose_input(
+                    "root",
+                    g.discover("authored")?
+                        .inlets::<RefreshCause, LocalValue>()
+                        .port(InletPort::<RefreshCause, RefreshCause>::new(
+                            "sum.sources.refresh",
+                        ))
+                        .target()?,
+                )?;
                 match mode {
                     "misdirected" | "wrong_type" => {
                         g.trigger(&route, [unrelated])?;
@@ -1590,9 +1674,124 @@ fn backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order()
 }
 
 struct RepublishElsewhere {
-    root: bool,
     saved: Mutex<Option<Vec<Emission>>>,
     intercepted: AtomicUsize,
+}
+
+struct SkipLaterTaps(AtomicBool);
+impl Executor for SkipLaterTaps {
+    fn dispatch(
+        &self,
+        action: &dyn NodeAction,
+        ctx: InvocationCtx,
+    ) -> Result<Vec<Emission>, String> {
+        let tap = ctx.shared::<i64>(0).is_ok();
+        let values = action.execute(ctx)?;
+        if tap && !self.0.swap(false, Ordering::SeqCst) {
+            Ok(vec![])
+        } else {
+            Ok(values)
+        }
+    }
+}
+
+#[test]
+fn multiple_root_events_are_rejected_even_with_one_current_matching_terminal() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let mut graph = GraphBuilder::new("repeated-root");
+    let sum = graph.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
+    let spec = graph.query_spec("query", &sum).unwrap();
+    // Re-enter the deployed source once in a fresh cohort. Suppress the second
+    // terminal so terminal cardinality and freshness alone cannot reject this.
+    let first = AtomicBool::new(true);
+    graph
+        .add(
+            "again",
+            phenix_graph::NodeTemplate::with_action(
+                0,
+                vec![
+                    phenix_graph::Port::all(
+                        0,
+                        vec![phenix_graph::InputSlot::local::<(Number, Number)>(0).named("value")],
+                    )
+                    .named("run"),
+                ],
+                phenix_graph::OutputSlot::local::<RefreshCause>(0).named("value"),
+                move |_: InvocationCtx| {
+                    Ok(if first.swap(false, Ordering::SeqCst) {
+                        vec![phenix_graph::emit_local(0, RefreshCause::Demand)]
+                    } else {
+                        vec![]
+                    })
+                },
+            )
+            .with_fresh_cohort(),
+        )
+        .unwrap();
+    graph
+        .connect(
+            graph
+                .discover("sum.sources")
+                .unwrap()
+                .output::<(Number, Number), LocalValue>()
+                .unwrap(),
+            graph
+                .discover("again")
+                .unwrap()
+                .inlets::<(Number, Number), LocalValue>()
+                .port(InletPort::<(Number, Number), (Number, Number)>::new("run"))
+                .target()
+                .unwrap(),
+        )
+        .unwrap();
+    graph
+        .connect(
+            graph
+                .discover("again")
+                .unwrap()
+                .output::<RefreshCause, LocalValue>()
+                .unwrap(),
+            graph
+                .discover("sum.sources")
+                .unwrap()
+                .inlets::<RefreshCause, LocalValue>()
+                .port(InletPort::<RefreshCause, RefreshCause>::new("run"))
+                .target()
+                .unwrap(),
+        )
+        .unwrap();
+    let compiled = graph.compile().unwrap();
+    let Some(phenix_graph::FindResult::Node(source)) = compiled.find("sum.sources") else {
+        panic!("missing source");
+    };
+    let output = source.output("value").unwrap();
+    let engine = Deployment::new(compiled)
+        .executor(Arc::new(SkipLaterTaps(AtomicBool::new(true))))
+        .build()
+        .unwrap();
+    // Query extraction must reject the repeated root, not accept the last value.
+    assert!(matches!(
+        spec.bind_engine(&engine).unwrap().query(),
+        Err(Error::InvalidPublication)
+    ));
+    // The one-shot feedback is exhausted; only one root event remains.
+    let report = engine
+        .fire(
+            sum.refresh_route(),
+            vec![phenix_graph::Value::local(RefreshCause::Demand)],
+        )
+        .unwrap();
+    assert!(report.success());
+    assert_eq!(
+        report
+            .publication_events()
+            .iter()
+            .filter(|e| e.from == output)
+            .count(),
+        1
+    );
 }
 impl Executor for RepublishElsewhere {
     fn dispatch(
@@ -1600,23 +1799,12 @@ impl Executor for RepublishElsewhere {
         action: &dyn NodeAction,
         ctx: InvocationCtx,
     ) -> Result<Vec<Emission>, String> {
-        let selected = if self.root {
-            ctx.shared::<RefreshCause>(0).is_ok()
-        } else {
-            ctx.shared::<i64>(0).is_ok()
-        };
+        let selected = ctx.shared::<i64>(0).is_ok();
         let mut values = action.execute(ctx)?;
         if selected {
             let mut saved = self.saved.lock().unwrap();
             self.intercepted.fetch_add(1, Ordering::SeqCst);
-            if self.root {
-                let receipt = values.pop().unwrap();
-                if let Some(original) = &*saved {
-                    values.extend(original.clone());
-                } else {
-                    *saved = Some(vec![receipt]);
-                }
-            } else if let Some(original) = &*saved {
+            if let Some(original) = &*saved {
                 values = original.clone();
             } else {
                 *saved = Some(values);
@@ -1628,56 +1816,31 @@ impl Executor for RepublishElsewhere {
 }
 #[test]
 fn same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected() {
-    for root in [false, true] {
-        let f = Fixture::new(true);
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (a, b) = (f.a.clone(), f.b.clone());
-        let saved = Arc::new(Mutex::new(None));
-        let specs = saved.clone();
-        let executor = Arc::new(RepublishElsewhere {
-            root,
-            saved: Mutex::new(None),
-            intercepted: AtomicUsize::new(0),
-        });
-        let mut runtime = build(
-            demand(move |g| {
-                let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-                *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-                if root {
-                    let other = g.derive("other", (&a, &b), |a, b| a + b)?;
-                    let gate = g.node("gate", |_: (Number, Number)| RefreshCause::Demand)?;
-                    g.connect(
-                        g.local_output::<(Number, Number)>("sum.sources", "value")?,
-                        gate.inlet(),
-                    )?;
-                    g.connect(
-                        gate.output(),
-                        g.local_input::<RefreshCause>("other.sources", "run", "value")?,
-                    )?;
-                    // Keep the second computation ordinary, without a second tap.
-                    let _ = other;
-                } else {
-                    g.query_spec("decoy", &sum)?;
-                }
-                Ok(())
-            }),
-            executor.clone(),
-        );
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().clone().unwrap();
-        let result = runtime.bind_query(&spec).unwrap().query();
-        if root {
-            assert!(
-                matches!(result, Err(Error::InvalidPublication)),
-                "{result:?}"
-            );
-        } else {
-            assert!(
-                matches!(result, Err(Error::PublicationCount(0))),
-                "{result:?}"
-            );
-        }
-        assert_eq!(executor.intercepted.load(Ordering::SeqCst), 2);
-    }
+    let f = Fixture::new(true);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (a, b) = (f.a.clone(), f.b.clone());
+    let saved = Arc::new(Mutex::new(None));
+    let specs = saved.clone();
+    let executor = Arc::new(RepublishElsewhere {
+        saved: Mutex::new(None),
+        intercepted: AtomicUsize::new(0),
+    });
+    let mut runtime = build(
+        demand(move |g| {
+            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
+            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
+            g.query_spec("decoy", &sum)?;
+            Ok(())
+        }),
+        executor.clone(),
+    );
+    runtime.start().unwrap();
+    let spec = saved.lock().unwrap().clone().unwrap();
+    let result = runtime.bind_query(&spec).unwrap().query();
+    assert!(
+        matches!(result, Err(Error::PublicationCount(0))),
+        "{result:?}"
+    );
+    assert_eq!(executor.intercepted.load(Ordering::SeqCst), 2);
 }

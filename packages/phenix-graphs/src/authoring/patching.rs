@@ -16,6 +16,10 @@ pub enum PatchTarget {
     Instance(String),
     Connection(String),
     ConnectionPattern(ConnectionRoute),
+    /// Connections whose source or destination is this direct operation.
+    /// Distinct operation claims commute even when they retarget opposite ends
+    /// of the same edge; explicit topology edits still conflict with either.
+    IncidentConnections(String),
     /// Ordered insertions on one *original* edge compose, not compete.
     Splice(PatchAnchor),
     /// Explicit broad claim: all connections. Useful for wholesale rewrites,
@@ -94,6 +98,20 @@ impl PatchTarget {
         match (self, other) {
             (Splice(_), Splice(_)) => false, // orderable, validated separately
             (Graph, _) | (_, Graph) => true,
+            (IncidentConnections(_), Connections) | (Connections, IncidentConnections(_)) => true,
+            (IncidentConnections(name), Connection(edge))
+            | (Connection(edge), IncidentConnections(name)) => {
+                ConnectionRoute::from_exact_key(edge)
+                    .is_some_and(|route| route.from.node == *name || route.to.node == *name)
+            }
+            (IncidentConnections(name), ConnectionPattern(route))
+            | (ConnectionPattern(route), IncidentConnections(name)) => {
+                route.from.node == *name || route.to.node == *name
+            }
+            (incident @ IncidentConnections(_), Splice(anchor))
+            | (Splice(anchor), incident @ IncidentConnections(_)) => {
+                incident.overlaps(&anchor.edge_target())
+            }
             (Connections, Connection(_))
             | (Connection(_), Connections)
             | (Connections, ConnectionPattern(_))
@@ -315,17 +333,14 @@ impl GraphBuilder {
                     .find(|n| n.name.as_deref() == Some(node))
                     .ok_or_else(|| format!("splice unknown node {node:?}"))?;
                 let addr = n.output(output)?;
-                n.outputs
-                    .iter()
-                    .find(|s| s.id == addr.slot)
-                    .unwrap()
-                    .identity()
+                debug_assert_eq!(n.output.id, addr.slot);
+                n.output.identity()
             }
             Source::Instance { name, port } => {
                 let module = self.dependency_for_instance(name)?;
                 module
                     .definition
-                    .outputs
+                    .output
                     .iter()
                     .find(|p| &p.name == port)
                     .ok_or_else(|| format!("splice unknown instance output {name}.{port}"))?
@@ -720,18 +735,81 @@ impl PatchPlanner {
         for id in &plan.selected {
             let mut contribution = self.entries.remove(id).expect("selected patch exists");
             let edit = contribution.edit.take().expect("patch closure exists");
+            let before = draft.builder.as_ref().expect("unfinished assembly");
+            let root_claims = before.module.claims.clone();
+            let root_requests = before.module.contract_requests.clone();
+            let request_lifts =
+                before
+                    .module
+                    .instances
+                    .iter()
+                    .filter(|instance| {
+                        contribution.spec.writes.iter().any(|target| {
+                            target.overlaps(&PatchTarget::Node(instance.name.clone()))
+                        })
+                    })
+                    .map(|instance| {
+                        let requests = before.dependencies[&instance.definition]
+                            .definition
+                            .contract_requests
+                            .iter()
+                            .map(|(path, contract)| {
+                                let path = if path.is_empty() {
+                                    instance.name.clone()
+                                } else {
+                                    format!("{}/{path}", instance.name)
+                                };
+                                (path, contract.clone())
+                            })
+                            .collect::<Vec<_>>();
+                        (instance.name.clone(), requests)
+                    })
+                    .collect::<Vec<_>>();
             draft
                 .contribute(id.clone(), |builder| edit(builder))
                 .map_err(|reason| PatchError::Apply {
                     patch: id.clone(),
                     reason,
                 })?;
+            let after = draft.builder.as_ref().expect("unfinished assembly");
+            let mut permitted_lifts = request_lifts
+                .into_iter()
+                .filter(|(name, _)| {
+                    after.module.named_node(name).is_some()
+                        && !after
+                            .module
+                            .instances
+                            .iter()
+                            .any(|instance| instance.name == *name)
+                })
+                .flat_map(|(_, requests)| requests)
+                .collect::<Vec<_>>();
+            // Lifting obligations is part of replacing that operation, not
+            // authority to edit the composite root's claims or other requests.
+            let requests_lifted = root_claims == after.module.claims
+                && after.module.contract_requests.starts_with(&root_requests)
+                && after.module.contract_requests[root_requests.len()..]
+                    .iter()
+                    .all(|request| {
+                        if let Some(index) = permitted_lifts
+                            .iter()
+                            .position(|allowed| allowed == request)
+                        {
+                            permitted_lifts.remove(index);
+                            true
+                        } else {
+                            false
+                        }
+                    });
             let revision = draft
                 .revisions
                 .last()
                 .expect("successful contribution has revision");
             for change in &revision.changes {
                 let target = PatchTarget::observed(change);
+                if target == PatchTarget::Instance(String::new()) && requests_lifted {
+                    continue;
+                }
                 if !contribution
                     .spec
                     .writes

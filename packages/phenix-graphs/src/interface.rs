@@ -80,9 +80,8 @@ pub(crate) fn value_identity(value: DeclaredValue) -> TypeIdentity {
 #[derive(Clone, Debug, Default)]
 pub struct InterfaceShape {
     inputs: BTreeMap<String, BTreeMap<String, DeclaredValue>>,
-    outputs: BTreeMap<String, DeclaredValue>,
+    output: Option<(Option<String>, DeclaredValue)>,
     unnamed_inputs: BTreeMap<(u16, u16), TypeIdentity>,
-    unnamed_outputs: BTreeMap<u16, TypeIdentity>,
 }
 impl PartialEq for InterfaceShape {
     fn eq(&self, other: &Self) -> bool {
@@ -128,9 +127,10 @@ impl InterfaceShape {
     ) -> Result<Self, InterfaceError> {
         let name = name.into();
         validate_name_segment(&name).map_err(|e| InterfaceError::new(e.to_string()))?;
-        if self.outputs.insert(name.clone(), value).is_some() {
-            return Err(InterfaceError::new(format!("duplicate output {name}")));
+        if self.output.is_some() {
+            return Err(InterfaceError::new("interface already has an output"));
         }
+        self.output = Some((Some(name), value));
         Ok(self)
     }
     pub fn inputs(&self) -> impl Iterator<Item = (&str, &str, DeclaredValue)> {
@@ -140,10 +140,10 @@ impl InterfaceShape {
                 .map(move |(s, v)| (p.as_str(), s.as_str(), v.clone()))
         })
     }
-    pub fn outputs(&self) -> impl Iterator<Item = (&str, DeclaredValue)> {
-        self.outputs.iter().map(|(n, v)| (n.as_str(), v.clone()))
+    pub fn output_value(&self) -> Option<(Option<&str>, DeclaredValue)> {
+        self.output.as_ref().map(|(n, v)| (n.as_deref(), v.clone()))
     }
-    /// Exact input ports, slots and identities; additional outputs are allowed.
+    /// Exact input ports, slots and the optional single output.
     pub fn check_shape(&self, actual: &Self) -> Result<(), InterfaceError> {
         for port in self.inputs.keys() {
             if !actual.inputs.contains_key(port) {
@@ -182,19 +182,16 @@ impl InterfaceShape {
                 "unnamed input set or identity mismatch",
             ));
         }
-        for (name, value) in self.outputs() {
-            check_endpoint(
-                format!("output {name}"),
-                value_identity(value),
-                actual.outputs.get(name).cloned().map(value_identity),
-            )?;
-        }
-        if !self
-            .unnamed_outputs
-            .iter()
-            .all(|(k, v)| actual.unnamed_outputs.get(k) == Some(v))
-        {
-            return Err(InterfaceError::new("unnamed endpoint mismatch"));
+        match (self.output_value(), actual.output_value()) {
+            (None, None) => {}
+            (Some((name, expected)), Some((actual_name, value))) if name == actual_name => {
+                check_endpoint(
+                    format!("output {}", name.unwrap_or("<unnamed>")),
+                    value_identity(expected),
+                    Some(value_identity(value)),
+                )?;
+            }
+            _ => return Err(InterfaceError::new("output presence or name mismatch")),
         }
         Ok(())
     }
@@ -203,10 +200,7 @@ impl InterfaceShape {
             && self.check_shape(actual).is_ok()
             && actual.check_shape(self).is_ok()
     }
-    pub(crate) fn node_ports(
-        ports: &[Port],
-        outputs: &[OutputSlot],
-    ) -> Result<Self, InterfaceError> {
+    pub(crate) fn node_ports(ports: &[Port], output: &OutputSlot) -> Result<Self, InterfaceError> {
         let mut shape = Self::new();
         let mut port_ids = BTreeSet::new();
         for port in ports {
@@ -252,10 +246,10 @@ impl InterfaceShape {
                 }
             }
         }
-        let mut output_ids = BTreeSet::new();
-        for slot in outputs {
-            if !output_ids.insert(slot.id) {
-                return Err(InterfaceError::new("duplicate output ID"));
+        {
+            let slot = output;
+            if slot.id != SlotId(0) {
+                return Err(InterfaceError::new("node output must use canonical slot 0"));
             }
             if let Some(name) = &slot.name {
                 shape = shape.output(
@@ -265,19 +259,21 @@ impl InterfaceShape {
                         local_type: slot.local_type,
                     },
                 )?;
-            } else if shape
-                .unnamed_outputs
-                .insert(slot.id.0, slot.identity())
-                .is_some()
-            {
-                return Err(InterfaceError::new("duplicate unnamed output"));
+            } else {
+                shape.output = Some((
+                    None,
+                    DeclaredValue {
+                        schema: slot.schema.clone(),
+                        local_type: slot.local_type,
+                    },
+                ));
             }
         }
         Ok(shape)
     }
     pub(crate) fn module_ports(
         inputs: &[ModuleInput],
-        outputs: &[ModuleOutput],
+        output: &Option<ModuleOutput>,
     ) -> Result<Self, InterfaceError> {
         let mut shape = Self::new();
         for p in inputs {
@@ -290,7 +286,12 @@ impl InterfaceShape {
                 },
             )?;
         }
-        for p in outputs {
+        if let Some(p) = output {
+            if p.id != 0 {
+                return Err(InterfaceError::new(
+                    "module output must use canonical slot 0",
+                ));
+            }
             shape = shape.output(
                 &p.name,
                 DeclaredValue {
@@ -471,7 +472,7 @@ pub(crate) fn declaration_snapshot(
     phase: InterfacePhase,
 ) -> Result<UnitSnapshot, InterfaceError> {
     snapshot(
-        InterfaceShape::module_ports(&def.inputs, &def.outputs),
+        InterfaceShape::module_ports(&def.inputs, &def.output),
         &def.claims,
         phase,
         &def.id,
@@ -487,7 +488,7 @@ pub(crate) fn node_snapshot(
     instances: &[String],
 ) -> Result<UnitSnapshot, InterfaceError> {
     snapshot(
-        InterfaceShape::node_ports(&node.ports, &node.outputs),
+        InterfaceShape::node_ports(&node.ports, &node.output),
         &node.claims,
         phase,
         definition,
@@ -556,7 +557,7 @@ impl GraphUnit for NodeRef<'_> {
             .get(&self.id)
             .ok_or_else(|| InterfaceError::new("missing physical node"))?;
         snapshot(
-            InterfaceShape::node_ports(&physical.ports, &physical.outputs),
+            InterfaceShape::node_ports(&physical.ports, &physical.output),
             &node.claims,
             InterfacePhase::Compiled,
             &origin.definition,
@@ -570,7 +571,7 @@ impl GraphUnit for ModuleRef<'_> {
     fn inspect(&self) -> Result<UnitSnapshot, InterfaceError> {
         let def = &self.graph.metadata.definitions[&self.lookup.definition];
         snapshot(
-            InterfaceShape::module_ports(&def.inputs, &def.outputs),
+            InterfaceShape::module_ports(&def.inputs, &def.output),
             &def.claims,
             InterfacePhase::Compiled,
             &def.id,
@@ -723,7 +724,13 @@ impl<'g> BoundUnit<'g> {
         })
     }
     pub fn output(&self, name: &str) -> Result<BoundOutput<'g>, InterfaceError> {
-        if !self.contract.required.outputs.contains_key(name) {
+        if self
+            .contract
+            .required
+            .output
+            .as_ref()
+            .is_none_or(|(n, _)| n.as_deref() != Some(name))
+        {
             return Err(self.lookup_error(
                 format!("output {name}"),
                 "output is not promised by contract",
@@ -735,8 +742,8 @@ impl<'g> BoundUnit<'g> {
                 .root_definition
                 .as_ref()
                 .and_then(|id| self.graph.metadata.definitions.get(id))
-                .and_then(|def| def.outputs.iter().find(|p| p.name == name))
-                .and_then(|p| self.graph.metadata.outputs.get(&p.id).copied())
+                .and_then(|def| def.output.as_ref().filter(|p| p.name == name))
+                .and(self.graph.metadata.output)
         } else {
             let unit = self.graph.find(&self.path).ok_or_else(|| {
                 self.lookup_error(format!("output {name}"), "compiled unit is missing")
@@ -745,12 +752,10 @@ impl<'g> BoundUnit<'g> {
                 FindResult::Node(n) => n.output(name),
                 FindResult::Module(m) => {
                     let def = &m.graph.metadata.definitions[&m.lookup.definition];
-                    def.outputs.iter().find(|p| p.name == name).and_then(|p| {
-                        m.graph.metadata.instances[m.lookup.instance_metadata]
-                            .outputs
-                            .get(&p.id)
-                            .copied()
-                    })
+                    def.output
+                        .as_ref()
+                        .filter(|p| p.name == name)
+                        .and_then(|_| m.graph.metadata.instances[m.lookup.instance_metadata].output)
                 }
             }
         };
@@ -931,6 +936,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn output_presence_is_exact_and_a_second_output_is_not_representable() {
+        let root = InterfaceShape::new();
+        let operation = root
+            .clone()
+            .output("value", DeclaredValue::local::<()>())
+            .unwrap();
+        assert!(root.check_shape(&operation).is_err());
+        assert!(operation.check_shape(&root).is_err());
+        assert!(
+            operation
+                .clone()
+                .output("other", DeclaredValue::local::<()>())
+                .is_err()
+        );
+        assert!(InterfaceShape::node_ports(&[], &OutputSlot::local::<()>(1)).is_err());
+    }
+
+    #[test]
     fn local_identity_ignores_diagnostic_schema_names() {
         let a = DeclaredValue {
             schema: "first diagnostic".into(),
@@ -954,13 +977,13 @@ mod tests {
                     vec![InputSlot::local::<i64>(slot)],
                     AllSameCohort,
                 )],
-                &[OutputSlot::local::<i64>(slot)],
+                &OutputSlot::local::<i64>(0),
             )
             .unwrap()
         };
         let a = make(1);
         assert_eq!(a.inputs().count(), 0);
-        assert_eq!(a.outputs().count(), 0);
+        assert_eq!(a.output_value().unwrap().0, None);
         assert_ne!(a, InterfaceShape::new());
         assert_ne!(a, make(2));
         assert!(
@@ -987,8 +1010,13 @@ mod tests {
 
     #[test]
     fn h07_unnamed_inputs_require_exact_sets_and_identities() {
-        let make =
-            |slots| InterfaceShape::node_ports(&[Port::new(4, slots, AllSameCohort)], &[]).unwrap();
+        let make = |slots| {
+            InterfaceShape::node_ports(
+                &[Port::new(4, slots, AllSameCohort)],
+                &OutputSlot::local::<()>(0),
+            )
+            .unwrap()
+        };
         let required = make(vec![InputSlot::local::<i64>(0)]);
         let extra = make(vec![
             InputSlot::local::<i64>(0),
@@ -1002,10 +1030,10 @@ mod tests {
         assert!(required.check_shape(&wrong_identity).is_err());
         required.check_shape(&required).unwrap();
         let extra_output = InterfaceShape {
-            unnamed_outputs: BTreeMap::from([(7, TypeIdentity::Local(TypeId::of::<bool>()))]),
+            output: Some((None, DeclaredValue::local::<bool>())),
             ..required.clone()
         };
-        required.check_shape(&extra_output).unwrap();
+        assert!(required.check_shape(&extra_output).is_err());
         assert!(!required.same_shape(&extra_output));
     }
 }

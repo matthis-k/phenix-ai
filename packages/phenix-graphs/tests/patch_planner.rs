@@ -21,6 +21,18 @@ fn execute(assembly: GraphAssembly, value: i64) -> i64 {
         .unwrap()
 }
 
+fn module_input(
+    instance: &phenix_graph::ModuleHandle,
+    port: &'static str,
+) -> Result<phenix_graph::Input<i64, phenix_graph::LocalValue>, String> {
+    instance
+        .operation()?
+        .inlets::<(), phenix_graph::LocalValue>()
+        .port(phenix_graph::InletPort::<(), i64>::new(port))
+        .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+        .target()
+}
+
 fn base(planner: &mut PatchPlanner) {
     planner
         .add_patch(PatchBuilder::custom(
@@ -332,9 +344,18 @@ fn three_independent_plugin_contributions_create_and_execute_a_graph() {
                 ]),
             move |g| {
                 let instance = g.instance("tool", &tool)?;
-                let model_out = g.local_output::<i64>("model", "output")?;
-                g.connect(model_out, instance.local_input::<i64>("input")?)?;
-                g.expose_output("result", instance.local_output::<i64>("output")?)?;
+                let model_out = g
+                    .discover("model")
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()?;
+                g.connect(model_out, module_input(&instance, "input")?)?;
+                g.expose_output(
+                    "result",
+                    instance
+                        .operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()?,
+                )?;
                 Ok(())
             },
         ))
@@ -349,8 +370,11 @@ fn three_independent_plugin_contributions_create_and_execute_a_graph() {
                 ]),
             move |g| {
                 let instance = g.instance("model", &model)?;
-                let out = g.local_output::<i64>("accept", "value")?;
-                g.connect(out, instance.local_input::<i64>("input")?)?;
+                let out = g
+                    .discover("accept")
+                    .unwrap()
+                    .output::<i64, phenix_graph::LocalValue>()?;
+                g.connect(out, module_input(&instance, "input")?)?;
                 Ok(())
             },
         ))
@@ -402,11 +426,19 @@ fn later_plugin_rebinds_module_by_public_interface_without_perturbing_consumers(
                 let model = g.instance("model", &original)?;
                 let tool = g.instance("tool", &tool)?;
                 g.connect(
-                    model.local_output::<i64>("output")?,
-                    tool.local_input::<i64>("input")?,
+                    model
+                        .operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()?,
+                    module_input(&tool, "input")?,
                 )?;
-                let input = g.expose_input("request", model.local_input::<i64>("input")?)?;
-                g.expose_output("result", tool.local_output::<i64>("output")?)?;
+                let input = g.expose_input("request", module_input(&model, "input")?)?;
+                g.expose_output(
+                    "result",
+                    tool.operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()?,
+                )?;
                 g.trigger("run", [input])?;
                 Ok(())
             },
@@ -503,13 +535,22 @@ fn randomized_multi_contributor_module_chains_match_independent_reference() {
                     move |g| {
                         let instance = g.instance(&name, &module)?;
                         let from = if i == 0 {
-                            g.local_output::<i64>("accept", "value")?
+                            g.discover("accept")
+                                .unwrap()
+                                .output::<i64, phenix_graph::LocalValue>()?
                         } else {
-                            g.local_output::<i64>(&format!("stage{}", i - 1), "output")?
+                            g.discover(&format!("stage{}", i - 1))?
+                                .output::<i64, phenix_graph::LocalValue>()?
                         };
-                        g.connect(from, instance.local_input::<i64>("input")?)?;
+                        g.connect(from, module_input(&instance, "input")?)?;
                         if i == stages - 1 {
-                            g.expose_output("result", instance.local_output::<i64>("output")?)?;
+                            g.expose_output(
+                                "result",
+                                instance
+                                    .operation()
+                                    .unwrap()
+                                    .output::<i64, phenix_graph::LocalValue>()?,
+                            )?;
                         }
                         Ok(())
                     },
@@ -753,9 +794,15 @@ fn splicing_into_public_module_input_preserves_module_interface() {
                     .node("accept", |x: i64| x + 1)
                     .map_err(|e| e.to_string())?;
                 let instance = g.instance("child", &child)?;
-                g.connect(a.output(), instance.local_input::<i64>("input")?)?;
+                g.connect(a.output(), module_input(&instance, "input")?)?;
                 let input = g.expose_input("request", a.inlet())?;
-                g.expose_output("result", instance.local_output::<i64>("output")?)?;
+                g.expose_output(
+                    "result",
+                    instance
+                        .operation()
+                        .unwrap()
+                        .output::<i64, phenix_graph::LocalValue>()?,
+                )?;
                 g.trigger("run", [input])?;
                 Ok(())
             },

@@ -79,7 +79,11 @@ impl PluginInstance for Provider {
                 if config.module {
                     let mut child = GraphBuilder::new(format!("module-{}", config.path));
                     let node = child.node("private", move |v: i64| v + increment)?;
-                    child.expose_input_slot("run", "value", node.inlet())?;
+                    child.expose_input_field(
+                        "run",
+                        phenix_graph::SlotField::<(), i64>::new("value"),
+                        node.inlet(),
+                    )?;
                     child.expose_output("value", node.output())?;
                     child.implements_public(&contract(config.semantic))?;
                     graph.instance(&config.path, &child.module())?;
@@ -125,11 +129,18 @@ impl PluginInstance for Consumer {
                 assert!(context.import("undeclared").is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
                 let graph = &mut *context.graph;
-                let bound = selected.bind(graph)?;
-                assert!(bound.local_output::<i64>("private").is_err());
-                assert!(bound.local_output::<String>("value").is_err());
-                let input = bound.local_input::<i64>("run", "value")?;
-                let output = bound.local_output::<i64>("value")?;
+                let bound = selected.bind(graph)?.operation()?;
+                let run = bound
+                    .inlets::<i64, phenix_graph::LocalValue>()
+                    .port(phenix_graph::InletPort::<i64, i64>::new("run"));
+                assert!(
+                    run.field(phenix_graph::SlotField::<i64, i64>::new("private"))
+                        .target()
+                        .is_err()
+                );
+                assert!(bound.output::<String, phenix_graph::LocalValue>().is_err());
+                let input = run.target()?;
+                let output = bound.output::<i64, phenix_graph::LocalValue>()?;
                 let observed = config.observed.clone();
                 let sink = graph.node("sink", move |v: i64| {
                     observed.lock().unwrap().push(v);
@@ -430,7 +441,10 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                     cx.graph.implements("provider", &contract("service@1"))?;
                     let input = selected
                         .bind(cx.graph)?
-                        .local_input::<i64>("run", "value")?;
+                        .operation()?
+                        .inlets::<i64, phenix_graph::LocalValue>()
+                        .port(phenix_graph::InletPort::<i64, i64>::new("run"))
+                        .target()?;
                     let public = cx.graph.expose_input("request", input)?;
                     cx.graph.trigger("run", [public])?;
                     Ok(())

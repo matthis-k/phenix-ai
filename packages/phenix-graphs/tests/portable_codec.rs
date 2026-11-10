@@ -55,7 +55,7 @@ fn decoder_member_names_cannot_shadow_its_state() {
 }
 
 #[cfg(feature = "derive")]
-#[derive(PortArgs, PortLayout, LocalPortLayout)]
+#[derive(PortArgs, PortLayout, LocalPortLayout, phenix_graph::InputFields)]
 struct Raw {
     r#type: i64,
 }

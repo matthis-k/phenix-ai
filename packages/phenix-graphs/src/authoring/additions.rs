@@ -38,6 +38,9 @@ impl GraphBuilder {
 }
 
 impl GraphAdditions<'_> {
+    pub fn discover(&self, name: &str) -> Result<DiscoveredOperation, String> {
+        self.graph.discover(name)
+    }
     pub fn additions<T, E>(
         &mut self,
         edit: impl FnOnce(&mut GraphAdditions<'_>) -> Result<T, E>,
@@ -66,43 +69,25 @@ impl GraphAdditions<'_> {
         self.graph.add(name, template)
     }
 
-    pub fn connect<T: Send + Sync + 'static>(
-        &mut self,
-        from: OutputRef<T>,
-        to: Input<T>,
-    ) -> Result<(), String> {
+    pub fn connect<A, B>(&mut self, from: A, to: B) -> Result<(), String>
+    where
+        (A, B): ConnectEndpoints,
+    {
         self.graph.connect(from, to).map(|_| ())
     }
 
-    pub fn local_input<T: Send + Sync + 'static>(
-        &self,
-        node: &str,
-        port: &str,
-        slot: &str,
-    ) -> Result<Input<T>, String> {
-        self.graph.local_input(node, port, slot)
-    }
-
-    pub fn local_output<T: Send + Sync + 'static>(
-        &self,
-        node: &str,
-        output: &str,
-    ) -> Result<OutputRef<T>, String> {
-        self.graph.local_output(node, output)
-    }
-
-    pub fn expose_input<T: Send + Sync + 'static>(
+    pub fn expose_input<T: Send + Sync + 'static, Mode>(
         &mut self,
         name: impl Into<String>,
-        to: Input<T>,
+        to: Input<T, Mode>,
     ) -> Result<PublicInput, String> {
         self.graph.expose_input(name, to)
     }
 
-    pub fn trigger(
+    pub fn trigger<T: TriggerEndpoint>(
         &mut self,
         name: impl Into<String>,
-        inputs: impl IntoIterator<Item = PublicInput>,
+        inputs: impl IntoIterator<Item = T>,
     ) -> Result<TriggerId, String> {
         self.graph.trigger(name, inputs)
     }
@@ -180,7 +165,7 @@ mod tests {
             module.add(node).unwrap();
         }
         assert!(matches!(
-            module.register_fn("overflow", |v: i64| v),
+            module.register("overflow", NodeTemplate::function(|v: i64| v)),
             Err(ModuleNameError::ExhaustedNodeIds)
         ));
         assert!(module.named_node("overflow").is_none());

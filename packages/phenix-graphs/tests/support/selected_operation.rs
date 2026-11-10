@@ -54,7 +54,7 @@ impl SelectedOperation {
         NodeTemplate::with_action(
             0,
             vec![Port::for_layout::<Atomic<A>>(0, "run", AllSameCohort).unwrap()],
-            vec![OutputSlot::typed::<O>(0).named("value")],
+            OutputSlot::typed::<O>(0).named("value"),
             move |mut ctx: InvocationCtx| {
                 let input = ctx.take_prepared::<A>()?;
                 let value =

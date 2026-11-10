@@ -11,7 +11,7 @@ use phenix_graph::{
 use phenix_graph::{LocalPortLayout, patch};
 
 #[derive(Clone)]
-#[cfg_attr(feature = "derive", derive(LocalPortLayout))]
+#[cfg_attr(feature = "derive", derive(LocalPortLayout, phenix_graph::InputFields))]
 struct Pair {
     left: i64,
     right: i64,

@@ -18,7 +18,7 @@ fn manifest(public_input: &str, public_output: &str, any: bool) -> String {
             NodeTemplate::with_action(
                 0,
                 vec![port],
-                vec![OutputSlot::local::<i64>(0).named("value")],
+                OutputSlot::local::<i64>(0).named("value"),
                 |_ctx| Ok(vec![phenix_graph::emit_local(0, 0_i64)]),
             ),
         )
@@ -102,7 +102,7 @@ fn unnamed_slot_manifest(target_slot: u16) -> String {
             InputSlot::immediate::<i64>(1),
         ],
     );
-    let node = NodeTemplate::with_action(1, vec![port], vec![OutputSlot::typed::<()>(0)], |_ctx| {
+    let node = NodeTemplate::with_action(1, vec![port], OutputSlot::typed::<()>(0), |_ctx| {
         Ok(vec![phenix_graph::emit(0, ())])
     });
     let mut module = ModuleDefBuilder::new("unnamed-slots");
@@ -154,11 +154,25 @@ fn nested_manifest(child_input_name: &str) -> String {
     let input = parent
         .expose_input(
             "request",
-            instance.local_input::<i64>(child_input_name).unwrap(),
+            instance
+                .operation()
+                .unwrap()
+                .inlets::<(), phenix_graph::LocalValue>()
+                .port(phenix_graph::InletPort::<(), i64>::named(child_input_name).unwrap())
+                .field(phenix_graph::SlotField::<i64, i64>::new("value"))
+                .target()
+                .unwrap(),
         )
         .unwrap();
     parent
-        .expose_output("response", instance.local_output::<i64>("answer").unwrap())
+        .expose_output(
+            "response",
+            instance
+                .operation()
+                .unwrap()
+                .output::<i64, phenix_graph::LocalValue>()
+                .unwrap(),
+        )
         .unwrap();
     parent.trigger("run", [input]).unwrap();
     parent.compile().unwrap().topology_manifest()

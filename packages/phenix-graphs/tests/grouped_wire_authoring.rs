@@ -4,9 +4,8 @@ use phenix_graph::{
     SelectedValues, SlotField, Value,
 };
 
-struct Request;
-const LEFT: SlotField<Request, i64> = SlotField::new("pair.left");
-const RIGHT: SlotField<Request, i64> = SlotField::new("pair.right");
+const LEFT: SlotField<(i64, i64), i64> = SlotField::new("pair.left");
+const RIGHT: SlotField<(i64, i64), i64> = SlotField::new("pair.right");
 
 #[test]
 fn descriptor_copy_and_clone_do_not_require_cloneable_domain_values() {
@@ -66,40 +65,78 @@ fn manual_wire_grouped_fields_use_the_same_contract_projection_and_execution() {
         .unwrap();
     for key in [LEFT, RIGHT] {
         let input = provider
-            .wire_input::<i64>("private", "run", key.name())
+            .discover("private")
+            .unwrap()
+            .inlets::<(), phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<(), (i64, i64)>::new("run"))
+            .field(phenix_graph::SlotField::<(i64, i64), i64>::new(key.name()))
+            .target()
             .unwrap();
         provider.expose_input_field("request", key, input).unwrap();
     }
-    let output = provider.wire_output::<i64>("private", "value").unwrap();
+    let output = provider
+        .discover("private")
+        .unwrap()
+        .output::<i64, phenix_graph::EncodedValue>()
+        .unwrap();
     provider.expose_output("result", output).unwrap();
     provider.implements_public(&contract).unwrap();
 
     let mut wrapper = GraphBuilder::new("wrapper");
     let inner = wrapper.instance("inner", &provider.module()).unwrap();
     for key in [LEFT, RIGHT] {
-        let input = inner.field("request", key).unwrap();
+        let input = inner
+            .operation()
+            .unwrap()
+            .inlets::<(), phenix_graph::EncodedValue>()
+            .port(phenix_graph::InletPort::<(), (i64, i64)>::new("request"))
+            .field(key)
+            .target()
+            .unwrap();
         wrapper.expose_input_field("request", key, input).unwrap();
     }
     wrapper
-        .expose_output("result", inner.output::<i64>("result").unwrap())
+        .expose_output(
+            "result",
+            wrapper
+                .discover("inner")
+                .unwrap()
+                .output::<i64, phenix_graph::EncodedValue>()
+                .unwrap(),
+        )
         .unwrap();
     wrapper.implements_public(&contract).unwrap();
 
     let mut graph = GraphBuilder::new("consumer");
     graph.instance("service", &wrapper.module()).unwrap();
     let bound = graph.bind_contract("service", &contract).unwrap();
-    let left = bound.wire_field("request", LEFT).unwrap();
-    let right = bound.wire_field("request", RIGHT).unwrap();
-    let result = bound.wire_output::<i64>("result").unwrap();
-    assert!(bound.local_field("request", LEFT).is_err());
+    let operation = bound.operation().unwrap();
+    let request = operation
+        .inlets::<(), phenix_graph::EncodedValue>()
+        .port(phenix_graph::InletPort::<(), (i64, i64)>::new("request"));
+    let left = request.field(LEFT).target().unwrap();
+    let right = request.field(RIGHT).target().unwrap();
+    let result = operation
+        .output::<i64, phenix_graph::EncodedValue>()
+        .unwrap();
     assert!(
-        bound
-            .wire_field("request", SlotField::<Request, bool>::new("pair.left"))
+        operation
+            .inlets::<(), phenix_graph::LocalValue>()
+            .port(phenix_graph::InletPort::<(), (i64, i64)>::new("request"))
+            .field(LEFT)
+            .target()
             .is_err()
     );
     assert!(
-        bound
-            .wire_field("request", SlotField::<Request, i64>::new("pair..left"))
+        request
+            .field(SlotField::<(i64, i64), bool>::new("pair.left"))
+            .target()
+            .is_err()
+    );
+    assert!(
+        request
+            .field(SlotField::<(i64, i64), i64>::new("pair..left"))
+            .target()
             .is_err()
     );
     let left = graph.expose_input_field("request", LEFT, left).unwrap();
