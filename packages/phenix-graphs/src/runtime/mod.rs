@@ -480,18 +480,7 @@ impl NetworkSession {
     ) -> Result<(), InjectionError> {
         self.inject(name, Value::local(value))
     }
-    /// Eager admission preserves reservation/credit behavior for direct callers.
     pub fn inject(&mut self, name: &str, value: Value) -> Result<(), InjectionError> {
-        let result = self.inject_scoped(name, value, None);
-        if result.is_ok() {
-            self.refresh();
-        }
-        result
-    }
-    /// Atomic transport-only admission. Callers must subsequently drive or query
-    /// the session; no readiness policy or process code executes in this method.
-    /// Used by hosts that must release their producer lock before scheduling.
-    pub fn enqueue(&mut self, name: &str, value: Value) -> Result<(), InjectionError> {
         self.inject_scoped(name, value, None)
     }
     fn inject_scoped(
@@ -539,8 +528,7 @@ impl NetworkSession {
                 if let Some(request) = request {
                     self.note_request_ingress(request, name);
                 }
-                // Scheduling is chosen by the caller: eager inject or
-                // transport-only enqueue. Both share this validation and commit.
+                self.refresh();
                 Ok(())
             }
             Err(reason) => Err(InjectionError { reason, value }),
