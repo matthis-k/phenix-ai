@@ -101,8 +101,17 @@ impl ResolvedImport {
     }
 }
 
+/// Read-only, declared-import-scoped view provided to a plugin's preparation callback.
+/// The complete compiled topology is intentionally not exposed.
+///
+/// ```compile_fail
+/// use phenix_kernel::CandidateContext;
+/// fn inspect_all(context: &CandidateContext<'_>) {
+///     let _ = context.compiled.inputs();
+/// }
+/// ```
 pub struct CandidateContext<'a> {
-    pub compiled: &'a CompiledNetwork,
+    compiled: &'a CompiledNetwork,
     imports: &'a BTreeMap<String, ResolvedImport>,
 }
 
@@ -141,12 +150,22 @@ impl CandidateArtifacts {
 
 impl CandidateContext<'_> {
     /// Look up only this contribution's declared imports. The result owns its
-    /// metadata so endpoint projection need not hold a borrow of the context.
+    /// metadata so callers can retain provider and offer identities.
     pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {
         self.imports
             .get(id)
             .cloned()
             .ok_or_else(|| format!("undeclared import: {id}").into())
+    }
+
+    /// Project only a declared import using the graph's authoritative contract
+    /// and type checks. Unrelated compiled topology is not available here.
+    pub fn bind_import(&self, id: &str) -> Result<BoundComponent<'_>, CallbackError> {
+        let imported = self
+            .imports
+            .get(id)
+            .ok_or_else(|| format!("undeclared import: {id}"))?;
+        imported.bind(self.compiled).map_err(Into::into)
     }
 }
 

@@ -106,10 +106,11 @@ impl PluginInstance for Consumer {
             routes: vec![],
             patch: NetworkPatch::new([]),
             prepare: Some(Box::new(move |context| {
-                let selected = context.import("service")?;
+                assert!(context.import("service").is_ok());
                 assert!(context.import("undeclared").is_err());
+                assert!(context.bind_import("undeclared").is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
-                let bound = selected.bind(context.compiled)?;
+                let bound = context.bind_import("service")?;
                 assert!(bound.input::<i64>("private").is_err());
                 assert!(bound.output::<String>("value").is_err());
                 bound.input::<i64>("run")?;

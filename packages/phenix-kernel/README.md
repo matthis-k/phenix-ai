@@ -26,7 +26,8 @@ pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send 
 
 `CandidateArtifacts::default()`, `activate(factory)` and `export(value)` provide
 single-slot registration with duplicate detection. The prepare callback receives
-read-only `CandidateContext { compiled, .. }` and `import(id)`, never a mutable
+read-only `CandidateContext` with `import(id)` metadata and
+`bind_import(id)` scoped projection, never a raw compiled topology or mutable
 candidate/builder. It may construct its own definitions or an owned patch. Replay
 is exclusively native `Composer` work. Self-imports are checked against a compiled,
 host-authorized preview of the static patch; they cannot certify fabricated shapes.
