@@ -81,3 +81,25 @@ interface mismatch and unauthorized changes atomically; test a 2-level seam and
 stale/foreign authoring handles. Existing `fbp_authority`, `fbp_components`,
 integration tests and full exact-HEAD CI must pass. Inspect the final diff for
 unintended new APIs/hidden authority.
+
+
+## Phase 1 amendment — ancestor/descendant write conflicts
+
+Critical edge case: two independent registrations can have distinct *exact*
+component grants (e.g. `m` and `m/inner/leaf`) while modifying overlapping
+physical definitions. Their writes must not silently erase each other. Extend
+the **existing** composer conflict/priority selection predicate to treat a
+component path as overlapping any actual descendant path separated by `/`.
+This does **not** broaden authorization: each registration still needs its own
+exact `Footprint::Component(path)` grant and each nested path still needs the
+composite's explicit seam.
+
+Equal-priority independent ancestor/descendant edits conflict. At unequal
+priority, select the winning registration as a whole, deactivating its loser.
+Explicit dependency allows an ancestor replacement followed by a nested edit,
+subject to the new parent's seam and the same post-replay contract checks.
+Root component names sharing a mere string prefix, e.g. `m`/`module`, do not
+overlap. Integration tests exercise all three cases.
+
+The bounded overlap check uses the existing footprint sets, not a new
+authority or edit-ordering mechanism.
