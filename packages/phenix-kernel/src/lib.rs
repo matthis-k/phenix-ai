@@ -950,14 +950,13 @@ impl Kernel {
         let mut producers = Vec::new();
         for key in &self.keys {
             if let Some(activate) = &self.artifacts[key].activate {
-                let producer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    activate()
-                }))
-                .unwrap_or_else(|_| Err("producer activation panicked".into()))
-                .map_err(|cause| StartError::Activation {
-                    contribution: key.clone(),
-                    cause: lease_callback_error(cause, self.code_lease.clone()),
-                })?;
+                let producer =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| activate()))
+                        .unwrap_or_else(|_| Err("producer activation panicked".into()))
+                        .map_err(|cause| StartError::Activation {
+                            contribution: key.clone(),
+                            cause: lease_callback_error(cause, self.code_lease.clone()),
+                        })?;
                 producers.push((key.clone(), Some(producer), None));
             }
         }
