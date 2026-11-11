@@ -23,12 +23,9 @@ fn claim() -> Contract {
 
 fn leaf(contract: &Contract) -> Arc<ComponentDef> {
     Arc::new(
-        ComponentDef::primitive(
-            Arc::new(Interface::default()),
-            Arc::new(|| Noop),
-        )
-        .claim(contract)
-        .unwrap(),
+        ComponentDef::primitive(Arc::new(Interface::default()), Arc::new(|| Noop))
+            .claim(contract)
+            .unwrap(),
     )
 }
 
@@ -96,17 +93,12 @@ fn same_id_with_incompatible_shape_is_rejected_before_deduplication() {
     let valid = claim();
     let wrong = Contract::new(
         valid.id(),
-        Arc::new(
-            Interface::new([PortDef::local::<i64>("required")], []).unwrap(),
-        ),
+        Arc::new(Interface::new([PortDef::local::<i64>("required")], []).unwrap()),
     )
     .unwrap();
     let mut builder = NetworkBuilder::new();
     builder.require_contract("worker", &wrong).unwrap();
     builder.add("worker", leaf(&valid)).unwrap();
 
-    assert!(matches!(
-        builder.build(),
-        Err(NetworkError::Interface(_))
-    ));
+    assert!(matches!(builder.build(), Err(NetworkError::Interface(_))));
 }
