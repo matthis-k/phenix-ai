@@ -1060,11 +1060,17 @@ impl Kernel {
             if refresh_after_admission {
                 // Refresh preserves eager reservation/queue-credit semantics
                 // without invoking any readiness callback under producer lock.
-                let mut session = self
-                    .session
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                session.state();
+                // Do not wait on a session currently executing work. Its
+                // driver will refresh; producers still retain Full admissions.
+                match self.session.try_lock() {
+                    Ok(mut session) => {
+                        session.state();
+                    }
+                    Err(TryLockError::Poisoned(error)) => {
+                        error.into_inner().state();
+                    }
+                    Err(TryLockError::WouldBlock) => {}
+                }
             }
         }
         drop(detached);
