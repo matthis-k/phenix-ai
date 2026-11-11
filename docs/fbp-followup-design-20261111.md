@@ -97,3 +97,26 @@ no-readiness-under-producer-lock test. There is no second scheduler, no bespoke
 capacity reservation, and no extra producer-in-flight authority. Producer::poll
 itself remains a callback under its own inventory lock; that separate limitation
 is explicitly not addressed here.
+
+
+## Phase 1 revision 3 — restore the proven kernel boundary
+
+Actual exact-head regression `generation_retirement::blocked_poll_finishes_its_drain_before_publication_retires_the_source` rejects per-poll release of `ProducerState`. Retirement must wait for the **whole** active drain call, including all its polls. The short unlock/refresh model cannot preserve this guarantee, irrespective of single-event capacity/fairness.
+
+Decision: **reject and revert the producer-lock experiment as a whole.**
+Restore the baseline `Kernel::drain`, public eager `NetworkSession::inject`,
+and eager `inject_request` unchanged. Remove the temporary `enqueue` entry path
+and lock-specific test. Retain only the independent, static-options startup
+preflight, which prevents invalid configuration from invoking plugin factories
+without changing runtime scheduling or retirement.
+
+Phase 0 recheck: The lock inversion is a real issue, but solving it safely
+requires a separately reviewed whole-drain ownership/lifecycle design that can
+exclude plugin callbacks from critical sections *without* permitting retirement
+mid-drain or adding a competing scheduler. Neither naive lazy injection nor
+per-poll lock release meets established invariants. This is an unresolved defect,
+not an accepted limitation or claimed completed fix.
+
+Final acceptance for this iteration: unchanged historical Graph/Kernel behavior,
+zero factory spawns on invalid static configuration, ordinary valid session
+spawns, strict rustfmt/Clippy, full workspace test/Nix matrix, and exact-head CI.
