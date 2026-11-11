@@ -546,8 +546,10 @@ fn overlapping_write<'a>(
             }
             match (write, other) {
                 (Footprint::Component(a), Footprint::Component(b)) => {
-                    b.strip_prefix(a).is_some_and(|suffix| suffix.starts_with('/'))
-                        || a.strip_prefix(b).is_some_and(|suffix| suffix.starts_with('/'))
+                    b.strip_prefix(a)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                        || a.strip_prefix(b)
+                            .is_some_and(|suffix| suffix.starts_with('/'))
                 }
                 _ => false,
             }
@@ -790,9 +792,10 @@ fn replace_nested(
     if remainder.contains('/') {
         replace_nested(&mut updated, remainder, definition, origin)?;
     } else {
-        let previous = updated.instances.get(remainder).ok_or_else(|| {
-            ComposeError::InvalidEdit(format!("unknown nested component {path}"))
-        })?;
+        let previous = updated
+            .instances
+            .get(remainder)
+            .ok_or_else(|| ComposeError::InvalidEdit(format!("unknown nested component {path}")))?;
         if previous.interface() != definition.interface() {
             return Err(NetworkError::InterfaceMismatch(path.into()).into());
         }
