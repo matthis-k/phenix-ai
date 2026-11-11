@@ -983,18 +983,18 @@ impl Kernel {
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
         // Plugin destructors may reenter drain; release the state lock first.
         let mut detached = Vec::new();
-        let mut state = self
-            .producers
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
         let mut events = Vec::new();
-        if state.retired {
-            return events;
-        }
         for _ in 0..max_polls {
-            if state.producers.is_empty() {
+            // Each poll is serialized with retirement, but readiness must run
+            // outside the producer mutex before polling the next event.
+            let mut state = self
+                .producers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if state.retired || state.producers.is_empty() {
                 break;
             }
+            let mut refresh_after_admission = false;
             let index = state.next;
             state.next = (index + 1) % state.producers.len();
             let (key, producer, pending) = &mut state.producers[index];
@@ -1020,6 +1020,7 @@ impl Kernel {
                         };
                         let admitted = session.enqueue(&event.input, event.value);
                         if admitted.is_ok() {
+                            refresh_after_admission = true;
                             session.notifier().notify();
                         }
                         drop(session);
@@ -1055,8 +1056,17 @@ impl Kernel {
             if state.next >= state.producers.len() {
                 state.next = 0;
             }
+            drop(state);
+            if refresh_after_admission {
+                // Refresh preserves eager reservation/queue-credit semantics
+                // without invoking any readiness callback under producer lock.
+                let mut session = self
+                    .session
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                session.state();
+            }
         }
-        drop(state);
         drop(detached);
         events
     }
