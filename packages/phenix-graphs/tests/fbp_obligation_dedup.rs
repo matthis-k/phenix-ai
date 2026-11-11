@@ -100,5 +100,8 @@ fn same_id_with_incompatible_shape_survives_deduplication_and_fails_at_compile()
     builder.require_contract("worker", &wrong).unwrap();
     builder.add("worker", leaf(&valid)).unwrap();
 
-    assert!(matches!(builder.build().unwrap().compile(), Err(NetworkError::Interface(_))));
+    assert!(matches!(
+        builder.build().unwrap().compile(),
+        Err(NetworkError::Interface(_))
+    ));
 }
