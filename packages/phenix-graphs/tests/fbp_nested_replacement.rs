@@ -99,12 +99,12 @@ fn run(session: &mut phenix_graph::runtime::NetworkSession) -> String {
 fn host_granted_deep_replacement_executes_and_revokes_without_touching_old_sessions() {
     let mut composer = composer(true, true);
     let mut old_session = composer.current().compiled().start();
-    let origin = GraphOrigin::default().child();
     let patch = replacement(
         "m/inner/leaf",
         stage("alternative"),
         [Footprint::Component("m/inner/leaf".to_owned())],
     );
+    let origin = patch.origin().clone();
     composer.register([patch]).unwrap();
     assert_eq!(run(&mut old_session), "sibling[base[Q]]");
     assert_eq!(
