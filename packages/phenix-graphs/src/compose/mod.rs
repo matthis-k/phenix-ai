@@ -35,7 +35,7 @@
 use crate::component::{Body, ComponentDef};
 use crate::network::{
     CompiledNetwork, ConnectionDef, InputProjection, NetworkDef, NetworkError, PortPath,
-    collect_component_obligations,
+    collect_component_obligations, normalize_requirements,
 };
 use crate::{GraphOrigin, Interface};
 use std::collections::{BTreeMap, BTreeSet};
@@ -521,6 +521,7 @@ fn compose(
         .connections
         .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
     network.sources.sort();
+    normalize_requirements(&mut network.requirements)?;
     let compiled = network.compile()?;
     footprints.retain(|id, _| active.contains(id));
     Ok(Composition {
