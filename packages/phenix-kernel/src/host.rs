@@ -225,16 +225,19 @@ impl KernelHost {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
         }
+        // Own an Arc separately from the mutable active pointer. It keeps
+        // the old kernel and plugin code leased through retirement and Drops.
+        let retiring = self.active.clone();
         // The whole-drain gate is acquired before the inventory lock. A
         // running drain finishes all of its polls before retirement begins.
-        let drain = self.active.as_ref().map(|generation| {
+        let drain = retiring.as_ref().map(|generation| {
             generation
                 .kernel
                 .producer_drain
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
         });
-        let mut old = self.active.as_ref().map(|generation| {
+        let mut old = retiring.as_ref().map(|generation| {
             generation
                 .kernel
                 .producers
@@ -256,6 +259,7 @@ impl KernelHost {
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
         drop(previous);
+        drop(retiring);
         Ok(candidate.generation)
     }
 }
