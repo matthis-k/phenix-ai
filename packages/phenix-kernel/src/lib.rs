@@ -1118,22 +1118,42 @@ impl Kernel {
             .producer_drain
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let mut state = self
+        let count = self
             .producers
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        for (key, producer, _) in &mut state.producers {
-            if !producer
-                .as_mut()
-                .expect("producer waker setup without concurrent drain")
-                .set_waker(wake.clone())
-            {
-                return Err(DriverError::UnsupportedWake {
-                    producer: key.clone(),
-                });
+            .unwrap_or_else(|error| error.into_inner())
+            .producers
+            .len();
+        for index in 0..count {
+            let (key, mut producer) = {
+                let mut state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                let (key, producer, _) = &mut state.producers[index];
+                (
+                    key.clone(),
+                    producer.take().expect("exclusive producer wake registration"),
+                )
+            };
+            // Producer callbacks never run under inventory locks, including
+            // during initial driver wake registration.
+            let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                producer.set_waker(wake.clone())
+            }));
+            self.producers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .producers[index]
+                .1 = Some(producer);
+            match registered {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(DriverError::UnsupportedWake { producer: key });
+                }
+                Err(panic) => std::panic::resume_unwind(panic),
             }
         }
-        drop(state);
         drop(drain);
         loop {
             {
