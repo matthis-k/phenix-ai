@@ -57,7 +57,9 @@ fn enqueue_defers_readiness_while_inject_preserves_eager_selection() {
         ..Default::default()
     });
     assert_eq!(selections.load(Ordering::SeqCst), 0);
-    session.enqueue("in", phenix_graph::Value::local(7_i64)).unwrap();
+    session
+        .enqueue("in", phenix_graph::Value::local(7_i64))
+        .unwrap();
     assert_eq!(selections.load(Ordering::SeqCst), 0);
     assert_eq!(seen.load(Ordering::SeqCst), 0);
     session.run_until_idle(16);
