@@ -1,102 +1,135 @@
-# Kernel Graph Contracts
+# Native Network Kernel
 
-Kernel composes the existing Graph engine. It discovers eligible providers,
-resolves consumer-local imports and orders composition, but adds no scheduler,
-authorization grant or automatic Graph edge insertion. Native composers remain
-trusted code.
+The kernel resolves plugin contributions, builds host-authorized native network
+patches, and owns a persistent `Mutex<NetworkSession>`. It adds no scheduler or
+legacy execution adapter. Native Rust plugins are not a sandbox or a dynamic ABI.
 
-## Definitions And Imports
-
-- `ContractDefinition { id, contract }` publishes a Graph-owned semantic definition.
-- `GraphOffer { id, unit, contract, producer }` names an actual public unit, its
-  definition Key and exact producing contribution Key, not an independent shape.
-- `ContractRequirement { id, contract, consumer }` declares a consumer-local import.
-  `ImportPolicy` supplies optional selections and allow/deny restrictions.
-
-The resolver requires a unique eligible provider or explicit host selection;
-missing, ambiguous and ineligible imports reject. Denial wins, and all policy
-keys are validated, including unused entries. Selected providers become
-composition dependencies. Changing selection changes the resolved import used
-by the consumer, without capturing a provider implementation path.
-
-Consumers explicitly bind and wire the selected operation:
+## Contribution Schema
 
 ```rust,ignore
-let selected = context.import("service")?;
-let bound = selected.bind(context.graph)?.operation()?;
-let request = bound.inlets::<Request, EncodedValue>()
-    .port(InletPort::<Request, Request>::new("run"))
-    .field(SlotField::<Request, Request>::new("left"))
-    .target()?;
-let response = bound.output::<Response, EncodedValue>()?;
-context.graph.connect(caller.output(), request)?;
-context.graph.connect(response, sink.inlet())?;
+pub struct Contribution {
+    pub id: String,
+    pub requires: Vec<Key>,
+    pub routes: Vec<String>, // Public inputs this producer may inject.
+    pub patch: NetworkPatch,
+    pub prepare: Option<Box<Prepare>>,
+}
+pub type Prepare = dyn Fn(&CandidateContext<'_>)
+    -> Result<CandidateArtifacts, CallbackError> + Send + Sync;
+pub struct CandidateArtifacts {
+    pub patch: Option<NetworkPatch>, // Replaces the static patch for this candidate.
+    pub activate: Option<Box<Activate>>,
+    pub export: Option<Box<dyn Any + Send + Sync>>,
+}
+pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync;
 ```
 
-These are the same checked typed views used by Graph operation authoring and the
-independently compiled host consumer fixture. Structural views are not delivery
-endpoints; `target()` validates the actual leaf/type/mode. Owner typing does not
-prove a custom erased physical multi-port definition's reconstruction or behavior.
-Local connections require Rust type identity; encoded connections allow different
-Rust types with equal complete schema/codec descriptors. Graph remains the only
-compatibility checker, and descriptor equality does not prove codec honesty.
+`CandidateArtifacts::default()`, `activate(factory)` and `export(value)` provide
+single-slot registration with duplicate detection. The prepare callback receives
+read-only `CandidateContext { compiled, .. }` and `import(id)`, never a mutable
+candidate/builder. It may construct its own definitions or an owned patch. Replay
+is exclusively native `Composer` work. Self-imports are checked against a compiled,
+host-authorized preview of the static patch; they cannot certify fabricated shapes.
 
-Conflicting definitions, including unused definitions, reject. Final Graph
-compilation validates actual explicit claims and requests; Kernel checks the
-compiled offers and exact producer origins. Current contracts require the complete
-single-output interface, not an output subset with diagnostic extensions. Equal
-shape without an explicit matching claim is insufficient. Native composition code
-can ignore a resolved import; final validation does not prove arbitrary wiring.
+Host `BuildOptions` contains `imports: ImportPolicy`, `execution: SessionOptions`
+and `composition: BTreeMap<Key, CompositionPolicy>`. Each `CompositionPolicy` has
+`grants: BTreeSet<Footprint>` and `priority: i64`. Missing policy grants no writes.
+Grants and priorities are host decisions, never fields in plugin patch payloads.
+The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code
+lease is added without discarding an application-provided lease.
 
-Compose callbacks run under distinct producer child origins within the leased
-plugin revision. Foreign or sibling producers cannot launder a compatible claim.
-Origins survive packaging/cloning; layout retargeting preserves handler origin,
-while replacement attributes the new boundary to the replacer. Module boundary
-origin does not assert ownership of every private implementation node. Root Graph
-containers have no single provider origin and are not operations.
+Side-effect-only processes declare no outputs. Intentionally unconnected emissions
+require explicit `execution.discard_outputs` entries naming the physical process
+path and output; the kernel does not silently grant discard permission.
 
-Graph offers may name a Node or Module public boundary. Typed Modules declare an
-independent `InputInterface`, use checked `Module::new(...)?`, explicitly project
-leaves and finish with one output source. Existing `graph.replace` supports
-compatible cross-kind edits using typed packages or NodeTemplate, with candidate
-compilation, explicit claims, request/origin obligations and handle revocation.
-The root exposure APIs and raw physical compiler declarations remain available;
-they are not alternate runtime operation wrappers.
+## Contracts
 
-## Candidate Lifecycle
+- `ContractDefinition { id, contract: phenix_graph::contract::Contract }`.
+- `NetworkOffer { id, producer: Key, unit: String, contract: Key }`; `unit` is the actual component path and `component_path()` returns it.
+- `ContractRequirement { id, consumer: Key, contract: Key }` declares an import local to one contribution.
+- `ImportPolicy { selections, allow, deny }` is host-owned; denial wins and unknown policy keys reject.
 
-`ComposeContext::activate` and `export` register candidate-owned factories and
-typed artifacts. `KernelHost::prepare` uses the exact staged inventory, validates
-the deployment and passes a nonadmitting `Binding` to the binding hook before
-starting producers without polling them. Data-only `BuildOptions` carries import
-policy and Graph-owned execution limits, not a deployment callback.
+Missing, ambiguous, incompatible, foreign-owner and sibling-producer offers fail
+closed. All definitions and all offers, including unused entries, are checked.
+Each producing contribution receives an exact child `GraphOrigin` within its
+leased plugin revision. Final validation uses `compiled.inspect(path).origin`,
+`compiled.check_implementation(path, &contract)` and the native contract catalog.
+An origin is provenance, not write authority or a code lease.
 
-`publish` rejects stale/foreign candidates, commits the validated plugin batch,
-retires old producers and switches the active generation. Publication serializes
-against producer drains, not old explicit waves/read callbacks. Old engine/query
-handles remain pinned and usable; retired producer drains cannot admit notices.
-Artifacts/actions/producers retain plugin code leases through teardown.
+`ResolvedImport::bind(&CompiledNetwork) -> Result<BoundComponent<'_>, NetworkError>`
+uses the actual native path/checker and returns only contract-visible ports.
+Local ports require Rust type identity. Wire ports require complete matching
+schema identities, allowing independent Rust implementations and codecs. Matching
+shape alone is not semantic membership, nor does schema equality prove codec honesty.
 
-This optional coordinator does not roll back arbitrary effects of native compose,
-binding or activation callbacks. Dropping failed candidates releases their owned
-resources and preserves the active generation. Raw PluginSet/Kernel callers still
-own their sequencing; successful build alone neither commits nor publishes.
+## Sessions And Producers
 
-## Evidence And Status
+```rust,ignore
+pub struct InputEvent { pub input: String, pub value: Value }
+pub trait Producer: Send {
+    fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError>;
+    fn set_waker(&mut self, waker: WakeHandle) -> bool { false }
+}
+```
 
-`tests/declarative_imports.rs` covers discovery, policy, dependency ordering and
-provider switching. `host_portable_contracts.rs` and its independently compiled
-consumer exercise typed bound discovery through host publication. Contract offer,
-origin, generation, retirement and artifact tests cover actual claims and leases.
+`Kernel::build(name, snapshots, Arc<dyn ProcessDispatcher>)` and
+`build_with_options(name, snapshots, dispatcher, options)` do not activate producers.
+`start(&mut self)` activates in dependency order; failures release all partial
+producers and permit retry without reconstructing candidate artifacts.
 
-The current operation redesign is an uncommitted tree based on `5469c55b`, branch
-`impl/operation-interface-20261109`, preserving earlier uncommitted work. Handoff
-reports Graph tests/doctests passed; workspace testing hit a portable-host schema
-error wording assertion, corrected by main with a subsequent focused host pass.
-Final workspace verification, exact implementation commit and independent review
-remain pending. These test references are not a final-head pass claim.
+- `inject(&self, input: &str, value: Value) -> Result<(), InjectionError>` admits exactly one value and returns its ownership on failure.
+- `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, String>` permits native requests, captures, completions and wakes only after start.
+- `run_steps(&self, budget: usize) -> Result<RunReport, String>` executes bounded native steps through the actual dispatcher and worker execution guards.
+- `drain(&self, max_polls: usize) -> Vec<ProducerEvent>` only polls/admit events; it never runs process code. `ProducerEvent.result` is `Result<(), ProducerError>`.
+- `compiled()` exposes immutable native declarations; `export::<T>(&Key)` retrieves a candidate-owned artifact.
 
-See [Typed Operation Interfaces](../../docs/grouped-authoring.md), the
-[implementation record and removal ledger](../../docs/operation-interface-redesign.md)
-and [Kernel lifecycle](../../docs/kernel.md). Run
-`cargo test -p phenix-kernel -p phenix-plugin --locked` to exercise package tests.
+Each producer retains at most one pending event on `Full` without repolling.
+Round-robin position persists across calls. Terminal poll errors detach producers
+and destroy them outside the producer mutex. Explicit session work does not hold
+the producer mutex; a drain defers admission instead of waiting behind it.
+The blocking `run_until` driver combines producer notification/shutdown with native
+session wakes and bounded step execution. Portless processes need an explicit
+`Edit::AddSource` or `NetworkBuilder::start`, never an implicit trigger.
+
+The kernel combines exact snapshot leases with any application-provided lease,
+then applies the same lease to native compiled declarations and the session.
+Candidate-context compiled views are leased before callbacks can export or clone
+them. Detached `compiled()` clones, exported compiled views, extracted factories,
+spawned processes and independently started sessions retain those leases after
+kernel/host teardown. Native queued packets, captured/cloned values, owned jobs and
+completions retain their leases through payload/process destruction as well.
+
+Escaping prepare, activation, producer-poll and host-binding callback errors own
+their code/application lease, not merely their containing event or lifecycle error.
+Moving a cause out of an error preserves the lease. The private wrapper delegates
+formatting and exposes the original concrete cause through `Error::source`; walk
+the source chain to downcast rather than assuming a fixed depth. The original
+cause drops before its lease. Retaining an error intentionally delays plugin code
+teardown even after its failed candidate and owned producers have been released.
+
+## Host Publication
+
+`KernelHost::prepare(stages, options, dispatcher, name, bind)` builds the exact
+candidate inventory, invokes the nonadmitting binding hook, then activates producers
+without polling. The hook receives only:
+
+```rust,ignore
+Binding::export::<T>(&Key) -> Option<&T>
+Binding::inspect(&str) -> Result<ComponentSnapshot, NetworkError>
+Binding::lookup_definition(DefinitionKey) -> Result<PhysicalDeclaration, NetworkError>
+Binding::input_targets(&str) -> Option<&[(usize, String)]>
+Binding::output_source(&str) -> Option<(usize, &str)>
+```
+
+There is no session or startable compiled-network getter on `Binding`.
+Use opaque `DefinitionKey` identities, not factory/action pointer equality.
+`publish(candidate)` rejects foreign/stale hosts and epochs, commits the plugin
+batch, retires old owned producers and replaces the generation. Publication waits
+only for producer drains, never old explicit session work. Old `Generation` handles
+retain `inject`, `with_session`, `run_steps`, `compiled`, `with_kernel` and exports;
+their retired producer drains remain empty. Candidate drop releases artifacts and
+producers before their plugin leases. Native callback external effects are not
+sandboxed or rolled back. Typed callback errors preserve their exact source.
+
+Run `cargo test -p phenix-plugin -p phenix-kernel`. Storage integration targets also
+require the independently migrated StorageGraph adapter.

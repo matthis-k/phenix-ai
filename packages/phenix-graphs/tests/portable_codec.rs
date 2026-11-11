@@ -1,7 +1,5 @@
 use phenix_graph::testing::portable::{GoldenVector, check};
 use phenix_graph::{ContractValue, Schema};
-#[cfg(feature = "derive")]
-use phenix_graph::{InputSchema, LocalPortLayout, PortArgs, PortLayout};
 
 #[cfg(feature = "derive")]
 #[derive(ContractValue, PartialEq, Debug)]
@@ -52,29 +50,6 @@ fn decoder_member_names_cannot_shadow_its_state() {
         )
         .unwrap();
     }
-}
-
-#[cfg(feature = "derive")]
-#[derive(PortArgs, PortLayout, LocalPortLayout, phenix_graph::InputFields)]
-struct Raw {
-    r#type: i64,
-}
-
-#[cfg(feature = "derive")]
-#[test]
-fn raw_identifiers_use_logical_names_in_all_layouts() {
-    let slots = Raw::slots().unwrap();
-    assert_eq!(slots.len(), 1);
-    // The three independent layout generators must agree on the logical path.
-    let mut portable = Vec::new();
-    Raw::append_slots("", &mut portable).unwrap();
-    let mut local = Vec::new();
-    Raw::append_local_slots("", &mut local).unwrap();
-    assert_eq!(slots[0].name, portable[0].name);
-    assert_eq!(slots[0].name, local[0].name);
-    assert_eq!(slots[0].name.as_deref(), Some("type"));
-    let _ = Raw::SLOT_TYPE;
-    assert_eq!(Raw { r#type: 7 }.r#type, 7);
 }
 
 #[derive(PartialEq)]

@@ -1,5 +1,5 @@
 //! Opaque composition provenance, separate from contracts and authorization.
-use crate::*;
+use std::sync::Arc;
 
 /// Allocation identity for one host-selected composition generation.
 /// Cloning preserves identity; constructing another token never does. This is
@@ -48,38 +48,6 @@ impl PartialEq for GraphOrigin {
     }
 }
 impl Eq for GraphOrigin {}
-
-impl FindResult<'_> {
-    /// The origin of this actual final declaration, not of its contract or path.
-    /// Module instances report their instantiation/replacement origin. Composite
-    /// roots and low-level declarations without scoped composition have none.
-    pub fn origin(&self) -> Option<&GraphOrigin> {
-        let (graph, declaration) = match self {
-            Self::Node(node) => {
-                let provenance = node.graph.metadata.nodes.get(&node.id)?;
-                let definition = node
-                    .graph
-                    .metadata
-                    .definitions
-                    .get(&provenance.definition)?;
-                let template = definition
-                    .nodes
-                    .iter()
-                    .find(|n| n.id == provenance.local_node)?;
-                return template.composition_origin.as_ref();
-            }
-            Self::Module(module) => {
-                let instance = module
-                    .graph
-                    .metadata
-                    .instances
-                    .get(module.lookup.instance_metadata)?;
-                (module.graph, instance.declaration_id?)
-            }
-        };
-        graph.composition_origins.get(&declaration)
-    }
-}
 
 #[cfg(test)]
 mod tests {

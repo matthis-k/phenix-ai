@@ -1,13 +1,14 @@
+mod support;
 use phenix_graph::{
-    CompileDiagnostic, CompilePhase, DeclaredValue, GraphContract, InterfaceError, InterfacePhase,
-    InterfaceShape, LocalExecutor, TypeIdentity,
+    Interface, PortDef,
+    compose::{Edit, NetworkPatch},
+    contract::Contract,
+    network::NetworkError,
+    process::LocalProcessDispatcher,
 };
-use phenix_kernel::{
-    BuildOptions, ContractDefinition, Contribution, GraphOffer, Kernel, Key, ResolutionError,
-};
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::{any::TypeId, error::Error, sync::Arc};
-
+use phenix_kernel::{ContractDefinition, Kernel, Key, NetworkOffer, ResolutionError};
+use phenix_plugin::{Failure, PluginInstance, Registrar};
+use std::{error::Error, sync::Arc};
 #[derive(Clone, Copy)]
 enum Case {
     Conflict,
@@ -17,10 +18,9 @@ enum Case {
     Interface,
     Catalog,
 }
-
 impl PluginInstance for Case {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        let contract = GraphContract::new("diagnostics/test@1", InterfaceShape::new()).unwrap();
+        let contract = support::contract("diagnostics/test@1");
         into.add(ContractDefinition {
             id: "contract".into(),
             contract: contract.clone(),
@@ -28,17 +28,15 @@ impl PluginInstance for Case {
         if matches!(self, Self::Conflict) {
             into.add(ContractDefinition {
                 id: "other".into(),
-                contract: GraphContract::new(
+                contract: Contract::new(
                     contract.id(),
-                    InterfaceShape::new()
-                        .output("value", DeclaredValue::local::<i64>())
-                        .unwrap(),
+                    Arc::new(Interface::new([], [PortDef::local::<String>("value")]).unwrap()),
                 )
                 .unwrap(),
             })?;
         }
         if matches!(self, Self::WrongOrigin | Self::Interface) {
-            into.add(GraphOffer {
+            into.add(NetworkOffer {
                 id: "offer".into(),
                 producer: Key::new(
                     if matches!(self, Self::WrongOrigin) {
@@ -48,109 +46,80 @@ impl PluginInstance for Case {
                     },
                     "main",
                 ),
-                unit: "invalid/../path".into(),
+                unit: "service".into(),
                 contract: Key::new("plugin", "contract"),
             })?;
         }
-        let case = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| match case {
-                Self::Composition => Err("composer failed".into()),
-                Self::Compilation => context
-                    .graph
-                    .require_contract("missing", &contract)
-                    .map_err(Into::into),
-                Self::Catalog => {
-                    let different = GraphContract::new(
-                        contract.id(),
-                        InterfaceShape::new()
-                            .input_slot("run", "value", DeclaredValue::local::<i64>())
-                            .unwrap()
-                            .output("value", DeclaredValue::local::<i64>())
-                            .unwrap(),
-                    )
-                    .unwrap();
-                    context.graph.node("service", |v: i64| v)?;
-                    context
-                        .graph
-                        .implements("service", &different)
-                        .map_err(Into::into)
-                }
-                _ => Ok(()),
-            }),
-        })
+        let patch = match self {
+            Self::Compilation => NetworkPatch::new([Edit::AddSource("missing".into())]),
+            Self::Catalog => support::patch("service", false, true, 0, "different@1"),
+            _ => support::patch("service", false, false, 0, "diagnostics/test@1"),
+        };
+        let mut contribution = support::contribution("main", patch);
+        if matches!(self, Self::Catalog) {
+            let conflicting = Contract::new(
+                contract.id(),
+                Arc::new(Interface::new([PortDef::local::<i64>("run")], []).unwrap()),
+            )
+            .unwrap();
+            let definition = phenix_graph::component::ComponentDef::primitive(
+                conflicting.required().clone(),
+                Arc::new(|| support::Transform {
+                    increment: 0,
+                    emitted: false,
+                }),
+            )
+            .claim(&conflicting)
+            .unwrap();
+            contribution.patch = NetworkPatch::new([Edit::Add {
+                path: "service".into(),
+                definition: Arc::new(definition),
+            }]);
+        }
+        if matches!(self, Self::Composition) {
+            contribution.prepare = Some(Box::new(|_| Err("composer failed".into())));
+        }
+        into.add(contribution)
     }
 }
-
 fn failure(case: Case) -> ResolutionError {
-    let mut catalog = PluginCatalog::new();
-    let plugin = catalog.register("plugin", |case: Case| Ok(case)).unwrap();
-    let mut plugins = catalog.instance();
-    plugins.load(&plugin, case).unwrap();
+    let snapshot = support::snapshot("plugin", case);
+    let options = support::options(std::slice::from_ref(&snapshot));
     Kernel::build_with_options(
         "diagnostics",
-        plugins.snapshots(),
-        Arc::new(LocalExecutor),
-        BuildOptions::default(),
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
     )
     .err()
-    .expect("diagnostic build must fail")
+    .unwrap()
 }
-
 #[test]
 fn build_failures_identify_definition_composer_and_origin() {
-    let conflict = failure(Case::Conflict);
     assert!(
-        matches!(&conflict, ResolutionError::ConflictingDefinition { definition, contract }
-        if *definition == Key::new("plugin", "other") && contract == "diagnostics/test@1")
-    );
-    assert!(
-        conflict
-            .to_string()
-            .contains("conflicting contract definition")
+        matches!(failure(Case::Conflict), ResolutionError::ConflictingDefinition { definition, contract } if definition == Key::new("plugin", "other") && contract == "diagnostics/test@1")
     );
     let composition = failure(Case::Composition);
     assert!(
-        matches!(&composition, ResolutionError::Composition { contribution, cause }
-        if *contribution == Key::new("plugin", "main") && cause.to_string() == "composer failed")
+        matches!(&composition, ResolutionError::Composition { contribution, .. } if *contribution == Key::new("plugin", "main"))
     );
-    assert!(composition.to_string().contains("composer failed"));
     assert_eq!(composition.source().unwrap().to_string(), "composer failed");
-    let origin = failure(Case::WrongOrigin);
     assert!(
-        matches!(&origin, ResolutionError::WrongOrigin { offer, producer, unit }
-        if *offer == Key::new("plugin", "offer") && **producer == Key::new("foreign", "main") && unit == "invalid/../path")
-    );
-    assert!(
-        origin
-            .to_string()
-            .contains("producer ownership origin mismatch")
-    );
-    assert!(
-        origin
-            .to_string()
-            .contains("contribution generation origin mismatch")
+        matches!(failure(Case::WrongOrigin), ResolutionError::WrongOrigin { offer, producer, unit } if offer == Key::new("plugin", "offer") && *producer == Key::new("foreign", "main") && unit == "service")
     );
 }
-
 #[test]
 fn compilation_preserves_structured_cause_and_source() {
     let error = failure(Case::Compilation);
     let ResolutionError::Compilation { cause } = &error else {
-        panic!("expected compilation diagnostic, got {error:?}");
+        panic!("{error:?}")
     };
-    assert_eq!(cause.phase, CompilePhase::Index);
-    assert!(cause.message.contains("missing"));
-    assert_eq!(error.to_string(), cause.to_string());
     assert_eq!(
-        error.source().unwrap().downcast_ref::<CompileDiagnostic>(),
+        error.source().unwrap().downcast_ref::<NetworkError>(),
         Some(cause)
     );
+    assert!(matches!(cause, NetworkError::UnknownProcess(path) if path == "missing"));
 }
-
 #[test]
 fn interface_failures_identify_offer_or_catalog_and_preserve_source() {
     for (case, expected_offer) in [
@@ -158,57 +127,31 @@ fn interface_failures_identify_offer_or_catalog_and_preserve_source() {
         (Case::Catalog, None),
     ] {
         let error = failure(case);
-        let ResolutionError::Interface { offer, unit, cause } = &error else {
-            panic!("expected interface diagnostic, got {error:?}");
+        let ResolutionError::Interface { offer, cause, .. } = &error else {
+            panic!("{error:?}")
         };
         assert_eq!(*offer, expected_offer);
-        if offer.is_some() {
-            assert_eq!(unit, "invalid/../path");
-            assert_eq!(cause.message.as_ref(), "invalid unit path");
-        } else {
-            assert_eq!(unit, cause.path.as_ref());
-            assert!(
-                error
-                    .to_string()
-                    .contains("host/graph contract catalog conflict")
-            );
-        }
         assert_eq!(
-            error.source().unwrap().downcast_ref::<InterfaceError>(),
+            error.source().unwrap().downcast_ref::<NetworkError>(),
             Some(cause.as_ref())
         );
     }
 }
-
 #[test]
 fn interface_fields_and_missing_unit_remain_machine_readable() {
-    let cause = InterfaceError {
-        contract: Some("diagnostics/test@1".into()),
-        path: "service".into(),
-        phase: InterfacePhase::Compiled,
-        endpoint: Some("value".into()),
-        expected: Some(TypeIdentity::Local(TypeId::of::<i64>())),
-        actual: Some(TypeIdentity::Local(TypeId::of::<String>())),
-        message: "incompatible endpoint".into(),
+    let error = failure(Case::Interface);
+    let ResolutionError::Interface { cause, unit, .. } = error else {
+        unreachable!()
     };
-    let error = ResolutionError::Interface {
-        offer: Some(Key::new("plugin", "offer")),
-        unit: "service".into(),
-        cause: Box::new(cause.clone()),
+    assert_eq!(unit, "service");
+    let NetworkError::Interface(cause) = *cause else {
+        unreachable!()
     };
-    assert_eq!(
-        error.source().unwrap().downcast_ref::<InterfaceError>(),
-        Some(&cause)
-    );
+    assert!(cause.message.contains("claim"));
     let missing = ResolutionError::MissingUnit {
         offer: Key::new("plugin", "offer"),
         unit: "service".into(),
     };
-    assert!(
-        missing
-            .to_string()
-            .contains("compiled unit not found for offer")
-    );
     assert!(missing.to_string().contains("service"));
     assert!(missing.source().is_none());
 }

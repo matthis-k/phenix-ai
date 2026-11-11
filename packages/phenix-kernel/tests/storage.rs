@@ -1,7 +1,8 @@
 #[path = "../examples/storage.rs"]
 mod example;
+use example::support as native;
 use phenix_graph::Value;
-use phenix_kernel::{Contribution, Kernel, Key, Producer};
+use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, Kernel, Key, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{Codec, Error, Grant, Notice, Operation, Registry, Scope, Subscription};
 use std::sync::{
@@ -28,15 +29,15 @@ impl Drop for ProbedSubscription {
 }
 
 impl Producer for ProbedSubscription {
-    fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<phenix_kernel::InputEvent>, phenix_kernel::CallbackError> {
         let notices = self.subscription.drain()?;
         assert!(notices.len() <= 1);
         Ok(notices
             .into_iter()
             .next()
-            .map(|notice| phenix_kernel::Notice {
-                trigger: "observed".into(),
-                values: vec![Value::local(notice)],
+            .map(|notice| phenix_kernel::InputEvent {
+                input: "observed".into(),
+                value: Value::local(notice),
             }))
     }
 }
@@ -63,15 +64,15 @@ impl PluginInstance for SubscriptionPlugin {
                 } else {
                     vec![]
                 },
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: phenix_graph::compose::NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut context = CandidateArtifacts::default();
                     if !later {
                         let observed = observed.clone();
-                        let sink = graph.node("observe", move |notice: Notice| {
+                        let sink = native::local_sink(move |notice: Notice| {
                             observed.lock().unwrap().push(notice);
-                        })?;
-                        let input = graph.expose_input("notice", sink.inlet())?;
-                        graph.trigger("observed", [input])?;
+                        });
+                        context.patch = Some(native::input_patch("observe", "observed", sink));
                     }
                     let attempts = AtomicUsize::new(0);
                     let counter = counter.clone();
@@ -90,8 +91,9 @@ impl PluginInstance for SubscriptionPlugin {
                             _marker: marker,
                             drops: probe.drops.clone(),
                         }))
-                    })
-                }),
+                    })?;
+                    Ok(context)
+                })),
             })?;
         }
         Ok(())
@@ -152,14 +154,23 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
             },
         )
         .unwrap();
-    let mut kernel = Kernel::build(
+    let mut options = BuildOptions::default();
+    native::allow(
+        &mut options,
+        "storage",
+        "subscription",
+        "observe",
+        "observed",
+    );
+    let mut kernel = Kernel::build_with_options(
         "subscription-lifecycle",
         plugins.snapshots(),
-        Arc::new(phenix_graph::LocalExecutor),
+        Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        options,
     )
     .unwrap();
     assert!(probe.markers.lock().unwrap().is_empty());
-    assert!(kernel.fire("observed", vec![]).is_err());
+    assert!(kernel.inject("observed", Value::local(())).is_err());
     counter.write(0).unwrap();
     if retry {
         assert!(
@@ -170,7 +181,7 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
         assert_eq!(markers.len(), 1);
         assert!(markers[0].upgrade().is_none());
         drop(markers);
-        assert!(kernel.fire("observed", vec![]).is_err());
+        assert!(kernel.inject("observed", Value::local(())).is_err());
         counter.write(1).unwrap();
         assert!(kernel.drain(8).is_empty());
         assert!(observed.lock().unwrap().is_empty());
@@ -193,11 +204,8 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
     counter.write(2).unwrap();
     let events = kernel.drain(8);
     assert_eq!(events.len(), 2);
-    assert!(
-        events
-            .iter()
-            .all(|event| event.result.as_ref().unwrap().success())
-    );
+    assert!(events.iter().all(|event| event.result.is_ok()));
+    kernel.run_steps(64).unwrap();
     assert!(matches!(
         observed.lock().unwrap().as_slice(),
         [Notice::Changed(_), Notice::Changed(_)]
@@ -244,7 +252,7 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
         let mut demo = example::build(sqlite, 8).unwrap();
         assert!(
             demo.kernel
-                .fire("write_counter", vec![Value::local(1_i64)])
+                .inject("write_counter", Value::local(1_i64))
                 .is_err()
         );
         assert!(demo.kernel.drain(8).is_empty());
@@ -255,18 +263,15 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
         assert_eq!(demo.counter.read().unwrap(), Some(0));
         assert!(
             demo.kernel
-                .fire("write_counter", vec![Value::local("wrong type".to_owned())])
+                .inject("write_counter", Value::local("wrong type".to_owned()))
                 .is_err()
         );
-        assert!(demo.kernel.fire("missing", vec![]).is_err());
-        let mut waves = Vec::new();
+        assert!(demo.kernel.inject("missing", Value::local(())).is_err());
         for value in [17_i64, 29, -4] {
-            let report = demo
-                .kernel
-                .fire("write_counter", vec![Value::local(value)])
+            demo.kernel
+                .inject("write_counter", Value::local(value))
                 .unwrap();
-            assert!(report.success(), "{:?}", report.error_messages());
-            waves.push(report.wave_id());
+            assert!(demo.kernel.run_steps(64).unwrap().steps > 0);
             assert_eq!(demo.counter.read().unwrap(), Some(value));
         }
         assert_eq!(
@@ -279,10 +284,8 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
             let events = demo.kernel.drain(1);
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].producer, Key::new("observer", "observer"));
-            let report = events[0].result.as_ref().unwrap();
-            assert!(report.success());
-            assert!(!waves.contains(&report.wave_id()));
-            waves.push(report.wave_id());
+            assert!(events[0].result.is_ok());
+            demo.kernel.run_steps(64).unwrap();
             assert_eq!(demo.observed.lock().unwrap().len(), count);
         }
         let observed = demo.observed.lock().unwrap();
@@ -348,13 +351,15 @@ fn overflow_is_a_typed_notice_and_polling_recovers() {
         demo.counter.write(2).unwrap();
         let events = demo.kernel.drain(1);
         assert_eq!(events.len(), 1);
-        assert!(events[0].result.as_ref().unwrap().success());
+        assert!(events[0].result.is_ok());
+        demo.kernel.run_steps(64).unwrap();
         assert!(matches!(
             demo.observed.lock().unwrap().as_slice(),
             [Notice::Overflow { .. }]
         ));
         demo.counter.write(3).unwrap();
         assert_eq!(demo.kernel.drain(1).len(), 1);
+        demo.kernel.run_steps(64).unwrap();
         assert!(matches!(
             demo.observed.lock().unwrap().last(),
             Some(Notice::Changed(_))

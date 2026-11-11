@@ -13,20 +13,18 @@ use phenix_storage::{
 };
 
 fn configure(demo: &mut example::Demo, expected: Option<Revision>, model: &str) -> Revision {
-    assert!(
-        demo.kernel
-            .fire(
-                "configure",
-                vec![Value::local(Update {
-                    expected,
-                    config: AgentConfig {
-                        model: model.into()
-                    },
-                })]
-            )
-            .unwrap()
-            .success()
-    );
+    demo.kernel
+        .inject(
+            "configure",
+            Value::local(Update {
+                expected,
+                config: AgentConfig {
+                    model: model.into(),
+                },
+            }),
+        )
+        .unwrap();
+    demo.kernel.run_steps(64).unwrap();
     demo.writes
         .lock()
         .unwrap()
@@ -76,8 +74,9 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].producer.owner, "observer");
     for event in events {
-        assert!(event.result.unwrap().success());
+        event.result.unwrap();
     }
+    demo.kernel.run_steps(64).unwrap();
     let reads = demo.reads.lock().unwrap();
     let observed = reads[0].as_ref().unwrap().as_ref().unwrap();
     assert_eq!(observed.value.0, "first");
@@ -98,12 +97,10 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
             .is_err()
     );
     assert_eq!(reader.get("default").unwrap().unwrap().value.0, "second");
-    assert!(
-        demo.kernel
-            .fire("index", vec![Value::local("Agent::run".to_string())])
-            .unwrap()
-            .success()
-    );
+    demo.kernel
+        .inject("index", Value::local("Agent::run".to_string()))
+        .unwrap();
+    demo.kernel.run_steps(64).unwrap();
     assert_eq!(
         demo.evidence.lock().unwrap()[0].as_ref().unwrap(),
         &vec![("Agent::run".into(), "src/mock.rs:7".into())]
@@ -132,12 +129,10 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
     let revision = {
         let mut demo = build(root.path(), "alpha").unwrap();
         let revision = configure(&mut demo, None, "persisted");
-        assert!(
-            demo.kernel
-                .fire("index", vec![Value::local("SavedSymbol".to_string())])
-                .unwrap()
-                .success()
-        );
+        demo.kernel
+            .inject("index", Value::local("SavedSymbol".to_string()))
+            .unwrap();
+        demo.kernel.run_steps(64).unwrap();
         assert!(demo.evidence.lock().unwrap()[0].is_ok());
         revision
     };
@@ -166,8 +161,9 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
         let events = demo.kernel.drain(8);
         assert_eq!(events.len(), 1);
         for event in events {
-            assert!(event.result.unwrap().success());
+            event.result.unwrap();
         }
+        demo.kernel.run_steps(64).unwrap();
     }
     {
         let mut demo = build(root.path(), "beta").unwrap();
@@ -179,12 +175,10 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
             .unwrap();
         assert!(reader.get("default").unwrap().is_none());
         configure(&mut demo, None, "isolated");
-        assert!(
-            demo.kernel
-                .fire("index", vec![Value::local("OtherSymbol".to_string())])
-                .unwrap()
-                .success()
-        );
+        demo.kernel
+            .inject("index", Value::local("OtherSymbol".to_string()))
+            .unwrap();
+        demo.kernel.run_steps(64).unwrap();
         assert_eq!(
             demo.evidence.lock().unwrap()[0].as_ref().unwrap(),
             &vec![("OtherSymbol".into(), "src/mock.rs:7".into())]
@@ -211,7 +205,7 @@ fn public_entry_point_runs() {
 
 #[test]
 fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
-    use phenix_graph::LocalExecutor;
+    use phenix_graph::process::LocalProcessDispatcher;
     use phenix_kernel::{Contribution, Kernel};
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use phenix_storage::{
@@ -290,9 +284,13 @@ fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
             );
         }
         // Graphs are already present, but cannot compose until the host injects storage.
-        let error = Kernel::build("not-injected", snapshots.clone(), Arc::new(LocalExecutor))
-            .err()
-            .expect("composition must require storage injection");
+        let error = Kernel::build(
+            "not-injected",
+            snapshots.clone(),
+            Arc::new(LocalProcessDispatcher),
+        )
+        .err()
+        .expect("composition must require storage injection");
         assert!(
             error.to_string().contains("storage not injected"),
             "{error}"

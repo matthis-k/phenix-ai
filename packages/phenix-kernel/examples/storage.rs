@@ -1,8 +1,14 @@
-use phenix_graph::{LocalExecutor, Value};
+use phenix_graph::{
+    Value, component::ComponentDef, compose::NetworkPatch, network::NetworkBuilder,
+    process::LocalProcessDispatcher,
+};
+pub(crate) use scoped_storage::support;
 #[allow(dead_code)]
 #[path = "scoped_storage.rs"]
 mod scoped_storage;
-use phenix_kernel::{Contribution, Kernel, Key, Notice, Producer};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, Contribution, InputEvent, Kernel, Key, Producer,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
     Address, Codec, Grant, Operation, Registry, Schema, Scope, Session, Subscription,
@@ -77,13 +83,13 @@ struct StorageProducer {
     pending: VecDeque<phenix_storage::Notice>,
 }
 impl Producer for StorageProducer {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         if self.pending.is_empty() {
             self.pending.extend(self.subscription.drain()?);
         }
-        Ok(self.pending.pop_front().map(|notice| Notice {
-            trigger: "storage_changed".into(),
-            values: vec![Value::local(notice)],
+        Ok(self.pending.pop_front().map(|notice| InputEvent {
+            input: "storage_changed".into(),
+            value: Value::local(notice),
         }))
     }
 }
@@ -102,32 +108,48 @@ impl PluginInstance for CounterPlugin {
             id: "module".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                let mut module = phenix_graph::Module::new(
-                    "counter-module",
-                    phenix_graph::InputInterface::single(phenix_graph::Layout::<i64>::atomic())?,
-                )?;
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut module = NetworkBuilder::new();
                 let writer = counter.clone();
-                let write = module.node("write", move |value: i64| writer.write(value))?;
+                let write = module.add(
+                    "write",
+                    support::local_map(move |value: i64| writer.write(value)),
+                )?;
                 let reader = counter.clone();
-                let read = module.node("read", move |written: Result<(), String>| {
-                    written.and_then(|()| reader.read())
-                })?;
-                module.connect(write.output(), read.inlet())?;
-                module.expose(module.inlet(), write.inlet())?;
-                let package = module.finish(read.output())?;
-                let instance = graph.instantiate("counter", &package)?;
+                let read = module.add(
+                    "read",
+                    support::local_map(move |written: Result<(), String>| {
+                        written.and_then(|()| reader.read())
+                    }),
+                )?;
+                module.connect(
+                    write.output::<Result<(), String>>("output")?,
+                    read.input::<Result<(), String>>("input")?,
+                    support::capacity(),
+                )?;
+                module.expose_input("input", write.input::<i64>("input")?, support::capacity())?;
                 let log = reads.clone();
-                let sink =
-                    graph.node("read_result", move |value: Result<Option<i64>, String>| {
+                let sink = module.add(
+                    "read_result",
+                    support::local_sink(move |value: Result<Option<i64>, String>| {
                         log.lock().unwrap().push(value);
-                    })?;
-                graph.connect(instance.output(), sink.inlet())?;
-                let input = graph.expose_input("counter_value", instance.inlet())?;
-                graph.trigger("write_counter", [input])?;
-                Ok(())
-            }),
+                    }),
+                )?;
+                module.connect(
+                    read.output::<Result<Option<i64>, String>>("output")?,
+                    sink.input::<Result<Option<i64>, String>>("input")?,
+                    support::capacity(),
+                )?;
+                Ok(CandidateArtifacts {
+                    patch: Some(support::input_patch(
+                        "counter",
+                        "write_counter",
+                        Arc::new(ComponentDef::composite(module.build()?)),
+                    )),
+                    ..Default::default()
+                })
+            })),
         })
     }
 }
@@ -147,14 +169,14 @@ impl PluginInstance for ObserverPlugin {
             id: "observer".into(),
             requires: vec![Key::new("counter", "module")],
             routes: vec!["storage_changed".into()],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut context = CandidateArtifacts::default();
                 let log = observed.clone();
-                let sink = graph.node("observe", move |notice: phenix_storage::Notice| {
+                let sink = support::local_sink(move |notice: phenix_storage::Notice| {
                     log.lock().unwrap().push(notice);
-                })?;
-                let input = graph.expose_input("storage_notice", sink.inlet())?;
-                graph.trigger("storage_changed", [input])?;
+                });
+                context.patch = Some(support::input_patch("observe", "storage_changed", sink));
                 let session = session.clone();
                 let scope = scope.clone();
                 context.activate(move || {
@@ -162,8 +184,9 @@ impl PluginInstance for ObserverPlugin {
                         subscription: session.subscribe(scope.clone(), capacity)?,
                         pending: VecDeque::new(),
                     }))
-                })
-            }),
+                })?;
+                Ok(context)
+            })),
         })
     }
 }
@@ -239,8 +262,28 @@ pub fn build(sqlite: bool, capacity: usize) -> Result<Demo, String> {
             },
         )
         .map_err(|e| e.to_string())?;
-    let kernel = Kernel::build("storage", plugins.snapshots(), Arc::new(LocalExecutor))
-        .map_err(|error| error.to_string())?;
+    let mut options = BuildOptions::default();
+    support::allow(
+        &mut options,
+        "counter",
+        "module",
+        "counter",
+        "write_counter",
+    );
+    support::allow(
+        &mut options,
+        "observer",
+        "observer",
+        "observe",
+        "storage_changed",
+    );
+    let kernel = Kernel::build_with_options(
+        "storage",
+        plugins.snapshots(),
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(Demo {
         kernel,
         counter,
@@ -254,19 +297,15 @@ fn main() -> Result<(), String> {
     for sqlite in [false, true] {
         let mut demo = build(sqlite, 8)?;
         demo.kernel.start().map_err(|error| error.to_string())?;
-        let write = demo
-            .kernel
-            .fire("write_counter", vec![Value::local(42_i64)])?;
-        assert!(write.success());
+        demo.kernel
+            .inject("write_counter", Value::local(42_i64))
+            .map_err(|error| error.to_string())?;
+        demo.kernel.run_steps(64)?;
         assert_eq!(demo.counter.read()?, Some(42));
         for event in demo.kernel.drain(8) {
-            assert!(
-                event
-                    .result
-                    .map_err(|error| format!("{error:?}"))?
-                    .success()
-            );
+            event.result.map_err(|error| error.to_string())?;
         }
+        demo.kernel.run_steps(64)?;
         assert_eq!(demo.observed.lock().unwrap().len(), 1);
     }
     scoped_storage::run()?;

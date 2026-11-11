@@ -1,7 +1,7 @@
 use super::*;
 use crate::StorageBinding;
 use phenix_graph::Value;
-use phenix_kernel::{Notice, Producer, WakeHandle};
+use phenix_kernel::{InputEvent, Producer, WakeHandle};
 
 /// Deferred observation request. Put `route()` in Contribution::routes and call
 /// `activate()` in its activation factory, never during graph composition.
@@ -31,12 +31,9 @@ impl Observation {
                 Ok(StorageBinding::mapped(
                     source.changed(self.capacity)?,
                     self.route(),
-                    |notice| {
-                        Value::local(match notice {
-                            phenix_storage::Notice::Overflow { .. } => RefreshCause::Resynchronize,
-                            notice => RefreshCause::Invalidated(notice),
-                        })
-                    },
+                    // Every invalidation causes a full snapshot, including overflow.
+                    // Keep its native `through` sequence instead of erasing provenance.
+                    |notice| Value::local(RefreshCause::Invalidated(notice)),
                 ))
             })
             .collect::<Result<Vec<_>, Error>>()?;
@@ -55,12 +52,12 @@ struct Observer {
     route: String,
 }
 impl Producer for Observer {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         if self.bootstrap {
             self.bootstrap = false;
-            return Ok(Some(Notice {
-                trigger: self.route.clone(),
-                values: vec![Value::local(RefreshCause::Resynchronize)],
+            return Ok(Some(InputEvent {
+                input: self.route.clone(),
+                value: Value::local(RefreshCause::Resynchronize),
             }));
         }
         for _ in 0..self.bindings.len() {

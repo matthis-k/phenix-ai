@@ -1,113 +1,20 @@
+mod support;
 use phenix_graph::{
-    Deployment, Emission, Executor, GraphBuilder, InletPort, InvocationCtx, Layout, LocalExecutor,
-    LocalValue, NodeAction,
+    Value,
+    network::NetworkBuilder,
+    process::{ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher},
+    runtime::{RequestStatus, SessionState},
 };
-use phenix_kernel::{Activate, Contribution, WakeHandle};
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
-    Address, Backend, Codec, Grant, MemoryBackend, Operation, Registry, Revisioned, Schema, Scope,
-    Session, TypedKv,
-    scoped::{CellSpec, Identity, ReadCell, ResourceCatalog, Stored},
+    Backend, Codec, Grant, MemoryBackend, Operation, Revisioned, Scope, TypedKv,
+    scoped::{Identity, ResourceCatalog},
 };
 use phenix_storage_graph::derived::*;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    mpsc,
 };
-use std::time::Duration;
-
-#[derive(Clone, Debug)]
-struct Number(i64);
-impl std::ops::Add for Number {
-    type Output = i64;
-    fn add(self, rhs: Self) -> i64 {
-        self.0 + rhs.0
-    }
-}
-#[derive(Default)]
-struct Format;
-impl Stored for Number {
-    type Format = Format;
-}
-impl Codec for Format {
-    type Value = Number;
-    fn schema(&self) -> Schema {
-        Schema {
-            name: "number".into(),
-            revision: 1,
-            structure: "i64".into(),
-            codec: "be".into(),
-        }
-    }
-    fn encode(&self, value: &Number) -> phenix_storage::Result<Vec<u8>> {
-        Ok(value.0.to_be_bytes().to_vec())
-    }
-    fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<Number> {
-        Ok(Number(i64::from_be_bytes(bytes.try_into().map_err(
-            |_| phenix_storage::Error::Codec("length".into()),
-        )?)))
-    }
-}
-const A: CellSpec<Number> = CellSpec::project_state("test/a");
-const B: CellSpec<Number> = CellSpec::project_state("test/b");
-struct Fixture {
-    registry: Registry,
-    session: Session,
-    a: ReadCell<Number>,
-    b: ReadCell<Number>,
-}
-impl Fixture {
-    fn new(subscribe: bool) -> Self {
-        Self::with_backend(subscribe, MemoryBackend::default())
-    }
-    fn with_backend(subscribe: bool, backend: impl Backend + 'static) -> Self {
-        let registry = Registry::new();
-        registry.mount("main", backend).unwrap();
-        Self::from_registry(subscribe, registry)
-    }
-    fn from_registry(subscribe: bool, registry: Registry) -> Self {
-        let identity = Identity::user("u").unwrap().project("p").unwrap();
-        let mut catalog = ResourceCatalog::new();
-        for (spec, name) in [(A, "a"), (B, "b")] {
-            let address = Address::parse(&format!("store://main/{name}")).unwrap();
-            registry.register(&address, Format.schema()).unwrap();
-            catalog
-                .bind(spec.resource_spec().resolve(&identity).unwrap(), address)
-                .unwrap();
-        }
-        let session = registry.session([Grant::new(
-            Scope::Mount("main".into()),
-            [
-                Operation::Read,
-                Operation::Write,
-                Operation::Delete,
-                Operation::Subscribe,
-            ],
-        )]);
-        let operations = if subscribe {
-            vec![Operation::Read, Operation::Subscribe]
-        } else {
-            vec![Operation::Read]
-        };
-        let storage = catalog.freeze().access(
-            registry.session([Grant::new(Scope::Mount("main".into()), operations)]),
-            identity,
-        );
-        let (a, b) = storage.bind((A.read(), B.read())).unwrap();
-        Self {
-            registry,
-            session,
-            a,
-            b,
-        }
-    }
-    fn put(&self, cell: &ReadCell<Number>, value: i64) {
-        self.session
-            .put(cell.source().address(), "value", &Number(value), &Format)
-            .unwrap();
-    }
-}
+use support::*;
 
 struct ReadProbe {
     memory: MemoryBackend,
@@ -134,347 +41,222 @@ impl TypedKv for ReadProbe {
             self.memory.read_many(keys)
         }
     }
-    fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
-        self.memory.get(dataset, key)
+    fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
+        self.memory.get(d, k)
     }
-    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> phenix_storage::Result<()> {
-        self.memory.put(dataset, key, value)
+    fn put(&mut self, d: &str, k: &str, v: Vec<u8>) -> phenix_storage::Result<()> {
+        self.memory.put(d, k, v)
     }
-    fn delete(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<bool> {
-        self.memory.delete(dataset, key)
+    fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
+        self.memory.delete(d, k)
     }
 }
 
 #[test]
-fn one_batch_per_query_no_build_binding_reads_and_runtime_native_denial_recovers() {
+fn one_atomic_batch_per_query_no_build_or_binding_reads_and_denial_recovers() {
     let reads = Arc::new(AtomicUsize::new(0));
     let denied = Arc::new(AtomicBool::new(false));
     let f = Fixture::with_backend(
         false,
         ReadProbe {
             memory: MemoryBackend::default(),
-            reads: reads.clone(),
             denied: denied.clone(),
+            reads: reads.clone(),
         },
     );
     f.put(&f.a, 3);
     f.put(&f.b, 5);
-    let (plugin, saved) = sum_plugin(&f);
-    let mut runtime = build(plugin.clone(), Arc::new(LocalExecutor));
-    let spec = saved.lock().unwrap().clone().unwrap();
+    let (plugin, spec) = sum(&f, false);
+    let mut runtime = local(plugin);
     runtime.bind_query(&spec).unwrap();
     assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query(),
+        Err(Error::Graph(_))
+    ));
     runtime.start().unwrap();
     let query = runtime.bind_query(&spec).unwrap();
-    assert_eq!(query.query().unwrap(), 8);
+    assert_eq!(*query.query().unwrap(), 8);
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     denied.store(true, Ordering::SeqCst);
     assert!(
-        matches!(query.query(), Err(Error::Wave(e)) if e.join(" ").contains("source[Storage]: Denied"))
+        matches!(query.query(),Err(Error::Wave(e)) if e.join(" ").contains("source[Storage]: Denied"))
     );
     denied.store(false, Ordering::SeqCst);
     f.put(&f.a, 4);
-    assert_eq!(query.query().unwrap(), 9);
-    let other = build(plugin, Arc::new(LocalExecutor));
-    assert!(matches!(
-        other.bind_query(&spec),
-        Err(Error::WrongGeneration)
-    ));
+    assert_eq!(*query.query().unwrap(), 9);
     assert_eq!(reads.load(Ordering::SeqCst), 3);
+    f.session.delete(f.a.source().address(), "value").unwrap();
+    assert!(
+        matches!(query.query(),Err(Error::Wave(e)) if e.join(" ").contains("source[MissingInput]"))
+    );
+    f.put(&f.a, 10);
+    assert_eq!(*query.query().unwrap(), 15);
 }
 
 #[test]
-fn source_has_one_physical_output_and_query_needs_only_terminal_payloads() {
+fn source_is_one_native_process_with_one_snapshot_and_terminal_capture() {
     let f = Fixture::new(false);
     f.put(&f.a, 3);
     f.put(&f.b, 5);
-    let mut graph = GraphBuilder::new("single-output");
-    let sum = graph.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
-    let spec = graph.query_spec("query", &sum).unwrap();
-    let compiled = graph.compile().unwrap();
-    assert_eq!(compiled.physical_node_count(), 3);
-    let Some(phenix_graph::FindResult::Node(source)) = compiled.find("sum.sources") else {
-        panic!("missing physical source");
-    };
-    let output = source.output("value").unwrap();
-    assert_eq!(output.slot_id(), 0);
-    let engine = Deployment::new(compiled)
-        .report_retention(phenix_graph::ReportRetention::TerminalOutputs)
-        .build()
-        .unwrap();
-    let report = engine
-        .fire(
-            sum.refresh_route(),
-            vec![phenix_graph::Value::local(RefreshCause::Demand)],
-        )
-        .unwrap();
-    assert!(report.success());
-    assert_eq!(
-        report.retention(),
-        phenix_graph::ReportRetention::TerminalOutputs
-    );
-    assert_eq!(report.publications().count(), 1);
+    let (plugin, spec) = sum(&f, false);
+    let mut runtime = local(plugin);
+    let compiled = runtime.kernel().compiled();
+    assert_eq!(compiled.processes().len(), 3);
     assert!(
-        report
-            .publications()
-            .all(|p| p.source_node_id() != output.node_id())
-    );
-    assert_eq!(
-        report
-            .publication_events()
-            .iter()
-            .filter(|e| e.from == output)
-            .count(),
-        1
-    );
-    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 8);
-    f.put(&f.a, 4);
-    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 9);
-}
-
-#[test]
-fn mixed_snapshot_sources_reject_before_topology_mutation() {
-    let first = Fixture::new(true);
-    let second = Fixture::new(true);
-    let mut graph = GraphBuilder::new("mixed");
-    assert!(matches!(
-        graph.sources("group", (&first.a, &second.b)),
-        Err(Error::Storage(phenix_storage::Error::MixedSnapshotSources))
-    ));
-    graph.sources("group", (&first.a, &first.b)).unwrap();
-    graph.compile().unwrap();
-}
-
-#[test]
-fn invalid_producer_route_preflight_never_activates() {
-    let activated = Arc::new(AtomicUsize::new(0));
-    let calls = activated.clone();
-    let plugin = Plugin {
-        compose: Arc::new(|_| Ok(())),
-        routes: vec!["missing".into()],
-        activate: Some(Arc::new(move || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Err("should not activate".into())
-        })),
-    };
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("invalid", |p: Plugin| Ok(p)).unwrap();
-    let mut plugins = catalog.instance();
-    plugins.load(&kind, plugin).unwrap();
-    assert!(
-        DerivedRuntime::build("invalid", plugins.snapshots(), Arc::new(LocalExecutor)).is_err()
-    );
-    assert_eq!(activated.load(Ordering::SeqCst), 0);
-}
-type ComposeGraph =
-    dyn Fn(&mut GraphBuilder) -> Result<(), phenix_kernel::CallbackError> + Send + Sync;
-
-#[derive(Clone)]
-struct Plugin {
-    compose: Arc<ComposeGraph>,
-    activate: Option<Arc<Activate>>,
-    routes: Vec<String>,
-}
-impl PluginInstance for Plugin {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let compose = self.compose.clone();
-        let activate = self.activate.clone();
-        registrar.add(Contribution {
-            id: "derive".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            compose: Box::new(move |context| {
-                compose(context.graph)?;
-                if let Some(activate) = activate.clone() {
-                    context.activate(move || activate())?;
-                }
-                Ok(())
-            }),
-        })
-    }
-}
-fn build(plugin: Plugin, executor: Arc<dyn Executor>) -> DerivedRuntime {
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog
-        .register("domain", |plugin: Plugin| Ok(plugin))
-        .unwrap();
-    let mut plugins = catalog.instance();
-    plugins.load(&kind, plugin).unwrap();
-    DerivedRuntime::build("derived", plugins.snapshots(), executor).unwrap()
-}
-fn demand(
-    compose: impl Fn(&mut GraphBuilder) -> Result<(), phenix_kernel::CallbackError>
-    + Send
-    + Sync
-    + 'static,
-) -> Plugin {
-    Plugin {
-        compose: Arc::new(compose),
-        activate: None,
-        routes: vec![],
-    }
-}
-fn sum_plugin(f: &Fixture) -> (Plugin, Arc<Mutex<Option<QuerySpec<i64>>>>) {
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let spec = Arc::new(Mutex::new(None));
-    let saved = spec.clone();
-    (
-        demand(move |g| {
-            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-            *saved.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-            Ok(())
-        }),
-        spec,
-    )
-}
-
-#[test]
-fn demand_arithmetic_changes_start_guard_generation_and_recovery() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (plugin, saved) = sum_plugin(&f);
-    let mut runtime = build(plugin.clone(), Arc::new(LocalExecutor));
-    let spec = saved.lock().unwrap().clone().unwrap();
-    assert!(
-        matches!(runtime.bind_query(&spec).unwrap().query(), Err(Error::Graph(e)) if e.contains("not started"))
+        compiled
+            .inspect("sum.sources")
+            .unwrap()
+            .interface
+            .output("value")
+            .is_some()
     );
     runtime.start().unwrap();
-    let query = runtime.bind_query(&spec).unwrap();
-    assert_eq!(query.query().unwrap(), 8);
-    f.put(&f.a, 4);
-    assert_eq!(query.query().unwrap(), 9);
-    f.put(&f.b, 7);
-    assert_eq!(query.query().unwrap(), 11);
-    f.session.delete(f.a.source().address(), "value").unwrap();
-    assert!(
-        matches!(query.query(), Err(Error::Wave(e)) if e.join(" ").contains("source[MissingInput]"))
-    );
-    f.put(&f.a, 10);
-    assert_eq!(query.query().unwrap(), 17);
-    // Same names and same contribution closure, but freshly composed generation.
-    let other = build(plugin, Arc::new(LocalExecutor));
-    assert!(matches!(
-        other.bind_query(&spec),
-        Err(Error::WrongGeneration)
-    ));
-    assert!(matches!(
-        runtime.bind_query(saved.lock().unwrap().as_ref().unwrap()),
-        Err(Error::WrongGeneration)
-    ));
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
 }
 
-struct CommitAfterSource {
-    first: AtomicBool,
-    commit: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
-}
-impl Executor for CommitAfterSource {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        let source = ctx.shared::<RefreshCause>(0).is_ok();
-        let emissions = action.execute(ctx)?;
-        if source && self.first.swap(false, Ordering::SeqCst) {
-            // The source has finished its read and released all storage locks,
-            // but the executor has not returned its tuple to the wave yet.
-            (self.commit)()?;
+#[test]
+fn optional_missing_and_codec_failures_recover_without_result_payloads() {
+    let f = Fixture::new(false);
+    f.put(&f.b, 5);
+    let mut graph = NetworkBuilder::new();
+    let optional = f.a.optional();
+    let sum = graph
+        .derive(
+            "optional",
+            (&optional, &f.b),
+            |a: Option<Number>, b: Number| a.map_or(0, |a| a.0) + b.0,
+        )
+        .unwrap();
+    let spec = graph.query_spec("query", &sum).unwrap();
+    let mut runtime = local(authored(graph, spec.clone(), None));
+    runtime.start().unwrap();
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 5);
+    struct Bad;
+    impl Codec for Bad {
+        type Value = Number;
+        fn schema(&self) -> phenix_storage::Schema {
+            Format.schema()
         }
-        Ok(emissions)
+        fn encode(&self, _: &Number) -> phenix_storage::Result<Vec<u8>> {
+            Ok(vec![0])
+        }
+        fn decode(&self, _: &[u8]) -> phenix_storage::Result<Number> {
+            unreachable!()
+        }
     }
-}
-struct RemoveDatabase(std::path::PathBuf);
-impl Drop for RemoveDatabase {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+    f.session
+        .put(f.b.source().address(), "value", &Number(0), &Bad)
+        .unwrap();
+    assert!(
+        matches!(runtime.bind_query(&spec).unwrap().query(),Err(Error::Wave(e)) if e.join(" ").contains("Codec"))
+    );
+    f.put(&f.b, 9);
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 9);
+    f.put(&f.a, 2);
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 11);
 }
 
 #[test]
-fn query_returns_its_snapshot_not_a_commit_after_the_source_read() {
-    for sqlite in [false, true] {
-        let path = RemoveDatabase(std::env::temp_dir().join(format!(
-            "phenix-derived-query-snapshot-{}-{}.sqlite",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-        )));
-        let f = if sqlite {
-            let registry = Registry::new();
-            registry.mount_sqlite("main", &path.0).unwrap();
-            Fixture::from_registry(false, registry)
-        } else {
-            Fixture::new(false)
-        };
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (a_address, b_address) = (
-            f.a.source().address().clone(),
-            f.b.source().address().clone(),
-        );
-        let writers = if sqlite {
-            // A separate registry owns an independent SQLite connection to the
-            // same file, not just a second session sharing the reader's lock.
-            let registry = Registry::new();
-            registry.mount_sqlite("main", &path.0).unwrap();
-            for address in [&a_address, &b_address] {
-                registry.register(address, Format.schema()).unwrap();
-            }
-            registry
-        } else {
-            f.registry.clone()
-        };
-        let writer = writers.session([Grant::new(Scope::Mount("main".into()), [Operation::Write])]);
-        let commits = Arc::new(AtomicUsize::new(0));
-        let written = commits.clone();
-        let executor = Arc::new(CommitAfterSource {
-            first: AtomicBool::new(true),
-            commit: Box::new(move || {
-                writer
-                    .put(&a_address, "value", &Number(4), &Format)
-                    .map_err(|e| e.to_string())?;
-                writer
-                    .put(&b_address, "value", &Number(7), &Format)
-                    .map_err(|e| e.to_string())?;
-                written.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }),
-        });
-        let (a, b) = (f.a.clone(), f.b.clone());
-        let saved = Arc::new(Mutex::new(None));
-        let specs = saved.clone();
-        let computed_after_commit = commits.clone();
-        let mut runtime = build(
-            demand(move |g| {
-                let committed = computed_after_commit.clone();
-                let pair = g.derive("pair", (&a, &b), move |a: Number, b: Number| {
-                    assert_eq!(committed.load(Ordering::SeqCst), 1);
-                    (a.0, b.0)
-                })?;
-                *specs.lock().unwrap() = Some(g.query_spec("query", &pair)?);
-                Ok(())
-            }),
-            executor,
-        );
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().take().unwrap();
-        let query = runtime.bind_query(&spec).unwrap();
-        assert_eq!(commits.load(Ordering::SeqCst), 0);
-        assert_eq!(query.query().unwrap(), (3, 5), "sqlite={sqlite}");
-        assert_eq!(commits.load(Ordering::SeqCst), 1);
-        // Both writes have already committed when the first query returns. Its
-        // result is the wave's coherent snapshot, not wall-clock freshness.
+fn shared_siblings_chain_diamond_all_arities_and_ordinary_consumer() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let mut g = NetworkBuilder::new();
+    let group = g.sources("values", (&f.a, &f.b)).unwrap();
+    let sum = g
+        .derive_from("sum", &group, |a: Number, b: Number| a.0 + b.0)
+        .unwrap();
+    let diff = g
+        .derive_from("diff", &group, |a: Number, b: Number| a.0 - b.0)
+        .unwrap();
+    let twice = g.derive("twice", (&sum,), |s| s * 2).unwrap();
+    let both = g.derive("both", (&sum, &diff), |s, d| s + d).unwrap();
+    let diamond = g.derive("diamond", (&sum, &twice), |s, t| s + t).unwrap();
+    let three = g
+        .derive("three", (&sum, &diff, &twice), |s, d, t| s + d + t)
+        .unwrap();
+    let four = g
+        .derive("four", (&sum, &diff, &twice, &both), |s, d, t, b| {
+            s + d + t + b
+        })
+        .unwrap();
+    let s3 = g
+        .derive(
+            "stored3",
+            (&f.a, &f.b, &f.a),
+            |a: Number, b: Number, c: Number| a.0 + b.0 + c.0,
+        )
+        .unwrap();
+    let s4 = g
+        .derive(
+            "stored4",
+            (&f.a, &f.b, &f.a, &f.b),
+            |a: Number, b: Number, c: Number, d: Number| a.0 + b.0 + c.0 + d.0,
+        )
+        .unwrap();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let consumed = log.clone();
+    let consumer = sink(&mut g, "consumer", move |v: i64| {
+        consumed.lock().unwrap().push(v)
+    })
+    .unwrap();
+    g.connect(sum.output(), consumer.input("run").unwrap(), capacity())
+        .unwrap();
+    let specs: Vec<_> = [
+        (&sum, "sum.q"),
+        (&both, "both.q"),
+        (&diamond, "diamond.q"),
+        (&three, "three.q"),
+        (&four, "four.q"),
+        (&s3, "s3.q"),
+        (&s4, "s4.q"),
+    ]
+    .into_iter()
+    .map(|(v, n)| g.query_spec(n, v).unwrap())
+    .collect();
+    let mut runtime = local(authored(g, specs[0].clone(), None));
+    runtime.start().unwrap();
+    for (spec, expected) in specs.iter().zip([8, 6, 24, 22, 28, 11, 16]) {
         assert_eq!(
-            (f.a.get().unwrap().value.0, f.b.get().unwrap().value.0),
-            (4, 7)
+            *runtime.bind_query(spec).unwrap().query().unwrap(),
+            expected
         );
-        assert_eq!(query.query().unwrap(), (4, 7), "sqlite={sqlite}");
-        assert_eq!(commits.load(Ordering::SeqCst), 1);
     }
+    assert_eq!(*log.lock().unwrap(), vec![8; 5]);
 }
 
 #[test]
-fn same_mount_sources_keep_separate_dataset_session_authority() {
+fn mixed_sources_roots_foreign_handles_and_name_collisions_reject_before_mutation() {
+    let f = Fixture::new(false);
+    let foreign = Fixture::new(false);
+    let mut g = NetworkBuilder::new();
+    assert!(matches!(
+        g.sources("group", (&f.a, &foreign.b)),
+        Err(Error::Storage(phenix_storage::Error::MixedSnapshotSources))
+    ));
+    let group = g.sources("group", (&f.a, &f.b)).unwrap();
+    let sum = g
+        .derive_from("sum", &group, |a: Number, b: Number| a.0 + b.0)
+        .unwrap();
+    let other = g.derive("other", (&f.a,), |a: Number| a.0).unwrap();
+    assert!(matches!(
+        g.derive("bad", (&sum, &other), |a, b| a + b),
+        Err(Error::MultipleRefreshRoots)
+    ));
+    g.derive("bad", (&sum,), |a| a).unwrap();
+    assert!(g.derive("sum", (&f.a,), |a: Number| a.0).is_err());
+    g.sources("sum.sources", (&f.a,)).unwrap();
+    let mut second = NetworkBuilder::new();
+    assert!(second.derive("foreign", (&sum,), |a| a).is_err());
+    second.sources("foreign", (&f.a,)).unwrap();
+    assert!(second.query_spec("tap", &sum).is_err());
+    second.component("foreign").unwrap();
+    assert!(g.inspect(&g.component("sum").unwrap()).is_ok());
+}
+
+#[test]
+fn same_mount_grouping_does_not_union_dataset_session_grants() {
     let f = Fixture::new(false);
     f.put(&f.a, 3);
     f.put(&f.b, 5);
@@ -505,1089 +287,340 @@ fn same_mount_sources_keep_separate_dataset_session_authority() {
     );
     let a = only_a.bind(A.read()).unwrap();
     let b = only_b.bind(B.read()).unwrap();
-    assert!(matches!(
-        only_a.bind(B.read()),
-        Err(phenix_storage::scoped::Error::Storage(
-            phenix_storage::Error::Denied
-        ))
-    ));
-    assert!(matches!(
-        only_b.bind(A.read()),
-        Err(phenix_storage::scoped::Error::Storage(
-            phenix_storage::Error::Denied
-        ))
-    ));
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let observation = Arc::new(Mutex::new(None));
-    let request = observation.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let group = g.sources("values", (&a, &b))?;
-            let sum = g.derive_from("sum", &group, |a, b| a + b)?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-            *request.lock().unwrap() = Some(sum.observation(1));
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    let spec = saved.lock().unwrap().take().unwrap();
-    let query = runtime.bind_query(&spec).unwrap();
-    assert_eq!(query.query().unwrap(), 8);
-    f.put(&f.b, 7);
-    assert_eq!(query.query().unwrap(), 10);
-    // A has Subscribe, but B does not. Grouping must not union either session's
-    // grants, even after a successful cross-session atomic source read.
-    assert!(matches!(
-        observation.lock().unwrap().as_ref().unwrap().activate(),
-        Err(Error::Storage(phenix_storage::Error::Denied))
-    ));
-    assert!(matches!(
-        only_a.bind(B.read()),
-        Err(phenix_storage::scoped::Error::Storage(
-            phenix_storage::Error::Denied
-        ))
-    ));
-    assert!(matches!(
-        only_b.bind(A.read()),
-        Err(phenix_storage::scoped::Error::Storage(
-            phenix_storage::Error::Denied
-        ))
-    ));
-    assert_eq!(query.query().unwrap(), 10);
-}
-
-#[test]
-fn shared_siblings_chain_diamond_arity_and_terminal_tap_with_fanout() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let saved = Arc::new(Mutex::new(Vec::new()));
-    let specs = saved.clone();
-    let consumed = Arc::new(Mutex::new(Vec::new()));
-    let log = consumed.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let result = (|| -> Result<(), Error> {
-                let group = g.sources("values", (&a, &b))?;
-                let sum = g.derive_from("sum", &group, |a: Number, b: Number| a.0 + b.0)?;
-                let diff = g.derive_from("diff", &group, |a: Number, b: Number| a.0 - b.0)?;
-                let twice = g.derive("twice", (&sum,), |v| v * 2)?;
-                let both = g.derive("both", (&sum, &diff), |s, d| s + d)?;
-                let diamond = g.derive("diamond", (&sum, &twice), |s, d| s + d)?;
-                let three = g.derive("three", (&sum, &diff, &twice), |s, d, t| s + d + t)?;
-                let four = g.derive("four", (&sum, &diff, &twice, &both), |s, d, t, b| {
-                    s + d + t + b
-                })?;
-                let stored3 = g.derive(
-                    "stored3",
-                    (&a, &b, &a),
-                    |a: Number, b: Number, c: Number| a.0 + b.0 + c.0,
-                )?;
-                let stored4 = g.derive(
-                    "stored4",
-                    (&a, &b, &a, &b),
-                    |a: Number, b: Number, c: Number, d: Number| a.0 + b.0 + c.0 + d.0,
-                )?;
-                let log = log.clone();
-                let sink = g
-                    .node("consumer", move |value: i64| {
-                        log.lock().unwrap().push(value)
-                    })
-                    .map_err(|e| Error::Graph(e.to_string()))?;
-                g.connect(sum.output(), sink.inlet())?;
-                let mut specs = specs.lock().unwrap();
-                for (name, value) in [
-                    ("qsum", &sum),
-                    ("qboth", &both),
-                    ("qdiamond", &diamond),
-                    ("qthree", &three),
-                    ("qfour", &four),
-                    ("qs3", &stored3),
-                    ("qs4", &stored4),
-                ] {
-                    specs.push(g.query_spec(name, value)?);
-                }
-                Ok(())
-            })();
-            result.map_err(Into::into)
-        }),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    for (spec, expected) in saved.lock().unwrap().iter().zip([8, 6, 24, 22, 28, 11, 16]) {
-        assert_eq!(runtime.bind_query(spec).unwrap().query().unwrap(), expected);
-    }
-    assert_eq!(*consumed.lock().unwrap(), vec![8; 5]);
-}
-
-#[test]
-fn optional_and_codec_failures_are_native_wave_failures_not_result_values() {
-    let f = Fixture::new(true);
-    f.put(&f.b, 5);
-    let (a, b) = (f.a.optional(), f.b.clone());
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let sum = g.derive("optional", (&a, &b), |a: Option<Number>, b: Number| {
-                a.map_or(0, |a| a.0) + b.0
-            })?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    let spec = saved.lock().unwrap().clone().unwrap();
-    let query = runtime.bind_query(&spec).unwrap();
-    assert_eq!(query.query().unwrap(), 5);
-    struct Bad;
-    impl Codec for Bad {
-        type Value = Number;
-        fn schema(&self) -> Schema {
-            Format.schema()
-        }
-        fn encode(&self, _: &Number) -> phenix_storage::Result<Vec<u8>> {
-            Ok(vec![0])
-        }
-        fn decode(&self, _: &[u8]) -> phenix_storage::Result<Number> {
-            unreachable!()
-        }
-    }
-    f.session
-        .put(f.b.source().address(), "value", &Number(0), &Bad)
-        .unwrap();
-    assert!(
-        matches!(query.query(), Err(Error::Wave(e)) if e.join(" ").contains("source[Storage]: Codec"))
-    );
-    f.put(&f.b, 9);
-    assert_eq!(query.query().unwrap(), 9);
-    f.session
-        .put(f.a.source().address(), "value", &Number(0), &Bad)
-        .unwrap();
-    assert!(
-        matches!(query.query(), Err(Error::Wave(e)) if e.join(" ").contains("source[Storage]: Codec"))
-    );
-    f.put(&f.a, 2);
-    assert_eq!(query.query().unwrap(), 11);
-}
-
-#[test]
-fn rejected_roots_foreign_handles_and_collisions_do_not_mutate_or_revoke_user_handles() {
-    let f = Fixture::new(true);
-    let mut graph = GraphBuilder::new("authoring");
-    let user = graph.node("user", |v: (i64, i64)| v.0 + v.1).unwrap();
-    let sum = graph
-        .derive("sum", (&f.a, &f.b), |a: Number, b: Number| a.0 + b.0)
-        .unwrap();
-    let other = graph.derive("other", (&f.a,), |a: Number| a.0).unwrap();
-    assert!(matches!(
-        graph.derive("bad", (&sum, &other), |s, o| s + o),
-        Err(Error::MultipleRefreshRoots)
-    ));
-    graph.node("bad", |v: i64| v).unwrap();
-    // Failed source expansion must not leave its .sources node or trigger behind.
-    assert!(graph.derive("user", (&f.a,), |a: Number| a.0).is_err());
-    graph.sources("user.sources", (&f.a,)).unwrap();
-    let configured = user.input(Layout::fields()).unwrap();
-    assert!(configured.name() == "user");
-    let mut foreign = GraphBuilder::new("foreign");
-    assert!(foreign.derive("foreign", (&sum,), |s| s).is_err());
-    foreign.node("foreign", |s: i64| s).unwrap();
-    graph.compile().unwrap();
-}
-
-#[test]
-fn late_derived_failures_discard_edges_inputs_triggers_and_taps() {
-    let f = Fixture::new(true);
-    let mut graph = GraphBuilder::new("late-failures");
-    let user = graph.node("user", |v: (i64, i64)| v.0 + v.1).unwrap();
-    let reserved = graph.node("reserved", |v: i64| v).unwrap();
-    let input = graph.expose_input("reserved", reserved.inlet()).unwrap();
-    graph.trigger("group.refresh", [input]).unwrap();
-    // The source node and public input are added before trigger registration fails.
-    assert!(graph.sources("group", (&f.a,)).is_err());
-    let replacement = graph.node("group", |v: i64| v).unwrap();
-    graph
-        .expose_input("group.refresh", replacement.inlet())
-        .unwrap();
-
-    let sum = graph.derive("sum", (&f.a,), |a: Number| a.0).unwrap();
-    let mut fork = graph.clone();
-    let absent = fork.derive("absent", (&sum,), |v| v).unwrap();
-    // The join's first input edge succeeds; the second belongs to the fork only.
-    assert!(graph.derive("pair", (&sum, &absent), |a, b| a + b).is_err());
-    graph.node("pair.join", |v: i64| v).unwrap();
-    graph.node("pair", |v: i64| v).unwrap();
-    let absent_group = fork.derive("absent-group", (&sum,), |v| (v,)).unwrap();
-    assert!(graph.derive_from("from", &absent_group, |v| v).is_err());
-    graph.node("from", |v: i64| v).unwrap();
-    assert!(graph.query_spec("tap", &absent).is_err());
-    let spec = graph.query_spec("tap", &sum).unwrap();
-    user.input(Layout::fields()).unwrap();
-    let engine = phenix_graph::Deployment::new(graph.compile().unwrap())
-        .build()
-        .unwrap();
-    f.put(&f.a, 7);
-    assert_eq!(spec.bind_engine(&engine).unwrap().query().unwrap(), 7);
-}
-
-#[test]
-#[ignore = "manual builder scaling benchmark; timings are diagnostic, not CI assertions"]
-fn builder_scaling_repeated_derived_additions() {
-    let f = Fixture::new(false);
-    // One source node plus N-1 derived nodes. Exclude fixture setup, compilation,
-    // execution and graph destruction; measure only incremental authoring.
-    // Transactions do not snapshot prior declarations, but registration, ID
-    // allocation and connection validation still scan growing node/edge lists.
-    // This measures that combined cost, not allocations or isolated rollback.
-    for nodes in [10usize, 100, 1000] {
-        let mut samples = Vec::new();
-        for _ in 0..21 {
-            let mut graph = GraphBuilder::new("scaling");
-            let group = graph.sources("root", (&f.a,)).unwrap();
-            let names: Vec<_> = (1..nodes).map(|i| format!("derived-{i}")).collect();
-            let start = std::time::Instant::now();
-            for name in &names {
-                std::hint::black_box(graph.derive_from(name, &group, |v: Number| v.0).unwrap());
-            }
-            samples.push(start.elapsed());
-            std::hint::black_box(&graph);
-        }
-        samples.sort_unstable();
-        let median = samples[samples.len() / 2];
-        eprintln!(
-            "builder scaling: nodes={nodes}, additions={}, samples={}, median={median:?}, ns/addition={:.0}",
-            nodes - 1,
-            samples.len(),
-            median.as_nanos() as f64 / (nodes - 1) as f64,
-        );
-    }
-}
-
-#[test]
-fn denied_binding_and_observation_fail_at_native_authority_boundary() {
-    let f = Fixture::new(false);
-    let mut graph = GraphBuilder::new("denied");
-    let group = graph.sources("group", (&f.a, &f.b)).unwrap();
-    assert!(matches!(
-        group.observation(1).activate(),
-        Err(Error::Storage(phenix_storage::Error::Denied))
-    ));
-    let identity = Identity::user("u").unwrap().project("p").unwrap();
-    let mut catalog = ResourceCatalog::new();
-    catalog
-        .bind(
-            A.resource_spec().resolve(&identity).unwrap(),
-            f.a.source().address().clone(),
-        )
-        .unwrap();
-    let denied = catalog.freeze().access(f.registry.session([]), identity);
-    assert!(matches!(
-        denied.bind(A.read()),
-        Err(phenix_storage::scoped::Error::Storage(
-            phenix_storage::Error::Denied
-        ))
-    ));
-}
-
-#[test]
-fn partial_subscription_activation_failure_can_retry_without_bootstrap() {
-    let f = Fixture::new(true);
-    let identity = Identity::user("u").unwrap().project("p").unwrap();
-    let mut catalog = ResourceCatalog::new();
-    for (spec, cell) in [(A, &f.a), (B, &f.b)] {
-        catalog
-            .bind(
-                spec.resource_spec().resolve(&identity).unwrap(),
-                cell.source().address().clone(),
-            )
-            .unwrap();
-    }
-    let session = f.registry.session([
-        Grant::new(
-            Scope::Dataset(f.a.source().address().clone()),
-            [Operation::Read, Operation::Subscribe],
-        ),
-        Grant::new(
-            Scope::Dataset(f.b.source().address().clone()),
-            [Operation::Read],
-        ),
-    ]);
-    let storage = catalog.freeze().access(session, identity);
-    let (a, b) = storage.bind((A.read(), B.read())).unwrap();
-    let mut graph = GraphBuilder::new("partial");
-    let group = graph.sources("group", (&a, &b)).unwrap();
+    assert!(only_a.bind(B.read()).is_err());
+    assert!(only_b.bind(A.read()).is_err());
+    let mut g = NetworkBuilder::new();
+    let group = g.sources("group", (&a, &b)).unwrap();
     for _ in 0..2 {
-        // A subscribes successfully, B fails; collection drops the acquired A
-        // binding and never returns a producer or queues an observable bootstrap.
         assert!(matches!(
             group.observation(1).activate(),
             Err(Error::Storage(phenix_storage::Error::Denied))
         ));
     }
-    let single = graph.sources("single", (&a,)).unwrap();
-    let mut producer = single.observation(1).activate().unwrap();
-    assert!(producer.poll().unwrap().is_some());
-    assert!(producer.poll().unwrap().is_none());
-    drop(producer);
-    f.put(&f.a, 10);
-}
-
-struct TerminalFixture {
-    dispatches: AtomicUsize,
-    copies: usize,
-}
-
-#[derive(Default)]
-struct ReplayTerminal {
-    dispatches: AtomicUsize,
-    saved: Mutex<Option<Vec<Emission>>>,
-}
-impl Executor for ReplayTerminal {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        let values = action.execute(ctx)?;
-        if self.dispatches.fetch_add(1, Ordering::SeqCst) % 3 == 2 {
-            let mut saved = self.saved.lock().unwrap();
-            if let Some(previous) = &*saved {
-                return Ok(previous.clone());
-            }
-            *saved = Some(values.clone());
-        }
-        Ok(values)
-    }
-}
-#[test]
-fn earlier_terminal_publications_are_not_accepted_as_fresh() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (plugin, saved) = sum_plugin(&f);
-    let mut runtime = build(plugin, Arc::new(ReplayTerminal::default()));
+    let sum = g
+        .derive_from("sum", &group, |a: Number, b: Number| a.0 + b.0)
+        .unwrap();
+    let spec = g.query_spec("query", &sum).unwrap();
+    let mut runtime = local(authored(g, spec.clone(), None));
     runtime.start().unwrap();
-    let spec = saved.lock().unwrap().clone().unwrap();
-    let query = runtime.bind_query(&spec).unwrap();
-    assert_eq!(query.query().unwrap(), 8);
-    f.put(&f.a, 4);
-    assert!(matches!(query.query(), Err(Error::InvalidPublication)));
-}
-impl Executor for TerminalFixture {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        let values = action.execute(ctx)?;
-        if self.dispatches.fetch_add(1, Ordering::SeqCst) == 2 {
-            Ok((0..self.copies).flat_map(|_| values.clone()).collect())
-        } else {
-            Ok(values)
-        }
-    }
-}
-#[test]
-fn zero_and_multiple_publications_never_return_an_old_result() {
-    for copies in [0, 2] {
-        let f = Fixture::new(true);
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (plugin, saved) = sum_plugin(&f);
-        let mut runtime = build(
-            plugin,
-            Arc::new(TerminalFixture {
-                dispatches: AtomicUsize::new(0),
-                copies,
-            }),
-        );
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().clone().unwrap();
-        let query = runtime.bind_query(&spec).unwrap();
-        let result = query.query();
-        if copies == 0 {
-            assert!(
-                matches!(result, Err(Error::PublicationCount(0))),
-                "{result:?}"
-            );
-        } else {
-            // Malformed multi-emission completion is rejected before any publication.
-            assert!(
-                matches!(result, Err(Error::Wave(ref e)) if e.join(" ").contains("expected zero or one")),
-                "{result:?}"
-            );
-        }
-        assert_eq!(query.query().unwrap(), 8);
-    }
-}
-
-#[test]
-fn terminal_multiple_cohorts_and_single_wrong_cohort_fail_validation() {
-    for keep_direct in [false, true] {
-        let f = Fixture::new(true);
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (a, b) = (f.a.clone(), f.b.clone());
-        let saved = Arc::new(Mutex::new(None));
-        let specs = saved.clone();
-        let mut runtime = build(
-            demand(move |g| {
-                let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-                *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-                if !keep_direct {
-                    g.disconnect(
-                        sum.output(),
-                        g.discover("query")?
-                            .inlets::<i64, LocalValue>()
-                            .port(InletPort::<i64, i64>::new("run"))
-                            .target()?,
-                    )?;
-                }
-                // Deliberately modify ordinary topology after declaring the terminal tap:
-                // it now receives the same value under two distinct, valid cohorts.
-                g.add(
-                    "fresh",
-                    phenix_graph::NodeTemplate::local_function::<i64, i64, i64, _>(|v| v)
-                        .with_fresh_cohort(),
-                )?;
-                g.connect(
-                    sum.output(),
-                    g.discover("fresh")?
-                        .inlets::<i64, LocalValue>()
-                        .port(InletPort::<i64, i64>::new("run"))
-                        .target()?,
-                )?;
-                g.connect(
-                    g.discover("fresh")?.output::<i64, LocalValue>()?,
-                    g.discover("query")?
-                        .inlets::<i64, LocalValue>()
-                        .port(InletPort::<i64, i64>::new("run"))
-                        .target()?,
-                )?;
-                Ok(())
-            }),
-            Arc::new(LocalExecutor),
-        );
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().clone().unwrap();
-        let result = runtime.bind_query(&spec).unwrap().query();
-        if keep_direct {
-            assert!(
-                matches!(result, Err(Error::PublicationCount(2))),
-                "{result:?}"
-            );
-        } else {
-            assert!(
-                matches!(result, Err(Error::InvalidPublication)),
-                "{result:?}"
-            );
-        }
-    }
-}
-
-fn observer_plugin(f: &Fixture, log: Arc<Mutex<Vec<i64>>>, capacity: usize) -> Plugin {
-    observer_named(f, log, capacity, "sum")
-}
-fn observer_named(f: &Fixture, log: Arc<Mutex<Vec<i64>>>, capacity: usize, name: &str) -> Plugin {
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let request = Arc::new(Mutex::new(None::<Observation>));
-    let activate_request = request.clone();
-    let route = format!("{name}.sources.refresh");
-    let name = name.to_owned();
-    Plugin {
-        routes: vec![route],
-        compose: Arc::new(move |g| {
-            let sum = g.derive(&name, (&a, &b), |a, b| a + b)?;
-            *request.lock().unwrap() = Some(sum.observation(capacity));
-            let log = log.clone();
-            let sink = g.node(format!("{name}.sink"), move |v: i64| {
-                log.lock().unwrap().push(v)
-            })?;
-            g.connect(sum.output(), sink.inlet())?;
-            Ok(())
-        }),
-        activate: Some(Arc::new(move || {
-            activate_request
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .activate()
-                .map_err(Into::into)
-        })),
-    }
-}
-#[test]
-fn observer_subscribe_before_bootstrap_overflow_both_sources_and_teardown() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let mut runtime = build(observer_plugin(&f, log.clone(), 1), Arc::new(LocalExecutor));
-    f.put(&f.a, 4); // No activation or computation during build.
-    assert!(runtime.drain(10).is_empty());
-    assert!(log.lock().unwrap().is_empty());
-    runtime.start().unwrap();
-    f.put(&f.b, 6); // After subscription but before initial read.
-    assert_eq!(runtime.drain(1).len(), 1);
-    assert_eq!(*log.lock().unwrap(), vec![10]);
-    f.put(&f.a, 10);
-    f.put(&f.a, 11);
-    f.put(&f.b, 20);
-    f.put(&f.b, 21);
-    let events = runtime.drain(2);
-    assert_eq!(events.len(), 2);
-    assert!(events.into_iter().all(|e| e.result.unwrap().success()));
-    assert_eq!(*log.lock().unwrap(), vec![10, 32, 32]);
-    assert!(runtime.drain(10).is_empty());
-    drop(runtime);
-    f.put(&f.a, 100);
-    assert_eq!(log.lock().unwrap().len(), 3);
-}
-
-#[test]
-fn observer_bootstrap_and_later_writes_wake_existing_kernel_driver() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let mut runtime = build(
-        observer_plugin(&f, Arc::default(), 1),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    let wake = WakeHandle::default();
-    let stop = wake.clone();
-    let (tx, rx) = mpsc::channel();
-    let driver = std::thread::spawn(move || {
-        runtime.run_until(&wake, |event| {
-            tx.send(event.result.unwrap().success()).unwrap();
-        })
-    });
-    assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
     f.put(&f.b, 7);
-    let result = rx.recv_timeout(Duration::from_secs(5));
-    stop.shutdown();
-    driver.join().unwrap().unwrap();
-    assert!(result.unwrap());
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 10);
+    assert!(only_a.bind(B.read()).is_err());
+    assert!(only_b.bind(A.read()).is_err());
 }
 
 #[test]
-fn missing_subscribe_start_failure_is_retryable_and_never_bootstraps() {
-    let f = Fixture::new(false);
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let mut runtime = build(observer_plugin(&f, log.clone(), 1), Arc::new(LocalExecutor));
-    assert!(runtime.start().is_err());
-    assert!(runtime.start().is_err());
-    assert!(runtime.drain(10).is_empty());
-    assert!(log.lock().unwrap().is_empty());
-}
-
-#[test]
-fn independent_observers_are_fair_with_bounded_tails_and_drop_together() {
+fn observation_subscribes_before_bootstrap_preserves_overflow_and_round_robin() {
     let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let logs = [
-        Arc::new(Mutex::new(Vec::new())),
-        Arc::new(Mutex::new(Vec::new())),
-    ];
-    let mut catalog = PluginCatalog::new();
-    let one = catalog.register("one", |p: Plugin| Ok(p)).unwrap();
-    let two = catalog.register("two", |p: Plugin| Ok(p)).unwrap();
-    let mut plugins = catalog.instance();
-    plugins
-        .load(&one, observer_named(&f, logs[0].clone(), 1, "one"))
-        .unwrap();
-    plugins
-        .load(&two, observer_named(&f, logs[1].clone(), 1, "two"))
-        .unwrap();
-    let mut runtime =
-        DerivedRuntime::build("two", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
-    runtime.start().unwrap();
-    assert_eq!(runtime.drain(1).len(), 1);
-    assert_eq!(logs[0].lock().unwrap().len(), 1);
-    assert!(logs[1].lock().unwrap().is_empty());
-    assert_eq!(runtime.drain(1).len(), 1);
+    let mut g = NetworkBuilder::new();
+    let group = g.sources("values", (&f.a, &f.b)).unwrap();
+    let mut producer = group.observation(1).activate().unwrap();
+    f.put(&f.b, 6);
+    let event = producer.poll().unwrap().unwrap();
+    assert_eq!(event.input, "values.refresh");
+    assert!(matches!(
+        event.value.borrow::<RefreshCause>(),
+        Some(RefreshCause::Resynchronize)
+    ));
+    assert!(matches!(
+        producer
+            .poll()
+            .unwrap()
+            .unwrap()
+            .value
+            .borrow::<RefreshCause>(),
+        Some(RefreshCause::Invalidated(phenix_storage::Notice::Changed(
+            _
+        )))
+    ));
     for v in 10..15 {
         f.put(&f.a, v);
         f.put(&f.b, v);
     }
     for _ in 0..2 {
-        assert_eq!(runtime.drain(1).len(), 1);
+        assert!(matches!(
+            producer
+                .poll()
+                .unwrap()
+                .unwrap()
+                .value
+                .borrow::<RefreshCause>(),
+            Some(RefreshCause::Invalidated(
+                phenix_storage::Notice::Overflow { .. }
+            ))
+        ));
     }
-    assert_eq!(logs[0].lock().unwrap().len(), 2);
-    assert_eq!(logs[1].lock().unwrap().len(), 2);
-    assert_eq!(runtime.drain(2).len(), 2);
-    assert!(runtime.drain(4).is_empty());
-    assert_eq!(*logs[0].lock().unwrap(), vec![8, 28, 28]);
-    assert_eq!(*logs[1].lock().unwrap(), vec![8, 28, 28]);
-    drop(runtime);
-    drop(plugins);
+    assert!(producer.poll().unwrap().is_none());
+    drop(producer);
     f.put(&f.a, 100);
-    assert_eq!(logs[0].lock().unwrap().len(), 3);
-    assert_eq!(logs[1].lock().unwrap().len(), 3);
 }
 
 #[test]
-fn binding_uses_final_engine_not_temporary_or_discarded_deployments() {
+fn observation_activation_failure_is_retryable_and_never_bootstraps() {
+    let f = Fixture::new(false);
+    let (plugin, _) = sum(&f, true);
+    let mut runtime = local(plugin);
+    assert!(runtime.start().is_err());
+    assert!(runtime.start().is_err());
+    assert!(runtime.drain(10).is_empty());
+}
+
+#[test]
+fn producer_admission_is_bounded_and_does_not_execute_processes() {
     let f = Fixture::new(true);
     f.put(&f.a, 3);
     f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let specs = Arc::new(Mutex::new(Vec::new()));
-    let saved = specs.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let mut discarded = GraphBuilder::new("derived");
-            let fake = discarded.derive("sum", (&a, &b), |a, b| a + b)?;
-            let fake = discarded.query_spec("query", &fake)?;
-            let _temporary = Deployment::new(discarded.compile()?).build()?;
-            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-            let real = g.query_spec("query", &sum)?;
-            let compiled = g.clone().compile()?;
-            // Both temporary deployments share the real stateless actions. Neither
-            // should add registration counts or affect final deployment membership.
-            let _first = Deployment::new(compiled.clone()).build()?;
-            let _second = Deployment::new(compiled).build()?;
-            *saved.lock().unwrap() = vec![fake, real];
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    let specs = specs.lock().unwrap();
+    let (plugin, spec) = sum(&f, true);
+    let mut runtime = local(plugin);
+    assert!(runtime.drain(10).is_empty());
+    runtime.start().unwrap();
+    assert_eq!(runtime.drain(1).len(), 1);
+    f.put(&f.a, 4);
+    f.put(&f.b, 7);
+    let events = runtime.drain(20);
+    assert!(events.len() <= 2);
+    runtime
+        .kernel()
+        .with_session(|s| assert!(s.last_step().is_none()))
+        .unwrap();
+    settle(&runtime);
+    runtime.drain(20);
+    settle(&runtime);
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 11);
+}
+
+#[test]
+fn final_definition_keys_reject_fresh_and_ambiguous_declarations_but_allow_redeployment() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (plugin, spec) = sum(&f, false);
+    let mut a = local(plugin.clone());
+    let mut b = local(plugin);
+    a.start().unwrap();
+    b.start().unwrap();
+    assert_eq!(*a.bind_query(&spec).unwrap().query().unwrap(), 8);
+    assert_eq!(*b.bind_query(&spec).unwrap().query().unwrap(), 8);
+    let (fresh, _) = sum(&f, false);
+    let other = local(fresh);
     assert!(matches!(
-        runtime.bind_query(&specs[0]),
+        other.bind_query(&spec),
         Err(Error::WrongGeneration)
     ));
-    runtime.start().unwrap();
-    assert_eq!(runtime.bind_query(&specs[1]).unwrap().query().unwrap(), 8);
-}
-
-#[test]
-fn failed_and_nested_builds_have_no_ambient_membership_state() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let first = Arc::new(AtomicBool::new(true));
-    let saved = Arc::new(Mutex::new(Vec::new()));
-    let specs = saved.clone();
-    let plugin = demand(move |g| {
-        let _nested = build(demand(|_| Ok(())), Arc::new(LocalExecutor));
-        let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-        specs.lock().unwrap().push(g.query_spec("query", &sum)?);
-        let _temporary = Deployment::new(g.clone().compile()?).build()?;
-        if first.swap(false, Ordering::SeqCst) {
-            return Err("composition failed after temporary deployment".into());
-        }
-        Ok(())
-    });
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("retry", |p: Plugin| Ok(p)).unwrap();
-    let mut plugins = catalog.instance();
-    plugins.load(&kind, plugin).unwrap();
-    assert!(DerivedRuntime::build("retry", plugins.snapshots(), Arc::new(LocalExecutor)).is_err());
-    let mut runtime =
-        DerivedRuntime::build("retry", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
-    let specs = saved.lock().unwrap();
-    assert!(matches!(
-        runtime.bind_query(&specs[0]),
-        Err(Error::WrongGeneration)
-    ));
-    runtime.start().unwrap();
-    assert_eq!(runtime.bind_query(&specs[1]).unwrap().query().unwrap(), 8);
-}
-
-#[test]
-fn shared_actions_in_two_module_instances_are_ambiguous() {
-    let f = Fixture::new(true);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let runtime = build(
-        demand(move |g| {
-            let mut child = GraphBuilder::new("child");
-            let sum = child.derive("sum", (&a, &b), |a, b| a + b)?;
-            *specs.lock().unwrap() = Some(child.query_spec("query", &sum)?);
-            child.expose_output("value", sum.output())?;
-            let module = child.module();
-            g.instance("one", &module)?;
-            g.instance("two", &module)?;
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    assert!(matches!(
-        runtime.bind_query(saved.lock().unwrap().as_ref().unwrap()),
-        Err(Error::WrongGeneration)
-    ));
-}
-
-struct OffloadExecutor;
-impl Executor for OffloadExecutor {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        std::thread::scope(|scope| scope.spawn(move || action.execute(ctx)).join().unwrap())
-    }
-}
-
-#[test]
-fn demand_and_observer_nodes_cannot_query_another_runtime_even_when_offloaded() {
-    for offload in [false, true] {
-        let reads = Arc::new(AtomicUsize::new(0));
-        let target = Fixture::with_backend(
-            false,
-            ReadProbe {
-                memory: MemoryBackend::default(),
-                reads: reads.clone(),
-                denied: Arc::new(AtomicBool::new(false)),
-            },
-        );
-        target.put(&target.a, 3);
-        target.put(&target.b, 5);
-        let (plugin, spec) = sum_plugin(&target);
-        let mut target_runtime = build(plugin, Arc::new(LocalExecutor));
-        target_runtime.start().unwrap();
-        let target_spec = spec.lock().unwrap().clone().unwrap();
-        let target_runtime = Arc::new(Mutex::new(target_runtime));
-        let nested_target = target_runtime.clone();
-        let nested_spec = target_spec.clone();
-        let f = Fixture::new(true);
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (a, b) = (f.a.clone(), f.b.clone());
-        let request = Arc::new(Mutex::new(None::<Observation>));
-        let activate = request.clone();
-        let saved = Arc::new(Mutex::new(None));
-        let specs = saved.clone();
-        let rejected = Arc::new(AtomicUsize::new(0));
-        let calls = rejected.clone();
-        let executor: Arc<dyn Executor> = if offload {
-            Arc::new(OffloadExecutor)
-        } else {
-            Arc::new(LocalExecutor)
-        };
-        let mut runtime = build(
-            Plugin {
-                routes: vec!["sum.sources.refresh".into()],
-                compose: Arc::new(move |g| {
-                    let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-                    *request.lock().unwrap() = Some(sum.observation(1));
-                    *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-                    let target = nested_target.clone();
-                    let spec = nested_spec.clone();
-                    let calls = calls.clone();
-                    let probe = g.node("probe", move |_: i64| {
-                        // The independent target has no recursive consumer, so this
-                        // regression would perform a real nested read without the guard.
-                        assert!(matches!(
-                            target.lock().unwrap().bind_query(&spec).unwrap().query(),
-                            Err(Error::NestedQuery)
-                        ));
-                        calls.fetch_add(1, Ordering::SeqCst);
-                    })?;
-                    g.connect(sum.output(), probe.inlet())?;
-                    Ok(())
-                }),
-                activate: Some(Arc::new(move || {
-                    activate
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .activate()
-                        .map_err(Into::into)
-                })),
-            },
-            executor,
-        );
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().clone().unwrap();
-        assert_eq!(runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
-        assert!(runtime.drain(1).remove(0).result.unwrap().success()); // observer bootstrap
-        f.put(&f.b, 6);
-        assert!(runtime.drain(1).remove(0).result.unwrap().success());
-        assert_eq!(rejected.load(Ordering::SeqCst), 3);
-        assert_eq!(reads.load(Ordering::SeqCst), 0); // rejected before Kernel::fire
-        assert_eq!(
-            target_runtime
-                .lock()
-                .unwrap()
-                .bind_query(&target_spec)
-                .unwrap()
-                .query()
-                .unwrap(),
-            8
-        );
-        assert_eq!(reads.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[test]
-fn demand_node_cannot_recursively_query_its_own_runtime() {
-    thread_local! { static SELF_QUERY: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> = const { std::cell::RefCell::new(None) }; }
-    struct Clear;
-    impl Drop for Clear {
-        fn drop(&mut self) {
-            SELF_QUERY.with(|slot| *slot.borrow_mut() = None);
-        }
-    }
-    let _clear = Clear;
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let calls = attempts.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-            let spec = g.query_spec("query", &sum)?;
-            *specs.lock().unwrap() = Some(spec.clone());
-            let calls = calls.clone();
-            let node = g.node("probe", move |_: i64| {
-                // Bound recursion even on a regressed implementation, rather than
-                // overflowing the stack or deadlocking the test process.
-                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    assert!(SELF_QUERY.with(|slot| slot.borrow().as_ref().unwrap()()));
-                }
-            })?;
-            g.connect(sum.output(), node.inlet())?;
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    let runtime = std::rc::Rc::new(runtime);
-    let spec = saved.lock().unwrap().clone().unwrap();
-    let owner = runtime.clone();
-    let nested_spec = spec.clone();
-    SELF_QUERY.with(|slot| {
-        *slot.borrow_mut() = Some(Box::new(move || {
-            matches!(
-                owner.bind_query(&nested_spec).unwrap().query(),
-                Err(Error::NestedQuery)
-            )
-        }))
-    });
-    assert_eq!(runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
-}
-
-struct DispatchFailure {
-    first: AtomicBool,
-    panic: bool,
-    calls: AtomicUsize,
-}
-impl Executor for DispatchFailure {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        if self.first.swap(false, Ordering::SeqCst) {
-            assert!(!self.panic, "executor panic fixture");
-            return Err("executor failure fixture".into());
-        }
-        action.execute(ctx)
-    }
-}
-#[test]
-fn dispatch_guard_restores_after_executor_error_and_panic_and_delegates_once() {
-    for panic in [false, true] {
-        let f = Fixture::new(true);
-        f.put(&f.a, 3);
-        f.put(&f.b, 5);
-        let (plugin, saved) = sum_plugin(&f);
-        let executor = Arc::new(DispatchFailure {
-            first: AtomicBool::new(true),
-            panic,
-            calls: AtomicUsize::new(0),
-        });
-        let mut runtime = build(plugin, executor.clone());
-        runtime.start().unwrap();
-        let spec = saved.lock().unwrap().clone().unwrap();
-        let query = runtime.bind_query(&spec).unwrap();
-        assert!(matches!(query.query(), Err(Error::Wave(_))));
-        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(query.query().unwrap(), 8);
-        assert_eq!(executor.calls.load(Ordering::SeqCst), 4);
-    }
-}
-
-#[test]
-fn dispatch_guard_restores_after_node_panic() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let first = Arc::new(AtomicBool::new(true));
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let mut runtime = build(
-        demand(move |g| {
-            let first = first.clone();
-            let sum = g.derive("sum", (&a, &b), move |a, b| {
-                assert!(!first.swap(false, Ordering::SeqCst), "node panic fixture");
-                a + b
-            })?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-            Ok(())
-        }),
-        Arc::new(LocalExecutor),
-    );
-    runtime.start().unwrap();
-    let spec = saved.lock().unwrap().clone().unwrap();
-    let query = runtime.bind_query(&spec).unwrap();
-    assert!(matches!(query.query(), Err(Error::Wave(_))));
-    assert_eq!(query.query().unwrap(), 8);
-}
-
-#[test]
-fn an_authored_module_can_be_deliberately_redeployed_and_each_query_pins_its_runtime() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let mut child = GraphBuilder::new("authored");
-    let sum = child.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
+    let mut child = NetworkBuilder::new();
+    let sum = child
+        .derive("sum", (&f.a, &f.b), |a: Number, b: Number| a.0 + b.0)
+        .unwrap();
     let spec = child.query_spec("query", &sum).unwrap();
-    let route = sum.refresh_route().to_owned();
-    child.expose_output("value", sum.output()).unwrap();
-    let module = child.module();
-    let plugin = demand(move |g| {
-        g.instance("authored", &module)?;
-        let input = g.expose_input(
-            &route,
-            g.discover("authored")?
-                .inlets::<RefreshCause, LocalValue>()
-                .port(InletPort::<RefreshCause, RefreshCause>::new(
-                    "sum.sources.refresh",
-                ))
-                .target()?,
-        )?;
-        g.trigger(&route, [input])?;
-        Ok(())
-    });
-    let mut one = build(plugin.clone(), Arc::new(LocalExecutor));
-    let mut two = build(plugin, Arc::new(LocalExecutor));
-    one.start().unwrap();
-    two.start().unwrap();
-    let first = one.bind_query(&spec).unwrap();
-    let second = two.bind_query(&spec).unwrap();
-    assert_eq!(first.query().unwrap(), 8);
-    f.put(&f.b, 6);
-    assert_eq!(second.query().unwrap(), 9);
-    assert_eq!(first.query().unwrap(), 9);
+    let def = child.build().unwrap();
+    let mut parent = NetworkBuilder::new();
+    parent.module("one", def.clone()).unwrap();
+    parent.module("two", def).unwrap();
+    let runtime = local(authored(parent, spec.clone(), None));
+    assert!(matches!(
+        runtime.bind_query(&spec),
+        Err(Error::WrongGeneration)
+    ));
 }
 
 #[test]
-fn query_binding_preflights_missing_misdirected_and_multi_target_module_routes() {
-    for mode in ["missing", "misdirected", "wrong_type", "multi", "valid"] {
-        let reads = Arc::new(AtomicUsize::new(0));
-        let f = Fixture::with_backend(
-            false,
-            ReadProbe {
-                memory: MemoryBackend::default(),
-                reads: reads.clone(),
-                denied: Arc::new(AtomicBool::new(false)),
-            },
-        );
+fn missing_redirected_wrong_type_and_fanout_refresh_routes_reject_without_io() {
+    for mode in ["missing", "redirected", "wrong_type", "fanout", "valid"] {
+        let f = Fixture::new(false);
         f.put(&f.a, 3);
         f.put(&f.b, 5);
-        let mut child = GraphBuilder::new("authored");
-        let sum = child.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
-        let spec = child.query_spec("query", &sum).unwrap();
-        let route = sum.refresh_route().to_owned();
-        let expected_route = route.clone();
-        child.expose_output("value", sum.output()).unwrap();
-        let module = child.module();
-        let effects = Arc::new(AtomicUsize::new(0));
-        let calls = effects.clone();
-        let mut runtime = build(
-            demand(move |g| {
-                g.instance("authored", &module)?;
-                if mode == "missing" {
-                    return Ok(());
-                }
-                let calls = calls.clone();
-                let unrelated = if mode == "wrong_type" {
-                    let node = g.node("unrelated", move |_: String| {
-                        calls.fetch_add(1, Ordering::SeqCst);
-                    })?;
-                    g.expose_input("unrelated", node.inlet())?
-                } else {
-                    let node = g.node("unrelated", move |_: RefreshCause| {
-                        calls.fetch_add(1, Ordering::SeqCst);
-                    })?;
-                    g.expose_input("unrelated", node.inlet())?
-                };
-                let root = g.expose_input(
-                    "root",
-                    g.discover("authored")?
-                        .inlets::<RefreshCause, LocalValue>()
-                        .port(InletPort::<RefreshCause, RefreshCause>::new(
-                            "sum.sources.refresh",
-                        ))
-                        .target()?,
-                )?;
-                match mode {
-                    "misdirected" | "wrong_type" => {
-                        g.trigger(&route, [unrelated])?;
-                    }
-                    "multi" => {
-                        g.trigger(&route, [root, unrelated])?;
-                    }
-                    "valid" => {
-                        g.trigger(&route, [root])?;
-                    }
-                    _ => unreachable!(),
-                }
-                Ok(())
-            }),
-            Arc::new(LocalExecutor),
-        );
-        if mode == "valid" {
-            runtime.bind_query(&spec).unwrap();
-        } else {
-            assert!(
-                matches!(runtime.bind_query(&spec), Err(Error::InvalidRefreshRoute(route)) if route == expected_route),
-                "mode={mode}"
-            );
+        let route = "sum.sources.refresh".to_owned();
+        let mut parent = NetworkBuilder::new();
+        let mut child_graph = NetworkBuilder::new();
+        let sum = child_graph
+            .derive("sum", (&f.a, &f.b), |a: Number, b: Number| a.0 + b.0)
+            .unwrap();
+        let spec = child_graph.query_spec("query", &sum).unwrap();
+        let child = parent
+            .module("child", child_graph.build().unwrap())
+            .unwrap();
+        for name in ["sum.sources.snapshot", "sum.sources.errors", "query"] {
+            parent
+                .expose_output_dynamic(name, &child.output_endpoint(name).unwrap())
+                .unwrap();
         }
-        assert_eq!(reads.load(Ordering::SeqCst), 0);
-        assert_eq!(effects.load(Ordering::SeqCst), 0);
-        runtime.start().unwrap();
+        if mode == "valid" || mode == "fanout" {
+            parent
+                .expose_input(
+                    &route,
+                    child.input::<RefreshCause>(&route).unwrap(),
+                    capacity(),
+                )
+                .unwrap();
+        }
+        if mode == "redirected" || mode == "fanout" {
+            let unrelated = sink(&mut parent, "unrelated", |_: RefreshCause| {}).unwrap();
+            parent
+                .expose_input(
+                    &route,
+                    unrelated.input::<RefreshCause>("run").unwrap(),
+                    capacity(),
+                )
+                .unwrap();
+        }
+        if mode == "wrong_type" {
+            let unrelated = sink(&mut parent, "unrelated", |_: String| {}).unwrap();
+            parent
+                .expose_input(
+                    &route,
+                    unrelated.input::<String>("run").unwrap(),
+                    capacity(),
+                )
+                .unwrap();
+        }
+        let mut runtime = local(authored(parent, spec.clone(), None));
         if mode == "valid" {
-            assert_eq!(runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
+            runtime.start().unwrap();
+            assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
         } else {
             assert!(
                 matches!(
                     runtime.bind_query(&spec),
                     Err(Error::InvalidRefreshRoute(_))
                 ),
-                "mode={mode}"
+                "{mode}"
             );
-            assert_eq!(reads.load(Ordering::SeqCst), 0);
         }
-        assert_eq!(effects.load(Ordering::SeqCst), 0);
     }
+}
+
+struct Offload;
+impl ProcessDispatcher for Offload {
+    fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+        DispatchResult::Completed(std::thread::spawn(move || job.run()).join().unwrap())
+    }
+}
+
+#[test]
+fn local_and_offloaded_demand_and_observer_processes_cannot_query_another_runtime() {
+    for offload in [false, true] {
+        let f = Fixture::new(true);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let (target, spec) = sum(&f, false);
+        let mut target = local(target);
+        target.start().unwrap();
+        let target = Arc::new(target);
+        let nested = target.clone();
+        let nested_spec = spec.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let checked = calls.clone();
+        let mut g = NetworkBuilder::new();
+        let group = g.sources("group", (&f.a, &f.b)).unwrap();
+        let derived = g
+            .derive_from("value", &group, move |a: Number, b: Number| {
+                assert!(matches!(
+                    nested.bind_query(&nested_spec).unwrap().query(),
+                    Err(Error::NestedQuery)
+                ));
+                checked.fetch_add(1, Ordering::SeqCst);
+                a.0 + b.0
+            })
+            .unwrap();
+        let query = g.query_spec("query", &derived).unwrap();
+        let observer = group.observation(1);
+        let dispatcher: Arc<dyn ProcessDispatcher> = if offload {
+            Arc::new(Offload)
+        } else {
+            Arc::new(LocalProcessDispatcher)
+        };
+        let mut runtime = build(authored(g, query.clone(), Some(observer)), dispatcher);
+        runtime.start().unwrap();
+        assert_eq!(*runtime.bind_query(&query).unwrap().query().unwrap(), 8);
+        runtime.drain(1);
+        settle(&runtime);
+        f.put(&f.b, 6);
+        runtime.drain(1);
+        settle(&runtime);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(*target.bind_query(&spec).unwrap().query().unwrap(), 9);
+    }
+}
+
+#[test]
+fn request_scopes_settle_release_and_reject_stale_or_foreign_capture() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (plugin, _) = sum(&f, false);
+    let mut runtime = local(plugin);
+    runtime.start().unwrap();
+    runtime
+        .kernel()
+        .with_session(|s| {
+            let id = s.begin_request(None).unwrap();
+            s.inject_request(
+                id,
+                "sum.sources.refresh",
+                Value::local(RefreshCause::Demand),
+            )
+            .unwrap();
+            s.close_request(id).unwrap();
+            assert!(matches!(
+                s.request_status(id).unwrap(),
+                RequestStatus::Pending
+            ));
+            s.run_until_idle(128);
+            let packet = s.take_request_output(id, "query").unwrap().unwrap();
+            s.validate_capture(id, "query", &packet).unwrap();
+            assert!(
+                s.validate_capture(id, "sum.sources.snapshot", &packet)
+                    .is_err()
+            );
+            while s
+                .take_request_output(id, "sum.sources.snapshot")
+                .unwrap()
+                .is_some()
+            {}
+            assert!(matches!(
+                s.request_status(id).unwrap(),
+                RequestStatus::Settled { .. }
+            ));
+            s.release_request(id).unwrap();
+            assert!(s.validate_capture(id, "query", &packet).is_err());
+            let next = s.begin_request(None).unwrap();
+            assert!(s.validate_capture(next, "query", &packet).is_err());
+            s.close_request(next).unwrap();
+            s.release_request(next).unwrap();
+        })
+        .unwrap();
+    for _ in 0..100 {
+        let spec = runtime
+            .kernel()
+            .export::<QuerySpec<i64>>(&phenix_kernel::Key::new("domain", "derive"))
+            .unwrap();
+        assert_eq!(*runtime.bind_query(spec).unwrap().query().unwrap(), 8);
+    }
+}
+
+#[test]
+fn query_budget_is_bounded_and_never_returns_partial_or_old_capture() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (plugin, spec) = sum(&f, false);
+    let mut runtime = local(plugin);
+    runtime.start().unwrap();
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query_with_budget(1),
+        Err(Error::Unsettled)
+    ));
+    runtime
+        .kernel()
+        .with_session(|s| assert_ne!(s.state(), SessionState::Cancelled))
+        .unwrap();
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
 }
 
 struct LifetimeBackend {
     memory: MemoryBackend,
     _lease: Arc<()>,
-    drops: Arc<AtomicUsize>,
 }
 impl Backend for LifetimeBackend {
     fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
@@ -1597,250 +630,613 @@ impl Backend for LifetimeBackend {
         self.memory.observation()
     }
 }
-impl Drop for LifetimeBackend {
-    fn drop(&mut self) {
-        self.drops.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
 #[test]
-fn backend_lives_until_runtime_and_all_saved_specs_are_dropped_in_either_order() {
+fn backend_lives_until_runtime_and_all_saved_specs_drop_in_either_order() {
     for spec_first in [false, true] {
         let lease = Arc::new(());
         let weak = Arc::downgrade(&lease);
-        let drops = Arc::new(AtomicUsize::new(0));
         let f = Fixture::with_backend(
             true,
             LifetimeBackend {
                 memory: MemoryBackend::default(),
                 _lease: lease,
-                drops: drops.clone(),
             },
         );
         f.put(&f.a, 3);
         f.put(&f.b, 5);
-        let (a, b) = (f.a.clone(), f.b.clone());
-        let saved = Arc::new(Mutex::new(None));
-        let specs = saved.clone();
-        let observation = Arc::new(Mutex::new(None::<Observation>));
-        let activate = observation.clone();
-        let mut runtime = build(
-            Plugin {
-                routes: vec!["sum.sources.refresh".into()],
-                compose: Arc::new(move |g| {
-                    let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-                    *observation.lock().unwrap() = Some(sum.observation(1));
-                    *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-                    Ok(())
-                }),
-                activate: Some(Arc::new(move || {
-                    activate
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .activate()
-                        .map_err(Into::into)
-                })),
-            },
-            Arc::new(LocalExecutor),
-        );
-        let spec = saved.lock().unwrap().take().unwrap();
-        let second_spec = spec.clone();
+        let (plugin, spec) = sum(&f, true);
+        let mut runtime = local(plugin);
         runtime.start().unwrap();
-        assert!(runtime.drain(1).remove(0).result.unwrap().success());
-        assert_eq!(runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
-        drop(f); // Remove the original Registry, Session and cell owners.
+        let second = spec.clone();
+        assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
+        drop(f);
         assert!(weak.upgrade().is_some());
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
         if spec_first {
             drop(spec);
-            drop(second_spec);
+            drop(second);
             assert!(weak.upgrade().is_some());
-            assert_eq!(drops.load(Ordering::SeqCst), 0);
             drop(runtime);
         } else {
             drop(runtime);
             assert!(weak.upgrade().is_some());
-            assert_eq!(drops.load(Ordering::SeqCst), 0);
             drop(spec);
             assert!(weak.upgrade().is_some());
-            assert_eq!(drops.load(Ordering::SeqCst), 0);
-            drop(second_spec);
+            drop(second);
         }
         assert!(weak.upgrade().is_none());
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
-    }
-}
-
-struct RepublishElsewhere {
-    saved: Mutex<Option<Vec<Emission>>>,
-    intercepted: AtomicUsize,
-}
-
-struct SkipLaterTaps(AtomicBool);
-impl Executor for SkipLaterTaps {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        let tap = ctx.shared::<i64>(0).is_ok();
-        let values = action.execute(ctx)?;
-        if tap && !self.0.swap(false, Ordering::SeqCst) {
-            Ok(vec![])
-        } else {
-            Ok(values)
-        }
     }
 }
 
 #[test]
-fn multiple_root_events_are_rejected_even_with_one_current_matching_terminal() {
+fn query_value_clones_retain_the_actual_application_code_lease() {
     let f = Fixture::new(false);
     f.put(&f.a, 3);
     f.put(&f.b, 5);
-    let mut graph = GraphBuilder::new("repeated-root");
-    let sum = graph.derive("sum", (&f.a, &f.b), |a, b| a + b).unwrap();
-    let spec = graph.query_spec("query", &sum).unwrap();
-    // Re-enter the deployed source once in a fresh cohort. Suppress the second
-    // terminal so terminal cardinality and freshness alone cannot reject this.
-    let first = AtomicBool::new(true);
-    graph
-        .add(
-            "again",
-            phenix_graph::NodeTemplate::with_action(
-                0,
-                vec![
-                    phenix_graph::Port::all(
-                        0,
-                        vec![phenix_graph::InputSlot::local::<(Number, Number)>(0).named("value")],
-                    )
-                    .named("run"),
-                ],
-                phenix_graph::OutputSlot::local::<RefreshCause>(0).named("value"),
-                move |_: InvocationCtx| {
-                    Ok(if first.swap(false, Ordering::SeqCst) {
-                        vec![phenix_graph::emit_local(0, RefreshCause::Demand)]
-                    } else {
-                        vec![]
-                    })
-                },
-            )
-            .with_fresh_cohort(),
-        )
-        .unwrap();
-    graph
-        .connect(
-            graph
-                .discover("sum.sources")
-                .unwrap()
-                .output::<(Number, Number), LocalValue>()
-                .unwrap(),
-            graph
-                .discover("again")
-                .unwrap()
-                .inlets::<(Number, Number), LocalValue>()
-                .port(InletPort::<(Number, Number), (Number, Number)>::new("run"))
-                .target()
-                .unwrap(),
-        )
-        .unwrap();
-    graph
-        .connect(
-            graph
-                .discover("again")
-                .unwrap()
-                .output::<RefreshCause, LocalValue>()
-                .unwrap(),
-            graph
-                .discover("sum.sources")
-                .unwrap()
-                .inlets::<RefreshCause, LocalValue>()
-                .port(InletPort::<RefreshCause, RefreshCause>::new("run"))
-                .target()
-                .unwrap(),
-        )
-        .unwrap();
-    let compiled = graph.compile().unwrap();
-    let Some(phenix_graph::FindResult::Node(source)) = compiled.find("sum.sources") else {
-        panic!("missing source");
-    };
-    let output = source.output("value").unwrap();
-    let engine = Deployment::new(compiled)
-        .executor(Arc::new(SkipLaterTaps(AtomicBool::new(true))))
-        .build()
-        .unwrap();
-    // Query extraction must reject the repeated root, not accept the last value.
-    assert!(matches!(
-        spec.bind_engine(&engine).unwrap().query(),
-        Err(Error::InvalidPublication)
-    ));
-    // The one-shot feedback is exhausted; only one root event remains.
-    let report = engine
-        .fire(
-            sum.refresh_route(),
-            vec![phenix_graph::Value::local(RefreshCause::Demand)],
-        )
-        .unwrap();
-    assert!(report.success());
-    assert_eq!(
-        report
-            .publication_events()
-            .iter()
-            .filter(|e| e.from == output)
-            .count(),
-        1
-    );
+    let (plugin, spec) = sum(&f, false);
+    let mut config = options(&plugin);
+    let lease = Arc::new(());
+    let weak = Arc::downgrade(&lease);
+    config.execution.lease = Some(lease);
+    let mut runtime = configured(plugin, Arc::new(LocalProcessDispatcher), config);
+    runtime.start().unwrap();
+    let value = runtime.bind_query(&spec).unwrap().query().unwrap();
+    let retained = value.clone();
+    drop(runtime);
+    drop(spec);
+    assert!(weak.upgrade().is_some());
+    assert_eq!(*retained, 8);
+    drop(value);
+    assert!(weak.upgrade().is_some());
+    drop(retained);
+    assert!(weak.upgrade().is_none());
 }
-impl Executor for RepublishElsewhere {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        let selected = ctx.shared::<i64>(0).is_ok();
-        let mut values = action.execute(ctx)?;
-        if selected {
-            let mut saved = self.saved.lock().unwrap();
-            self.intercepted.fetch_add(1, Ordering::SeqCst);
-            if let Some(original) = &*saved {
-                values = original.clone();
-            } else {
-                *saved = Some(values);
-                values = vec![];
-            }
+
+struct CommitAfterSource {
+    first: AtomicBool,
+    commit: Box<dyn Fn() + Send + Sync>,
+}
+impl ProcessDispatcher for CommitAfterSource {
+    fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+        let source = job.metadata().is_some_and(|m| m.path == "sum.sources");
+        let completed = job.run();
+        if source && self.first.swap(false, Ordering::SeqCst) {
+            (self.commit)();
         }
-        Ok(values)
+        DispatchResult::Completed(completed)
     }
 }
+
 #[test]
-fn same_wave_payloads_republished_at_other_compatible_endpoints_are_rejected() {
+fn memory_and_sqlite_queries_return_their_snapshot_not_a_later_commit() {
+    for sqlite in [false, true] {
+        let root = example::TempRoot::new().unwrap();
+        let database = root.path().join("snapshot.sqlite");
+        let f = if sqlite {
+            let registry = phenix_storage::Registry::new();
+            registry.mount_sqlite("main", &database).unwrap();
+            Fixture::from_registry(false, registry)
+        } else {
+            Fixture::new(false)
+        };
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let a = f.a.source().address().clone();
+        let b = f.b.source().address().clone();
+        let writers = if sqlite {
+            let registry = phenix_storage::Registry::new();
+            registry.mount_sqlite("main", &database).unwrap();
+            for address in [&a, &b] {
+                registry.register(address, Format.schema()).unwrap();
+            }
+            registry
+        } else {
+            f.registry.clone()
+        };
+        let writer = writers.session([Grant::new(Scope::Mount("main".into()), [Operation::Write])]);
+        let (plugin, spec) = sum(&f, false);
+        let dispatcher = Arc::new(CommitAfterSource {
+            first: AtomicBool::new(true),
+            commit: Box::new(move || {
+                writer.put(&a, "value", &Number(4), &Format).unwrap();
+                writer.put(&b, "value", &Number(7), &Format).unwrap();
+            }),
+        });
+        let mut runtime = build(plugin, dispatcher);
+        runtime.start().unwrap();
+        let query = runtime.bind_query(&spec).unwrap();
+        assert_eq!(*query.query().unwrap(), 8, "sqlite={sqlite}");
+        assert_eq!(
+            (f.a.get().unwrap().value.0, f.b.get().unwrap().value.0),
+            (4, 7)
+        );
+        assert_eq!(*query.query().unwrap(), 11, "sqlite={sqlite}");
+    }
+}
+
+#[test]
+fn multiple_terminal_activations_never_return_an_old_or_arbitrary_value() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let mut g = NetworkBuilder::new();
+    let group = g.sources("values", (&f.a, &f.b)).unwrap();
+    let sum = g
+        .derive_from("sum", &group, |a: Number, b: Number| a.0 + b.0)
+        .unwrap();
+    let other = g
+        .derive_from("other", &group, |a: Number, b: Number| a.0 * b.0)
+        .unwrap();
+    let spec = g.query_spec("query", &sum).unwrap();
+    let tap = g.component("query").unwrap();
+    g.connect(other.output(), tap.input("run").unwrap(), capacity())
+        .unwrap();
+    let mut runtime = local(authored(g, spec.clone(), None));
+    runtime.start().unwrap();
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query(),
+        Err(Error::PublicationCount(2))
+    ));
+    f.put(&f.a, 4);
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query(),
+        Err(Error::PublicationCount(2))
+    ));
+}
+
+#[test]
+fn a_missing_terminal_never_reuses_a_previous_capture() {
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (plugin, spec) = sum(&f, false);
+    let mut runtime = local(plugin);
+    runtime.start().unwrap();
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
+    f.session.delete(f.a.source().address(), "value").unwrap();
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query(),
+        Err(Error::Wave(_))
+    ));
+    f.put(&f.a, 4);
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 9);
+}
+
+#[test]
+fn demand_process_cannot_recursively_query_its_own_runtime() {
+    type SelfQuery = Option<Box<dyn Fn() -> bool>>;
+    thread_local! { static QUERY: std::cell::RefCell<SelfQuery> = const { std::cell::RefCell::new(None) }; }
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            QUERY.with(|q| *q.borrow_mut() = None);
+        }
+    }
+    let _clear = Clear;
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let mut g = NetworkBuilder::new();
+    let sum = g
+        .derive("sum", (&f.a, &f.b), |a: Number, b: Number| {
+            assert!(QUERY.with(|q| q.borrow().as_ref().unwrap()()));
+            a.0 + b.0
+        })
+        .unwrap();
+    let spec = g.query_spec("query", &sum).unwrap();
+    let mut runtime = local(authored(g, spec.clone(), None));
+    runtime.start().unwrap();
+    let runtime = std::rc::Rc::new(runtime);
+    let owner = runtime.clone();
+    let nested = spec.clone();
+    QUERY.with(|q| {
+        *q.borrow_mut() = Some(Box::new(move || {
+            matches!(
+                owner.bind_query(&nested).unwrap().query(),
+                Err(Error::NestedQuery)
+            )
+        }))
+    });
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
+}
+
+#[test]
+fn execution_guard_restores_after_process_panic_on_local_and_worker_threads() {
+    for offload in [false, true] {
+        let f = Fixture::new(false);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let mut g = NetworkBuilder::new();
+        let value = g
+            .derive("panic", (&f.a,), |_: Number| -> i64 {
+                panic!("process fixture")
+            })
+            .unwrap();
+        let spec = g.query_spec("query", &value).unwrap();
+        let dispatcher: Arc<dyn ProcessDispatcher> = if offload {
+            Arc::new(Offload)
+        } else {
+            Arc::new(LocalProcessDispatcher)
+        };
+        let mut failed = build(authored(g, spec.clone(), None), dispatcher);
+        failed.start().unwrap();
+        assert!(matches!(
+            failed.bind_query(&spec).unwrap().query(),
+            Err(Error::Wave(_))
+        ));
+        // Request-local failure must never leave the worker guard set.
+        let (plugin, spec) = sum(&f, false);
+        let mut healthy = local(plugin);
+        healthy.start().unwrap();
+        assert_eq!(*healthy.bind_query(&spec).unwrap().query().unwrap(), 8);
+    }
+}
+
+#[test]
+fn late_public_export_collision_rolls_back_source_and_tap_authoring() {
+    let f = Fixture::new(false);
+    let mut g = NetworkBuilder::new();
+    let existing = g.sources("existing", (&f.a,)).unwrap();
+    g.expose_output("group.snapshot", existing.output())
+        .unwrap();
+    assert!(g.sources("group", (&f.a,)).is_err());
+    assert!(g.component("group").is_err());
+    let sum = g.derive_from("sum", &existing, |a: Number| a.0).unwrap();
+    g.expose_output("tap", sum.output()).unwrap();
+    assert!(g.query_spec("tap", &sum).is_err());
+    assert!(g.component("tap").is_err());
+    assert!(g.derive("sum", (&f.a,), |a: Number| a.0).is_err());
+    assert!(g.component("sum.sources").is_err());
+    g.inspect(&g.component("existing").unwrap()).unwrap();
+}
+
+#[test]
+fn unwinding_nested_derived_authoring_preserves_existing_and_revokes_aborted_handles() {
+    let f = Fixture::new(false);
+    let mut graph = NetworkBuilder::new();
+    let existing = graph.sources("existing", (&f.a,)).unwrap();
+    let mut escaped = None;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<(), Error> = graph.additions(|graph| {
+            let value = graph.derive_from("aborted", &existing, |a: Number| a.0)?;
+            escaped = Some(value.clone());
+            graph.query_spec("aborted.query", &value)?;
+            panic!("abort after nested derived additions");
+        });
+    }));
+    assert!(result.is_err());
+    assert!(graph.component("aborted").is_err());
+    assert!(graph.component("aborted.query").is_err());
+    let escaped = escaped.unwrap();
+    assert!(graph.derive("bad", (&escaped,), |a| a).is_err());
+    let value = graph
+        .derive_from("aborted", &existing, |a: Number| a.0)
+        .unwrap();
+    graph.query_spec("aborted.query", &value).unwrap();
+    assert!(graph.derive("still.bad", (&escaped,), |a| a).is_err());
+    graph.build().unwrap();
+}
+
+#[test]
+fn repeated_root_activations_are_rejected_even_when_the_values_agree() {
+    use phenix_graph::{
+        Interface, PortDef,
+        process::{Process, ProcessContext, ProcessEmission, Step},
+    };
+    struct Again {
+        fired: bool,
+        emitted: bool,
+    }
+    impl Process for Again {
+        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, String> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            if ctx.take("run").is_none() {
+                return Ok(Step::Finished);
+            }
+            if self.fired {
+                return Ok(Step::Complete);
+            }
+            self.fired = true;
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "value",
+                Value::local(RefreshCause::Demand),
+            )))
+        }
+    }
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    let mut g = NetworkBuilder::new();
+    let group = g.sources("values", (&f.a,)).unwrap();
+    let sum = g.derive_from("sum", &group, |a: Number| a.0).unwrap();
+    let spec = g.query_spec("query", &sum).unwrap();
+    let again = g
+        .node(
+            "again",
+            Arc::new(
+                Interface::new(
+                    [PortDef::local::<(Number,)>("run")],
+                    [PortDef::local::<RefreshCause>("value")],
+                )
+                .unwrap(),
+            ),
+            Arc::new(|| Again {
+                fired: false,
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    g.connect(group.output(), again.input("run").unwrap(), capacity())
+        .unwrap();
+    g.connect(
+        again.output::<RefreshCause>("value").unwrap(),
+        g.component("values").unwrap().input("run").unwrap(),
+        capacity(),
+    )
+    .unwrap();
+    let mut runtime = local(authored(g, spec.clone(), None));
+    runtime.start().unwrap();
+    assert!(matches!(
+        runtime.bind_query(&spec).unwrap().query(),
+        Err(Error::InvalidPublication)
+    ));
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 3);
+}
+
+#[test]
+fn observer_bootstrap_and_commits_wake_the_native_kernel_driver() {
     let f = Fixture::new(true);
     f.put(&f.a, 3);
     f.put(&f.b, 5);
-    let (a, b) = (f.a.clone(), f.b.clone());
-    let saved = Arc::new(Mutex::new(None));
-    let specs = saved.clone();
-    let executor = Arc::new(RepublishElsewhere {
-        saved: Mutex::new(None),
-        intercepted: AtomicUsize::new(0),
-    });
-    let mut runtime = build(
-        demand(move |g| {
-            let sum = g.derive("sum", (&a, &b), |a, b| a + b)?;
-            *specs.lock().unwrap() = Some(g.query_spec("query", &sum)?);
-            g.query_spec("decoy", &sum)?;
-            Ok(())
-        }),
-        executor.clone(),
-    );
+    let (plugin, _) = sum(&f, true);
+    let mut runtime = local(plugin);
     runtime.start().unwrap();
-    let spec = saved.lock().unwrap().clone().unwrap();
-    let result = runtime.bind_query(&spec).unwrap().query();
+    let wake = phenix_kernel::WakeHandle::default();
+    let stop = wake.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let driver = std::thread::spawn(move || {
+        runtime.run_until(&wake, |event| tx.send(event.result.is_ok()).unwrap())
+    });
+    assert!(rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap());
+    f.put(&f.b, 7);
+    let published = rx.recv_timeout(std::time::Duration::from_secs(5));
+    stop.shutdown();
+    driver.join().unwrap().unwrap();
+    assert!(published.unwrap());
+}
+
+#[test]
+fn unknown_producer_route_rejects_before_activation() {
+    use phenix_graph::compose::NetworkPatch;
+    use phenix_kernel::{CandidateArtifacts, Contribution, Kernel};
+    use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+    struct Invalid(Arc<AtomicUsize>);
+    impl PluginInstance for Invalid {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let starts = self.0.clone();
+            registrar.add(Contribution {
+                id: "invalid".into(),
+                requires: vec![],
+                routes: vec!["missing".into()],
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let starts = starts.clone();
+                    let mut artifacts = CandidateArtifacts::default();
+                    artifacts.activate(move || {
+                        starts.fetch_add(1, Ordering::SeqCst);
+                        Err("must not activate".into())
+                    })?;
+                    Ok(artifacts)
+                })),
+            })
+        }
+    }
+    let starts = Arc::new(AtomicUsize::new(0));
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog.register("invalid", |p: Invalid| Ok(p)).unwrap();
+    let mut plugins = catalog.instance();
+    plugins.load(&kind, Invalid(starts.clone())).unwrap();
     assert!(
-        matches!(result, Err(Error::PublicationCount(0))),
-        "{result:?}"
+        Kernel::build(
+            "invalid",
+            plugins.snapshots(),
+            Arc::new(LocalProcessDispatcher)
+        )
+        .is_err()
     );
-    assert_eq!(executor.intercepted.load(Ordering::SeqCst), 2);
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn process_panic_fails_only_its_demand_and_subsequent_demand_recovers() {
+    use phenix_graph::{
+        Interface, PortDef,
+        process::{Process, ProcessContext, Step},
+    };
+    struct Counter {
+        count: usize,
+        log: Arc<Mutex<Vec<usize>>>,
+    }
+    impl Process for Counter {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if context.take("run").is_none() {
+                return Ok(Step::Finished);
+            }
+            self.count += 1;
+            self.log.lock().unwrap().push(self.count);
+            Ok(Step::Complete)
+        }
+    }
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    let first = Arc::new(AtomicBool::new(true));
+    let effects = Arc::new(AtomicUsize::new(0));
+    let committed = effects.clone();
+    let mut graph = NetworkBuilder::new();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let counter_log = log.clone();
+    let counter = graph
+        .node(
+            "counter",
+            Arc::new(Interface::new([PortDef::local::<()>("run")], []).unwrap()),
+            Arc::new(move || Counter {
+                count: 0,
+                log: counter_log.clone(),
+            }),
+        )
+        .unwrap();
+    graph
+        .expose_input("counter", counter.input::<()>("run").unwrap(), capacity())
+        .unwrap();
+    let value = graph
+        .derive("value", (&f.a,), move |a: Number| {
+            committed.fetch_add(1, Ordering::SeqCst);
+            assert!(!first.swap(false, Ordering::SeqCst), "first demand panics");
+            a.0
+        })
+        .unwrap();
+    let spec = graph.query_spec("query", &value).unwrap();
+    let mut runtime = local(authored(graph, spec.clone(), None));
+    runtime.start().unwrap();
+    runtime
+        .kernel()
+        .inject("counter", Value::local(()))
+        .unwrap();
+    runtime.kernel().run_steps(16).unwrap();
+    let query = runtime.bind_query(&spec).unwrap();
+    assert!(matches!(query.query(), Err(Error::Wave(_))));
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    runtime
+        .kernel()
+        .inject("counter", Value::local(()))
+        .unwrap();
+    runtime.kernel().run_steps(16).unwrap();
+    assert_eq!(*query.query().unwrap(), 3);
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    assert_eq!(*log.lock().unwrap(), [1, 2]);
+}
+
+#[test]
+fn cancelled_query_transfers_handed_job_inventory_and_rejects_late_completion() {
+    struct DeferredOnce(Mutex<Option<ActivationJob>>, AtomicBool);
+    impl ProcessDispatcher for DeferredOnce {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            if self.1.swap(false, Ordering::SeqCst) {
+                *self.0.lock().unwrap() = Some(job);
+                DispatchResult::Deferred
+            } else {
+                DispatchResult::Completed(job.run())
+            }
+        }
+    }
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let (plugin, spec) = sum(&f, false);
+    let dispatcher = Arc::new(DeferredOnce(Mutex::new(None), AtomicBool::new(true)));
+    let mut runtime = build(plugin, dispatcher.clone());
+    runtime.start().unwrap();
+    let error = runtime
+        .bind_query(&spec)
+        .unwrap()
+        .query_with_budget(1)
+        .unwrap_err();
+    let job = dispatcher.0.lock().unwrap().take().unwrap();
+    let request = job.metadata().unwrap().request.unwrap();
+    match error {
+        Error::RequestInterrupted {
+            cause,
+            cancelled_jobs,
+            disposal,
+        } => {
+            assert!(matches!(*cause, Error::Unsettled));
+            assert_eq!(cancelled_jobs, [job.ticket()]);
+            assert_eq!(disposal.handed_jobs, 1);
+        }
+        other => panic!("lost cancellation inventory: {other:?}"),
+    }
+    runtime
+        .kernel()
+        .with_session(|session| {
+            assert!(matches!(
+                session.request_status(request),
+                Err(phenix_graph::runtime::RequestError::Stale)
+            ));
+            assert!(session.complete_job(job.run()).is_err());
+            assert_ne!(session.state(), SessionState::Cancelled);
+        })
+        .unwrap();
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 8);
+}
+
+#[test]
+fn automatic_failure_snapshots_cancelled_peer_jobs_before_releasing_the_request() {
+    struct DeferredPeer {
+        job: Mutex<Option<ActivationJob>>,
+        first: AtomicBool,
+    }
+    impl ProcessDispatcher for DeferredPeer {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            if job.metadata().is_some_and(|m| m.path == "a.held")
+                && self.first.swap(false, Ordering::SeqCst)
+            {
+                *self.job.lock().unwrap() = Some(job);
+                DispatchResult::Deferred
+            } else {
+                DispatchResult::Completed(job.run())
+            }
+        }
+    }
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    let mut graph = NetworkBuilder::new();
+    let group = graph.sources("values", (&f.a,)).unwrap();
+    let held = graph
+        .derive_from("a.held", &group, |a: Number| a.0)
+        .unwrap();
+    graph.query_spec("held.query", &held).unwrap();
+    let first = AtomicBool::new(true);
+    let failed = graph
+        .derive_from("z.fail", &group, move |a: Number| {
+            assert!(
+                !first.swap(false, Ordering::SeqCst),
+                "fail with a peer in flight"
+            );
+            a.0
+        })
+        .unwrap();
+    let spec = graph.query_spec("query", &failed).unwrap();
+    let dispatcher = Arc::new(DeferredPeer {
+        job: Mutex::new(None),
+        first: AtomicBool::new(true),
+    });
+    let mut runtime = build(authored(graph, spec.clone(), None), dispatcher.clone());
+    runtime.start().unwrap();
+    let error = runtime.bind_query(&spec).unwrap().query().unwrap_err();
+    let job = dispatcher.job.lock().unwrap().take().unwrap();
+    match error {
+        Error::RequestInterrupted {
+            cause,
+            cancelled_jobs,
+            disposal,
+        } => {
+            assert!(matches!(*cause, Error::Wave(e) if e.join(" ").contains("panicked")));
+            assert_eq!(cancelled_jobs, [job.ticket()]);
+            assert_eq!(disposal.handed_jobs, 1);
+        }
+        other => panic!("lost failure inventory: {other:?}"),
+    }
+    runtime
+        .kernel()
+        .with_session(|session| {
+            assert!(matches!(
+                session.request_status(job.metadata().unwrap().request.unwrap()),
+                Err(phenix_graph::runtime::RequestError::Stale)
+            ));
+            assert!(session.complete_job(job.run()).is_err());
+        })
+        .unwrap();
+    assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 3);
 }

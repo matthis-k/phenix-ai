@@ -6,9 +6,9 @@ use std::{any::Any, collections::BTreeSet};
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
     fn id(&self) -> &str;
-    /// Logical path of the actual graph unit offered by this contribution.
+    /// Logical path of the actual native component offered by this contribution.
     /// This locator is not a shape declaration, membership claim or permission.
-    fn graph_unit(&self) -> Option<&str> {
+    fn component_path(&self) -> Option<&str> {
         None
     }
 }

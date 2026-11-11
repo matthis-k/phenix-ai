@@ -1,380 +1,377 @@
-#[allow(dead_code)]
-#[path = "../examples/derived.rs"]
-mod example;
-
-use example::{A, Amount, B, TempRoot};
-use phenix_graph::{Emission, Executor, InvocationCtx, LocalExecutor, NodeAction};
-use phenix_kernel::host::{Binding, LifecycleError};
-use phenix_kernel::{BuildOptions, Contribution, Key};
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use phenix_storage::scoped::Storage;
-use phenix_storage_graph::derived::{
-    DerivedGeneration, DerivedHost, Error, GraphDeriveExt, QuerySpec,
+mod support;
+use phenix_graph::{
+    network::NetworkBuilder,
+    process::{
+        ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher,
+        ProcessExecutionGuard,
+    },
 };
+use phenix_kernel::{CandidateArtifacts, Key, host::LifecycleError};
+use phenix_plugin::PluginCatalog;
+use phenix_storage_graph::derived::*;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use support::*;
 
-#[derive(Clone)]
-struct Queries(QuerySpec<i64>);
-
-struct Store {
-    queries: Queries,
-}
-impl Store {
-    fn bind(binding: &Binding<'_>, key: &Key) -> Result<Self, phenix_kernel::CallbackError> {
-        let queries = binding
-            .export::<Queries>(key)
-            .ok_or("missing Queries")?
-            .clone();
-        queries.0.validate_binding(binding)?;
-        Ok(Self { queries })
-    }
-    fn query(&self, generation: &DerivedGeneration) -> Result<i64, Error> {
-        generation.query(&self.queries.0)
-    }
-}
-
-struct Reader {
-    storage: Arc<Storage>,
+fn reader(
+    f: &Fixture,
     starts: Arc<AtomicUsize>,
-    admissions: Arc<AtomicUsize>,
     nested: Option<Arc<dyn Fn() + Send + Sync>>,
-}
-impl PluginInstance for Reader {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let storage = self.storage.clone();
-        let starts = self.starts.clone();
-        let admissions = self.admissions.clone();
-        let nested = self.nested.clone();
-        registrar.add(Contribution {
-            id: "reader".into(),
-            requires: vec![],
-            routes: vec!["sum.sources.refresh".into()],
-            compose: Box::new(move |context| {
-                let (a, b) = storage.bind((A.read(), B.read()))?;
-                let graph = &mut *context.graph;
-                let sum = graph.derive("sum", (&a, &b), |a: Amount, b: Amount| a.0 + b.0)?;
-                let admissions = admissions.clone();
-                let nested = nested.clone();
-                let consumer = graph.node("consumer", move |_: i64| {
-                    admissions.fetch_add(1, Ordering::SeqCst);
-                    if let Some(nested) = &nested {
-                        nested();
-                    }
-                })?;
-                graph.connect(sum.output(), consumer.inlet())?;
-                let queries = Queries(graph.query_spec("query", &sum)?);
-                let observation = sum.observation(16);
-                context.export(queries)?;
-                let starts = starts.clone();
-                context.activate(move || {
-                    starts.fetch_add(1, Ordering::SeqCst);
-                    observation.activate().map_err(Into::into)
-                })
-            }),
-        })
+) -> Plugin {
+    let (base, _) = sum(f, true);
+    let (a, b) = (f.a.clone(), f.b.clone());
+    Plugin {
+        author: Arc::new(move || {
+            let mut g = NetworkBuilder::new();
+            let nested = nested.clone();
+            let sum = g.derive("sum", (&a, &b), move |a: Number, b: Number| {
+                if let Some(nested) = &nested {
+                    nested();
+                }
+                a.0 + b.0
+            })?;
+            let spec = g.query_spec("query", &sum)?;
+            let observation = sum.observation(1);
+            let mut artifacts = CandidateArtifacts {
+                patch: Some(patch(g.build()?)),
+                ..Default::default()
+            };
+            artifacts.export(spec)?;
+            let starts = starts.clone();
+            artifacts.activate(move || {
+                starts.fetch_add(1, Ordering::SeqCst);
+                observation.activate().map_err(Into::into)
+            })?;
+            Ok(artifacts)
+        }),
+        ..base
     }
 }
 
 #[test]
-fn host_exports_bind_before_start_and_pin_exact_old_and_new_snapshots() {
-    let root = TempRoot::new().unwrap();
-    let mut first = example::build(root.path(), "first").unwrap();
-    let mut second = example::build(root.path(), "second").unwrap();
-    first.runtime.start().unwrap();
-    second.runtime.start().unwrap();
-    first.write(true, 3).unwrap();
-    first.write(false, 5).unwrap();
-    second.write(true, 10).unwrap();
-    second.write(false, 20).unwrap();
+fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generations_stay_pinned() {
+    let first = Fixture::new(true);
+    first.put(&first.a, 3);
+    first.put(&first.b, 5);
+    let second = Fixture::new(true);
+    second.put(&second.a, 10);
+    second.put(&second.b, 20);
     let starts = Arc::new(AtomicUsize::new(0));
-    let admissions = Arc::new(AtomicUsize::new(0));
-    let reader = |storage| Reader {
-        storage,
-        starts: starts.clone(),
-        admissions: admissions.clone(),
-        nested: None,
-    };
+    let old_plugin = reader(&first, starts.clone(), None);
+    let config = options(&old_plugin);
     let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("derive", |p: Reader| Ok(p)).unwrap();
+    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
     let mut host = DerivedHost::new(catalog.instance());
-    let key = Key::new("derive", "reader");
-    let mut old_store = None;
+    let key = Key::new("domain", "derive");
+    let mut old_spec = None;
     let candidate = host
         .prepare(
-            vec![
-                host.plugins()
-                    .prepare_load(&kind, reader(first.readers[0].clone()))
-                    .unwrap(),
-            ],
-            BuildOptions::default(),
-            Arc::new(LocalExecutor),
+            vec![host.plugins().prepare_load(&kind, old_plugin).unwrap()],
+            phenix_kernel::BuildOptions {
+                composition: config.composition.clone(),
+                ..Default::default()
+            },
+            Arc::new(LocalProcessDispatcher),
             "old",
             |binding| {
                 assert_eq!(starts.load(Ordering::SeqCst), 0);
-                old_store = Some(Store::bind(binding, &key)?);
+                let spec = binding.export::<QuerySpec<i64>>(&key).unwrap();
+                spec.validate_binding(binding)?;
+                old_spec = Some(spec.clone());
                 Ok(())
             },
         )
         .unwrap();
-    assert_eq!(admissions.load(Ordering::SeqCst), 0);
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
     let old = host.publish(candidate).unwrap();
-    let old_store = old_store.unwrap();
-    assert_eq!(old_store.query(&old).unwrap(), 8);
-    let events = old.drain(16); // bootstrap, once
-    assert_eq!(events.len(), 1);
-    let report = events[0].result.as_ref().unwrap();
-    assert!(report.success());
-    assert_eq!(
-        report.retention(),
-        phenix_graph::ReportRetention::TerminalOutputs
-    );
-    assert_eq!(report.publications().count(), 2); // Tap and unit-valued consumer.
-    assert_eq!(report.publication_events().len(), 4); // Source, compute, tap, consumer.
-
+    let old_spec = old_spec.unwrap();
+    assert_eq!(*old.query(&old_spec).unwrap(), 8);
     let failed = host.prepare(
         vec![
             host.plugins()
-                .prepare_reload(&kind, reader(second.readers[0].clone()))
+                .prepare_reload(&kind, reader(&second, starts.clone(), None))
                 .unwrap(),
         ],
-        BuildOptions::default(),
-        Arc::new(LocalExecutor),
+        phenix_kernel::BuildOptions {
+            composition: config.composition.clone(),
+            ..Default::default()
+        },
+        Arc::new(LocalProcessDispatcher),
         "failed",
-        |binding| Store::bind(binding, &Key::new("missing", "reader")).map(|_| ()),
+        |_| Err("binding rejected".into()),
     );
     assert!(matches!(failed, Err(LifecycleError::Binding(_))));
-    assert!(std::ptr::eq(&*host.active().unwrap(), &*old));
-    assert_eq!(host.plugins().snapshot(&kind).unwrap().revision(), 1);
     assert_eq!(starts.load(Ordering::SeqCst), 1);
-    let before = admissions.load(Ordering::SeqCst);
-    first.write(false, 7).unwrap();
-    // Both cells share a dataset: its notice reaches each source subscription.
-    assert_eq!(old.drain(16).len(), 2);
-    assert_eq!(admissions.load(Ordering::SeqCst), before + 2);
-    assert!(old.drain(16).is_empty());
-
-    let mut new_store = None;
+    assert_eq!(host.plugins().snapshot(&kind).unwrap().revision(), 1);
+    let mut new_spec = None;
     let candidate = host
         .prepare(
             vec![
                 host.plugins()
-                    .prepare_reload(&kind, reader(second.readers[0].clone()))
+                    .prepare_reload(&kind, reader(&second, starts.clone(), None))
                     .unwrap(),
             ],
-            BuildOptions::default(),
-            Arc::new(LocalExecutor),
+            config,
+            Arc::new(LocalProcessDispatcher),
             "new",
             |binding| {
-                assert!(matches!(
-                    old_store.queries.0.validate_binding(binding),
-                    Err(Error::WrongGeneration)
-                ));
-                new_store = Some(Store::bind(binding, &key)?);
+                let spec = binding.export::<QuerySpec<i64>>(&key).unwrap();
+                spec.validate_binding(binding)?;
+                assert!(old_spec.validate_binding(binding).is_err());
+                new_spec = Some(spec.clone());
                 Ok(())
             },
         )
         .unwrap();
     let new = host.publish(candidate).unwrap();
-    let new_store = new_store.unwrap();
-    // Retrieve the generation-owned export through the public scoped view too.
-    let retrieved = new.with_kernel(|kernel| Store {
-        queries: kernel.export::<Queries>(&key).unwrap().clone(),
-    });
-    assert_eq!(retrieved.query(&new).unwrap(), 30);
-    assert_eq!(old_store.query(&old).unwrap(), 10);
-    assert_eq!(new_store.query(&new).unwrap(), 30);
-    assert!(matches!(old_store.query(&new), Err(Error::WrongGeneration)));
-    assert!(matches!(new_store.query(&old), Err(Error::WrongGeneration)));
-    assert!(old.drain(16).is_empty());
-    assert_eq!(new.drain(16).len(), 1);
-    assert!(new.drain(16).is_empty());
-    assert_eq!(starts.load(Ordering::SeqCst), 2);
-}
-
-#[test]
-fn derived_host_passes_execution_limits_to_queries_and_producers() {
-    let root = TempRoot::new().unwrap();
-    let mut demo = example::build(root.path(), "budget").unwrap();
-    demo.runtime.start().unwrap();
-    demo.write(true, 3).unwrap();
-    demo.write(false, 5).unwrap();
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("derive", |p: Reader| Ok(p)).unwrap();
-    let mut host = DerivedHost::new(catalog.instance());
-    let stage = host
-        .plugins()
-        .prepare_load(
-            &kind,
-            Reader {
-                storage: demo.readers[0].clone(),
-                starts: Arc::default(),
-                admissions: Arc::default(),
-                nested: None,
-            },
-        )
-        .unwrap();
-    let mut stages = vec![stage];
-    for limit in [0, phenix_graph::DEFAULT_MAX_ACTIVATIONS] {
-        let mut store = None;
-        let candidate = host
-            .prepare(
-                std::mem::take(&mut stages),
-                BuildOptions {
-                    imports: Default::default(),
-                    execution: phenix_graph::ExecutionLimits {
-                        max_activations: limit,
-                    },
-                },
-                Arc::new(LocalExecutor),
-                "budget",
-                |binding| {
-                    store = Some(Store::bind(binding, &Key::new("derive", "reader"))?);
-                    Ok(())
-                },
-            )
-            .unwrap();
-        let generation = host.publish(candidate).unwrap();
-        let result = store.unwrap().query(&generation);
-        if limit == 0 {
-            assert!(matches!(result, Err(Error::Wave(_))));
-        } else {
-            assert!(result.is_ok(), "{result:?}");
-        }
-        let events = generation.drain(1);
-        assert_eq!(events.len(), 1);
-        let report = events[0].result.as_ref().unwrap();
-        assert_eq!(report.budget_exhausted(), limit == 0);
-        assert_eq!(report.success(), limit != 0);
-    }
+    let new_spec = new_spec.unwrap();
+    assert_eq!(*new.query(&new_spec).unwrap(), 30);
+    assert!(new.query(&old_spec).is_err());
+    assert!(old.query(&new_spec).is_err());
+    assert!(old.drain(10).is_empty());
+    assert_eq!(*old.query(&old_spec).unwrap(), 8);
+    first.put(&first.b, 7);
+    assert_eq!(*old.query(&old_spec).unwrap(), 10);
+    drop(host);
+    assert_eq!(*new.query(&new_spec).unwrap(), 30);
 }
 
 struct Offload;
-impl Executor for Offload {
-    fn dispatch(
-        &self,
-        action: &dyn NodeAction,
-        ctx: InvocationCtx,
-    ) -> Result<Vec<Emission>, String> {
-        std::thread::scope(|scope| scope.spawn(move || action.execute(ctx)).join().unwrap())
+impl ProcessDispatcher for Offload {
+    fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+        DispatchResult::Completed(std::thread::spawn(move || job.run()).join().unwrap())
+    }
+}
+struct ApplicationGuard(Arc<AtomicUsize>);
+impl ProcessExecutionGuard for ApplicationGuard {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(()))
     }
 }
 
 #[test]
-fn host_dispatch_rejects_cross_runtime_queries_on_local_and_worker_threads() {
-    for executor in [
-        Arc::new(LocalExecutor) as Arc<dyn Executor>,
-        Arc::new(Offload),
-    ] {
-        let root = TempRoot::new().unwrap();
-        let mut demo = example::build(root.path(), "nested").unwrap();
-        demo.runtime.start().unwrap();
-        demo.write(true, 3).unwrap();
-        demo.write(false, 5).unwrap();
-        let queries = demo
-            .runtime
-            .kernel()
-            .export::<example::reader::Queries>(&Key::new("derive", "derive"))
-            .unwrap()
-            .clone();
+fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_application_guard() {
+    for offload in [false, true] {
+        let f = Fixture::new(true);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let (target, spec) = sum(&f, false);
+        let mut target = local(target);
+        target.start().unwrap();
+        let target = Arc::new(target);
+        let nested = target.clone();
+        let nested_spec = spec.clone();
         let calls = Arc::new(AtomicUsize::new(0));
-        let storage = demo.readers[0].clone();
-        let demo = Arc::new(Mutex::new(demo));
-        let target = demo.clone();
-        let attempts = calls.clone();
+        let observed = calls.clone();
+        let plugin = reader(
+            &f,
+            Arc::default(),
+            Some(Arc::new(move || {
+                assert!(matches!(
+                    nested.bind_query(&nested_spec).unwrap().query(),
+                    Err(Error::NestedQuery)
+                ));
+                observed.fetch_add(1, Ordering::SeqCst);
+            })),
+        );
+        let mut options = options(&plugin);
+        let entered = Arc::new(AtomicUsize::new(0));
+        options.execution.execution_guard = Some(Arc::new(ApplicationGuard(entered.clone())));
+        options.execution.capture_capacity = capacity();
+        options.execution.max_requests = capacity();
         let mut catalog = PluginCatalog::new();
-        let kind = catalog.register("derive", |p: Reader| Ok(p)).unwrap();
+        let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
         let mut host = DerivedHost::new(catalog.instance());
-        let mut target_host = DerivedHost::new(catalog.instance());
-        let mut target_store = None;
-        let target_candidate = target_host
-            .prepare(
-                vec![
-                    target_host
-                        .plugins()
-                        .prepare_load(
-                            &kind,
-                            Reader {
-                                storage: storage.clone(),
-                                starts: Arc::default(),
-                                admissions: Arc::default(),
-                                nested: None,
-                            },
-                        )
-                        .unwrap(),
-                ],
-                BuildOptions::default(),
-                executor.clone(),
-                "target",
-                |binding| {
-                    target_store = Some(Store::bind(binding, &Key::new("derive", "reader"))?);
-                    Ok(())
-                },
-            )
-            .unwrap();
-        let target_generation = target_host.publish(target_candidate).unwrap();
-        let target_store = target_store.unwrap();
-        assert_eq!(target_store.query(&target_generation).unwrap(), 8);
-        let nested_generation = target_generation.clone();
-        let nested_store = Store {
-            queries: target_store.queries.clone(),
+        let dispatcher: Arc<dyn ProcessDispatcher> = if offload {
+            Arc::new(Offload)
+        } else {
+            Arc::new(LocalProcessDispatcher)
         };
-        let mut store = None;
         let candidate = host
             .prepare(
-                vec![
-                    host.plugins()
-                        .prepare_load(
-                            &kind,
-                            Reader {
-                                storage,
-                                starts: Arc::default(),
-                                admissions: Arc::default(),
-                                nested: Some(Arc::new(move || {
-                                    assert!(matches!(
-                                        nested_store.query(&nested_generation),
-                                        Err(Error::NestedQuery)
-                                    ));
-                                    let target = target.lock().unwrap();
-                                    assert!(matches!(
-                                        target.runtime.bind_query(&queries.sum).unwrap().query(),
-                                        Err(Error::NestedQuery)
-                                    ));
-                                    // Explicit low-level queries share the guard too.
-                                    assert!(matches!(
-                                        queries
-                                            .sum
-                                            .bind_engine(target.runtime.kernel().engine())
-                                            .unwrap()
-                                            .query(),
-                                        Err(Error::NestedQuery)
-                                    ));
-                                    attempts.fetch_add(1, Ordering::SeqCst);
-                                })),
-                            },
-                        )
-                        .unwrap(),
-                ],
-                BuildOptions::default(),
-                executor,
+                vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+                options,
+                dispatcher,
                 "guarded",
                 |binding| {
-                    store = Some(Store::bind(binding, &Key::new("derive", "reader"))?);
+                    binding
+                        .export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+                        .unwrap()
+                        .validate_binding(binding)?;
                     Ok(())
                 },
             )
             .unwrap();
         let generation = host.publish(candidate).unwrap();
-        let store = store.unwrap();
-        assert_eq!(store.query(&generation).unwrap(), 8);
-        assert_eq!(generation.drain(16).len(), 1);
-        demo.lock().unwrap().write(false, 6).unwrap();
-        assert_eq!(generation.drain(16).len(), 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
-        assert_eq!(target_store.query(&target_generation).unwrap(), 9);
-        // Guard restoration permits a subsequent ordinary host query.
-        assert_eq!(demo.lock().unwrap().query_all(0).unwrap(), [9, -3, -27, 18]);
+        let spec = generation.with_kernel(|k| {
+            k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+                .unwrap()
+                .clone()
+        });
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(entered.load(Ordering::SeqCst) >= 6);
+        generation.drain(1);
+        generation.run_steps(128).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *target
+                .bind_query(&nested_spec_for(&target))
+                .unwrap()
+                .query()
+                .unwrap(),
+            8
+        );
     }
+}
+fn nested_spec_for(runtime: &DerivedRuntime) -> QuerySpec<i64> {
+    runtime
+        .kernel()
+        .export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn host_passes_request_capacity_to_the_native_session() {
+    let f = Fixture::new(true);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let plugin = reader(&f, Arc::default(), None);
+    let mut options = options(&plugin);
+    options.execution.max_requests = capacity();
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+    let mut host = DerivedHost::new(catalog.instance());
+    let candidate = host
+        .prepare(
+            vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+            options,
+            Arc::new(LocalProcessDispatcher),
+            "bounded",
+            |_| Ok(()),
+        )
+        .unwrap();
+    let generation = host.publish(candidate).unwrap();
+    generation
+        .with_session(|session| {
+            let id = session.begin_request(None).unwrap();
+            assert!(matches!(
+                session.begin_request(None),
+                Err(phenix_graph::runtime::RequestError::Full)
+            ));
+            session.close_request(id).unwrap();
+            session.release_request(id).unwrap();
+        })
+        .unwrap();
+}
+
+#[test]
+fn prepare_rejects_redirected_terminal_and_missing_source_captures_before_activation() {
+    use phenix_graph::{
+        compose::{Edit, NetworkPatch},
+        network::PortPath,
+    };
+    for output in ["query", "sum.sources.snapshot", "sum.sources.errors"] {
+        let f = Fixture::new(true);
+        let starts = Arc::new(AtomicUsize::new(0));
+        let mut plugin = reader(&f, starts.clone(), None);
+        let config = options(&plugin);
+        let author = plugin.author.clone();
+        plugin.author = Arc::new(move || {
+            let mut artifacts = author()?;
+            let patch = artifacts.patch.take().unwrap();
+            artifacts.patch = Some(NetworkPatch::new(patch.edits().iter().filter_map(|edit| {
+                if matches!(edit, Edit::ExposeOutput { name, .. } if name == output) {
+                    if output == "query" {
+                        Some(Edit::ExposeOutput {
+                            name: output.into(),
+                            from: PortPath {
+                                process: "sum".into(),
+                                port: "value".into(),
+                            },
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(edit.clone())
+                }
+            })));
+            Ok(artifacts)
+        });
+        let mut catalog = PluginCatalog::new();
+        let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+        let host = DerivedHost::new(catalog.instance());
+        let result = host.prepare(
+            vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+            config,
+            Arc::new(LocalProcessDispatcher),
+            "invalid-capture",
+            |binding| {
+                let spec = binding
+                    .export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+                    .unwrap();
+                assert!(matches!(
+                    spec.validate_binding(binding),
+                    Err(Error::InvalidPublication)
+                ));
+                spec.validate_binding(binding).map_err(Into::into)
+            },
+        );
+        assert!(
+            matches!(result, Err(LifecycleError::Binding(_))),
+            "{output}"
+        );
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        assert!(host.active().is_none());
+    }
+}
+
+#[test]
+fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
+    let f = Fixture::new(true);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let effects = Arc::new(AtomicUsize::new(0));
+    let committed = effects.clone();
+    let plugin = reader(
+        &f,
+        Arc::default(),
+        Some(Arc::new(move || {
+            assert_ne!(
+                committed.fetch_add(1, Ordering::SeqCst),
+                0,
+                "first demand fails"
+            );
+        })),
+    );
+    let config = options(&plugin);
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+    let mut host = DerivedHost::new(catalog.instance());
+    let candidate = host
+        .prepare(
+            vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+            config,
+            Arc::new(LocalProcessDispatcher),
+            "recoverable",
+            |_| Ok(()),
+        )
+        .unwrap();
+    let generation = host.publish(candidate).unwrap();
+    let spec = generation.with_kernel(|k| {
+        k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+            .unwrap()
+            .clone()
+    });
+    assert!(
+        matches!(generation.query(&spec), Err(Error::Wave(e)) if e.join(" ").contains("panicked"))
+    );
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(*generation.query(&spec).unwrap(), 8);
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
 }

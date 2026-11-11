@@ -1,8 +1,13 @@
 //! Graph-native derived values across independently authorized plugins.
 //! Run: cargo run -p phenix-storage-graph --example derived
 //! Notifications are registry-local invalidations, not a durable/cross-process feed.
-use phenix_graph::{LocalExecutor, Value};
-use phenix_kernel::{Contribution, Key};
+use phenix_graph::{
+    Interface, PortDef, Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    network::{ComponentRef, NetworkBuilder, NetworkDef},
+    process::{LocalProcessDispatcher, Process, ProcessContext, Step},
+};
+use phenix_kernel::{BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Key};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{
     Codec, Operation, Revisioned, Schema,
@@ -24,6 +29,131 @@ fn text(error: impl std::fmt::Display) -> String {
 }
 type Slot<T> = Arc<OnceLock<T>>;
 type Log<T> = Arc<Mutex<Vec<T>>>;
+
+pub fn capacity() -> std::num::NonZeroUsize {
+    std::num::NonZeroUsize::new(1).unwrap()
+}
+
+pub fn patch(network: NetworkDef) -> NetworkPatch {
+    NetworkPatch::new(
+        network
+            .instances()
+            .iter()
+            .map(|(path, definition)| Edit::Add {
+                path: path.clone(),
+                definition: definition.clone(),
+            })
+            .chain(network.connections().iter().cloned().map(Edit::Connect))
+            .chain(
+                network
+                    .input_projections()
+                    .iter()
+                    .map(|(name, p)| Edit::ExposeInput {
+                        name: name.clone(),
+                        targets: p.targets.clone(),
+                        capacity: p.capacity,
+                    }),
+            )
+            .chain(
+                network
+                    .output_projections()
+                    .iter()
+                    .map(|(name, from)| Edit::ExposeOutput {
+                        name: name.clone(),
+                        from: from.clone(),
+                    }),
+            ),
+    )
+}
+
+pub fn sink<T: Clone + Send + Sync + 'static>(
+    graph: &mut NetworkBuilder,
+    name: &str,
+    f: impl Fn(T) + Send + Sync + 'static,
+) -> Result<ComponentRef, phenix_kernel::CallbackError> {
+    struct Sink<T> {
+        f: Arc<dyn Fn(T) + Send + Sync>,
+    }
+    impl<T: Clone + Send + Sync + 'static> Process for Sink<T> {
+        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, String> {
+            let Some(value) = ctx.take("run") else {
+                return Ok(Step::Finished);
+            };
+            (self.f)(value.borrow::<T>().ok_or("wrong sink input")?.clone());
+            Ok(Step::Complete)
+        }
+    }
+    let f: Arc<dyn Fn(T) + Send + Sync> = Arc::new(f);
+    Ok(graph.node(
+        name,
+        Arc::new(Interface::new([PortDef::local::<T>("run")], [])?),
+        Arc::new(move || Sink { f: f.clone() }),
+    )?)
+}
+
+// Exact host-approved write inventory; prepare callbacks cannot grant themselves authority.
+pub fn reader_grants(name: &str) -> std::collections::BTreeSet<Footprint> {
+    use phenix_graph::{compose::ConnectionKey, network::PortPath};
+    let path = |node: &str, port: &str| PortPath {
+        process: format!("{name}.{node}"),
+        port: port.into(),
+    };
+    let mut grants: std::collections::BTreeSet<_> = [
+        "values", "sum", "diff", "both", "twice", "consumer", "qsum", "qdiff", "qboth", "qtwice",
+    ]
+    .into_iter()
+    .map(|n| Footprint::Component(format!("{name}.{n}")))
+    .collect();
+    grants.insert(Footprint::InputExport(format!("{name}.values.refresh")));
+    for n in ["snapshot", "errors"] {
+        grants.insert(Footprint::OutputExport(format!("{name}.values.{n}")));
+    }
+    for (from, to, port) in [
+        ("values", "sum", "run"),
+        ("values", "diff", "run"),
+        ("sum", "both", "0"),
+        ("diff", "both", "1"),
+        ("sum", "twice", "0"),
+        ("twice", "consumer", "run"),
+        ("sum", "qsum", "run"),
+        ("diff", "qdiff", "run"),
+        ("both", "qboth", "run"),
+        ("twice", "qtwice", "run"),
+    ] {
+        grants.insert(Footprint::Connection(ConnectionKey::new(
+            path(from, "value"),
+            path(to, port),
+        )));
+    }
+    for n in ["qsum", "qdiff", "qboth", "qtwice"] {
+        grants.insert(Footprint::OutputExport(format!("{name}.{n}")));
+    }
+    grants
+}
+pub fn build_options() -> BuildOptions {
+    let mut options = BuildOptions::default();
+    for name in ["derive", "subscriber"] {
+        options.composition.insert(
+            Key::new(name, name),
+            CompositionPolicy {
+                grants: reader_grants(name),
+                priority: 0,
+            },
+        );
+    }
+    options.composition.insert(
+        Key::new("writer", "writer"),
+        CompositionPolicy {
+            grants: [
+                Footprint::Component("write".into()),
+                Footprint::InputExport("update".into()),
+            ]
+            .into(),
+            priority: 0,
+        },
+    );
+    options
+}
 
 // Shared domain contract, not a built-in codec for arbitrary Rust integers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,8 +218,9 @@ pub mod writer {
                 id: "writer".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut graph = NetworkBuilder::new();
                     let project = storage
                         .get()
                         .ok_or("writer storage not injected")?
@@ -97,17 +228,19 @@ pub mod writer {
                     let a = project.state::<Amount>("demo.values/a")?;
                     let b = project.state::<Amount>("demo.values/b")?;
                     let writes = writes.clone();
-                    let node = graph.node("write", move |update: Update| {
+                    let node = sink(&mut graph, "write", move |update: Update| {
                         let target = if update.a { &a } else { &b };
                         writes
                             .lock()
                             .unwrap()
                             .push(target.put("value", &update.value).map_err(text));
                     })?;
-                    let input = graph.expose_input("update", node.inlet())?;
-                    graph.trigger("write", [input])?;
-                    Ok(())
-                }),
+                    graph.expose_input("update", node.input::<Update>("run")?, capacity())?;
+                    Ok(CandidateArtifacts {
+                        patch: Some(patch(graph.build()?)),
+                        ..Default::default()
+                    })
+                })),
             })
         }
     }
@@ -143,8 +276,9 @@ pub mod reader {
                 id: name.into(),
                 requires: vec![],
                 routes: vec![format!("{name}.values.refresh")],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut graph = NetworkBuilder::new();
                     let (a, b) = storage
                         .get()
                         .ok_or("reader storage not injected")?
@@ -166,10 +300,14 @@ pub mod reader {
                         })?;
                     let twice = graph.derive(&format!("{name}.twice"), (&sum,), |sum| sum * 2)?;
                     let consumed = state.consumed.clone();
-                    let consumer = graph.node(format!("{name}.consumer"), move |value: i64| {
-                        consumed.lock().unwrap().push(value);
-                    })?;
-                    graph.connect(twice.output(), consumer.inlet())?;
+                    let consumer = sink(
+                        &mut graph,
+                        &format!("{name}.consumer"),
+                        move |value: i64| {
+                            consumed.lock().unwrap().push(value);
+                        },
+                    )?;
+                    graph.connect(twice.output(), consumer.input("run")?, capacity())?;
                     let queries = Queries {
                         sum: graph.query_spec(&format!("{name}.qsum"), &sum)?,
                         diff: graph.query_spec(&format!("{name}.qdiff"), &diff)?,
@@ -177,10 +315,14 @@ pub mod reader {
                         twice: graph.query_spec(&format!("{name}.qtwice"), &twice)?,
                     };
                     let observation = group.observation(16);
-                    context.export(queries)?;
-                    context.activate(move || observation.activate().map_err(Into::into))?;
-                    Ok(())
-                }),
+                    let mut artifacts = CandidateArtifacts {
+                        patch: Some(patch(graph.build()?)),
+                        ..Default::default()
+                    };
+                    artifacts.export(queries)?;
+                    artifacts.activate(move || observation.activate().map_err(Into::into))?;
+                    Ok(artifacts)
+                })),
             })
         }
     }
@@ -304,8 +446,13 @@ pub fn build_with_policy(
             .map_err(|_| "storage already injected")?;
         views.push(view);
     }
-    let runtime = DerivedRuntime::build("derived-plugins", snapshots, Arc::new(LocalExecutor))
-        .map_err(text)?;
+    let runtime = DerivedRuntime::build_with_options(
+        "derived-plugins",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        build_options(),
+    )
+    .map_err(text)?;
     let [writer, derive, subscriber]: [_; 3] = views.try_into().map_err(|_| "three views")?;
     Ok(Demo {
         runtime,
@@ -318,16 +465,17 @@ pub fn build_with_policy(
 
 impl Demo {
     pub fn write(&self, a: bool, value: i64) -> Result<(), String> {
-        let report = self.runtime.kernel().fire(
-            "write",
-            vec![Value::local(writer::Update {
-                a,
-                value: Amount(value),
-            })],
-        )?;
-        if !report.success() {
-            return Err(report.error_messages().join("; "));
-        }
+        self.runtime
+            .kernel()
+            .inject(
+                "update",
+                Value::local(writer::Update {
+                    a,
+                    value: Amount(value),
+                }),
+            )
+            .map_err(text)?;
+        self.runtime.kernel().run_steps(128)?;
         self.writes
             .lock()
             .unwrap()
@@ -336,15 +484,46 @@ impl Demo {
             .clone()
     }
     pub fn drain(&mut self) -> Result<usize, String> {
-        let events = self.runtime.drain(64);
-        let count = events.len();
-        for event in events {
-            let report = event.result.map_err(|e| format!("{e:?}"))?;
-            if !report.success() {
-                return Err(report.error_messages().join("; "));
+        let mut count = 0;
+        for _ in 0..128 {
+            let events = self.runtime.drain(64);
+            if events.is_empty() {
+                return Ok(count);
             }
+            count += events.len();
+            for event in events {
+                event.result.map_err(|e| format!("{e:?}"))?;
+            }
+            self.runtime.kernel().with_session(|session| {
+                for _ in 0..128 {
+                    let report = session.run_until_idle(128);
+                    for name in ["derive", "subscriber"] {
+                        for q in [
+                            "qsum",
+                            "qdiff",
+                            "qboth",
+                            "qtwice",
+                            "values.snapshot",
+                            "values.errors",
+                        ] {
+                            while session
+                                .take_output(&format!("{name}.{q}"))
+                                .map_err(text)?
+                                .is_some()
+                            {}
+                        }
+                    }
+                    if report.state == phenix_graph::runtime::SessionState::Failed {
+                        return Err(session.failure().unwrap_or("failed").to_owned());
+                    }
+                    if report.steps == 0 {
+                        return Ok(());
+                    }
+                }
+                Err("drain budget exhausted".into())
+            })??;
         }
-        Ok(count)
+        Err("producer drain budget exhausted".into())
     }
     pub fn values(&self) -> Result<[Revisioned<Amount>; 2], String> {
         let (a, b) = self.readers[0].bind((A.read(), B.read())).map_err(text)?;
@@ -369,7 +548,7 @@ impl Demo {
             .ok_or("queries not composed")?;
         let mut values = [0; 4];
         for (value, spec) in values.iter_mut().zip([&q.sum, &q.diff, &q.both, &q.twice]) {
-            *value = self
+            *value = *self
                 .runtime
                 .bind_query(spec)
                 .map_err(text)?

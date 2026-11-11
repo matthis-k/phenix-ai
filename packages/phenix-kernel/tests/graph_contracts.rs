@@ -1,18 +1,24 @@
-use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor, Node, Value};
-use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+mod support;
+use phenix_graph::{
+    ContractValue, Interface, PortDef, Value,
+    component::ComponentDef,
+    compose::{Edit, Footprint, NetworkPatch},
+    contract::Contract,
+    process::{LocalProcessDispatcher, Process, ProcessContext, ProcessEmission, Step},
 };
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+use phenix_kernel::{
+    CandidateArtifacts, ContractDefinition, ContractRequirement, Contribution, ImportPolicy,
+    Kernel, Key, NetworkOffer,
+};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-
-// Each expansion defines a distinct Rust type and its own portable codec.
 macro_rules! portable {
     ($name:ident, $schema:literal) => {
         pub struct $name(pub i64);
-        impl phenix_graph::ContractValue for $name {
+        impl ContractValue for $name {
             fn schema() -> phenix_graph::Schema {
                 phenix_graph::Schema {
                     name: $schema.into(),
@@ -32,19 +38,20 @@ macro_rules! portable {
         }
     };
 }
-
 mod definition {
     use super::*;
     portable!(Request, "example/request");
     portable!(Response, "example/response");
-    pub fn contract() -> GraphContract {
-        GraphContract::new(
+    pub fn contract() -> Contract {
+        Contract::new(
             "example/transform@1",
-            InterfaceShape::new()
-                .input_slot("run", "value", DeclaredValue::wire::<Request>())
-                .unwrap()
-                .output("value", DeclaredValue::wire::<Response>())
+            Arc::new(
+                Interface::new(
+                    [PortDef::wire::<Request>("run").unwrap()],
+                    [PortDef::wire::<Response>("value").unwrap()],
+                )
                 .unwrap(),
+            ),
         )
         .unwrap()
     }
@@ -58,7 +65,6 @@ mod definition {
         }
     }
 }
-
 mod provider {
     use super::*;
     portable!(Request, "example/request");
@@ -75,16 +81,42 @@ mod provider {
             self.drops.fetch_add(1, Ordering::SeqCst);
         }
     }
+    struct Worker(i64, bool);
+    impl Process for Worker {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if self.1 {
+                self.1 = false;
+                return Ok(Step::Complete);
+            }
+            if context.is_closed("run") {
+                return Ok(Step::Finished);
+            }
+            let request = Request::decode(context.take("run").ok_or("missing request")?.bytes())?;
+            self.1 = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "value",
+                Value::of(Response(request.0 + self.0)),
+            )))
+        }
+    }
+    pub fn component(increment: i64, claim: bool) -> Arc<ComponentDef> {
+        let mut component = ComponentDef::primitive(
+            definition::contract().required().clone(),
+            Arc::new(move || Worker(increment, false)),
+        );
+        if claim {
+            component = component.claim(&definition::contract()).unwrap();
+        }
+        Arc::new(component)
+    }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(GraphOffer {
+            into.add(NetworkOffer {
                 id: "service".into(),
                 producer: Key::new(into.owner(), "main"),
                 unit: self.path.clone(),
                 contract: Key::new("definition", "transform"),
             })?;
-            let increment = self.increment;
-            let claim = self.claim;
             let activations = self.activations.clone();
             let path = if self.path == "does-not-exist" {
                 "service".into()
@@ -95,39 +127,36 @@ mod provider {
                 id: "main".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
-                    graph.node(
-                        &path,
-                        Node::wire(move |request: Request| Response(request.0 + increment)),
-                    )?;
-                    if claim {
-                        graph.implements(&path, &definition::contract())?;
-                    }
+                patch: NetworkPatch::new([Edit::Add {
+                    path,
+                    definition: component(self.increment, self.claim),
+                }]),
+                prepare: Some(Box::new(move |_| {
+                    let mut artifacts = CandidateArtifacts::default();
                     let activations = activations.clone();
-                    context.activate(move || {
+                    artifacts.activate(move || {
                         activations.fetch_add(1, Ordering::SeqCst);
                         Ok(Box::new(Idle))
-                    })
-                }),
+                    })?;
+                    Ok(artifacts)
+                })),
             })
         }
     }
     struct Idle;
     impl phenix_kernel::Producer for Idle {
-        fn poll(&mut self) -> Result<Option<phenix_kernel::Notice>, phenix_kernel::CallbackError> {
+        fn poll(
+            &mut self,
+        ) -> Result<Option<phenix_kernel::InputEvent>, phenix_kernel::CallbackError> {
             Ok(None)
         }
     }
 }
-
 mod consumer {
     use super::*;
     portable!(Request, "example/request");
     portable!(Response, "example/response");
-    pub struct Plugin {
-        pub observed: Arc<Mutex<Vec<i64>>>,
-    }
+    pub struct Plugin(pub Arc<Mutex<Vec<i64>>>);
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             into.add(ContractRequirement {
@@ -135,51 +164,82 @@ mod consumer {
                 consumer: Key::new("consumer", "main"),
                 contract: Key::new("definition", "transform"),
             })?;
-            let observed = self.observed.clone();
+            let observed = self.0.clone();
             into.add(Contribution {
                 id: "main".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
-                    let selected = context.import("transform")?;
-                    let graph = &mut *context.graph;
-                    let source = graph.node("source", Node::wire(|request: Request| request))?;
-                    let sink = graph.node(
-                        "sink",
-                        Node::wire({
-                            let observed = observed.clone();
-                            move |response: Response| {
-                                observed.lock().unwrap().push(response.0);
-                                response
-                            }
-                        }),
-                    )?;
-                    // Lookup uses A's contract types, never B's implementation types.
-                    // C's independently defined types cross both portable edges.
-                    let (input, output) = {
-                        let bound = selected.bind(graph)?.operation()?;
-                        (
-                            bound
-                                .inlets::<definition::Request, phenix_graph::EncodedValue>()
-                                .port(phenix_graph::InletPort::<
-                                    definition::Request,
-                                    definition::Request,
-                                >::new("run"))
-                                .target()?,
-                            bound.output::<definition::Response, phenix_graph::EncodedValue>()?,
-                        )
-                    };
-                    graph.connect(source.output(), input)?;
-                    graph.connect(output, sink.inlet())?;
-                    let input = graph.expose_input("request", source.inlet())?;
-                    graph.trigger("run", [input])?;
-                    Ok(())
-                }),
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |context| {
+                    let bound = context.import("transform")?.bind(context.compiled)?;
+                    bound.wire_input::<Request>("run")?;
+                    bound.wire_output::<Response>("value")?;
+                    let mut artifacts = CandidateArtifacts::default();
+                    artifacts.export(observed.clone())?;
+                    artifacts.patch = Some(NetworkPatch::new([
+                        Edit::ExposeInput {
+                            name: "request".into(),
+                            targets: vec![support::path(bound.path(), "run")],
+                            capacity: support::capacity(),
+                        },
+                        Edit::ExposeOutput {
+                            name: "reply".into(),
+                            from: support::path(bound.path(), "value"),
+                        },
+                    ]));
+                    Ok(artifacts)
+                })),
             })
         }
     }
 }
-
+fn options(snapshots: &[PluginSnapshot]) -> phenix_kernel::BuildOptions {
+    let mut options = support::options(snapshots);
+    support::grant(
+        &mut options,
+        Key::new("consumer", "main"),
+        [
+            Footprint::InputExport("request".into()),
+            Footprint::OutputExport("reply".into()),
+        ],
+    );
+    options
+}
+fn build(
+    snapshots: impl IntoIterator<Item = PluginSnapshot>,
+) -> Result<Kernel, phenix_kernel::ResolutionError> {
+    let snapshots: Vec<_> = snapshots.into_iter().collect();
+    let options = options(&snapshots);
+    Kernel::build_with_options(
+        "portable",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+}
+fn execute(kernel: &Kernel, value: i64) {
+    kernel
+        .inject("request", Value::of(consumer::Request(value)))
+        .unwrap();
+    kernel.run_steps(100).unwrap();
+    let response = kernel
+        .with_session(|session| {
+            session
+                .take_output("reply")
+                .unwrap()
+                .unwrap()
+                .value()
+                .decoded::<consumer::Response>()
+                .unwrap()
+        })
+        .unwrap();
+    kernel
+        .export::<Arc<Mutex<Vec<i64>>>>(&Key::new("consumer", "main"))
+        .unwrap()
+        .lock()
+        .unwrap()
+        .push(response.0);
+}
 fn provider(
     increment: i64,
     claim: bool,
@@ -194,7 +254,6 @@ fn provider(
         activations: activations.clone(),
     }
 }
-
 #[test]
 fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
     let mut catalog = PluginCatalog::new();
@@ -202,52 +261,37 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
         .register("definition", |_: ()| Ok(definition::Plugin))
         .unwrap();
     let b = catalog
-        .register("provider", |plugin: provider::Plugin| Ok(plugin))
+        .register("provider", |p: provider::Plugin| Ok(p))
         .unwrap();
     let c = catalog
-        .register("consumer", |plugin: consumer::Plugin| Ok(plugin))
+        .register("consumer", |p: consumer::Plugin| Ok(p))
         .unwrap();
     let drops = Arc::new(AtomicUsize::new(0));
     let activations = Arc::new(AtomicUsize::new(0));
-    let observed = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::new(Mutex::new(vec![]));
     let mut plugins = catalog.instance();
     plugins.load(&a, ()).unwrap();
     let original = plugins
         .load(&b, provider(10, true, &drops, &activations))
         .unwrap();
     plugins
-        .load(
-            &c,
-            consumer::Plugin {
-                observed: observed.clone(),
-            },
-        )
+        .load(&c, consumer::Plugin(observed.clone()))
         .unwrap();
-    let mut old = Kernel::build("old", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    let mut old = build(plugins.snapshots()).unwrap();
     assert_eq!(activations.load(Ordering::SeqCst), 0);
     old.start().unwrap();
-    assert!(
-        old.fire("run", vec![Value::of(consumer::Request(2))])
-            .unwrap()
-            .success()
-    );
-    assert_eq!(*observed.lock().unwrap(), [12]);
-
-    // A real candidate build fails before deployment/producer activation.
+    execute(&old, 2);
     let staged = plugins
         .prepare_reload(&b, provider(100, false, &drops, &activations))
         .unwrap();
-    let candidate = staged.candidate().unwrap();
-    let snapshots = plugins
-        .snapshots()
-        .filter(|s| s.name() != "provider")
-        .chain([candidate]);
-    let error = Kernel::build("rejected", snapshots, Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
     assert!(
-        error.to_string().contains("service") && error.to_string().contains("claim"),
-        "{error}"
+        build(
+            plugins
+                .snapshots()
+                .filter(|s| s.name() != "provider")
+                .chain([staged.candidate().unwrap()])
+        )
+        .is_err()
     );
     assert_eq!(activations.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -256,25 +300,15 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
     );
     drop(staged);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(
-        old.fire("run", vec![Value::of(consumer::Request(3))])
-            .unwrap()
-            .success()
-    );
-
-    // Build a valid candidate before committing. This is host sequencing, not
-    // an atomic plugin/kernel coordinator or an automatic generation redirect.
+    execute(&old, 3);
     let mut renamed = provider(20, true, &drops, &activations);
     renamed.path = "renamed-service".into();
     let staged = plugins.prepare_reload(&b, renamed).unwrap();
-    let candidate = staged.candidate().unwrap();
-    let mut new = Kernel::build(
-        "new",
+    let mut new = build(
         plugins
             .snapshots()
             .filter(|s| s.name() != "provider")
-            .chain([candidate]),
-        Arc::new(LocalExecutor),
+            .chain([staged.candidate().unwrap()]),
     )
     .unwrap();
     plugins.commit(staged).unwrap();
@@ -284,211 +318,136 @@ fn three_plugins_execute_portable_contracts_and_pin_old_generations() {
     drop(original);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     new.start().unwrap();
-    assert!(
-        new.fire("run", vec![Value::of(consumer::Request(4))])
-            .unwrap()
-            .success()
-    );
-    assert!(
-        old.fire("run", vec![Value::of(consumer::Request(5))])
-            .unwrap()
-            .success()
-    );
+    execute(&new, 4);
+    execute(&old, 5);
     assert_eq!(*observed.lock().unwrap(), [12, 13, 24, 15]);
     drop(old);
     assert_eq!(drops.load(Ordering::SeqCst), 2);
     drop(new);
     assert_eq!(drops.load(Ordering::SeqCst), 3);
 }
-
 #[test]
 fn missing_paths_and_definitions_fail_closed() {
-    let mut catalog = PluginCatalog::new();
-    let a = catalog
-        .register("definition", |_: ()| Ok(definition::Plugin))
-        .unwrap();
-    let b = catalog
-        .register("provider", |plugin: provider::Plugin| Ok(plugin))
-        .unwrap();
     let drops = Arc::new(AtomicUsize::new(0));
     let activations = Arc::new(AtomicUsize::new(0));
-    let mut plugins = catalog.instance();
-    let mut missing = provider(1, true, &drops, &activations);
-    missing.path = "does-not-exist".into();
-    plugins.load(&b, missing).unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
+    let mut p = provider(1, true, &drops, &activations);
+    p.path = "does-not-exist".into();
+    let snapshot = support::snapshot("provider", p);
     assert!(
-        error.to_string().contains("missing contract definition"),
-        "{error}"
+        build([snapshot.clone()])
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("missing contract definition")
     );
-    plugins.load(&a, ()).unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
+    assert!(
+        build([
+            snapshot,
+            support::snapshot("definition", definition::Plugin)
+        ])
         .err()
-        .unwrap();
-    assert!(error.to_string().contains("does-not-exist"), "{error}");
+        .unwrap()
+        .to_string()
+        .contains("does-not-exist")
+    );
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }
-
-struct RequirementPlugin {
-    contract: GraphContract,
-}
+struct RequirementPlugin(Contract);
 impl PluginInstance for RequirementPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         into.add(ContractDefinition {
             id: "requested".into(),
-            contract: self.contract.clone(),
+            contract: self.0.clone(),
         })?;
         into.add(ContractRequirement {
             id: "request".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new(into.owner(), "requested"),
+            consumer: Key::new("consumer", "main"),
+            contract: Key::new("consumer", "requested"),
         })?;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|_| Ok(())),
-        })
+        into.add(support::contribution("main", NetworkPatch::new([])))
     }
 }
-
 #[test]
 fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
-    let mut catalog = PluginCatalog::new();
-    let a = catalog
-        .register("definition", |_: ()| Ok(definition::Plugin))
-        .unwrap();
-    let b = catalog
-        .register("provider", |plugin: provider::Plugin| Ok(plugin))
-        .unwrap();
-    let c = catalog
-        .register("consumer", |plugin: RequirementPlugin| Ok(plugin))
-        .unwrap();
     let drops = Arc::new(AtomicUsize::new(0));
     let activations = Arc::new(AtomicUsize::new(0));
-    let mut plugins = catalog.instance();
-    plugins.load(&a, ()).unwrap();
-    plugins
-        .load(&b, provider(1, true, &drops, &activations))
-        .unwrap();
-    plugins
-        .load(
-            &c,
-            RequirementPlugin {
-                contract: definition::contract(),
-            },
-        )
-        .unwrap();
-    let mut policy = ImportPolicy::default();
-    policy.selections.insert(
+    let base = vec![
+        support::snapshot("definition", definition::Plugin),
+        support::snapshot("provider", provider(1, true, &drops, &activations)),
+    ];
+    let mut snapshots = base.clone();
+    snapshots.push(support::snapshot(
+        "consumer",
+        RequirementPlugin(definition::contract()),
+    ));
+    let mut options = options(&snapshots);
+    options.imports = ImportPolicy::default();
+    options.imports.selections.insert(
         Key::new("consumer", "request"),
         Key::new("provider", "absent"),
     );
-    let error = Kernel::build_with_options(
-        "host",
-        plugins.snapshots(),
-        Arc::new(LocalExecutor),
-        phenix_kernel::BuildOptions {
-            imports: policy,
-            ..Default::default()
-        },
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.contains("unknown offer"), "{error}");
-
-    let unrelated = GraphContract::new(
-        "example/unrelated@1",
-        definition::contract().required().clone(),
-    )
-    .unwrap();
-    plugins
-        .reload(
-            &c,
-            RequirementPlugin {
-                contract: unrelated,
-            },
-        )
-        .unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
     assert!(
-        error.to_string().contains("missing eligible offer"),
-        "{error}"
-    );
-
-    let conflicting =
-        GraphContract::new(definition::contract().id(), InterfaceShape::new()).unwrap();
-    plugins
-        .reload(
-            &c,
-            RequirementPlugin {
-                contract: conflicting,
-            },
-        )
-        .unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
-    assert!(
-        error
+        Kernel::build_with_options("host", snapshots, Arc::new(LocalProcessDispatcher), options)
+            .err()
+            .unwrap()
             .to_string()
-            .contains("conflicting contract definition"),
-        "{error}"
+            .contains("unknown offer")
     );
+    for (contract, expected) in [
+        (
+            Contract::new(
+                "example/unrelated@1",
+                definition::contract().required().clone(),
+            )
+            .unwrap(),
+            "missing eligible offer",
+        ),
+        (
+            Contract::new(
+                definition::contract().id(),
+                Arc::new(Interface::new([], []).unwrap()),
+            )
+            .unwrap(),
+            "conflicting contract definition",
+        ),
+    ] {
+        let mut snapshots = base.clone();
+        snapshots.push(support::snapshot("consumer", RequirementPlugin(contract)));
+        assert!(
+            build(snapshots)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains(expected)
+        );
+    }
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }
-
-struct LateEdit;
-impl PluginInstance for LateEdit {
-    fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: vec![],
-            compose: Box::new(|context| {
-                let graph = &mut *context.graph;
-                // A later contributor can replace the entire builder. An early
-                // successful claim/inspection must not certify this final unit.
-                *graph = phenix_graph::GraphBuilder::new("late-edit");
-                graph.node(
-                    "service",
-                    Node::wire(|request: definition::Request| definition::Response(request.0)),
-                )?;
-                Ok(())
-            }),
-        })
-    }
-}
-
 #[test]
 fn plugin_request_checks_final_selected_unit_after_late_composition() {
-    let mut catalog = PluginCatalog::new();
-    let a = catalog
-        .register("definition", |_: ()| Ok(definition::Plugin))
-        .unwrap();
-    let b = catalog
-        .register("provider", |plugin: provider::Plugin| Ok(plugin))
-        .unwrap();
-    let patch = catalog.register("patch", |_: ()| Ok(LateEdit)).unwrap();
+    struct LateEdit;
+    impl PluginInstance for LateEdit {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            let mut patch = support::contribution(
+                "main",
+                NetworkPatch::new([Edit::Replace {
+                    path: "service".into(),
+                    definition: provider::component(0, false),
+                }]),
+            );
+            patch.requires.push(Key::new("provider", "main"));
+            into.add(patch)
+        }
+    }
     let drops = Arc::new(AtomicUsize::new(0));
     let activations = Arc::new(AtomicUsize::new(0));
-    let mut plugins = catalog.instance();
-    plugins.load(&a, ()).unwrap();
-    plugins
-        .load(&b, provider(1, true, &drops, &activations))
-        .unwrap();
-    plugins.load(&patch, ()).unwrap();
-    let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
-    assert!(
-        error.to_string().contains("service") && error.to_string().contains("claim"),
-        "{error}"
-    );
+    let error = build([
+        support::snapshot("definition", definition::Plugin),
+        support::snapshot("provider", provider(1, true, &drops, &activations)),
+        support::snapshot("patch", LateEdit),
+    ])
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("claim"), "{error}");
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }

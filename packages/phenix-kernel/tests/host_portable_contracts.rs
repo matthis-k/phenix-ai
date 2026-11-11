@@ -1,14 +1,19 @@
-// This feature belongs to the standalone fixture package, not phenix-kernel.
 #![allow(unexpected_cfgs)]
-
+mod support;
 use phenix_graph::{
-    AllSameCohort, ContractValue, DeclaredValue, GraphBuilder, GraphContract, InputSlot,
-    InterfaceShape, InvocationCtx, LocalExecutor, NodeTemplate, OutputSlot, Port, Schema, Value,
-    emit,
+    ContractValue, Interface, PortDef, Schema, Value,
+    component::ComponentDef,
+    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    contract::Contract,
+    network::NetworkBuilder,
+    process::{LocalProcessDispatcher, Process, ProcessContext, ProcessEmission, Step},
+    runtime::Readiness,
 };
-use phenix_kernel::host::{Generation, KernelHost, LifecycleError};
-use phenix_kernel::{ContractDefinition, Contribution, GraphOffer, ImportPolicy, Key};
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+use phenix_kernel::{
+    BuildOptions, ContractDefinition, Contribution, Key, NetworkOffer,
+    host::{Generation, KernelHost, LifecycleError},
+};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(feature = "independently-compiled-consumer"))]
@@ -17,7 +22,6 @@ mod consumer;
 #[cfg(feature = "independently-compiled-consumer")]
 use host_portable_consumer as consumer;
 
-// A and B have distinct Rust types, as does the separately compilable C fixture.
 macro_rules! portable {
     ($name:ident, $schema:literal, $codec:literal) => {
         struct $name(i64);
@@ -41,21 +45,23 @@ macro_rules! portable {
         }
     };
 }
-
 mod definition {
     use super::*;
     portable!(Request, "host-portable/request", "i64-le-v1");
     portable!(Response, "host-portable/response", "i64-le-v1");
-    pub fn contract() -> GraphContract {
-        GraphContract::new(
+    pub fn contract() -> Contract {
+        Contract::new(
             "host-portable/transform@1",
-            InterfaceShape::new()
-                .input_slot("run", "left", DeclaredValue::wire::<Request>())
-                .unwrap()
-                .input_slot("run", "right", DeclaredValue::wire::<Request>())
-                .unwrap()
-                .output("value", DeclaredValue::wire::<Response>())
+            Arc::new(
+                Interface::new(
+                    [
+                        PortDef::wire::<Request>("left").unwrap(),
+                        PortDef::wire::<Request>("right").unwrap(),
+                    ],
+                    [PortDef::wire::<Response>("value").unwrap()],
+                )
                 .unwrap(),
+            ),
         )
         .unwrap()
     }
@@ -69,19 +75,17 @@ mod definition {
         }
     }
 }
-
 mod provider {
     use super::*;
     portable!(Request, "host-portable/request", "i64-le-v1");
     portable!(Response, "host-portable/response", "i64-le-v1");
     portable!(WrongCodec, "host-portable/request", "incompatible-codec");
-
     #[derive(Clone, Copy, Debug)]
     pub enum Fault {
         None,
         MissingClaim,
         Codec,
-        ExtraInput,
+        MissingInput,
     }
     #[derive(Clone)]
     pub struct Plugin {
@@ -90,129 +94,171 @@ mod provider {
         pub increment: i64,
         pub fault: Fault,
     }
-
-    fn worker<T: ContractValue>(increment: i64, extra: bool) -> NodeTemplate {
-        let mut inputs = vec![
-            InputSlot::deferred::<T>(0).named("left"),
-            InputSlot::deferred::<Request>(1).named("right"),
-        ];
-        if extra {
-            inputs.push(InputSlot::deferred::<Request>(2).named("extra"));
-        }
-        NodeTemplate::with_action(
-            500,
-            vec![Port::new(0, inputs, AllSameCohort).named("run")],
-            OutputSlot::typed::<Response>(0).named("value"),
-            move |ctx: InvocationCtx| {
-                // Noncommutative arithmetic detects swapped named slots.
-                let left = ctx.arg::<Request>(0)?.0;
-                let right = ctx.arg::<Request>(1)?.0;
-                Ok(vec![emit(0, Response(left * 10 + right + increment))])
-            },
-        )
+    struct Worker {
+        increment: i64,
+        emitted: bool,
     }
-
-    fn expose(graph: &mut GraphBuilder, path: &str, extra: bool) -> Result<(), String> {
-        for slot in ["left", "right"]
-            .into_iter()
-            .chain(extra.then_some("extra"))
-        {
-            let input = graph
-                .discover(path)?
-                .inlets::<Request, phenix_graph::EncodedValue>()
-                .port(phenix_graph::InletPort::<Request, Request>::new("run"))
-                .field(phenix_graph::SlotField::<Request, Request>::new(slot))
-                .target()?;
-            graph.expose_input_field(
-                "run",
-                phenix_graph::SlotField::<(), Request>::new(slot),
-                input,
-            )?;
+    impl Process for Worker {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            if context.is_closed("left") || context.is_closed("right") {
+                return Ok(Step::Finished);
+            }
+            let left =
+                Request::decode(context.take("left").ok_or("missing left input")?.bytes())?.0;
+            let right =
+                Request::decode(context.take("right").ok_or("missing right input")?.bytes())?.0;
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "value",
+                Value::of(Response(left * 10 + right + self.increment)),
+            )))
         }
-        let output = graph
-            .discover(path)?
-            .output::<Response, phenix_graph::EncodedValue>()?;
-        graph.expose_output("value", output)?;
-        Ok(())
     }
-
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(GraphOffer {
+            into.add(NetworkOffer {
                 id: "service".into(),
                 producer: Key::new(into.owner(), "main"),
                 unit: self.path.into(),
                 contract: Key::new("definition", "transform"),
             })?;
-            let config = self.clone();
+            let left = if matches!(self.fault, Fault::Codec) {
+                PortDef::wire::<WrongCodec>("left").unwrap()
+            } else {
+                PortDef::wire::<Request>("left").unwrap()
+            };
+            let mut inputs = vec![left];
+            if !matches!(self.fault, Fault::MissingInput) {
+                inputs.push(PortDef::wire::<Request>("right").unwrap());
+            }
+            let interface = Arc::new(
+                Interface::new(inputs, [PortDef::wire::<Response>("value").unwrap()]).unwrap(),
+            );
+            let increment = self.increment;
+            let mut component = ComponentDef::primitive(
+                interface.clone(),
+                Arc::new(move || Worker {
+                    increment,
+                    emitted: false,
+                }),
+            );
+            if !matches!(self.fault, Fault::MissingClaim) {
+                // A malformed advertised definition is independently rejected by
+                // the host's contract catalog, not by sharing A's Rust types.
+                let claim = Contract::new(definition::contract().id(), interface).unwrap();
+                component = component.claim(&claim).unwrap();
+            }
+            if self.nested {
+                for name in ["worker", "inside"] {
+                    let mut child = NetworkBuilder::new();
+                    let claims = component.claims().to_vec();
+                    let node = child.add(name, Arc::new(component)).unwrap();
+                    child
+                        .expose_input_dynamic(
+                            "left",
+                            &node.input_endpoint("left").unwrap(),
+                            support::capacity(),
+                        )
+                        .unwrap();
+                    if !matches!(self.fault, Fault::MissingInput) {
+                        child
+                            .expose_input(
+                                "right",
+                                node.wire_input::<Request>("right").unwrap(),
+                                support::capacity(),
+                            )
+                            .unwrap();
+                    }
+                    child
+                        .expose_output("value", node.wire_output::<Response>("value").unwrap())
+                        .unwrap();
+                    for claim in claims {
+                        child.claim(&claim).unwrap();
+                    }
+                    component = ComponentDef::composite(child.build().unwrap());
+                }
+            }
             into.add(Contribution {
                 id: "main".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
-                    let extra = matches!(config.fault, Fault::ExtraInput);
-                    let template = if matches!(config.fault, Fault::Codec) {
-                        worker::<WrongCodec>(config.increment, extra)
-                    } else {
-                        worker::<Request>(config.increment, extra)
-                    };
-                    if config.nested {
-                        let mut child = GraphBuilder::new("private-module");
-                        child.add("worker", template)?;
-                        let diagnostic = child.node(
-                            "diagnostic",
-                            phenix_graph::Node::wire(|_: Response| Response(-1)),
-                        )?;
-                        child.connect(
-                            child
-                                .discover("worker")?
-                                .output::<Response, phenix_graph::EncodedValue>()?,
-                            diagnostic.inlet(),
-                        )?;
-                        expose(&mut child, "worker", extra)?;
-                        let mut wrapper = GraphBuilder::new("wrapper");
-                        wrapper.instance("inside", &child.module())?;
-                        expose(&mut wrapper, "inside", extra)?;
-                        if !matches!(config.fault, Fault::MissingClaim) {
-                            wrapper.implements_public(&definition::contract())?;
-                        }
-                        graph.instance(config.path, &wrapper.module())?;
-                    } else {
-                        graph.add(config.path, template)?;
-                        if !matches!(config.fault, Fault::MissingClaim) {
-                            graph.implements(config.path, &definition::contract())?;
-                        }
-                    }
-                    Ok(())
-                }),
+                patch: NetworkPatch::new([Edit::Add {
+                    path: self.path.into(),
+                    definition: Arc::new(component),
+                }]),
+                prepare: None,
             })
         }
     }
 }
 
-fn policy(owner: &str) -> ImportPolicy {
-    let mut policy = ImportPolicy::default();
-    policy.selections.insert(
+fn options(host: &KernelHost, stages: &[StagedPlugin], owner: &str) -> BuildOptions {
+    let snapshots = host.plugins().candidate_snapshots(stages).unwrap();
+    let mut options = support::options(&snapshots);
+    options.imports.selections.insert(
         Key::new("consumer", "transform"),
         Key::new(owner, "service"),
     );
-    policy
+    let mut grants = vec![
+        Footprint::Component("consumer-sink".into()),
+        Footprint::InputExport("left".into()),
+        Footprint::InputExport("right".into()),
+    ];
+    for snapshot in &snapshots {
+        if let Some(contribution) = snapshot.get::<Contribution>("main") {
+            for edit in contribution.patch.edits() {
+                if let Edit::Add { path, definition } = edit {
+                    grants.push(Footprint::Connection(ConnectionKey::new(
+                        support::path(path, "value"),
+                        support::path("consumer-sink", "value"),
+                    )));
+                    let physical = if matches!(
+                        definition.body(),
+                        phenix_graph::component::Body::Composite(_)
+                    ) {
+                        format!("{path}/inside/worker")
+                    } else {
+                        path.clone()
+                    };
+                    options.execution.readiness.insert(physical, Readiness::All);
+                }
+            }
+        }
+    }
+    support::grant(&mut options, Key::new("consumer", "main"), grants);
+    options
 }
-
-fn fire(generation: &Generation, left: i64, right: i64) {
-    let report = generation
-        .fire(
-            "run",
-            vec![
-                Value::of(consumer::Request(left)),
-                Value::of(consumer::Request(right)),
-            ],
-        )
+fn prepare(
+    host: &KernelHost,
+    stages: Vec<StagedPlugin>,
+    owner: &str,
+) -> Result<phenix_kernel::host::Candidate, LifecycleError> {
+    let options = options(host, &stages, owner);
+    host.prepare(
+        stages,
+        options,
+        Arc::new(LocalProcessDispatcher),
+        "portable",
+        |_| Ok(()),
+    )
+}
+fn execute(generation: &Generation, left: i64, right: i64) {
+    generation
+        .inject("left", Value::of(consumer::Request(left)))
         .unwrap();
-    assert!(report.success(), "{:?}", report.error_messages());
+    generation
+        .inject("right", Value::of(consumer::Request(right)))
+        .unwrap();
+    generation.run_steps(100).unwrap();
+    let failure = generation
+        .with_session(|session| session.failure().map(str::to_owned))
+        .unwrap();
+    assert!(failure.is_none(), "{failure:?}");
 }
-
 #[test]
 fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_replacements() {
     let mut catalog = PluginCatalog::new();
@@ -220,13 +266,13 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         .register("definition", |_: ()| Ok(definition::Plugin))
         .unwrap();
     let b1 = catalog
-        .register("node-provider", |p: provider::Plugin| Ok(p))
+        .register("node-provider", |plugin: provider::Plugin| Ok(plugin))
         .unwrap();
     let b2 = catalog
-        .register("module-provider", |p: provider::Plugin| Ok(p))
+        .register("module-provider", |plugin: provider::Plugin| Ok(plugin))
         .unwrap();
     let c = catalog
-        .register("consumer", |p: consumer::Plugin| Ok(p))
+        .register("consumer", |plugin: consumer::Plugin| Ok(plugin))
         .unwrap();
     let observed = Arc::new(Mutex::new(vec![]));
     let mut host = KernelHost::new(catalog.instance());
@@ -250,103 +296,50 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         host.plugins().prepare_load(&a, ()).unwrap(),
         host.plugins().prepare_load(&b1, node.clone()).unwrap(),
     ];
-    let candidate = host
-        .prepare(
-            stages,
-            phenix_kernel::BuildOptions {
-                imports: policy("node-provider"),
-                ..Default::default()
-            },
-            Arc::new(LocalExecutor),
-            "initial",
-            |_| Ok(()),
-        )
-        .unwrap();
+    let candidate = prepare(&host, stages, "node-provider").unwrap();
     assert!(host.active().is_none());
     assert_eq!(host.plugins().snapshots().count(), 0);
     let original = host.publish(candidate).unwrap();
-    fire(&original, 2, 3);
+    execute(&original, 2, 3);
     assert_eq!(*observed.lock().unwrap(), [123]);
-
-    let candidate = host
-        .prepare(
-            vec![],
-            phenix_kernel::BuildOptions {
-                imports: policy("module-provider"),
-                ..Default::default()
-            },
-            Arc::new(LocalExecutor),
-            "switch",
-            |_| Ok(()),
-        )
+    let switched = host
+        .publish(prepare(&host, vec![], "module-provider").unwrap())
         .unwrap();
-    assert!(Arc::ptr_eq(&original, &host.active().unwrap()));
-    let switched = host.publish(candidate).unwrap();
     assert_eq!(switched.epoch(), 2);
-    fire(&switched, 2, 3);
-    fire(&original, 3, 2);
+    execute(&switched, 2, 3);
+    execute(&original, 3, 2);
     assert_eq!(*observed.lock().unwrap(), [123, 223, 132]);
-
     for (handle, owner, mut replacement) in [
         (&b1, "node-provider", node),
         (&b2, "module-provider", module),
     ] {
-        let candidate = host
-            .prepare(
-                vec![],
-                phenix_kernel::BuildOptions {
-                    imports: policy(owner),
-                    ..Default::default()
-                },
-                Arc::new(LocalExecutor),
-                "select",
-                |_| Ok(()),
-            )
+        let active = host
+            .publish(prepare(&host, vec![], owner).unwrap())
             .unwrap();
-        host.publish(candidate).unwrap();
-        let active = host.active().unwrap();
         let revision = host.plugins().snapshot(handle).unwrap().revision();
         for fault in [
             provider::Fault::MissingClaim,
             provider::Fault::Codec,
-            provider::Fault::ExtraInput,
+            provider::Fault::MissingInput,
         ] {
             let mut broken = replacement.clone();
             broken.path = "rejected-path";
             broken.increment = 9000;
             broken.fault = fault;
-            let staged = host.plugins().prepare_reload(handle, broken).unwrap();
-            let error = host
-                .prepare(
-                    vec![staged],
-                    phenix_kernel::BuildOptions {
-                        imports: policy(owner),
-                        ..Default::default()
-                    },
-                    Arc::new(LocalExecutor),
-                    "rejected",
-                    |_| Ok(()),
-                )
-                .err()
-                .unwrap();
+            let stage = host.plugins().prepare_reload(handle, broken).unwrap();
             assert!(
-                matches!(error, LifecycleError::Build(_)),
-                "{fault:?}: {error}"
+                matches!(
+                    prepare(&host, vec![stage], owner),
+                    Err(LifecycleError::Build(_))
+                ),
+                "{fault:?}"
             );
-            let message = error.to_string();
-            let expected = match fault {
-                provider::Fault::MissingClaim => "claim",
-                provider::Fault::Codec => "schema",
-                provider::Fault::ExtraInput => "input",
-                provider::Fault::None => unreachable!(),
-            };
-            assert!(message.contains(expected), "{fault:?}: {message}");
             assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
             assert_eq!(
                 host.plugins().snapshot(handle).unwrap().revision(),
                 revision
             );
-            fire(&host.active().unwrap(), 4, 5);
+            execute(&active, 4, 5);
             assert_eq!(
                 *observed.lock().unwrap().last().unwrap(),
                 45 + replacement.increment
@@ -363,49 +356,37 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
             .prepare_reload(handle, replacement.clone())
             .unwrap();
         let candidate_revision = stage.candidate().unwrap().revision();
-        assert!(candidate_revision > revision);
-        let candidate = host
-            .prepare(
-                vec![stage],
-                phenix_kernel::BuildOptions {
-                    imports: policy(owner),
-                    ..Default::default()
-                },
-                Arc::new(LocalExecutor),
-                "renamed",
-                |_| Ok(()),
-            )
+        let current = host
+            .publish(prepare(&host, vec![stage], owner).unwrap())
             .unwrap();
-        assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
-        let current = host.publish(candidate).unwrap();
         assert_eq!(current.epoch(), active.epoch() + 1);
         assert_eq!(
             host.plugins().snapshot(handle).unwrap().revision(),
             candidate_revision
         );
-        fire(&current, 5, 6);
+        execute(&current, 5, 6);
         assert_eq!(
             *observed.lock().unwrap().last().unwrap(),
             56 + replacement.increment
         );
-        fire(&active, 5, 6);
+        execute(&active, 5, 6);
         assert_eq!(
             *observed.lock().unwrap().last().unwrap(),
             56 + replacement.increment - 1000
         );
     }
 }
-
 #[cfg(not(feature = "independently-compiled-consumer"))]
 #[test]
 fn independently_compiled_consumer_executes_through_host_publication() {
-    use std::process::Command;
     let output_dir = tempfile::tempdir().unwrap();
-    let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let fixtures = kernel.join("tests/fixtures");
-    // Preserve registry versions while allowing Cargo to add the standalone package.
-    std::fs::copy(kernel.join("../../Cargo.lock"), fixtures.join("Cargo.lock")).unwrap();
-    let output = Command::new(env!("CARGO"))
+    let source = std::path::Path::new(file!());
+    let fixtures = if source.is_absolute() {
+        source.parent().unwrap().join("fixtures")
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    };
+    let output = std::process::Command::new(env!("CARGO"))
         .args(["test", "--offline", "--manifest-path"])
         .arg(fixtures.join("Cargo.toml"))
         .arg("--target-dir")

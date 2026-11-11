@@ -1,16 +1,20 @@
-//! In-process composition and producer lifecycle around the existing graph engine.
+//! Host-authorized native network composition and persistent producer lifecycle.
 pub mod host;
 
 use phenix_graph::{
-    Deployment, Engine, Executor, GraphBuilder, GraphContract, TriggerId, TriggerSelector, Value,
-    WaveReport,
+    Value,
+    compose::{Composer, Footprint, NetworkPatch, Registration},
+    contract::Contract,
+    network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
+    process::ProcessDispatcher,
+    runtime::{InjectionError, NetworkSession, RunReport, SessionOptions, SessionState},
 };
 pub use phenix_plugin::CallbackError;
-use phenix_plugin::{ContributionHandle, PluginSnapshot};
+use phenix_plugin::{ContributionHandle, PluginSnapshot, lease_callback_error};
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex, TryLockError},
 };
 
 /// Globally qualified contribution identity, ordered lexically by owner then id.
@@ -29,10 +33,10 @@ impl Key {
     }
 }
 
-/// One external event. Each notice is admitted as a separate engine wave.
-pub struct Notice {
-    pub trigger: String,
-    pub values: Vec<Value>,
+/// One bounded external admission to one public network input.
+pub struct InputEvent {
+    pub input: String,
+    pub value: Value,
 }
 
 /// A producer must not wait for an event. Drop must stop and release its resources.
@@ -40,7 +44,7 @@ pub struct Notice {
 pub trait Producer: Send {
     /// An error is terminal: the kernel reports it once and drops this producer.
     /// Transient unavailability must return Ok(None) and wake when ready to retry.
-    fn poll(&mut self) -> Result<Option<Notice>, CallbackError>;
+    fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError>;
 
     /// Register notification for newly available events. Return false if unsupported.
     /// Implementations must synchronize registration with event publication.
@@ -51,8 +55,8 @@ pub trait Producer: Send {
 
 #[derive(Default)]
 struct WakeState {
-    state: Mutex<(u64, bool)>,
-    ready: Condvar,
+    shutdown: Mutex<bool>,
+    notifier: Mutex<Option<phenix_graph::runtime::SessionNotifier>>,
 }
 
 /// Cloneable notification and shutdown handle for the optional blocking driver.
@@ -61,20 +65,22 @@ pub struct WakeHandle(Arc<WakeState>);
 
 impl WakeHandle {
     pub fn wake(&self) {
-        let mut state = self.0.state.lock().unwrap();
-        state.0 = state.0.wrapping_add(1);
-        self.0.ready.notify_all();
+        if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
+            notifier.notify();
+        }
     }
 
     /// Shutdown is sticky. Use a new handle for a subsequent driver run.
     pub fn shutdown(&self) {
-        let mut state = self.0.state.lock().unwrap();
-        state.1 = true;
-        self.0.ready.notify_all();
+        *self.0.shutdown.lock().unwrap() = true;
+        if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
+            notifier.notify();
+        }
     }
 }
 
-pub type Compose = dyn Fn(&mut ComposeContext<'_>) -> Result<(), CallbackError> + Send + Sync;
+pub type Prepare =
+    dyn Fn(&CandidateContext<'_>) -> Result<CandidateArtifacts, CallbackError> + Send + Sync;
 pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync;
 
 /// Owned selection metadata. Projection uses the graph's authoritative contract checker.
@@ -83,54 +89,57 @@ pub struct ResolvedImport {
     pub offer: Key,
     pub producer: Key,
     unit: String,
-    contract: GraphContract,
+    contract: Contract,
 }
 
 impl ResolvedImport {
     pub fn bind<'g>(
         &self,
-        graph: &'g GraphBuilder,
-    ) -> Result<phenix_graph::BoundAuthoringUnit<'g>, phenix_graph::InterfaceError> {
-        graph.bind_contract(&self.unit, &self.contract)
+        network: &'g CompiledNetwork,
+    ) -> Result<BoundComponent<'g>, NetworkError> {
+        network.bind(&self.unit, &self.contract)
     }
 }
 
-pub struct ComposeContext<'a> {
-    pub graph: &'a mut GraphBuilder,
+pub struct CandidateContext<'a> {
+    pub compiled: &'a CompiledNetwork,
     imports: &'a BTreeMap<String, ResolvedImport>,
-    artifacts: &'a mut BuildArtifacts,
 }
 
 #[derive(Default)]
-struct BuildArtifacts {
-    activate: Option<Box<Activate>>,
-    export: Option<Box<dyn Any + Send + Sync>>,
+pub struct CandidateArtifacts {
+    /// Optional candidate-specific replacement for the contribution's patch.
+    pub patch: Option<NetworkPatch>,
+    pub activate: Option<Box<Activate>>,
+    pub export: Option<Box<dyn Any + Send + Sync>>,
 }
 
-impl ComposeContext<'_> {
+impl CandidateArtifacts {
     /// Register this candidate's producer factory, capturing its exact composed state.
     /// Only one factory is allowed per contribution in each candidate.
     pub fn activate(
         &mut self,
         factory: impl Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync + 'static,
     ) -> Result<(), CallbackError> {
-        if self.artifacts.activate.is_some() {
+        if self.activate.is_some() {
             return Err("candidate activation already registered".into());
         }
-        self.artifacts.activate = Some(Box::new(factory));
+        self.activate = Some(Box::new(factory));
         Ok(())
     }
 
     /// Export one typed value owned by this candidate and scoped to its contribution key.
     /// Bundle multiple values in a struct; retrieve it through Kernel::export.
     pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), CallbackError> {
-        if self.artifacts.export.is_some() {
+        if self.export.is_some() {
             return Err("candidate export already registered".into());
         }
-        self.artifacts.export = Some(Box::new(value));
+        self.export = Some(Box::new(value));
         Ok(())
     }
+}
 
+impl CandidateContext<'_> {
     /// Look up only this contribution's declared imports. The result owns its
     /// metadata so endpoint projection need not hold a borrow of the context.
     pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {
@@ -142,13 +151,14 @@ impl ComposeContext<'_> {
 }
 
 /// Shared Rust type registered by plugins through the existing Registrar.
-/// Low-level graph authoring remains available through the composition context.
+/// Payloads never carry write grants or mutable candidate access.
 pub struct Contribution {
     pub id: String,
     pub requires: Vec<Key>,
-    /// Public trigger names this contribution's producer may emit.
+    /// Public input names this contribution's producer may inject.
     pub routes: Vec<String>,
-    pub compose: Box<Compose>,
+    pub patch: NetworkPatch,
+    pub prepare: Option<Box<Prepare>>,
 }
 
 impl phenix_plugin::Contribution for Contribution {
@@ -162,11 +172,11 @@ impl phenix_plugin::Contribution for Contribution {
 /// the defining plugin; the contract itself owns its semantic identity.
 pub struct ContractDefinition {
     pub id: String,
-    pub contract: GraphContract,
+    pub contract: Contract,
 }
 
 impl phenix_plugin::Contribution for ContractDefinition {
-    const KIND: &'static str = "graph.contract";
+    const KIND: &'static str = "network.contract";
     fn id(&self) -> &str {
         &self.id
     }
@@ -174,7 +184,7 @@ impl phenix_plugin::Contribution for ContractDefinition {
 
 /// An offer names an actual unit, never a purported implementation shape.
 /// Every offer is checked after all composition, including unused offers.
-pub struct GraphOffer {
+pub struct NetworkOffer {
     pub id: String,
     /// Exact contribution responsible for creating the offered unit.
     pub producer: Key,
@@ -182,12 +192,12 @@ pub struct GraphOffer {
     pub contract: Key,
 }
 
-impl phenix_plugin::Contribution for GraphOffer {
-    const KIND: &'static str = "graph.offer";
+impl phenix_plugin::Contribution for NetworkOffer {
+    const KIND: &'static str = "network.offer";
     fn id(&self) -> &str {
         &self.id
     }
-    fn graph_unit(&self) -> Option<&str> {
+    fn component_path(&self) -> Option<&str> {
         Some(&self.unit)
     }
 }
@@ -208,34 +218,20 @@ pub struct ImportPolicy {
     pub deny: BTreeSet<(Key, Key)>,
 }
 
-/// Trusted import selection and Graph-owned execution limits.
-/// Configuration never receives the validated deployment or an admission API.
-///
-/// ```compile_fail
-/// use phenix_kernel::BuildOptions;
-/// let options = BuildOptions::default();
-/// options.execution.build().unwrap().fire("start", vec![]);
-/// ```
-/// ```compile_fail
-/// use phenix_graph::Deployment;
-/// use phenix_kernel::BuildOptions;
-/// fn substitute(options: &mut BuildOptions, replacement: Deployment) {
-///     options.execution = replacement;
-/// }
-/// ```
-/// ```compile_fail
-/// use phenix_graph::Deployment;
-/// use phenix_kernel::BuildOptions;
-/// let options = BuildOptions {
-///     deployment: |deployment: Deployment| deployment,
-///     ..Default::default()
-/// };
-/// ```
+/// Trusted import selection, exact composition grants and native session options.
 #[derive(Default)]
 pub struct BuildOptions {
     pub imports: ImportPolicy,
-    /// Limits only: cannot replace graphs, build/fire, or override executors.
-    pub execution: phenix_graph::ExecutionLimits,
+    /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
+    pub execution: SessionOptions,
+    /// Trusted exact write authority, keyed by contribution identity. No implicit grants.
+    pub composition: BTreeMap<Key, CompositionPolicy>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CompositionPolicy {
+    pub grants: BTreeSet<Footprint>,
+    pub priority: i64,
 }
 
 #[derive(Debug)]
@@ -251,7 +247,7 @@ pub enum ResolutionError {
         cause: CallbackError,
     },
     Compilation {
-        cause: phenix_graph::CompileDiagnostic,
+        cause: NetworkError,
     },
     MissingUnit {
         offer: Key,
@@ -265,7 +261,7 @@ pub enum ResolutionError {
     Interface {
         offer: Option<Key>,
         unit: String,
-        cause: Box<phenix_graph::InterfaceError>,
+        cause: Box<NetworkError>,
     },
     Missing {
         requirement: Key,
@@ -357,24 +353,24 @@ impl From<String> for ResolutionError {
 }
 
 impl phenix_plugin::Contribution for ContractRequirement {
-    const KIND: &'static str = "graph.requirement";
+    const KIND: &'static str = "network.requirement";
     fn id(&self) -> &str {
         &self.id
     }
 }
 
-/// One poll's outcome; admission errors and invocation failures remain distinct.
+/// One poll's admission outcome, distinct from subsequent session execution.
 pub struct ProducerEvent {
     pub producer: Key,
-    pub result: Result<WaveReport, ProducerError>,
+    pub result: Result<(), ProducerError>,
 }
 
-/// Invocation failures remain inside successful WaveReports, not these errors.
+/// Process failures belong to the native session, not producer admission.
 #[derive(Debug)]
 pub enum ProducerError {
     Poll(CallbackError),
     UndeclaredRoute(String),
-    Admission(String),
+    Admission(InjectionError),
 }
 
 impl std::fmt::Display for ProducerError {
@@ -391,6 +387,7 @@ impl std::error::Error for ProducerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Poll(cause) => Some(cause.as_ref()),
+            Self::Admission(cause) => Some(cause),
             _ => None,
         }
     }
@@ -399,7 +396,13 @@ impl std::error::Error for ProducerError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DriverError {
     NotStarted,
-    UnsupportedWake { producer: Key },
+    UnsupportedWake {
+        producer: Key,
+    },
+    SessionStopped {
+        state: SessionState,
+        cause: Option<String>,
+    },
 }
 
 impl std::fmt::Display for DriverError {
@@ -410,6 +413,9 @@ impl std::fmt::Display for DriverError {
                 f,
                 "producer does not support wake notifications: {producer:?}"
             ),
+            Self::SessionStopped { state, cause } => {
+                write!(f, "native session stopped: {state:?}: {cause:?}")
+            }
         }
     }
 }
@@ -448,22 +454,24 @@ impl std::error::Error for StartError {
 
 #[derive(Default)]
 struct ProducerState {
-    producers: Vec<(Key, Box<dyn Producer>)>,
+    producers: Vec<(Key, Box<dyn Producer>, Option<InputEvent>)>,
     next: usize,
     retired: bool,
 }
 
 pub struct Kernel {
-    // Drop clears producers first; field order then keeps leases alive past engine teardown.
-    engine: Engine,
+    // Drop clears producers first; leases outlive session and compiled declarations.
+    session: Mutex<NetworkSession>,
+    compiled: CompiledNetwork,
     producers: Mutex<ProducerState>,
-    artifacts: BTreeMap<Key, BuildArtifacts>,
+    artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
     started: bool,
-    routes: BTreeMap<Key, BTreeMap<String, TriggerId>>,
-    // Keep definition/offer/consumer code alive after engine and action teardown.
+    routes: BTreeMap<Key, BTreeSet<String>>,
+    // Keep definition/offer/consumer code alive after session and factory teardown.
     _snapshots: Vec<PluginSnapshot>,
+    code_lease: Arc<dyn Send + Sync>,
 }
 
 impl Drop for Kernel {
@@ -477,27 +485,29 @@ impl Drop for Kernel {
 }
 
 impl Kernel {
-    /// Resolve all dependencies before composing, compile once, build one deployment,
+    /// Resolve all dependencies before composing and build one native session,
     /// without activating producers. Lexical keys break topological ties.
     pub fn build(
         name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
-        executor: Arc<dyn Executor>,
+        dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, ResolutionError> {
-        Self::build_with_options(name, snapshots, executor, BuildOptions::default())
+        Self::build_with_options(name, snapshots, dispatcher, BuildOptions::default())
     }
 
     /// Discover compatible offers, apply trusted eligibility and selections,
     /// and order composers before invoking any plugin code. A unique eligible
     /// offer is selected automatically; missing or ambiguous imports fail closed.
     pub fn build_with_options(
-        name: impl Into<String>,
+        _name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
-        executor: Arc<dyn Executor>,
-        options: BuildOptions,
+        dispatcher: Arc<dyn ProcessDispatcher>,
+        mut options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
         let policy = &options.imports;
         let snapshots: Vec<_> = snapshots.into_iter().collect();
+        let code_lease: Arc<dyn Send + Sync> =
+            Arc::new((options.execution.lease.take(), snapshots.clone()));
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
             if !owners.insert(snapshot.name()) {
@@ -525,7 +535,7 @@ impl Kernel {
                     };
                 }
                 collect!(ContractDefinition, definitions);
-                collect!(GraphOffer, offers);
+                collect!(NetworkOffer, offers);
                 collect!(ContractRequirement, requirements);
                 if kind != <Contribution as phenix_plugin::Contribution>::KIND {
                     continue;
@@ -715,60 +725,132 @@ impl Kernel {
         }
         // Candidate artifacts and builder are dropped before leases on build failure.
         let mut artifacts = BTreeMap::new();
-        let mut graph = GraphBuilder::new(name);
+        let base = NetworkBuilder::new()
+            .build()
+            .map_err(|cause| ResolutionError::Compilation { cause })?;
+        let mut composer =
+            Composer::new(base).map_err(|cause| ResolutionError::Invalid(cause.to_string()))?;
+        let registration_ids: BTreeMap<_, _> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| (key.clone(), index.to_string()))
+            .collect();
         let empty_imports = BTreeMap::new();
         for (key, contribution) in keys.iter().zip(&leases) {
-            graph
-                .with_origin(&origins[key], |graph| {
-                    (contribution.compose)(&mut ComposeContext {
-                        graph,
-                        imports: imports.get(key).unwrap_or(&empty_imports),
-                        artifacts: artifacts.entry(key.clone()).or_default(),
-                    })
+            let authority = options.composition.get(key).cloned().unwrap_or_default();
+            // A self-import may bind the immutable static payload, never a made-up
+            // interface. The same host grants and origin checks govern this preview.
+            let preview = if imports
+                .get(key)
+                .is_some_and(|entries| entries.values().any(|import| import.producer == *key))
+            {
+                let mut preview =
+                    Composer::new(composer.current().network().clone()).map_err(|cause| {
+                        ResolutionError::Composition {
+                            contribution: key.clone(),
+                            cause: Box::new(cause),
+                        }
+                    })?;
+                preview
+                    .register([Registration::new(
+                        "self",
+                        [],
+                        authority.priority,
+                        origins[key].clone(),
+                        authority.grants.clone(),
+                        contribution.patch.clone(),
+                    )])
+                    .map_err(|cause| ResolutionError::Composition {
+                        contribution: key.clone(),
+                        cause: Box::new(cause),
+                    })?;
+                Some(preview)
+            } else {
+                None
+            };
+            let context_compiled = preview
+                .as_ref()
+                .map_or_else(
+                    || composer.current().compiled(),
+                    |preview| preview.current().compiled(),
+                )
+                .with_lease(code_lease.clone());
+            let mut owned = match &contribution.prepare {
+                Some(prepare) => prepare(&CandidateContext {
+                    compiled: &context_compiled,
+                    imports: imports.get(key).unwrap_or(&empty_imports),
                 })
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
-                    cause,
+                    cause: lease_callback_error(cause, code_lease.clone()),
+                })?,
+                None => CandidateArtifacts::default(),
+            };
+            let patch = owned
+                .patch
+                .take()
+                .unwrap_or_else(|| contribution.patch.clone());
+            artifacts.insert(key.clone(), owned);
+            composer
+                .register([Registration::new(
+                    registration_ids[key].clone(),
+                    dependencies[key]
+                        .iter()
+                        .map(|dependency| registration_ids[dependency].clone()),
+                    authority.priority,
+                    origins[key].clone(),
+                    authority.grants,
+                    patch,
+                )])
+                .map_err(|cause| match cause {
+                    phenix_graph::compose::ComposeError::Network(cause) => {
+                        ResolutionError::Compilation { cause }
+                    }
+                    cause => ResolutionError::Composition {
+                        contribution: key.clone(),
+                        cause: Box::new(cause),
+                    },
                 })?;
         }
-        for (key, offer) in &offers {
-            graph
-                .require_contract(&offer.unit, &definitions[&offer.contract].contract)
-                .map_err(|cause| ResolutionError::Interface {
-                    offer: Some(key.clone()),
-                    unit: offer.unit.clone(),
-                    cause: Box::new(cause),
-                })?;
-        }
-        let compiled = graph
-            .compile()
-            .map_err(|cause| ResolutionError::Compilation { cause })?;
+        let compiled = composer.current().compiled().with_lease(code_lease.clone());
+        let active = composer.current().active();
+        let selected: BTreeSet<_> = keys
+            .iter()
+            .filter(|key| active.contains(&registration_ids[*key]))
+            .cloned()
+            .collect();
+        artifacts.retain(|key, _| selected.contains(key));
+        let (keys, leases): (Vec<_>, Vec<_>) = keys
+            .into_iter()
+            .zip(leases)
+            .filter(|(key, _)| selected.contains(key))
+            .unzip();
         // Check all registered definitions against all compiled claims and
         // requests, including units with no offer or selected requirement.
         compiled
             .check_contract_catalog(definitions.values().map(|entry| &entry.contract))
             .map_err(|cause| ResolutionError::Interface {
                 offer: None,
-                unit: cause.path.to_string(),
+                unit: String::new(),
                 cause: Box::new(cause),
             })?;
         for (key, offer) in &offers {
             let contract = &definitions[&offer.contract].contract;
             let unit = compiled
-                .find(&offer.unit)
-                .ok_or_else(|| ResolutionError::MissingUnit {
+                .inspect(&offer.unit)
+                .map_err(|_| ResolutionError::MissingUnit {
                     offer: key.clone(),
                     unit: offer.unit.clone(),
                 })?;
-            if unit.origin() != Some(&origins[&offer.producer]) {
+            if unit.origin.as_ref() != Some(&origins[&offer.producer]) {
                 return Err(ResolutionError::WrongOrigin {
                     offer: key.clone(),
                     producer: Box::new(offer.producer.clone()),
                     unit: offer.unit.clone(),
                 });
             }
-            contract
-                .check_implementation(&unit)
+            compiled
+                .check_implementation(&offer.unit, contract)
                 .map_err(|cause| ResolutionError::Interface {
                     offer: Some(key.clone()),
                     unit: offer.unit.clone(),
@@ -780,23 +862,28 @@ impl Kernel {
             if artifacts[key].activate.is_none() && !contribution.routes.is_empty() {
                 return Err(format!("routes declared without producer: {key:?}").into());
             }
-            let mut selected = BTreeMap::new();
+            let mut selected = BTreeSet::new();
             for name in &contribution.routes {
-                let trigger = compiled
-                    .trigger(name)
-                    .ok_or_else(|| format!("unknown producer route for {key:?}: {name:?}"))?;
-                if selected.insert(name.clone(), trigger).is_some() {
+                if !compiled.inputs().contains_key(name) {
+                    return Err(format!("unknown producer route for {key:?}: {name:?}").into());
+                }
+                if !selected.insert(name.clone()) {
                     return Err(format!("duplicate producer route for {key:?}: {name:?}").into());
                 }
             }
             routes.insert(key.clone(), selected);
         }
-        let engine = Deployment::new(compiled)
-            .max_activations(options.execution.max_activations)
-            .executor(executor)
-            .build()?;
+        // The session propagates this lease into dispatched jobs and queued packets.
+        // Do not let a caller-provided lease displace the plugin revision leases.
+        options.execution.lease = Some(code_lease.clone());
+        options.execution.dispatcher = dispatcher;
+        let session = compiled.start_with_options(options.execution);
+        if let Some(failure) = session.failure() {
+            return Err(ResolutionError::Invalid(failure.into()));
+        }
         Ok(Self {
-            engine,
+            session: Mutex::new(session),
+            compiled,
             producers: Mutex::new(ProducerState::default()),
             artifacts,
             _leases: leases,
@@ -804,6 +891,7 @@ impl Kernel {
             started: false,
             routes,
             _snapshots: snapshots,
+            code_lease,
         })
     }
 
@@ -819,9 +907,9 @@ impl Kernel {
             if let Some(activate) = &self.artifacts[key].activate {
                 let producer = activate().map_err(|cause| StartError::Activation {
                     contribution: key.clone(),
-                    cause,
+                    cause: lease_callback_error(cause, self.code_lease.clone()),
                 })?;
-                producers.push((key.clone(), producer));
+                producers.push((key.clone(), producer, None));
             }
         }
         self.producers
@@ -832,32 +920,66 @@ impl Kernel {
         Ok(())
     }
 
-    /// Low-level engine access bypasses the kernel's started-state admission guard.
-    pub fn engine(&self) -> &Engine {
-        &self.engine
+    /// Immutable declaration inspection never admits work or exposes process state.
+    pub fn compiled(&self) -> &CompiledNetwork {
+        &self.compiled
     }
 
-    /// Retrieve this deployment's composed export, never a shared snapshot slot.
+    /// Retrieve this candidate's composed export, never a shared snapshot slot.
     /// Missing keys and mismatched types return None.
     pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
         self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
-    pub fn fire<T: TriggerSelector>(
+    pub fn with_session<R>(
         &self,
-        trigger: T,
-        values: Vec<Value>,
-    ) -> Result<WaveReport, String> {
+        use_session: impl FnOnce(&mut NetworkSession) -> R,
+    ) -> Result<R, String> {
         if !self.started {
             return Err("kernel not started".into());
         }
-        self.engine.fire(trigger, values)
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let result = use_session(&mut session);
+        session.notifier().notify();
+        Ok(result)
+    }
+
+    pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
+        if !self.started {
+            return Err(InjectionError {
+                reason: phenix_graph::connection::ConnectionError::Cancelled,
+                value,
+            });
+        }
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let result = session.inject(input, value);
+        if result.is_ok() {
+            session.notifier().notify();
+        }
+        result
+    }
+
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+        if !self.started {
+            return Err("kernel not started".into());
+        }
+        Ok(self
+            .session
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .run_until_idle(budget))
     }
 
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
     /// calls. Idle polls count toward the bound. Poll errors retire only the failed
     /// producer; admission errors do not stop polling.
-    /// This bounds admissions, not the execution time of an individual wave.
+    /// A full input retains one event without repolling. No process code runs here.
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
         // Plugin destructors may reenter drain; release the state lock first.
         let mut detached = Vec::new();
@@ -875,17 +997,52 @@ impl Kernel {
             }
             let index = state.next;
             state.next = (index + 1) % state.producers.len();
-            let (key, producer) = &mut state.producers[index];
-            let result = match producer.poll() {
+            let (key, producer, pending) = &mut state.producers[index];
+            let polled = match pending.take() {
+                Some(event) => Ok(Some(event)),
+                None => producer.poll(),
+            };
+            let result = match polled {
                 Ok(None) => continue,
-                Ok(Some(notice)) => match self.routes[key].get(&notice.trigger) {
-                    Some(trigger) => self
-                        .engine
-                        .fire(*trigger, notice.values)
-                        .map_err(ProducerError::Admission),
-                    None => Err(ProducerError::UndeclaredRoute(notice.trigger)),
-                },
-                Err(error) => Err(ProducerError::Poll(error)),
+                Ok(Some(event)) => {
+                    if !self.routes[key].contains(&event.input) {
+                        Err(ProducerError::UndeclaredRoute(event.input))
+                    } else {
+                        // Never hold the producer lock waiting for explicit session work:
+                        // publication must retire producers independently of old queries.
+                        let mut session = match self.session.try_lock() {
+                            Ok(session) => session,
+                            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+                            Err(TryLockError::WouldBlock) => {
+                                *pending = Some(event);
+                                continue;
+                            }
+                        };
+                        let admitted = session.inject(&event.input, event.value);
+                        if admitted.is_ok() {
+                            session.notifier().notify();
+                        }
+                        drop(session);
+                        match admitted {
+                            Ok(()) => Ok(()),
+                            Err(error)
+                                if error.reason
+                                    == phenix_graph::connection::ConnectionError::Full =>
+                            {
+                                *pending = Some(InputEvent {
+                                    input: event.input,
+                                    value: error.value,
+                                });
+                                continue;
+                            }
+                            Err(error) => Err(ProducerError::Admission(error)),
+                        }
+                    }
+                }
+                Err(error) => Err(ProducerError::Poll(lease_callback_error(
+                    error,
+                    self.code_lease.clone(),
+                ))),
             };
             events.push(ProducerEvent {
                 producer: key.clone(),
@@ -905,35 +1062,38 @@ impl Kernel {
     }
 
     /// Drive a started kernel until shutdown, delivering events without retaining reports.
-    /// Every producer must support wake registration. Shutdown is checked between waves;
-    /// it does not interrupt a running producer poll, wave, or callback.
+    /// Every producer must support wake registration. Shutdown is checked between
+    /// bounded driver iterations; it cannot preempt a running step or callback.
     pub fn run_until(
-        &mut self,
+        &self,
         wake: &WakeHandle,
         mut on_event: impl FnMut(ProducerEvent),
     ) -> Result<(), DriverError> {
         if !self.started {
             return Err(DriverError::NotStarted);
         }
-        let state = self
+        let (mut listener, notifier) = self
+            .with_session(|session| (session.wake_listener(), session.notifier()))
+            .unwrap();
+        *wake.0.notifier.lock().unwrap() = Some(notifier);
+        let mut state = self
             .producers
-            .get_mut()
+            .lock()
             .unwrap_or_else(|error| error.into_inner());
-        for (key, producer) in &mut state.producers {
+        for (key, producer, _) in &mut state.producers {
             if !producer.set_waker(wake.clone()) {
                 return Err(DriverError::UnsupportedWake {
                     producer: key.clone(),
                 });
             }
         }
+        drop(state);
         loop {
-            let generation = {
-                let state = wake.0.state.lock().unwrap();
-                if state.1 {
+            {
+                if *wake.0.shutdown.lock().unwrap() {
                     return Ok(());
                 }
-                state.0
-            };
+            }
             let mut active = false;
             let count = self
                 .producers
@@ -942,7 +1102,7 @@ impl Kernel {
                 .producers
                 .len();
             for _ in 0..count {
-                if wake.0.state.lock().unwrap().1 {
+                if *wake.0.shutdown.lock().unwrap() {
                     return Ok(());
                 }
                 for event in self.drain(1) {
@@ -950,13 +1110,18 @@ impl Kernel {
                     on_event(event);
                 }
             }
+            let report = self.run_steps(64).unwrap();
+            if matches!(report.state, SessionState::Failed | SessionState::Cancelled) {
+                return Err(DriverError::SessionStopped {
+                    state: report.state,
+                    cause: self
+                        .with_session(|session| session.failure().map(str::to_owned))
+                        .unwrap(),
+                });
+            }
+            active |= report.steps > 0 || report.publications > 0;
             if !active {
-                let state = wake.0.state.lock().unwrap();
-                let _state = wake
-                    .0
-                    .ready
-                    .wait_while(state, |state| !state.1 && state.0 == generation)
-                    .unwrap();
+                listener.wait_timeout(std::time::Duration::from_secs(60));
             }
         }
     }
@@ -975,7 +1140,7 @@ mod tests {
 
         struct Source(Weak<Kernel>, Arc<AtomicUsize>);
         impl Producer for Source {
-            fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
                 Err("terminal".into())
             }
         }
@@ -996,8 +1161,12 @@ mod tests {
             }
         }
 
-        let mut kernel =
-            Kernel::build("reentrant", [], Arc::new(phenix_graph::LocalExecutor)).unwrap();
+        let mut kernel = Kernel::build(
+            "reentrant",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
         kernel.start().unwrap();
         let kernel = Arc::new(kernel);
         let drops = Arc::new(AtomicUsize::new(0));
@@ -1007,6 +1176,7 @@ mod tests {
                 (
                     Key::new("test", name),
                     Box::new(Source(Arc::downgrade(&kernel), drops.clone())) as Box<dyn Producer>,
+                    None,
                 )
             })
             .collect();
@@ -1031,7 +1201,7 @@ mod tests {
     fn terminal_failure_preserves_round_robin_and_idle_poll_budget() {
         struct Source(&'static str, Arc<Mutex<Vec<&'static str>>>);
         impl Producer for Source {
-            fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
                 self.1.lock().unwrap().push(self.0);
                 if self.0 == "broken" {
                     Err("terminal".into())
@@ -1041,7 +1211,12 @@ mod tests {
             }
         }
         let log = Arc::new(Mutex::new(Vec::new()));
-        let mut kernel = Kernel::build("fair", [], Arc::new(phenix_graph::LocalExecutor)).unwrap();
+        let mut kernel = Kernel::build(
+            "fair",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
         kernel.start().unwrap();
         kernel.producers.get_mut().unwrap().producers = ["a", "broken", "b"]
             .into_iter()
@@ -1049,6 +1224,7 @@ mod tests {
                 (
                     Key::new("test", name),
                     Box::new(Source(name, log.clone())) as Box<dyn Producer>,
+                    None,
                 )
             })
             .collect();

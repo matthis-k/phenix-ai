@@ -1,26 +1,33 @@
 #[cfg(feature = "derive")]
 use phenix_graph::testing::portable::{GoldenVector, check};
 use phenix_graph::{
-    AllSameCohort, ContractValue, Deployment, GraphBuilder, InputSlot, InvocationCtx, NodeTemplate,
-    OutputSlot, Port, ReportRetention, Store, Value, emit,
+    ContractValue, Interface, NetworkBuilder, PortDef, Process, ProcessContext, ProcessEmission,
+    Step, Value,
 };
 use portable_consumer::Number as ConsumerNumber;
 use portable_provider::Number as ProviderNumber;
+use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc};
 
-fn relay<T: ContractValue>(id: u16) -> NodeTemplate {
-    NodeTemplate::with_action(
-        id,
-        vec![
-            Port::new(
-                0,
-                vec![InputSlot::deferred::<T>(0).named("value")],
-                AllSameCohort,
-            )
-            .named("run")
-            .args::<T, _>(|values| values.get("value")),
-        ],
-        OutputSlot::typed::<T>(0).named("value"),
-        |mut ctx: InvocationCtx| Ok(vec![emit(0, ctx.take_prepared::<T>()?)]),
+struct Relay<T>(PhantomData<T>);
+impl<T: ContractValue> Process for Relay<T> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        if let Some(value) = context.take("in") {
+            Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::of(value.get::<T>()?),
+            )))
+        } else {
+            Ok(Step::Complete)
+        }
+    }
+}
+fn interface<T: ContractValue>() -> Arc<Interface> {
+    Arc::new(
+        Interface::new(
+            [PortDef::wire::<T>("in").unwrap()],
+            [PortDef::wire::<T>("out").unwrap()],
+        )
+        .unwrap(),
     )
 }
 
@@ -32,35 +39,63 @@ fn main() {
         std::any::TypeId::of::<ConsumerNumber>()
     );
     assert_eq!(ProviderNumber::schema(), ConsumerNumber::schema());
-    let mut graph = GraphBuilder::new("independent-crates");
-    graph.add("provider", relay::<ProviderNumber>(1)).unwrap();
-    graph.add("consumer", relay::<ConsumerNumber>(2)).unwrap();
-    let source = graph
-        .discover("provider").unwrap().output::<ProviderNumber, phenix_graph::EncodedValue >()
+    let mut graph = NetworkBuilder::new();
+    let provider = graph
+        .node(
+            "provider",
+            interface::<ProviderNumber>(),
+            Arc::new(|| Relay::<ProviderNumber>(PhantomData)),
+        )
         .unwrap();
-    let sink = graph
-        .discover("consumer").unwrap().inlets::<(), phenix_graph::EncodedValue>().port(phenix_graph::InletPort::<(), ConsumerNumber>::new("run")).field(phenix_graph::SlotField::<ConsumerNumber, ConsumerNumber>::new("value")).target()
+    let consumer = graph
+        .node(
+            "consumer",
+            interface::<ConsumerNumber>(),
+            Arc::new(|| Relay::<ConsumerNumber>(PhantomData)),
+        )
         .unwrap();
-    graph.connect(source, sink).unwrap();
-    let request = graph.expose_input("request", "provider").unwrap();
-    graph.expose_output("result", "consumer").unwrap();
-    graph.trigger("run", [request]).unwrap();
-    let engine = Deployment::new(graph.compile().unwrap())
-        .store(Store::new())
-        .report_retention(ReportRetention::RetainPayloads)
-        .build()
+    let capacity = NonZeroUsize::new(1).unwrap();
+    graph
+        .connect_dynamic(
+            provider
+                .wire_output::<ProviderNumber>("out")
+                .unwrap()
+                .endpoint(),
+            consumer
+                .wire_input::<ConsumerNumber>("in")
+                .unwrap()
+                .endpoint(),
+            capacity,
+        )
         .unwrap();
+    graph
+        .expose_input(
+            "request",
+            provider.wire_input::<ProviderNumber>("in").unwrap(),
+            capacity,
+        )
+        .unwrap();
+    graph
+        .expose_output(
+            "result",
+            consumer.wire_output::<ConsumerNumber>("out").unwrap(),
+        )
+        .unwrap();
+    let mut session = graph.build().unwrap().compile().unwrap().start();
     for value in [i64::MIN, -1, 0, 1, 42, i64::MAX] {
-        let report = engine
-            .fire("run", vec![Value::of(ProviderNumber { value })])
+        session
+            .inject("request", Value::of(ProviderNumber { value }))
             .unwrap();
-        assert!(report.success(), "{:?}", report.error_messages());
-        assert_eq!(report.invocation_count(1), 1);
-        assert_eq!(report.invocation_count(2), 1);
-        let publications: Vec<_> = report.publications().collect();
-        assert_eq!(publications.len(), 2);
+        session.run_until_idle(100);
         assert_eq!(
-            publications[1].value::<ConsumerNumber>().unwrap().number,
+            session
+                .take_output("result")
+                .unwrap()
+                .unwrap()
+                .value()
+                .get::<ConsumerNumber>()
+                .unwrap()
+                .number,
             value
         );
     }

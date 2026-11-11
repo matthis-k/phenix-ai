@@ -4,7 +4,13 @@
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
 use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
-use phenix_graph::{Engine, Executor, InputAddr, NodeAction, TriggerSelector, Value, WaveReport};
+use phenix_graph::{
+    Value,
+    component::DefinitionKey,
+    network::{CompiledNetwork, ComponentSnapshot, NetworkError, PhysicalDeclaration},
+    process::ProcessDispatcher,
+    runtime::{InjectionError, NetworkSession, RunReport},
+};
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
 use std::sync::Arc;
 
@@ -44,8 +50,8 @@ impl std::error::Error for LifecycleError {
 }
 
 /// An immutable generation identity with serialized producer access. No mutable
-/// kernel or producer access escapes. Explicit engine calls remain valid after
-/// replacement, but retired producers can never admit another notice.
+/// kernel or producer access escapes. Explicit session calls remain valid after
+/// replacement, but retired producers can never admit another event.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -56,23 +62,29 @@ impl Generation {
         self.epoch
     }
 
-    /// Scoped read-only access includes generation-owned exports and the engine.
-    /// Explicit reads and engine calls do not acquire the producer lock.
+    /// Scoped access includes generation-owned exports and explicit session calls.
+    /// Explicit reads and session calls do not acquire the producer lock.
     pub fn with_kernel<R>(&self, read: impl FnOnce(&Kernel) -> R) -> R {
         read(&self.kernel)
     }
 
-    /// Engine-only view, independent of producer polling and retirement.
-    pub fn with_engine<R>(&self, read: impl FnOnce(&Engine) -> R) -> R {
-        self.with_kernel(|kernel| read(kernel.engine()))
+    pub fn compiled(&self) -> &CompiledNetwork {
+        self.kernel.compiled()
     }
 
-    pub fn fire<T: TriggerSelector>(
+    pub fn with_session<R>(
         &self,
-        trigger: T,
-        values: Vec<Value>,
-    ) -> Result<WaveReport, String> {
-        self.with_engine(|engine| engine.fire(trigger, values))
+        use_session: impl FnOnce(&mut NetworkSession) -> R,
+    ) -> Result<R, String> {
+        self.kernel.with_session(use_session)
+    }
+
+    pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
+        self.kernel.inject(input, value)
+    }
+
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+        self.kernel.run_steps(budget)
     }
 
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
@@ -80,7 +92,7 @@ impl Generation {
     }
 }
 
-/// Private execution state: there is intentionally no generation/engine getter.
+/// Private execution state: there is intentionally no generation/session getter.
 /// A candidate is bound to both the preparing host and its publication epoch.
 pub struct Candidate {
     host: Arc<()>,
@@ -90,20 +102,20 @@ pub struct Candidate {
 }
 
 /// Preparation-only inspection capability. It exposes exports and deployment
-/// identities, but no kernel, engine, wave admission, or producer access.
+/// identities, but no kernel, session admission, or producer access.
 /// Exports are arbitrary application values; their external effects are not
 /// sandboxed or rolled back by the host.
 ///
 /// ```compile_fail
 /// use phenix_kernel::host::Binding;
 /// fn admit(binding: &Binding<'_>) {
-///     binding.engine().fire("refresh", vec![]);
+///     binding.with_session(|session| session.inject_local("refresh", 1_i64));
 /// }
 /// ```
 /// ```compile_fail
 /// use phenix_kernel::host::Binding;
 /// fn admit(binding: &Binding<'_>) {
-///     binding.fire("refresh", vec![]);
+///     binding.compiled().start();
 /// }
 /// ```
 pub struct Binding<'a> {
@@ -115,12 +127,28 @@ impl Binding<'_> {
         self.kernel.export(key)
     }
 
-    pub fn node_ids_for_action(&self, action: &Arc<dyn NodeAction>) -> Vec<u16> {
-        self.kernel.engine().node_ids_for_action(action)
+    pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
+        self.kernel.compiled().inspect(path)
     }
 
-    pub fn trigger_targets(&self, name: &str) -> Option<&[Vec<InputAddr>]> {
-        self.kernel.engine().trigger_targets(name)
+    pub fn lookup_definition(
+        &self,
+        key: DefinitionKey,
+    ) -> Result<PhysicalDeclaration, NetworkError> {
+        self.kernel.compiled().lookup_definition(key)
+    }
+
+    pub fn input_targets(&self, name: &str) -> Option<&[(usize, String)]> {
+        self.kernel.compiled().inputs().get(name).map(Vec::as_slice)
+    }
+
+    /// Inspect the exact compiled capture source without exposing session admission.
+    pub fn output_source(&self, output: &str) -> Option<(usize, &str)> {
+        self.kernel
+            .compiled()
+            .outputs()
+            .get(output)
+            .map(|(index, port)| (*index, port.as_str()))
     }
 }
 
@@ -161,7 +189,7 @@ impl KernelHost {
         &self,
         stages: Vec<StagedPlugin>,
         options: BuildOptions,
-        executor: Arc<dyn Executor>,
+        dispatcher: Arc<dyn ProcessDispatcher>,
         name: impl Into<String>,
         bind: impl FnOnce(&Binding<'_>) -> Result<(), CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
@@ -173,9 +201,14 @@ impl KernelHost {
             .plugins
             .candidate_snapshots(&stages)
             .map_err(LifecycleError::Plugins)?;
-        let mut kernel = Kernel::build_with_options(name, snapshots, executor, options)
+        let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        bind(&Binding { kernel: &kernel }).map_err(LifecycleError::Binding)?;
+        bind(&Binding { kernel: &kernel }).map_err(|cause| {
+            LifecycleError::Binding(phenix_plugin::lease_callback_error(
+                cause,
+                kernel.code_lease.clone(),
+            ))
+        })?;
         kernel.start().map_err(LifecycleError::Start)?;
         Ok(Candidate {
             host: self.identity.clone(),
@@ -186,7 +219,7 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement waits only for producer drains, never explicit waves or queries.
+    /// Retirement waits only for producer drains, never explicit session work or queries.
     /// Producer destructors run after the transition.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
@@ -236,14 +269,14 @@ impl Drop for KernelHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Contribution, Notice, Producer};
-    use phenix_graph::LocalExecutor;
+    use crate::{CandidateArtifacts, Contribution, InputEvent, Producer};
+    use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
     use phenix_plugin::{PluginCatalog, PluginInstance, Registrar};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Source;
     impl Producer for Source {
-        fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+        fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
             Ok(None)
         }
     }
@@ -257,14 +290,17 @@ mod tests {
                 id: "source".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let calls = calls.clone();
-                    context.activate(move || {
+                    let mut artifacts = CandidateArtifacts::default();
+                    artifacts.activate(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
                         Ok(Box::new(Source))
-                    })
-                }),
+                    })?;
+                    Ok(artifacts)
+                })),
             })
         }
     }
@@ -286,7 +322,7 @@ mod tests {
             .prepare(
                 vec![stage],
                 BuildOptions::default(),
-                Arc::new(LocalExecutor),
+                Arc::new(LocalProcessDispatcher),
                 "last",
                 |_| Ok(()),
             )
@@ -304,7 +340,7 @@ mod tests {
             let result = host.prepare(
                 stages,
                 BuildOptions::default(),
-                Arc::new(LocalExecutor),
+                Arc::new(LocalProcessDispatcher),
                 "exhausted",
                 |_| panic!("binding must not run after epoch exhaustion"),
             );

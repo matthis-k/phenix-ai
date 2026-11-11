@@ -1,32 +1,28 @@
-//! Binding validates the final actual unit, not a copied provider descriptor.
-use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape};
+//! Binding validates actual native declarations and exact revision ancestry.
+use phenix_graph::{
+    Interface, PortDef,
+    component::ComponentDef,
+    contract::Contract,
+    network::NetworkBuilder,
+    process::{Process, ProcessContext, Step},
+};
 use phenix_plugin::{Code, Contribution, Failure, PluginCatalog, PluginInstance, Registrar};
+use std::{num::NonZeroUsize, sync::Arc};
 
 struct ProviderAction {
     path: Option<String>,
     increment: i64,
 }
 impl Contribution for ProviderAction {
-    const KIND: &'static str = "graph.node";
+    const KIND: &'static str = "network.node";
     fn id(&self) -> &str {
         "model"
     }
-    fn graph_unit(&self) -> Option<&str> {
+    fn component_path(&self) -> Option<&str> {
         self.path.as_deref()
     }
 }
 struct Provider(Option<String>, i64);
-fn contract(input: DeclaredValue) -> GraphContract {
-    GraphContract::new(
-        "plugina/provider@1",
-        InterfaceShape::new()
-            .input_slot("run", "value", input)
-            .unwrap()
-            .output("value", DeclaredValue::local::<i64>())
-            .unwrap(),
-    )
-    .unwrap()
-}
 impl PluginInstance for Provider {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         into.add(ProviderAction {
@@ -34,6 +30,62 @@ impl PluginInstance for Provider {
             increment: self.1,
         })
     }
+}
+struct Identity;
+impl Process for Identity {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        Ok(Step::Complete)
+    }
+}
+fn contract(wire: bool) -> Contract {
+    let input = if wire {
+        PortDef::wire::<i64>("run").unwrap()
+    } else {
+        PortDef::local::<i64>("run")
+    };
+    Contract::new(
+        "plugina/provider@1",
+        Arc::new(Interface::new([input], [PortDef::local::<i64>("value")]).unwrap()),
+    )
+    .unwrap()
+}
+fn compiled(
+    snapshot: &phenix_plugin::PluginSnapshot,
+    claimed: bool,
+    module: bool,
+) -> phenix_graph::network::CompiledNetwork {
+    let required = contract(false);
+    let mut definition =
+        ComponentDef::primitive(required.required().clone(), Arc::new(|| Identity));
+    if claimed {
+        definition = definition.claim(&required).unwrap();
+    }
+    if module {
+        let mut child = NetworkBuilder::new();
+        let node = child.add("private", Arc::new(definition)).unwrap();
+        child
+            .expose_input(
+                "run",
+                node.input::<i64>("run").unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap();
+        child
+            .expose_output("value", node.output::<i64>("value").unwrap())
+            .unwrap();
+        if claimed {
+            child.claim(&required).unwrap();
+        }
+        definition = ComponentDef::composite(child.build().unwrap());
+    }
+    let mut network = NetworkBuilder::new();
+    network
+        .add(
+            "service",
+            Arc::new(definition.with_origin(snapshot.graph_origin().child())),
+        )
+        .unwrap();
+    network.build().unwrap().compile().unwrap()
 }
 
 #[test]
@@ -43,16 +95,10 @@ fn plugin_request_checks_final_selected_unit() {
         .register("provider", |path: Option<String>| Ok(Provider(path, 41)))
         .unwrap();
     let mut plugins = catalog.instance();
-    let snapshot = plugins.load(&key, Some("provider".into())).unwrap();
-    let required = contract(DeclaredValue::local::<i64>());
-    let mut graph = GraphBuilder::new("agent");
-    graph.with_origin(snapshot.graph_origin(), |graph| {
-        graph.node("provider", |x: i64| x + 1).unwrap();
-    });
-    // Matching structure alone never creates semantic membership.
-    let unclaimed = graph.clone().compile().unwrap();
+    let snapshot = plugins.load(&key, Some("service".into())).unwrap();
+    let required = contract(false);
     let error = snapshot
-        .bind::<ProviderAction>("model", &required, &unclaimed)
+        .bind::<ProviderAction>("model", &required, &compiled(&snapshot, false, false))
         .err()
         .unwrap();
     assert_eq!(error.code, Code::SchemaRejected);
@@ -62,29 +108,29 @@ fn plugin_request_checks_final_selected_unit() {
     assert_eq!(context.contribution.as_deref(), Some("model"));
     let source = std::error::Error::source(&error)
         .unwrap()
-        .downcast_ref::<phenix_plugin::Failure>()
+        .source()
+        .unwrap()
+        .downcast_ref::<Failure>()
         .unwrap();
     assert!(
         std::error::Error::source(source)
             .unwrap()
-            .is::<phenix_graph::InterfaceError>()
+            .is::<phenix_graph::network::NetworkError>()
     );
-    graph.implements("provider", &required).unwrap();
-    let compiled = graph.compile().unwrap();
+    let network = compiled(&snapshot, true, false);
     let action = snapshot
-        .bind::<ProviderAction>("model", &required, &compiled)
+        .bind::<ProviderAction>("model", &required, &network)
         .unwrap();
     assert_eq!(action.increment, 41);
-    // A same-ID request with a dishonest definition must also be rejected.
     assert!(
         snapshot
-            .bind::<ProviderAction>("model", &contract(DeclaredValue::wire::<i64>()), &compiled)
+            .bind::<ProviderAction>("model", &contract(true), &network)
             .is_err()
     );
     let missing = plugins.reload(&key, Some("missing".into())).unwrap();
     assert_eq!(
         missing
-            .bind::<ProviderAction>("model", &required, &compiled)
+            .bind::<ProviderAction>("model", &required, &network)
             .err()
             .unwrap()
             .code,
@@ -93,13 +139,13 @@ fn plugin_request_checks_final_selected_unit() {
     let no_locator = plugins.reload(&key, None).unwrap();
     assert!(
         no_locator
-            .bind::<ProviderAction>("model", &required, &compiled)
+            .bind::<ProviderAction>("model", &required, &network)
             .is_err()
     );
     plugins.unload(&key).unwrap();
     assert_eq!(
         snapshot
-            .bind::<ProviderAction>("model", &required, &compiled)
+            .bind::<ProviderAction>("model", &required, &network)
             .unwrap()
             .increment,
         41
@@ -114,26 +160,8 @@ fn module_offers_use_the_same_compiled_unit_validation() {
         .register("provider", |_: ()| Ok(Provider(Some("service".into()), 1)))
         .unwrap();
     let snapshot = catalog.instance().load(&key, ()).unwrap();
-    let required = contract(DeclaredValue::local::<i64>());
-    let mut module = GraphBuilder::new("service");
-    let node = module.node("implementation", |x: i64| x).unwrap();
-    module
-        .expose_input_field(
-            "run",
-            phenix_graph::SlotField::<(), i64>::new("value"),
-            node.inlet(),
-        )
-        .unwrap();
-    module.expose_output("value", node.output()).unwrap();
-    module.implements_public(&required).unwrap();
-    let definition = module.module();
-    let mut graph = GraphBuilder::new("host");
-    graph.with_origin(snapshot.graph_origin(), |graph| {
-        graph.instance("service", &definition).unwrap();
-    });
-    let compiled = graph.compile().unwrap();
     snapshot
-        .bind::<ProviderAction>("model", &required, &compiled)
+        .bind::<ProviderAction>("model", &contract(false), &compiled(&snapshot, true, true))
         .unwrap();
 }
 
@@ -148,55 +176,27 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
     for module in [false, true] {
         let mut plugins = catalog.instance();
         let old = plugins.load(&key, 1).unwrap();
-        let required = contract(DeclaredValue::local::<i64>());
-        let mut graph = GraphBuilder::new("host");
-        graph.with_origin(old.graph_origin(), |graph| {
-            let action = old.get::<ProviderAction>("model").unwrap();
-            if module {
-                let mut child = GraphBuilder::new("implementation");
-                let node = child
-                    .node("private", move |x: i64| x + action.increment)
-                    .unwrap();
-                child
-                    .expose_input_field(
-                        "run",
-                        phenix_graph::SlotField::<(), i64>::new("value"),
-                        node.inlet(),
-                    )
-                    .unwrap();
-                child.expose_output("value", node.output()).unwrap();
-                child.implements_public(&required).unwrap();
-                graph.instance("service", &child.module()).unwrap();
-            } else {
-                graph
-                    .node("service", move |x: i64| x + action.increment)
-                    .unwrap();
-                graph.implements("service", &required).unwrap();
-            }
-        });
-        let compiled = graph.compile().unwrap();
-        old.bind::<ProviderAction>("model", &required, &compiled)
+        let network = compiled(&old, true, module);
+        old.bind::<ProviderAction>("model", &contract(false), &network)
             .unwrap();
-        let staged = plugins.prepare_reload(&key, 2).unwrap();
-        let rejected_candidate = staged.candidate().unwrap();
-        drop(staged);
+        let stage = plugins.prepare_reload(&key, 2).unwrap();
+        let rejected = stage.candidate().unwrap();
+        drop(stage);
         let current = plugins.reload(&key, 3).unwrap();
-        // A rejected candidate and the committed replacement can have the same
-        // numeric revision. Only the opaque allocation proves the generation.
-        assert_eq!(rejected_candidate.revision(), current.revision());
+        assert_eq!(rejected.revision(), current.revision());
         let sibling = catalog.instance().load(&key, 1).unwrap();
         assert_eq!(sibling.revision(), old.revision());
-        for foreign in [&rejected_candidate, &current, &sibling] {
+        for foreign in [&rejected, &current, &sibling] {
             let error = foreign
-                .bind::<ProviderAction>("model", &required, &compiled)
+                .bind::<ProviderAction>("model", &contract(false), &network)
                 .err()
                 .unwrap();
             assert_eq!(error.code, Code::Denied);
-            assert!(error.message.contains("origin mismatch"), "{error}");
+            assert!(error.message.contains("origin mismatch"));
         }
         plugins.unload(&key).unwrap();
         assert_eq!(
-            old.bind::<ProviderAction>("model", &required, &compiled)
+            old.bind::<ProviderAction>("model", &contract(false), &network)
                 .unwrap()
                 .increment,
             1

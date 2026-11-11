@@ -1,5 +1,11 @@
-use phenix_graph::{ContractValue, EncodedValue, InletPort, Node, Schema, SlotField};
-use phenix_kernel::{ContractRequirement, Contribution, Key};
+use phenix_graph::{
+    ContractValue, Interface, PortDef, Schema,
+    component::ComponentDef,
+    compose::{Edit, NetworkPatch},
+    network::{ConnectionDef, PortPath},
+    process::{Process, ProcessContext, Step},
+};
+use phenix_kernel::{CandidateArtifacts, ContractRequirement, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +39,20 @@ wire_value!(Response, "host-portable/response");
 
 pub struct Plugin(pub Arc<Mutex<Vec<i64>>>);
 
+struct Sink(Arc<Mutex<Vec<i64>>>);
+impl Process for Sink {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        let Some(value) = context.take("value") else {
+            return Ok(Step::Finished);
+        };
+        self.0
+            .lock()
+            .unwrap()
+            .push(Response::decode(value.bytes())?.0);
+        Ok(Step::Complete)
+    }
+}
+
 impl PluginInstance for Plugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         into.add(ContractRequirement {
@@ -45,48 +65,48 @@ impl PluginInstance for Plugin {
             id: "main".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(move |context| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |context| {
                 let selected = context.import("transform")?;
-                let graph = &mut *context.graph;
-                let bound = selected.bind(graph)?.operation()?;
+                let bound = selected.bind(context.compiled)?;
                 // Only contract-visible names and C's own Rust types are used.
-                let run = bound
-                    .inlets::<Request, EncodedValue>()
-                    .port(InletPort::<Request, Request>::new("run"));
-                assert!(
-                    run.field(SlotField::<Request, Request>::new("extra"))
-                        .target()
-                        .is_err()
+                assert!(bound.wire_input::<Request>("extra").is_err());
+                bound.wire_input::<Request>("left")?;
+                bound.wire_input::<Request>("right")?;
+                bound.wire_output::<Response>("value")?;
+                let capacity = std::num::NonZeroUsize::new(1).unwrap();
+                let port = |process: &str, name: &str| PortPath {
+                    process: process.into(),
+                    port: name.into(),
+                };
+                let observed = observed.clone();
+                let sink = ComponentDef::primitive(
+                    Arc::new(Interface::new([PortDef::wire::<Response>("value")?], [])?),
+                    Arc::new(move || Sink(observed.clone())),
                 );
-                assert!(graph.discover("initial-module/inside/diagnostic").is_err());
-                let left = run
-                    .field(SlotField::<Request, Request>::new("left"))
-                    .target()?;
-                let right = run
-                    .field(SlotField::<Request, Request>::new("right"))
-                    .target()?;
-                let output = bound.output::<Response, EncodedValue>()?;
-                let sink = graph.node(
-                    "consumer-sink",
-                    Node::wire({
-                        let observed = observed.clone();
-                        move |response: Response| {
-                            observed.lock().unwrap().push(response.0);
-                            response
-                        }
+                let mut edits = vec![
+                    Edit::Add {
+                        path: "consumer-sink".into(),
+                        definition: Arc::new(sink),
+                    },
+                    Edit::Connect(ConnectionDef {
+                        from: port(bound.path(), "value"),
+                        to: port("consumer-sink", "value"),
+                        capacity,
                     }),
-                )?;
-                graph.connect(output, sink.inlet())?;
-                let mut inputs = Vec::new();
-                for (name, target) in [("left", left), ("right", right)] {
-                    let source =
-                        graph.node(format!("consumer-{name}"), Node::wire(|v: Request| v))?;
-                    graph.connect(source.output(), target)?;
-                    inputs.push(graph.expose_input(name, source.inlet())?);
+                ];
+                for name in ["left", "right"] {
+                    edits.push(Edit::ExposeInput {
+                        name: name.into(),
+                        targets: vec![port(bound.path(), name)],
+                        capacity,
+                    });
                 }
-                graph.trigger("run", inputs)?;
-                Ok(())
-            }),
+                Ok(CandidateArtifacts {
+                    patch: Some(NetworkPatch::new(edits)),
+                    ..Default::default()
+                })
+            })),
         })
     }
 }

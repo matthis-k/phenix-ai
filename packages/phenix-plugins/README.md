@@ -1,57 +1,58 @@
-# Plugin Graph Binding
+# Native Component Binding
 
-Plugin contributions remain typed, in-process values retained by exact-revision
-`PluginSnapshot` and `ContributionHandle` leases. Native Rust registration is not
-a dynamic-library ABI, sandbox or authorization grant.
+Plugin contributions are typed in-process values retained by exact-revision
+`PluginSnapshot` and `ContributionHandle` leases. Registration is neither a dynamic
+library ABI, a sandbox nor a write grant. Catalog, plugin key, staging, batch commit,
+revision, failure-context and lease APIs remain independent of network execution.
 
-Graph-facing contributions can implement the optional locator-only method:
+Component-facing contributions implement this optional locator:
 
 ```rust,ignore
 impl phenix_plugin::Contribution for MyOffer {
-    const KIND: &'static str = "app.graph";
+    const KIND: &'static str = "app.network";
     fn id(&self) -> &str { &self.id }
-    fn graph_unit(&self) -> Option<&str> { Some(&self.unit_path) }
+    fn component_path(&self) -> Option<&str> { Some(&self.path) }
 }
 ```
 
-Use `snapshot.bind::<MyOffer>(id, &requested_contract, &compiled_graph)` to obtain
-a leased contribution after validation. Binding resolves the contribution's
-actual unit through `CompiledGraph::find` and delegates to the graph-owned
-contract checker. It also requires the actual unit's opaque composition origin
-to match this exact plugin revision. Missing origins, locators/paths, and absent
-or incompatible claims fail closed. The registrar stores no copy of a purported
-implementation shape.
+`snapshot.bind::<MyOffer>(id, &contract, &compiled_network)` accepts canonical
+`phenix_graph::contract::Contract` and `network::CompiledNetwork`. It resolves the
+actual component with `compiled.inspect(path)`, verifies its opaque origin belongs
+to the exact leased revision, and invokes
+`compiled.check_implementation(path, &contract)`. Missing locators, paths, origins,
+claims and incompatible contracts fail closed. No copied implementation shape is
+stored or trusted. Binding errors retain plugin/contribution/phase context and
+the typed native error source.
 
-Trusted hosts must compose provider declarations inside
-`graph.with_origin(snapshot.graph_origin(), |graph| { /* compose */ })`.
-`ContributionHandle::graph_origin()` exposes the same leased revision token.
-Tokens are allocation identities, not plugin names or numeric revision counters:
-another plugin set or an aborted candidate cannot alias them. Merely inspecting
-or claiming an existing unit inside that scope does not change its origin.
-Successful replacements record the replacing scope; unscoped replacements lose
-the old origin. Pending layout changes preserve the original handler's origin
-while Graph independently revalidates its final interface.
+Trusted hosts supply `GraphOrigin` through native composer `Registration` envelopes
+or `ComponentDef::with_origin`. `PluginSnapshot::graph_origin()` and
+`ContributionHandle::graph_origin()` expose the exact revision token. Kernel assigns
+a distinct child to each producing contribution. Allocation identity, not a plugin
+name or numeric revision, prevents sibling sets and abandoned candidates from
+aliasing provenance. This token is not itself a permission or executable-code lease.
 
-Module origins identify the actual instantiation/replacement boundary, not all
-code inside an imported definition. Nested declarations retain their own origins
-through packaging. Composite roots and unscoped declarations have no attributable
-origin and cannot be bound by this API; offer a named node or module instance.
-The token is trusted-host provenance, not proof of native handler behavior or
-authorization. It does not itself lease executable plugin code.
+Primitive and composite boundaries use the same compiled validation. Matching shape
+alone does not create semantic membership: definitions explicitly claim canonical
+contracts. Native local ports use Rust type identity; wire ports use complete schema
+identity and may be implemented by independently compiled Rust types. Descriptor
+equality does not establish codec honesty.
 
-The former copied-bounds metadata integration is removed. Construct expectations
-with `GraphContract::new(id, InterfaceShape)`,
-attach explicit graph claims during composition, compile, then bind against that
-immutable final graph. Matching shape alone is not semantic membership.
+The returned handle pins plugin code/state, not a network or a transferable
+validation certificate. Revalidate each final network after composition. Raw native
+hosts must attach a snapshot/code lease with `CompiledNetwork::with_lease` before
+exposing executable declarations. Kernel does this automatically, including
+candidate-context compiled views and any application-provided lease. Detached
+compiled clones, factories, processes, sessions, jobs and queued values retain it.
 
-The returned handle pins plugin code/state, not the graph or a transferable
-validation certificate. Do not treat binding against one graph as validation of
-another graph, infer authorization from it, or assume it proves a native closure
-uses the offered unit. Keep handles/snapshots alive alongside executable graphs.
-The kernel package provides generic definition/offer/requirement contributions
-for hosts that need cross-plugin final-target validation without importing the
-provider's implementation type.
+Constructor failures retain their originating factory. Contribution failures retain
+partial registered contributions, the implementation, and its factory in that drop
+order; binding failures retain the exact loaded revision. The escaping error owns
+the lease, so inventory/catalog teardown cannot invalidate its methods or destructor.
+`CallbackError` remains a boxed error. `lease_callback_error(error, lease)` lets host
+adapters apply the same rule: its private wrapper drops the original cause before
+the lease, delegates formatting, and preserves the concrete error in the source
+chain. Downcast by walking that chain rather than relying on a fixed source depth.
 
-Staging and commit remain explicit host operations. `bind` does not commit a
-candidate, switch generations or coordinate activation. Existing handles stay
-pinned after reload and logical unload.
+Staging and commit remain explicit host operations, and existing leased handles
+survive reload and logical unload. Retained errors can intentionally extend code
+lifetimes beyond candidate rejection or logical unload.

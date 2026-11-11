@@ -1,12 +1,12 @@
 //! Optional storage-to-kernel integration. Storage and kernel do not depend on this crate.
 use phenix_graph::Value;
-use phenix_kernel::{Notice, Producer, WakeHandle};
+use phenix_kernel::{InputEvent, Producer, WakeHandle};
 use phenix_storage::Subscription;
 use std::{collections::VecDeque, sync::Arc, task::Wake};
 
 pub mod derived;
 
-/// Routes each storage notice, including overflow, to one kernel wave as a local value.
+/// Routes each storage notice, including overflow, to one native ingress value.
 /// Owns its subscription; dropping the binding cancels observation. No storage authority
 /// is added: create the subscription through an appropriately authorized session.
 pub struct StorageBinding {
@@ -50,13 +50,13 @@ impl Wake for KernelWake {
 }
 
 impl Producer for StorageBinding {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         if self.pending.is_empty() {
             self.pending.extend(self.subscription.drain()?);
         }
-        Ok(self.pending.pop_front().map(|notice| Notice {
-            trigger: self.trigger.clone(),
-            values: vec![(self.map)(notice)],
+        Ok(self.pending.pop_front().map(|notice| InputEvent {
+            input: self.trigger.clone(),
+            value: (self.map)(notice),
         }))
     }
 

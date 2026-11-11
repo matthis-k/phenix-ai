@@ -1,5 +1,13 @@
-use phenix_graph::LocalExecutor;
-use phenix_kernel::{Contribution, Kernel, Producer, WakeHandle};
+#[allow(dead_code)]
+#[path = "../examples/derived.rs"]
+mod example;
+use phenix_graph::{
+    compose::NetworkPatch, network::NetworkBuilder, process::LocalProcessDispatcher,
+};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Kernel, Key, Producer,
+    WakeHandle,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{Address, Grant, Notice, Operation, Registry, Schema, Scope, Session};
 use phenix_storage_graph::StorageBinding;
@@ -58,27 +66,55 @@ impl PluginInstance for Observer {
             id: "observer".into(),
             requires: vec![],
             routes: vec![route.clone()],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut graph = NetworkBuilder::new();
                 let observed = observed.clone();
-                let sink = graph.node(&route, move |notice: Notice| {
+                let sink = example::sink(&mut graph, &route, move |notice: Notice| {
                     observed.lock().unwrap().push(notice);
                 })?;
-                let input = graph.expose_input(&route, sink.inlet())?;
-                graph.trigger(&route, [input])?;
+                graph.expose_input(
+                    &route,
+                    sink.input::<Notice>("run")?,
+                    std::num::NonZeroUsize::new(16).unwrap(),
+                )?;
                 let session = session.clone();
                 let target = target.clone();
-                context.activate(move || {
+                let mut artifacts = CandidateArtifacts {
+                    patch: Some(example::patch(graph.build()?)),
+                    ..Default::default()
+                };
+                artifacts.activate(move || {
                     let subscription = session.subscribe(Scope::Mount("main".into()), 2)?;
                     Ok(Box::new(StorageBinding::new(subscription, target.clone())))
-                })
-            }),
+                })?;
+                Ok(artifacts)
+            })),
         })
     }
 }
 
+fn options(routes: &[(&str, &str)]) -> BuildOptions {
+    use phenix_graph::compose::Footprint;
+    let mut options = BuildOptions::default();
+    for (owner, route) in routes {
+        options.composition.insert(
+            Key::new(*owner, "observer"),
+            CompositionPolicy {
+                grants: [
+                    Footprint::Component((*route).into()),
+                    Footprint::InputExport((*route).into()),
+                ]
+                .into(),
+                priority: 0,
+            },
+        );
+    }
+    options
+}
+
 #[test]
-fn independent_plugins_preserve_tails_and_overflow_per_wave() {
+fn independent_plugins_preserve_tails_and_overflow_per_ingress() {
     let (_registry, session, address) = storage();
     let mut catalog = PluginCatalog::new();
     let a = catalog
@@ -104,12 +140,18 @@ fn independent_plugins_preserve_tails_and_overflow_per_wave() {
             )
             .unwrap();
     }
-    let mut kernel =
-        Kernel::build("bindings", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build_with_options(
+        "bindings",
+        plugins.snapshots(),
+        Arc::new(LocalProcessDispatcher),
+        options(&[("a", "a"), ("b", "b")]),
+    )
+    .unwrap();
     kernel.start().unwrap();
     write(&session, &address);
     write(&session, &address);
-    assert!(kernel.drain(1).remove(0).result.unwrap().success());
+    kernel.drain(1).remove(0).result.unwrap();
+    kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 1);
     assert!(logs[1].lock().unwrap().is_empty());
     // A has a buffered tail; B's undrained subscription overflows independently.
@@ -117,16 +159,19 @@ fn independent_plugins_preserve_tails_and_overflow_per_wave() {
     write(&session, &address);
     let events = kernel.drain(3);
     assert_eq!(events.len(), 2);
-    assert!(events.into_iter().all(|e| e.result.unwrap().success()));
+    assert!(events.into_iter().all(|e| e.result.is_ok()));
+    kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 2);
     assert!(matches!(
         logs[1].lock().unwrap().as_slice(),
         [Notice::Overflow { through: 5 }]
     ));
     assert_eq!(kernel.drain(4).len(), 2);
+    kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 4);
     write(&session, &address);
     assert_eq!(kernel.drain(2).len(), 2);
+    kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 5);
     assert_eq!(logs[1].lock().unwrap().len(), 2);
 }
@@ -149,14 +194,20 @@ fn blocking_driver_wakes_for_storage_publication() {
             },
         )
         .unwrap();
-    let mut kernel = Kernel::build("wake", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build_with_options(
+        "wake",
+        plugins.snapshots(),
+        Arc::new(LocalProcessDispatcher),
+        options(&[("observer", "changed")]),
+    )
+    .unwrap();
     kernel.start().unwrap();
     let wake = WakeHandle::default();
     let stop = wake.clone();
     let (tx, rx) = mpsc::channel();
     let driver = std::thread::spawn(move || {
         kernel.run_until(&wake, |event| {
-            tx.send(event.result.unwrap().success()).unwrap();
+            tx.send(event.result.is_ok()).unwrap();
         })
     });
     write(&session, &address);

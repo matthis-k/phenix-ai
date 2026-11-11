@@ -1,7 +1,7 @@
-use phenix_graph::LocalExecutor;
+use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
 use phenix_kernel::{
-    BuildOptions, CallbackError, Contribution, DriverError, Kernel, Key, Notice, Producer,
-    ProducerError, ResolutionError, StartError, WakeHandle,
+    BuildOptions, CallbackError, CandidateArtifacts, Contribution, DriverError, InputEvent, Kernel,
+    Key, Producer, ProducerError, ResolutionError, StartError, WakeHandle,
     host::{KernelHost, LifecycleError},
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
@@ -25,7 +25,7 @@ enum Phase {
 struct Plugin(Phase, Arc<()>);
 struct Source(Arc<()>);
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
         Err(Box::new(Cause(self.0.clone())))
     }
 }
@@ -37,25 +37,35 @@ impl PluginInstance for Plugin {
             id: "callback".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(move |context| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
                 if matches!(phase, Phase::Compose) {
                     return Err(Box::new(Cause(identity.clone())));
                 }
                 let identity = identity.clone();
-                context.activate(move || {
+                let mut artifacts = CandidateArtifacts::default();
+                artifacts.activate(move || {
                     if matches!(phase, Phase::Activate) {
                         return Err(Box::new(Cause(identity.clone())));
                     }
                     Ok(Box::new(Source(identity.clone())))
-                })
-            }),
+                })?;
+                Ok(artifacts)
+            })),
         })
     }
 }
 
 fn assert_cause(error: &dyn Error, identity: &Arc<()>) {
-    let cause = error.source().unwrap().downcast_ref::<Cause>().unwrap();
-    assert!(Arc::ptr_eq(&cause.0, identity));
+    let mut source = error.source();
+    while let Some(error) = source {
+        if let Some(cause) = error.downcast_ref::<Cause>() {
+            assert!(Arc::ptr_eq(&cause.0, identity));
+            return;
+        }
+        source = error.source();
+    }
+    panic!("original typed callback cause missing from source chain");
 }
 
 #[test]
@@ -68,7 +78,7 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
         .unwrap();
     let mut plugins = catalog.instance();
     let snapshot = plugins.load(&key, Phase::Compose).unwrap();
-    let error = Kernel::build("compose", [snapshot], Arc::new(LocalExecutor))
+    let error = Kernel::build("compose", [snapshot], Arc::new(LocalProcessDispatcher))
         .err()
         .unwrap();
     assert!(
@@ -78,7 +88,8 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
     assert_cause(&error, &identity);
 
     let snapshot = plugins.reload(&key, Phase::Activate).unwrap();
-    let mut kernel = Kernel::build("activate", [snapshot], Arc::new(LocalExecutor)).unwrap();
+    let mut kernel =
+        Kernel::build("activate", [snapshot], Arc::new(LocalProcessDispatcher)).unwrap();
     let error = kernel.start().unwrap_err();
     assert!(matches!(&error, StartError::Activation { contribution, .. }
         if *contribution == Key::new("plugin", "callback")));
@@ -86,7 +97,7 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
     assert!(kernel.drain(1).is_empty());
 
     let snapshot = plugins.reload(&key, Phase::Poll).unwrap();
-    let mut kernel = Kernel::build("poll", [snapshot], Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build("poll", [snapshot], Arc::new(LocalProcessDispatcher)).unwrap();
     assert_eq!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
@@ -118,7 +129,7 @@ fn host_binding_preserves_source_without_publishing_or_starting() {
         .prepare(
             vec![],
             BuildOptions::default(),
-            Arc::new(LocalExecutor),
+            Arc::new(LocalProcessDispatcher),
             "binding",
             |_| Err(Box::new(Cause(identity.clone()))),
         )
