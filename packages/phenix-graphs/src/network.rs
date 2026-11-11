@@ -292,6 +292,9 @@ pub struct NetworkDef {
     pub(crate) inputs: BTreeMap<String, InputProjection>,
     pub(crate) outputs: BTreeMap<String, PortPath>,
     pub(crate) sources: Vec<String>,
+    // Exact child declarations the composite author intentionally allows
+    // host-granted plugins to replace; never inherited by descendants.
+    pub(crate) replacement_points: BTreeSet<String>,
     pub(crate) claims: Vec<Contract>,
     pub(crate) origin: Option<GraphOrigin>,
     // Frozen obligations survive replacement, including removed private paths.
@@ -325,6 +328,10 @@ impl NetworkDef {
     pub fn source_starts(&self) -> &[String] {
         &self.sources
     }
+    /// Explicit, immediate child declarations available as replacement seams.
+    pub fn replacement_points(&self) -> &BTreeSet<String> {
+        &self.replacement_points
+    }
     pub fn compile(&self) -> Result<CompiledNetwork, NetworkError> {
         self.compile_with_limits(CompileLimits::default())
     }
@@ -346,6 +353,7 @@ pub struct NetworkBuilder {
     inputs: BTreeMap<String, (PortDef, InputProjection)>,
     outputs: BTreeMap<String, (PortDef, PortPath)>,
     sources: BTreeSet<String>,
+    replacement_points: BTreeSet<String>,
     claims: Vec<Contract>,
     origin: Option<GraphOrigin>,
     requirements: Vec<(String, Contract)>,
@@ -367,6 +375,7 @@ impl NetworkBuilder {
             inputs: BTreeMap::new(),
             outputs: BTreeMap::new(),
             sources: BTreeSet::new(),
+            replacement_points: BTreeSet::new(),
             claims: Vec::new(),
             origin: None,
             requirements: Vec::new(),
@@ -406,6 +415,7 @@ impl NetworkBuilder {
                 })
                 .collect(),
             sources: network.sources.iter().cloned().collect(),
+            replacement_points: network.replacement_points.clone(),
             claims: network.claims.clone(),
             origin: network.origin.clone(),
             requirements: network.requirements.clone(),
@@ -443,6 +453,7 @@ impl NetworkBuilder {
             inputs: self.inputs.clone(),
             outputs: self.outputs.clone(),
             sources: self.sources.clone(),
+            replacement_points: self.replacement_points.clone(),
             claims: self.claims.clone(),
             origin: self.origin.clone(),
             requirements: self.requirements.clone(),
@@ -667,6 +678,14 @@ impl NetworkBuilder {
         self.outputs.insert(name, (port, from.0.path.clone()));
         Ok(())
     }
+    /// Mark an immediate child component as a deliberate, narrowly writable
+    /// replacement seam for later host-authorized composition. This grants
+    /// nothing by itself; exact path authorization is still required.
+    pub fn allow_replace(&mut self, child: &ComponentRef) -> Result<(), NetworkError> {
+        self.check_component(child)?;
+        self.replacement_points.insert(child.process.clone());
+        Ok(())
+    }
     /// Primitive sources must have no inputs. Starting a composite starts only
     /// its explicitly declared source set, never all of its disconnected roots.
     pub fn start(&mut self, component: &ComponentRef) -> Result<(), NetworkError> {
@@ -701,6 +720,7 @@ impl NetworkBuilder {
                 .map(|(name, (_, path))| (name, path))
                 .collect(),
             sources: self.sources.into_iter().collect(),
+            replacement_points: self.replacement_points,
             claims: self.claims,
             origin: self.origin,
             requirements: self.requirements,
@@ -944,6 +964,11 @@ fn qualify(prefix: &str, name: &str) -> String {
 }
 fn validate_network(network: &NetworkDef) -> Result<(), NetworkError> {
     validate_claims(&network.interface, &network.claims, "")?;
+    for name in &network.replacement_points {
+        if !network.instances.contains_key(name) {
+            return Err(NetworkError::UnknownProcess(name.clone()));
+        }
+    }
     for (name, component) in &network.instances {
         validate_process_name(name)?;
         validate_claims(&component.interface, &component.claims, name)?;
