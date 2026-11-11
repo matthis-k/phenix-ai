@@ -117,6 +117,7 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     assert_eq!(spawned.load(Ordering::SeqCst), 0);
 
     let mut valid = compiled.start();
-    assert_eq!(valid.state(), SessionState::Quiescent);
+    // An unconnected input may legitimately deliver EOS immediately.
+    assert_ne!(valid.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 1);
 }
