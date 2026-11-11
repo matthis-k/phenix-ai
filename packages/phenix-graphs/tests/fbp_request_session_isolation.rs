@@ -129,5 +129,5 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     active[a].release_request(ra).unwrap();
     active[b].release_request(rb).unwrap();
     active.remove(b);
-    assert!(start_bounded(&compiled, &mut active, 2).is_ok());
+    assert!(start_bounded(&compiled, &mut active, 2).is_some());
 }
