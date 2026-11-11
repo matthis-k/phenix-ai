@@ -974,7 +974,7 @@ pub(crate) fn normalize_requirements(requirements: &mut Vec<(String, Contract)>)
         if let Some(previous) = seen.get(&key) {
             // Retain conflicting definitions so the existing compilation
             // boundary can reject them with its complete contract catalog.
-            previous != &*contract
+            previous != contract
         } else {
             seen.insert(key, contract.clone());
             true
