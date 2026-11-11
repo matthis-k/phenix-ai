@@ -90,7 +90,10 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     let compiled = builder.build().unwrap().compile().unwrap();
 
     let invalid_readiness = SessionOptions {
-        readiness: BTreeMap::from([("worker".to_owned(), Readiness::AtLeast(NonZeroUsize::new(2).unwrap()))]),
+        readiness: BTreeMap::from([(
+            "worker".to_owned(),
+            Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        )]),
         ..Default::default()
     };
     let mut failed = compiled.start_with_options(invalid_readiness);
