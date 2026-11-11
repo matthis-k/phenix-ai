@@ -207,14 +207,11 @@ impl NetworkSession {
         if let Err(reason) = validation {
             return Err(RequestInjectionError { reason, value });
         }
-        let result = self.inject_scoped(name, value, Some(id));
-        if result.is_ok() {
-            self.refresh();
-        }
-        result.map_err(|e| RequestInjectionError {
-            reason: RequestError::Transport(e.reason),
-            value: e.value,
-        })
+        self.inject_scoped(name, value, Some(id))
+            .map_err(|e| RequestInjectionError {
+                reason: RequestError::Transport(e.reason),
+                value: e.value,
+            })
     }
     pub fn inject_request_local<T: Send + Sync + 'static>(
         &mut self,
