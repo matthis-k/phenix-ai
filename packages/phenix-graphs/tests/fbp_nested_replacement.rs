@@ -88,7 +88,9 @@ fn replacement(
 }
 
 fn run(session: &mut phenix_graph::runtime::NetworkSession) -> String {
-    session.inject("in", Value::local(String::from("Q"))).unwrap();
+    session
+        .inject("in", Value::local(String::from("Q")))
+        .unwrap();
     let report = session.run_until_idle(100);
     assert!(!report.budget_exhausted);
     let out = session.take_output("out").unwrap().unwrap();
@@ -111,7 +113,11 @@ fn host_granted_deep_replacement_executes_and_revokes_without_touching_old_sessi
         run(&mut composer.current().compiled().start()),
         "sibling[alternative[Q]]"
     );
-    let changed = composer.current().compiled().inspect("m/inner/leaf").unwrap();
+    let changed = composer
+        .current()
+        .compiled()
+        .inspect("m/inner/leaf")
+        .unwrap();
     assert_eq!(changed.declared_origin, Some(origin));
     for unchanged in ["m", "m/inner", "m/inner/sibling"] {
         assert_eq!(
@@ -172,7 +178,9 @@ fn nested_replacement_checks_exact_grant_shape_and_path_atomically() {
             sink,
             [Footprint::Component("m/inner/leaf".to_owned())]
         )]),
-        Err(ComposeError::Network(phenix_graph::network::NetworkError::InterfaceMismatch(_)))
+        Err(ComposeError::Network(
+            phenix_graph::network::NetworkError::InterfaceMismatch(_)
+        ))
     ));
     for path in ["m//leaf", "m/../leaf", "m/inner/leaf/"] {
         let result = composer.register([replacement(
@@ -265,7 +273,12 @@ fn ancestor_and_nested_replacements_conflict_unless_explicitly_dependent() {
     );
     winner.register([child.clone(), high_parent]).unwrap();
     assert_eq!(
-        winner.current().active().iter().cloned().collect::<Vec<_>>(),
+        winner
+            .current()
+            .active()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
         vec!["parent"]
     );
     assert_eq!(
@@ -276,8 +289,7 @@ fn ancestor_and_nested_replacements_conflict_unless_explicitly_dependent() {
     // Dependency makes the order explicit; the narrowed child seam survives
     // replacement of the parent definition and is applied afterward.
     let mut dependent = composer(true, true);
-    let dependent_child =
-        registration_named("child", &["parent"], "m/inner/leaf", stage("new"), 0);
+    let dependent_child = registration_named("child", &["parent"], "m/inner/leaf", stage("new"), 0);
     dependent.register([dependent_child, parent]).unwrap();
     assert_eq!(
         run(&mut dependent.current().compiled().start()),
