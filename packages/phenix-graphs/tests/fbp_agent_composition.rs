@@ -60,7 +60,9 @@ fn registration(
 
 fn execute(composer: &Composer) -> String {
     let mut session = composer.current().compiled().start();
-    session.inject("prompt", Value::local(String::from("Q"))).unwrap();
+    session
+        .inject("prompt", Value::local(String::from("Q")))
+        .unwrap();
     let result = session.run_until_idle(128);
     assert!(!result.budget_exhausted);
     let packet = session.take_output("reply").unwrap().unwrap();
