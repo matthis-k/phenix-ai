@@ -89,7 +89,7 @@ fn replayed_add_then_replace_retains_one_identical_obligation() {
 }
 
 #[test]
-fn same_id_with_incompatible_shape_is_rejected_before_deduplication() {
+fn same_id_with_incompatible_shape_survives_deduplication_and_fails_at_compile() {
     let valid = claim();
     let wrong = Contract::new(
         valid.id(),
@@ -100,5 +100,8 @@ fn same_id_with_incompatible_shape_is_rejected_before_deduplication() {
     builder.require_contract("worker", &wrong).unwrap();
     builder.add("worker", leaf(&valid)).unwrap();
 
-    assert!(matches!(builder.build(), Err(NetworkError::Interface(_))));
+    assert!(matches!(
+        builder.build().unwrap().compile(),
+        Err(NetworkError::Interface(_))
+    ));
 }
