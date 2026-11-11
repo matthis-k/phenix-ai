@@ -728,6 +728,7 @@ impl NetworkBuilder {
         for (name, component) in &network.instances {
             collect_component_obligations(component, name, &mut network.requirements);
         }
+        normalize_requirements(&mut network.requirements)?;
         validate_network(&network)?;
         Ok(network)
     }
@@ -962,6 +963,19 @@ fn qualify(prefix: &str, name: &str) -> String {
         format!("{prefix}/{name}")
     }
 }
+/// Preserve one obligation per (path, semantic contract ID), without masking
+/// incompatible definitions that accidentally reuse the same semantic identity.
+/// Both builder round-trips and composer replay may checkpoint an obligation
+/// more than once; duplicates must not grow with the number of revisions.
+pub(crate) fn normalize_requirements(
+    requirements: &mut Vec<(String, Contract)>,
+) -> Result<(), NetworkError> {
+    catalog(requirements.iter().map(|(_, contract)| contract))?;
+    let mut seen = BTreeSet::new();
+    requirements.retain(|(path, contract)| seen.insert((path.clone(), contract.id().to_owned())));
+    Ok(())
+}
+
 fn validate_network(network: &NetworkDef) -> Result<(), NetworkError> {
     validate_claims(&network.interface, &network.claims, "")?;
     for name in &network.replacement_points {
