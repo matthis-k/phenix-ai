@@ -72,3 +72,28 @@ enqueue does not, and the kernel lock regression checks explicit scheduling.
 This is a narrowly justified public operation; do not introduce more entry paths.
 
 The first implementation is superseded by this revision, not accepted retroactively.
+
+
+## Phase 1 revision 2 — kernel capacity regression
+
+The revised transport-only `enqueue` eliminated callback-under-lock but initially
+changed `native_sessions::full_retains_exactly_one_event_and_does_not_repoll_or_execute`:
+the kernel admitted only one event instead of two (one actively reserved input
+plus one queued input). This is an established producer-admission contract, not
+an optional throughput gain. **Simply replacing `inject` with `enqueue` is
+insufficient.**
+
+Revised implementation: keep the same `enqueue` operation and shared transport
+authority, but move `ProducerState` locking inside each polling iteration.
+After a successful enqueue, release that lock and call the existing
+`NetworkSession::state` refresh under the session mutex **before polling the next
+event**. On Full, retain the single event and do not repoll. Idle polls still
+consume poll budget; terminal failures still detach and drop producers after
+their lock is released. `KernelHost::publish` may retire between iterations;
+the next iteration checks `retired` before admitting work.
+
+This change must preserve both the existing two-admission boundary and the new
+no-readiness-under-producer-lock test. There is no second scheduler, no bespoke
+capacity reservation, and no extra producer-in-flight authority. Producer::poll
+itself remains a callback under its own inventory lock; that separate limitation
+is explicitly not addressed here.
