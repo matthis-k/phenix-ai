@@ -50,7 +50,10 @@ impl Process for Memory {
         let Some(input) = cx.take("input") else {
             return Ok(Step::Finished);
         };
-        let latest = (*input.borrow::<String>()?).clone();
+        let latest = input
+            .borrow::<String>()
+            .ok_or("memory expects a local String")?
+            .clone();
         self.history.push(latest.clone());
         self.emitted = true;
         // Each process instance owns its own history. The most recent message
@@ -97,7 +100,10 @@ impl Process for Model {
         let Some(input) = cx.take("input") else {
             return Ok(Step::Finished);
         };
-        let context = (*input.borrow::<String>()?).clone();
+        let context = input
+            .borrow::<String>()
+            .ok_or("model expects a local String")?
+            .clone();
         self.activations += 1;
         self.effects.fetch_add(1, Ordering::SeqCst);
         self.emitted = true;
