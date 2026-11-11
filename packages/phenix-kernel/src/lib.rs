@@ -1018,7 +1018,7 @@ impl Kernel {
                                 continue;
                             }
                         };
-                        let admitted = session.inject(&event.input, event.value);
+                        let admitted = session.enqueue(&event.input, event.value);
                         if admitted.is_ok() {
                             session.notifier().notify();
                         }
@@ -1331,7 +1331,9 @@ mod tests {
             kernel
         });
 
-        assert!(kernel.drain(1).is_empty());
+        let events = kernel.drain(1);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].result.is_ok());
         assert_eq!(selected.load(Ordering::SeqCst), 0);
         assert!(kernel.run_steps(8).unwrap().steps > 0);
         assert!(selected.load(Ordering::SeqCst) > 0);
