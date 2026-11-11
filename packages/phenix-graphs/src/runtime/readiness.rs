@@ -52,27 +52,38 @@ pub(super) struct Reservation {
     request: Option<RequestId>,
 }
 
+/// Validate only declarations. Never inspect application code or spawn a factory.
+pub(super) fn validate_policy_ports<'a>(
+    ports: impl Iterator<Item = &'a str>,
+    policy: &Readiness,
+) -> Result<(), String> {
+    let names: BTreeSet<&str> = ports.collect();
+    match policy {
+        Readiness::AtLeast(n) if n.get() > names.len() => {
+            return Err("readiness threshold exceeds input port count".into());
+        }
+        Readiness::Optional { required, optional } => {
+            let mut seen = BTreeSet::new();
+            for name in required.iter().chain(optional) {
+                if !names.contains(name.as_str()) || !seen.insert(name) {
+                    return Err(format!("invalid optional readiness port {name}"));
+                }
+            }
+            if seen.is_empty() {
+                return Err("empty optional readiness policy".into());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 impl NetworkSession {
     pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), String> {
-        let inputs = &self.processes[index].inputs;
-        match policy {
-            Readiness::AtLeast(n) if n.get() > inputs.len() => {
-                return Err("readiness threshold exceeds input port count".into());
-            }
-            Readiness::Optional { required, optional } => {
-                let mut seen = std::collections::BTreeSet::new();
-                for name in required.iter().chain(optional) {
-                    if !inputs.iter().any(|p| &p.name == name) || !seen.insert(name) {
-                        return Err(format!("invalid optional readiness port {name}"));
-                    }
-                }
-                if seen.is_empty() {
-                    return Err("empty optional readiness policy".into());
-                }
-            }
-            _ => {}
-        }
-        Ok(())
+        validate_policy_ports(
+            self.processes[index].inputs.iter().map(|p| p.name.as_str()),
+            policy,
+        )
     }
     fn head_for(&self, index: usize, port: usize, request: Option<RequestId>) -> Option<usize> {
         let p = &self.processes[index].inputs[port];
