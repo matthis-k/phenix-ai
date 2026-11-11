@@ -46,3 +46,36 @@ let bound = context.bind_import("service")?; // Exact declared import only.
 No new authority type, graph executor, transport, scheduler, or claim. Bind uses the existing `CompiledNetwork::bind` and the exact `ResolvedImport` stored in this context, not a caller-supplied import identity. Existing `ResolvedImport::bind(network)` can remain for code which independently owns an authorized compiled network; it does not grant access to the private context field.
 
 Acceptance: undeclared imports reject, declared imports have the same shape/typing/projection behavior, no mutation access is exposed, a compile-fail doctest prevents `context.compiled` access, native tests and exact-head CI pass. Read access to a separately obtained CompiledNetwork and in-process Rust isolation are outside this change and are not misrepresented as sandbox guarantees.
+
+
+## Phase 1 revision — full-graph export is an established capability
+
+The implementation audit found two more uses: the independently compiled
+`host_portable_consumer` fixture binds a declared import (direct migration), and
+`code_leases::detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_leases`
+deliberately exports a detached `CompiledNetwork` from preparation. Blindly
+removing the latter weakens the established code-lease test and violates the
+protocol's default acceptance rule. **Withdraw the unconditional removal**.
+
+Revised minimum: `BuildOptions` carries one *host-owned*, default-empty
+`inspect_network: BTreeSet<Key>` grant list. Ordinary `CandidateContext`
+still hides `compiled` and binds only declared imports. A distinct
+`inspect_network()` method returns the complete immutable compiled network
+*only* when the exact contribution `Key` was authorized by the host. Permission
+is checked when constructing the context; plugins cannot self-grant.
+The opt-in privileged path retains the former detached compiled export and
+its exact lease test, with the test host explicitly granting this privilege.
+The portable fixture migrates to `bind_import` like the other consumers.
+
+Alternative comparison: unrestricted baseline violates default least privilege;
+removal-only breaks established export/lifetime behavior; a new scoped graph
+projection type requires substantial implementation and cannot preserve exporting
+a full compiled snapshot; exact opt-in is a single additive host policy field and
+no new trait, graph backend, or executor. This consciously preserves full
+inspection for trusted callers. It is **not** in-process sandboxing.
+
+Phase 3 gates: ungranted preparation cannot inspect the complete topology;
+authorized preparation can still clone and export the compiled network; no
+cross-contribution permission bleed; declared imports remain checked; existing
+code lease test remains unchanged apart from explicit grant and API invocation;
+portable fixture compiles and executes.
