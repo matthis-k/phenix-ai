@@ -1179,6 +1179,81 @@ mod tests {
     use super::*;
 
     #[test]
+    fn producer_poll_may_inspect_inventory_without_a_mutex_deadlock() {
+        use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
+
+        struct Probe(Weak<Kernel>, Arc<AtomicUsize>);
+        impl Producer for Probe {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                let kernel = self.0.upgrade().unwrap();
+                let state = kernel
+                    .producers
+                    .try_lock()
+                    .expect("producer inventory was locked during poll callback");
+                assert_eq!(state.producers.len(), 1);
+                // The in-flight producer retains an inventory slot but cannot
+                // be borrowed by another caller during its exclusive poll.
+                assert!(state.producers[0].1.is_none());
+                self.1.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "reentrant-producer",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        let calls = Arc::new(AtomicUsize::new(0));
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "probe"),
+            Some(Box::new(Probe(Arc::downgrade(&kernel), calls.clone()))),
+            None,
+        ));
+        assert!(kernel.drain(3).is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(kernel.producers.lock().unwrap().producers.len(), 1);
+    }
+
+    #[test]
+    fn panic_in_one_producer_retires_only_that_source() {
+        struct Panics;
+        impl Producer for Panics {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                panic!("probe producer panic");
+            }
+        }
+        struct Idle;
+        impl Producer for Idle {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+        }
+        let mut kernel = Kernel::build(
+            "panic-retirement",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers = vec![
+            (Key::new("test", "broken"), Some(Box::new(Panics)), None),
+            (Key::new("test", "live"), Some(Box::new(Idle)), None),
+        ];
+        let events = kernel.drain(3);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].producer.id, "broken");
+        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
+        let state = kernel.producers.get_mut().unwrap();
+        assert_eq!(state.producers.len(), 1);
+        assert_eq!(state.producers[0].0.id, "live");
+        assert!(state.producers[0].1.is_some());
+    }
+
+    #[test]
     fn terminal_producer_destructors_reenter_after_all_failures_are_detached() {
         use std::sync::{
             Weak,
