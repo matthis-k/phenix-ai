@@ -225,6 +225,15 @@ impl KernelHost {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
         }
+        // The whole-drain gate is acquired before the inventory lock. A
+        // running drain finishes all of its polls before retirement begins.
+        let drain = self.active.as_ref().map(|generation| {
+            generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+        });
         let mut old = self.active.as_ref().map(|generation| {
             generation
                 .kernel
@@ -242,6 +251,7 @@ impl KernelHost {
         drop(old);
         self.epoch = candidate.generation.epoch;
         let previous = self.active.replace(candidate.generation.clone());
+        drop(drain);
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
@@ -253,6 +263,11 @@ impl KernelHost {
 impl Drop for KernelHost {
     fn drop(&mut self) {
         if let Some(generation) = &self.active {
+            let drain = generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut state = generation
                 .kernel
                 .producers
@@ -261,6 +276,7 @@ impl Drop for KernelHost {
             state.retired = true;
             let producers = std::mem::take(&mut state.producers);
             drop(state);
+            drop(drain);
             drop(producers);
         }
     }
