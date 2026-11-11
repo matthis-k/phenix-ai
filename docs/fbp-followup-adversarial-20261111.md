@@ -67,3 +67,28 @@ The proposed per-iteration unlock/refresh must establish:
 The change is **conditionally accepted for Phase 3** only if the pre-existing
 full-retention, fairness, retirement and new lock-boundary tests pass on the
 exact head. Otherwise return again to Phase 1.
+
+
+## Phase 2 final challenge — reject unsafe lock fix
+
+The follow-up experiment encountered independently established behaviors that
+cannot be waived by the protocol default:
+- Graph tests require eager readiness credit and active cancellation semantics.
+- Kernel bounded-producer tests require one reserved plus one queued event.
+- Kernel generation tests require publication to wait for **the entire drain**,
+  not merely an individual producer poll.
+
+The proposed `enqueue` plus per-poll unlocked refresh violated the third
+requirement even after preserving the first two. That approach is **rejected**;
+it is not approved merely because it would fix one lock inversion. All related
+production changes and temporary regression assumptions must be reverted.
+
+The remaining startup-preflight change does not introduce an API or execution
+authority and can be judged independently. Accept it only if session
+configuration is validated from immutable compiled declarations before the
+first factory spawn, invalid options return Failed with no spawned plugin code,
+and the full existing CI matrix is green.
+
+Producer reentrancy/lock inversion, FIFO correlation and authorized nested
+composition remain separate primary-use-case issues requiring fresh Phase 0/1/2
+work. Do not mark them accepted or complete in this iteration.
