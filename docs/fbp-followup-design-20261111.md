@@ -38,3 +38,37 @@ The [FBP migration ledger](fbp-migration.md) and prior review identify two subst
 ## Phase 4 gate
 
 Review the actual diff against every invariant, check unexpected changes to response timing, no duplicate authorities, no new APIs/compatibility paths, meaningful tests, and exact-head CI. Any new limitation outside the Phase 1 scope returns to design.
+
+
+## Phase 1 revision — regression counterevidence
+
+The first implementation of the proposal changed every public `inject` and
+`inject_request` into transport-only admission. Exact-head Nix checks exposed
+three existing behavioral regressions in `fbp_streams`:
+`default_any_rotates_between_available_ports`,
+`cancellation_disposes_owned_queues_but_does_not_claim_to_preempt_runner`,
+and `active_cancellation_defaults_to_fail_session_and_host_failure_can_opt_into_restart`.
+Eager reservation during ordinary injection is an established behavioral guarantee
+for capacity and active-request cancellation. **The original proposal is rejected.**
+These are not historical tests to weaken, and there is no accepted tradeoff to
+remove their behavior.
+
+Revised option comparison:
+- Restore eager refresh for ordinary `inject` and `inject_request`, preserving
+  the existing public contract. No new session mode or source policy.
+- Introduce one explicitly named transport-only `enqueue` admission operation.
+  It delegates to the **same** `inject_scoped` validation and atomic fanout,
+  but does not run `refresh`. This is a timing choice, not a second transport
+  implementation, scheduler, source of authority, or changed readiness policy.
+- `Kernel::drain` alone uses `enqueue` under its producer mutex. Kernel's
+  regular external `inject` remains eager, as no producer lock is held.
+  `Kernel::run_steps` and `NetworkSession::state` already drive `refresh`;
+  the kernel notifies its wake listener after accepted enqueues.
+
+New acceptance gates: pre-existing `fbp_streams` tests must pass without edits,
+a direct test shows ordinary inject eagerly evaluates readiness, another shows
+enqueue does not, and the kernel lock regression checks explicit scheduling.
+`enqueue` must preserve failed ownership, schema, scope and queue credit exactly.
+This is a narrowly justified public operation; do not introduce more entry paths.
+
+The first implementation is superseded by this revision, not accepted retroactively.
