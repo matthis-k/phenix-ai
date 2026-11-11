@@ -521,7 +521,7 @@ fn compose(
         .connections
         .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
     network.sources.sort();
-    normalize_requirements(&mut network.requirements)?;
+    normalize_requirements(&mut network.requirements);
     let compiled = network.compile()?;
     footprints.retain(|id, _| active.contains(id));
     Ok(Composition {
