@@ -728,7 +728,7 @@ impl NetworkBuilder {
         for (name, component) in &network.instances {
             collect_component_obligations(component, name, &mut network.requirements);
         }
-        normalize_requirements(&mut network.requirements)?;
+        normalize_requirements(&mut network.requirements);
         validate_network(&network)?;
         Ok(network)
     }
@@ -967,13 +967,19 @@ fn qualify(prefix: &str, name: &str) -> String {
 /// incompatible definitions that accidentally reuse the same semantic identity.
 /// Both builder round-trips and composer replay may checkpoint an obligation
 /// more than once; duplicates must not grow with the number of revisions.
-pub(crate) fn normalize_requirements(
-    requirements: &mut Vec<(String, Contract)>,
-) -> Result<(), NetworkError> {
-    catalog(requirements.iter().map(|(_, contract)| contract))?;
-    let mut seen = BTreeSet::new();
-    requirements.retain(|(path, contract)| seen.insert((path.clone(), contract.id().to_owned())));
-    Ok(())
+pub(crate) fn normalize_requirements(requirements: &mut Vec<(String, Contract)>) {
+    let mut seen = BTreeMap::new();
+    requirements.retain(|(path, contract)| {
+        let key = (path.clone(), contract.id().to_owned());
+        if let Some(previous) = seen.get(&key) {
+            // Retain conflicting definitions so the existing compilation
+            // boundary can reject them with its complete contract catalog.
+            previous != contract
+        } else {
+            seen.insert(key, contract.clone());
+            true
+        }
+    });
 }
 
 fn validate_network(network: &NetworkDef) -> Result<(), NetworkError> {
