@@ -11,3 +11,33 @@ Status: Phase 2 independent challenge of [the follow-up design](fbp-followup-des
 7. **Remaining core FBP blockers:** Strict FIFO correlation head blocking and private nested edits remain primary use-case gaps. This patch cannot classify them as accepted absent explicit use-case evidence. Their solutions must retain bounded transport, exact grants and pure plugin parity.
 
 Phase 2 verdict: **conditionally accepted** under the stated acceptance tests and diff review. Do not change producer lifecycle synchronization or graph authority in this iteration; those would require a new Phase 1 design.
+
+
+## Phase 2 revision — after actual execution evidence
+
+The first implementation failed three pre-existing graph behavioral tests because
+the loss of eager refresh changed queue credit and active cancellation, even though
+transport packets were still accepted. A passing new test alone was insufficient.
+The previous conditional acceptance is withdrawn for global lazy injection.
+
+The revised design separates one **shared admission implementation** from two
+explicitly documented scheduling choices. This adds a small public method, but
+does not introduce a second transport authority, buffering implementation,
+scheduler or runtime. Challenge it against these counterexamples:
+
+- Eager `inject` must restore all three historical tests without adjusting
+  expectations.
+- `inject_request` must retain eager admission/active-request accounting;
+  scoped work may not incorrectly settle while queued.
+- Kernel producer admission must use only transport-only `enqueue`; neither
+  readiness callbacks nor process steps may execute under the producer lock.
+- The same `Full` ownership and atomicity properties must apply to both APIs.
+- Calling `state` or running a driver after enqueue must activate the
+  already accepted packet without a second injection.
+- Any application invoking the explicitly deferred operation assumes
+  responsibility for driving the session; the kernel's driver already does so.
+  The internal producer `poll` callback reentrancy problem is still open.
+
+**Verdict:** revised proposal accepted for Phase 3, conditional on unchanged
+historical semantics and the exact-head regression matrix. Do not substitute
+test rewriting for preserved behavior.
