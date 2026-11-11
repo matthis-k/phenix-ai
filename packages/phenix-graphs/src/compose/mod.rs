@@ -541,7 +541,7 @@ fn overlapping_write<'a>(
 ) -> Option<&'a Footprint> {
     left.iter().find(|write| {
         right.iter().any(|other| {
-            if write == other {
+            if *write == other {
                 return true;
             }
             match (write, other) {
