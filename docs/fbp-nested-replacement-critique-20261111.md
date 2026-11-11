@@ -35,3 +35,17 @@ Phase 2. Independently challenge
 **Phase 2 verdict:** Conditionally approve the exact-seam proposal for
 implementation only if these tests pass. Arbitrary private nested mutation
 and unrestricted deep topology patches remain blocked, not tradeoffs.
+
+
+## Phase 2 amendment — conflict and frozen-contract counterexamples
+
+- A plugin replacing `m` and an unrelated one replacing
+  `m/inner/leaf` must not both be selected as independent non-conflicting
+  writes. Require priority-based whole-registration exclusion or explicit
+  dependency, even though their *grants remain exact and distinct*.
+- Existing ancestor contracts and new leaf claims must be checked in the
+  final compiled topology, including claims that the old child required.
+  Verify rejection preserves the last published plan and permits subsequent
+  corrected registration.
+
+These tests are **mandatory** for acceptance, not deferred improvements.
