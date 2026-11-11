@@ -816,11 +816,14 @@ impl Kernel {
                 )
                 .with_lease(code_lease.clone());
             let mut owned = match &contribution.prepare {
-                Some(prepare) => prepare(&CandidateContext {
-                    compiled: &context_compiled,
-                    imports: imports.get(key).unwrap_or(&empty_imports),
-                    can_inspect_network: options.inspect_network.contains(key),
-                })
+                Some(prepare) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    prepare(&CandidateContext {
+                        compiled: &context_compiled,
+                        imports: imports.get(key).unwrap_or(&empty_imports),
+                        can_inspect_network: options.inspect_network.contains(key),
+                    })
+                }))
+                .unwrap_or_else(|_| Err("plugin preparation panicked".into()))
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
                     cause: lease_callback_error(cause, code_lease.clone()),
@@ -947,7 +950,11 @@ impl Kernel {
         let mut producers = Vec::new();
         for key in &self.keys {
             if let Some(activate) = &self.artifacts[key].activate {
-                let producer = activate().map_err(|cause| StartError::Activation {
+                let producer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    activate()
+                }))
+                .unwrap_or_else(|_| Err("producer activation panicked".into()))
+                .map_err(|cause| StartError::Activation {
                     contribution: key.clone(),
                     cause: lease_callback_error(cause, self.code_lease.clone()),
                 })?;

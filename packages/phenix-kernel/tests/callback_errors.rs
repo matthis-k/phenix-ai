@@ -21,6 +21,8 @@ enum Phase {
     Compose,
     Activate,
     Poll,
+    ComposePanic,
+    ActivatePanic,
 }
 struct Plugin(Phase, Arc<()>);
 struct Source(Arc<()>);
@@ -39,12 +41,18 @@ impl PluginInstance for Plugin {
             routes: vec![],
             patch: NetworkPatch::new([]),
             prepare: Some(Box::new(move |_| {
+                if matches!(phase, Phase::ComposePanic) {
+                    panic!("deliberate preparation panic");
+                }
                 if matches!(phase, Phase::Compose) {
                     return Err(Box::new(Cause(identity.clone())));
                 }
                 let identity = identity.clone();
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.activate(move || {
+                    if matches!(phase, Phase::ActivatePanic) {
+                        panic!("deliberate activation panic");
+                    }
                     if matches!(phase, Phase::Activate) {
                         return Err(Box::new(Cause(identity.clone())));
                     }
@@ -138,4 +146,60 @@ fn host_binding_preserves_source_without_publishing_or_starting() {
     assert!(matches!(&error, LifecycleError::Binding(_)));
     assert_cause(&error, &identity);
     assert!(host.active().is_none());
+}
+
+#[test]
+fn panicking_plugin_prepare_and_activate_return_errors_and_preserve_active_generation() {
+    let identity = Arc::new(());
+    let mut catalog = PluginCatalog::new();
+    let captured = identity.clone();
+    let key = catalog
+        .register("plugin", move |phase| Ok(Plugin(phase, captured.clone())))
+        .unwrap();
+    let mut host = KernelHost::new(catalog.instance());
+    let initial = host
+        .prepare(
+            vec![host.plugins().prepare_load(&key, Phase::Poll).unwrap()],
+            BuildOptions::default(),
+            Arc::new(LocalProcessDispatcher),
+            "initial",
+            |_| Ok(()),
+        )
+        .unwrap();
+    let active = host.publish(initial).unwrap();
+
+    for (phase, marker) in [
+        (Phase::ComposePanic, "plugin preparation panicked"),
+        (Phase::ActivatePanic, "producer activation panicked"),
+    ] {
+        let candidate = host.plugins().prepare_reload(&key, phase).unwrap();
+        let error = host
+            .prepare(
+                vec![candidate],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "panic",
+                |_| Ok(()),
+            )
+            .err()
+            .unwrap();
+        match phase {
+            Phase::ComposePanic => assert!(matches!(
+                &error,
+                LifecycleError::Build(cause)
+                    if matches!(cause.as_ref(), ResolutionError::Composition {
+                        contribution, ..
+                    } if *contribution == Key::new("plugin", "callback"))
+            )),
+            Phase::ActivatePanic => assert!(matches!(
+                &error,
+                LifecycleError::Start(StartError::Activation { contribution, .. })
+                    if *contribution == Key::new("plugin", "callback")
+            )),
+            _ => unreachable!(),
+        }
+        assert!(error.to_string().contains(marker), "{error}");
+        assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
+        assert_eq!(host.plugins().snapshot(&key).unwrap().revision(), 1);
+    }
 }

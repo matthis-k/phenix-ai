@@ -12,7 +12,7 @@ not an accepted limitation.
 | Issue | Resolved? | Evidence / remaining acceptance |
 | --- | --- | --- |
 | H1 Shared-session FIFO correlation head blocking | No | `runtime/readiness.rs`, `runtime/mod.rs`; require per-request correlation and bounded-lane adversarial tests |
-| H2 Callback panic containment | No | `runtime/mod.rs` catches dispatcher panics, but other plugin callbacks/poisoned synchronization boundaries require review and regressions |
+| H2 Callback panic containment | Partial; CI pending | Kernel preparation and activation now catch panics into contribution-scoped leased errors; `callback_errors.rs` covers preservation of the active generation. Process factories, steps, readiness and polls already have catch boundaries. Wake registration and arbitrary host callbacks still need explicit policy/review. |
 | H3 Producer/session callback reentrancy deadlocks | No | `phenix-kernel/src/lib.rs` locks producer and session state; rejected partial lock change documented in `fbp-followup-adversarial-20261111.md`; independent policy needed |
 | H4 Full-inventory scheduling scans | No | `runtime/mod.rs::refresh` walks process inventory; need activation-scaled measurements before refactor |
 | H5 Expensive closure analysis | No | `runtime/closure.rs`; need bounded stress and topology-aware cost evidence |
@@ -57,3 +57,22 @@ superseded before its matrix finished.
 2. C3 remains blocked on an explicit retirement policy; no silent ABI/behavior change.
 3. Work next on H1/H3 high-impact correlation and reentrancy, then C5/C9/C10 and
    measurement gates. Every new abstraction follows Phase 0–4 of the design protocol.
+
+## H2 focused diff review — plugin callback panics
+
+Scope is kernel-owned plugin `Contribution::prepare` and `CandidateArtifacts::activate`,
+both invoked outside the graph runtime. Their panics previously unwound through
+`Kernel::build_with_options` or `Kernel::start`, unlike process factories,
+steps, readiness, dispatch and polling, which already catch panics.
+
+The fix reuses the existing `ResolutionError::Composition` and
+`StartError::Activation` error paths and the exact snapshot code lease,
+with a stable non-reflective error message. It does not catch or conceal typed
+callback errors, fabricate rollback for external side effects, or reenter a
+partially started producer inventory. Caught panic payloads are dropped while
+the owning plugin code lease remains held.
+
+Regression: a published old generation survives both failure modes; exact
+contribution and error phase are reported. Producer disposal and startup retry
+remain separate existing tests. `Producer::set_waker` intentionally continues
+to resume panic and is not classified as fixed by H2. Final-head CI is required.
