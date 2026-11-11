@@ -264,7 +264,33 @@ impl NetworkSession {
                     .any(|p| p.path() == path.as_str())
             })
             .cloned();
-        let mut initial_failure = None;
+        // Reject static configuration before invoking any plugin-owned factory.
+        // Readiness policy callbacks are never evaluated during this preflight.
+        let mut initial_failure = invalid_path
+            .map(|path| format!("unknown process configuration: {path}"))
+            .or_else(|| {
+                options
+                    .discard_outputs
+                    .iter()
+                    .find(|(path, output)| {
+                        !compiled.processes().iter().any(|p| {
+                            p.path() == path && p.interface().outputs().contains_key(output)
+                        })
+                    })
+                    .map(|(path, output)| format!("invalid discard output: {path}.{output}"))
+            })
+            .or_else(|| {
+                compiled.processes().iter().find_map(|process| {
+                    options.readiness.get(process.path()).and_then(|policy| {
+                        readiness::validate_policy_ports(
+                            process.interface().inputs().keys().map(String::as_str),
+                            policy,
+                        )
+                        .err()
+                        .map(|error| format!("process {}: {error}", process.path()))
+                    })
+                })
+            });
         let mut processes: Vec<_> = compiled
             .processes()
             .iter()
@@ -434,26 +460,6 @@ impl NetworkSession {
             session.fail(error);
             return session;
         }
-        if let Some(path) = invalid_path {
-            session.fail(format!("unknown process configuration: {path}"));
-            return session;
-        }
-        if let Some((path, output)) = session.discard_outputs.iter().find(|(path, output)| {
-            !session
-                .compiled
-                .processes()
-                .iter()
-                .any(|p| p.path() == path && p.interface().outputs().contains_key(output))
-        }) {
-            session.fail(format!("invalid discard output: {path}.{output}"));
-            return session;
-        }
-        for index in 0..session.processes.len() {
-            if let Err(error) = session.validate_policy(index, &session.processes[index].policy) {
-                session.fail(error);
-                return session;
-            }
-        }
         for index in 0..session.processes.len() {
             if options.auto_start_sources && session.processes[index].source {
                 let resources = session.processes[index].resources.clone();
@@ -522,7 +528,8 @@ impl NetworkSession {
                 if let Some(request) = request {
                     self.note_request_ingress(request, name);
                 }
-                self.refresh();
+                // Admission owns only FIFO state. The next driver/state query
+                // runs readiness callbacks outside the kernel producer lock.
                 Ok(())
             }
             Err(reason) => Err(InjectionError { reason, value }),
