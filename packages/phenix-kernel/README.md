@@ -33,7 +33,11 @@ is exclusively native `Composer` work. Self-imports are checked against a compil
 host-authorized preview of the static patch; they cannot certify fabricated shapes.
 
 Host `BuildOptions` contains `imports: ImportPolicy`, `execution: SessionOptions`
-and `composition: BTreeMap<Key, CompositionPolicy>`. Each `CompositionPolicy` has
+and `composition: BTreeMap<Key, CompositionPolicy>`.
+Host `inspect_network: BTreeSet<Key>` is a separate default-deny read grant.
+A preparation callback may call `inspect_network()` only with an exact host
+grant; this preserves trusted compiled exports without exposing all topology
+to ordinary declared-import consumers. Each `CompositionPolicy` has
 `grants: BTreeSet<Footprint>` and `priority: i64`. Missing policy grants no writes.
 Grants and priorities are host decisions, never fields in plugin patch payloads.
 The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code

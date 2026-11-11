@@ -321,7 +321,7 @@ impl PluginInstance for DeclarationPlugin {
             patch: NetworkPatch::new([]),
             prepare: Some(Box::new(|context| {
                 let mut artifacts = CandidateArtifacts::default();
-                artifacts.export(context.compiled.clone())?;
+                artifacts.export(context.inspect_network()?.clone())?;
                 Ok(artifacts)
             })),
         })
@@ -345,6 +345,7 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
         );
         let mut options = support::options(std::slice::from_ref(&snapshot));
         options.execution.lease = Some(Arc::new(application));
+        options.inspect_network.insert(Key::new("plugin", "export"));
         let kernel = Kernel::build_with_options(
             "declarations",
             [snapshot],

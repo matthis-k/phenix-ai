@@ -109,6 +109,7 @@ impl PluginInstance for Consumer {
                 assert!(context.import("service").is_ok());
                 assert!(context.import("undeclared").is_err());
                 assert!(context.bind_import("undeclared").is_err());
+                assert!(context.inspect_network().is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
                 let bound = context.bind_import("service")?;
                 assert!(bound.input::<i64>("private").is_err());

@@ -101,8 +101,8 @@ impl ResolvedImport {
     }
 }
 
-/// Read-only, declared-import-scoped view provided to a plugin's preparation callback.
-/// The complete compiled topology is intentionally not exposed.
+/// Declared-import-scoped view provided to a plugin's preparation callback.
+/// The complete compiled topology is hidden unless the host explicitly grants inspection.
 ///
 /// ```compile_fail
 /// use phenix_kernel::CandidateContext;
@@ -113,6 +113,7 @@ impl ResolvedImport {
 pub struct CandidateContext<'a> {
     compiled: &'a CompiledNetwork,
     imports: &'a BTreeMap<String, ResolvedImport>,
+    can_inspect_network: bool,
 }
 
 #[derive(Default)]
@@ -166,6 +167,16 @@ impl CandidateContext<'_> {
             .get(id)
             .ok_or_else(|| format!("undeclared import: {id}"))?;
         imported.bind(self.compiled).map_err(Into::into)
+    }
+
+    /// Full immutable topology inspection requires an explicit, exact
+    /// contribution grant in the host's BuildOptions. Not a sandbox boundary.
+    pub fn inspect_network(&self) -> Result<&CompiledNetwork, CallbackError> {
+        if self.can_inspect_network {
+            Ok(self.compiled)
+        } else {
+            Err("full compiled network inspection not granted".into())
+        }
     }
 }
 
@@ -245,6 +256,9 @@ pub struct BuildOptions {
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.
     pub composition: BTreeMap<Key, CompositionPolicy>,
+    /// Exact contributions allowed to inspect the entire compiled candidate
+    /// during preparation. Empty by default; distinct from graph write grants.
+    pub inspect_network: BTreeSet<Key>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -805,6 +819,7 @@ impl Kernel {
                 Some(prepare) => prepare(&CandidateContext {
                     compiled: &context_compiled,
                     imports: imports.get(key).unwrap_or(&empty_imports),
+                    can_inspect_network: options.inspect_network.contains(key),
                 })
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
