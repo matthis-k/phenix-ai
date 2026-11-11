@@ -963,10 +963,10 @@ fn qualify(prefix: &str, name: &str) -> String {
         format!("{prefix}/{name}")
     }
 }
-/// Preserve one obligation per (path, semantic contract ID), without masking
-/// incompatible definitions that accidentally reuse the same semantic identity.
-/// Both builder round-trips and composer replay may checkpoint an obligation
-/// more than once; duplicates must not grow with the number of revisions.
+/// Remove identical obligations without masking conflicting contract shapes.
+/// Builder round-trips and composer replay may checkpoint the same requirement
+/// repeatedly. Keep any same-ID/different-shape entries for compilation to
+/// reject at the existing contract-catalog validation boundary.
 pub(crate) fn normalize_requirements(requirements: &mut Vec<(String, Contract)>) {
     let mut seen = BTreeMap::new();
     requirements.retain(|(path, contract)| {
