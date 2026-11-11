@@ -1179,6 +1179,105 @@ mod tests {
     use super::*;
 
     #[test]
+    fn eager_readiness_during_drain_may_inspect_unlocked_inventory() {
+        use phenix_graph::{
+            ComponentDef,
+            network::NetworkBuilder,
+            runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot},
+        };
+        use std::num::NonZeroUsize;
+        use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
+
+        struct InspectInventory(Weak<Kernel>, Arc<AtomicUsize>);
+        impl ReadinessPolicy for InspectInventory {
+            fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+                let kernel = self.0.upgrade().unwrap();
+                let state = kernel
+                    .producers
+                    .try_lock()
+                    .expect("readiness ran while producer inventory locked");
+                assert_eq!(state.producers.len(), 1);
+                assert!(state.producers[0].1.is_none());
+                self.1.fetch_add(1, Ordering::SeqCst);
+                snapshot
+                    .heads
+                    .iter()
+                    .filter(|head| head.available)
+                    .map(|head| head.port.clone())
+                    .collect()
+            }
+        }
+
+        struct Once(bool);
+        impl Producer for Once {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                if self.0 {
+                    return Ok(None);
+                }
+                self.0 = true;
+                Ok(Some(InputEvent {
+                    input: "in".into(),
+                    value: Value::local(7_i64),
+                }))
+            }
+        }
+        let selections = Arc::new(AtomicUsize::new(0));
+        let kernel = Arc::new_cyclic(|weak| {
+            let mut kernel = Kernel::build(
+                "readiness-inventory",
+                [],
+                Arc::new(phenix_graph::process::LocalProcessDispatcher),
+            )
+            .unwrap();
+            kernel.start().unwrap();
+
+            let mut builder = NetworkBuilder::new();
+            let sink = builder
+                .add("sink", Arc::new(ComponentDef::sink(|_: &i64| {})))
+                .unwrap();
+            builder
+                .expose_input(
+                    "in",
+                    sink.input::<i64>("input").unwrap(),
+                    NonZeroUsize::new(1).unwrap(),
+                )
+                .unwrap();
+            kernel.session = Mutex::new(
+                builder
+                    .build()
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+                    .start_with_options(SessionOptions {
+                        readiness: BTreeMap::from([(
+                            "sink".to_owned(),
+                            Readiness::Custom(Arc::new(InspectInventory(
+                                weak.clone(),
+                                selections.clone(),
+                            ))),
+                        )]),
+                        ..Default::default()
+                    }),
+            );
+            let key = Key::new("test", "one");
+            kernel
+                .routes
+                .insert(key.clone(), BTreeSet::from(["in".to_owned()]));
+            kernel.producers.get_mut().unwrap().producers.push((
+                key,
+                Some(Box::new(Once(false))),
+                None,
+            ));
+            kernel
+        });
+        assert_eq!(selections.load(Ordering::SeqCst), 0);
+        let events = kernel.drain(1);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].result.is_ok());
+        assert!(selections.load(Ordering::SeqCst) > 0);
+    }
+
+    #[test]
     fn producer_poll_may_inspect_inventory_without_a_mutex_deadlock() {
         use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
 
