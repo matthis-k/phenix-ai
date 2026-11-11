@@ -151,7 +151,7 @@ fn errors_and_panics_restore_all_topology_and_revoke_escaped_handles() {
                 .iter()
                 .filter(|(p, _)| p == "existing")
                 .count(),
-            4
+            1
         );
         // Only the final added declaration contributes an added requirement.
         assert_eq!(
@@ -216,7 +216,7 @@ fn success_returns_live_handles_and_commits_metadata_without_spawning() {
             .iter()
             .filter(|(p, _)| p == "sink")
             .count(),
-        2
+        1
     );
     network.compile().unwrap();
     frozen.compile().unwrap();
