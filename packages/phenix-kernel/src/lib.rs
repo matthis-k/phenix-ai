@@ -454,7 +454,7 @@ impl std::error::Error for StartError {
 
 #[derive(Default)]
 struct ProducerState {
-    producers: Vec<(Key, Box<dyn Producer>, Option<InputEvent>)>,
+    producers: Vec<(Key, Option<Box<dyn Producer>>, Option<InputEvent>)>,
     next: usize,
     retired: bool,
 }
@@ -464,6 +464,9 @@ pub struct Kernel {
     session: Mutex<NetworkSession>,
     compiled: CompiledNetwork,
     producers: Mutex<ProducerState>,
+    // Serialize one whole drain against generation retirement. Inventory
+    // mutations use a separate short lock; no user poll/readiness runs under it.
+    producer_drain: Mutex<()>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
@@ -885,6 +888,7 @@ impl Kernel {
             session: Mutex::new(session),
             compiled,
             producers: Mutex::new(ProducerState::default()),
+            producer_drain: Mutex::new(()),
             artifacts,
             _leases: leases,
             keys,
@@ -909,7 +913,7 @@ impl Kernel {
                     contribution: key.clone(),
                     cause: lease_callback_error(cause, self.code_lease.clone()),
                 })?;
-                producers.push((key.clone(), producer, None));
+                producers.push((key.clone(), Some(producer), None));
             }
         }
         self.producers
@@ -977,86 +981,120 @@ impl Kernel {
     }
 
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
-    /// calls. Idle polls count toward the bound. Poll errors retire only the failed
-    /// producer; admission errors do not stop polling.
+    /// calls. One whole drain is serialized against retirement, but callbacks
+    /// and eager session admission do not hold the producer inventory mutex.
     /// A full input retains one event without repolling. No process code runs here.
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
-        // Plugin destructors may reenter drain; release the state lock first.
-        let mut detached = Vec::new();
-        let mut state = self
-            .producers
+        let drain = self
+            .producer_drain
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        // Producer destructors may reenter inventory inspection. Drop them only
+        // after both the drain gate and inventory mutex have been released.
+        let mut detached = Vec::new();
         let mut events = Vec::new();
-        if state.retired {
-            return events;
-        }
         for _ in 0..max_polls {
-            if state.producers.is_empty() {
-                break;
-            }
-            let index = state.next;
-            state.next = (index + 1) % state.producers.len();
-            let (key, producer, pending) = &mut state.producers[index];
-            let polled = match pending.take() {
-                Some(event) => Ok(Some(event)),
-                None => producer.poll(),
+            let (index, key, mut producer, pending) = {
+                let mut state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if state.retired || state.producers.is_empty() {
+                    break;
+                }
+                let index = state.next;
+                state.next = (index + 1) % state.producers.len();
+                let (key, producer, pending) = &mut state.producers[index];
+                (
+                    index,
+                    key.clone(),
+                    producer.take().expect("exclusive producer drain ownership"),
+                    pending.take(),
+                )
             };
-            let result = match polled {
-                Ok(None) => continue,
+
+            let polled = match pending {
+                Some(event) => Ok(Some(event)),
+                None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    producer.poll()
+                })) {
+                    Ok(result) => result,
+                    Err(_) => Err("producer poll panicked".into()),
+                },
+            };
+            let mut retained = None;
+            let mut terminal_poll = false;
+            let outcome = match polled {
+                Ok(None) => None,
                 Ok(Some(event)) => {
-                    if !self.routes[key].contains(&event.input) {
-                        Err(ProducerError::UndeclaredRoute(event.input))
+                    if !self.routes[&key].contains(&event.input) {
+                        Some(Err(ProducerError::UndeclaredRoute(event.input)))
                     } else {
-                        // Never hold the producer lock waiting for explicit session work:
-                        // publication must retire producers independently of old queries.
-                        let mut session = match self.session.try_lock() {
-                            Ok(session) => session,
-                            Err(TryLockError::Poisoned(error)) => error.into_inner(),
-                            Err(TryLockError::WouldBlock) => {
-                                *pending = Some(event);
-                                continue;
-                            }
+                        // Session access stays nonblocking. On contention or
+                        // Full, retain exactly one owned event, never repoll.
+                        let session = match self.session.try_lock() {
+                            Ok(session) => Some(session),
+                            Err(TryLockError::Poisoned(error)) => Some(error.into_inner()),
+                            Err(TryLockError::WouldBlock) => None,
                         };
-                        let admitted = session.inject(&event.input, event.value);
-                        if admitted.is_ok() {
-                            session.notifier().notify();
-                        }
-                        drop(session);
-                        match admitted {
-                            Ok(()) => Ok(()),
-                            Err(error)
-                                if error.reason
-                                    == phenix_graph::connection::ConnectionError::Full =>
-                            {
-                                *pending = Some(InputEvent {
-                                    input: event.input,
-                                    value: error.value,
-                                });
-                                continue;
+                        if let Some(mut session) = session {
+                            let input = event.input;
+                            match session.inject(&input, event.value) {
+                                Ok(()) => {
+                                    session.notifier().notify();
+                                    Some(Ok(()))
+                                }
+                                Err(error)
+                                    if error.reason
+                                        == phenix_graph::connection::ConnectionError::Full =>
+                                {
+                                    retained = Some(InputEvent {
+                                        input,
+                                        value: error.value,
+                                    });
+                                    None
+                                }
+                                Err(error) => Some(Err(ProducerError::Admission(error))),
                             }
-                            Err(error) => Err(ProducerError::Admission(error)),
+                        } else {
+                            retained = Some(event);
+                            None
                         }
                     }
                 }
-                Err(error) => Err(ProducerError::Poll(lease_callback_error(
-                    error,
-                    self.code_lease.clone(),
-                ))),
+                Err(error) => {
+                    terminal_poll = true;
+                    Some(Err(ProducerError::Poll(lease_callback_error(
+                        error,
+                        self.code_lease.clone(),
+                    ))))
+                }
             };
-            events.push(ProducerEvent {
-                producer: key.clone(),
-                result,
-            });
-            if matches!(events.last().unwrap().result, Err(ProducerError::Poll(_))) {
-                detached.push(state.producers.remove(index));
-                state.next = index;
+            {
+                let mut state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                let slot = &mut state.producers[index];
+                debug_assert!(slot.1.is_none());
+                slot.1 = Some(producer);
+                slot.2 = retained;
+                if terminal_poll {
+                    detached.push(state.producers.remove(index));
+                    state.next = index;
+                }
+                if state.next >= state.producers.len() {
+                    state.next = 0;
+                }
             }
-            if state.next >= state.producers.len() {
-                state.next = 0;
+            if let Some(result) = outcome {
+                events.push(ProducerEvent {
+                    producer: key,
+                    result,
+                });
             }
         }
-        drop(state);
+        drop(drain);
         drop(detached);
         events
     }
@@ -1076,18 +1114,27 @@ impl Kernel {
             .with_session(|session| (session.wake_listener(), session.notifier()))
             .unwrap();
         *wake.0.notifier.lock().unwrap() = Some(notifier);
+        let drain = self
+            .producer_drain
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut state = self
             .producers
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         for (key, producer, _) in &mut state.producers {
-            if !producer.set_waker(wake.clone()) {
+            if !producer
+                .as_mut()
+                .expect("producer waker setup without concurrent drain")
+                .set_waker(wake.clone())
+            {
                 return Err(DriverError::UnsupportedWake {
                     producer: key.clone(),
                 });
             }
         }
         drop(state);
+        drop(drain);
         loop {
             {
                 if *wake.0.shutdown.lock().unwrap() {
@@ -1175,7 +1222,7 @@ mod tests {
             .map(|name| {
                 (
                     Key::new("test", name),
-                    Box::new(Source(Arc::downgrade(&kernel), drops.clone())) as Box<dyn Producer>,
+                    Some(Box::new(Source(Arc::downgrade(&kernel), drops.clone())) as Box<dyn Producer>),
                     None,
                 )
             })
@@ -1223,7 +1270,7 @@ mod tests {
             .map(|name| {
                 (
                     Key::new("test", name),
-                    Box::new(Source(name, log.clone())) as Box<dyn Producer>,
+                    Some(Box::new(Source(name, log.clone())) as Box<dyn Producer>),
                     None,
                 )
             })
