@@ -439,8 +439,7 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                     },
                 ]),
                 prepare: Some(Box::new(|cx| {
-                    let selected = cx.import("service")?;
-                    selected.bind(cx.compiled)?.input::<i64>("run")?;
+                    cx.bind_import("service")?.input::<i64>("run")?;
                     Ok(CandidateArtifacts::default())
                 })),
             })
