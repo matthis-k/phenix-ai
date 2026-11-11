@@ -1,4 +1,4 @@
-//! Admission is transport-only. Startup must not execute invalid declarations.
+//! Startup validation is declaration-only; ordinary packet admission stays eager.
 use phenix_graph::{
     ComponentDef, Interface, PortDef,
     network::NetworkBuilder,
@@ -32,7 +32,7 @@ impl ReadinessPolicy for CountingReadiness {
 }
 
 #[test]
-fn enqueue_defers_readiness_while_inject_preserves_eager_selection() {
+fn direct_injection_preserves_eager_reservation_and_driver_executes() {
     let seen = Arc::new(AtomicUsize::new(0));
     let seen_by_sink = seen.clone();
     let mut builder = NetworkBuilder::new();
@@ -57,29 +57,11 @@ fn enqueue_defers_readiness_while_inject_preserves_eager_selection() {
         ..Default::default()
     });
     assert_eq!(selections.load(Ordering::SeqCst), 0);
-    session
-        .enqueue("in", phenix_graph::Value::local(7_i64))
-        .unwrap();
-    assert_eq!(selections.load(Ordering::SeqCst), 0);
+    session.inject_local("in", 7_i64).unwrap();
+    assert!(selections.load(Ordering::SeqCst) > 0);
     assert_eq!(seen.load(Ordering::SeqCst), 0);
     session.run_until_idle(16);
-    assert!(selections.load(Ordering::SeqCst) > 0);
     assert_eq!(seen.load(Ordering::SeqCst), 7);
-
-    // Existing direct-injection callers depend on eager queue reservation.
-    selections.store(0, Ordering::SeqCst);
-    let mut eager = compiled.start_with_options(SessionOptions {
-        readiness: BTreeMap::from([(
-            "sink".to_owned(),
-            Readiness::Custom(Arc::new(CountingReadiness(selections.clone()))),
-        )]),
-        ..Default::default()
-    });
-    assert_eq!(selections.load(Ordering::SeqCst), 0);
-    eager.inject_local("in", 3_i64).unwrap();
-    assert!(selections.load(Ordering::SeqCst) > 0);
-    eager.run_until_idle(16);
-    assert_eq!(seen.load(Ordering::SeqCst), 10);
 }
 
 struct Noop;
