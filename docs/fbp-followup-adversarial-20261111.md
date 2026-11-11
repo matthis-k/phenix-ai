@@ -41,3 +41,29 @@ scheduler or runtime. Challenge it against these counterexamples:
 **Verdict:** revised proposal accepted for Phase 3, conditional on unchanged
 historical semantics and the exact-head regression matrix. Do not substitute
 test rewriting for preserved behavior.
+
+
+## Phase 2 revision 2 — fairness, retirement, and reentrancy
+
+The first revised kernel use of `enqueue` failed the native bounded-producer
+regression: one event was queued but the previous eager reservation had been lost.
+A workaround that changes expected poll/admission counts or silently increases
+capacity is rejected.
+
+The proposed per-iteration unlock/refresh must establish:
+1. No readiness policy executes while the producer inventory mutex is held.
+2. Each accepted event is refreshed before the next poll, preserving one
+   reserved activation plus one queued packet and exact single-event Full retention.
+3. Idle and terminal producer polls retain fair round-robin budget accounting.
+4. `KernelHost::publish` can interleave only between iterations; once retired,
+   an old producer cannot admit another event. Detached failed producers drop
+   after the inventory mutex is released, with their code lease intact.
+5. A refresh invoked outside the producer lock can reenter a producer-state
+   inspection, but does not imply Producer::poll itself is reentrant or that
+   arbitrary readiness callbacks may reenter the session mutex.
+6. Session admission and readiness retain their existing FIFO and request scope
+   semantics; no new execution backend or source of truth is introduced.
+
+The change is **conditionally accepted for Phase 3** only if the pre-existing
+full-retention, fairness, retirement and new lock-boundary tests pass on the
+exact head. Otherwise return again to Phase 1.
