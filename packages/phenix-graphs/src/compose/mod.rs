@@ -465,7 +465,7 @@ fn compose(
                     });
                 }
             }
-            if let Some(footprint) = left.intersection(right).next()
+            if let Some(footprint) = overlapping_write(left, right)
                 && registrations[a].priority == registrations[b].priority
             {
                 return Err(ComposeError::Conflict {
@@ -493,7 +493,7 @@ fn compose(
             let loses = selected.iter().any(|winner| {
                 !ancestors[id].contains(winner)
                     && !ancestors[winner].contains(id)
-                    && !footprints[id].is_disjoint(&footprints[winner])
+                    && overlapping_write(&footprints[id], &footprints[winner]).is_some()
             });
             if !loses {
                 selected.insert(id.clone());
@@ -528,6 +528,30 @@ fn compose(
         compiled,
         active,
         footprints,
+    })
+}
+
+/// Exact grants remain separate. Selection conflict is broader: replacing an
+/// ancestor composite changes the definition containing every nested child.
+/// Independently selected ancestor and descendant replacements would otherwise
+/// silently erase each other depending on lexical replay order.
+fn overlapping_write<'a>(
+    left: &'a BTreeSet<Footprint>,
+    right: &BTreeSet<Footprint>,
+) -> Option<&'a Footprint> {
+    left.iter().find(|write| {
+        right.iter().any(|other| {
+            if write == other {
+                return true;
+            }
+            match (write, other) {
+                (Footprint::Component(a), Footprint::Component(b)) => {
+                    b.strip_prefix(a).is_some_and(|suffix| suffix.starts_with('/'))
+                        || a.strip_prefix(b).is_some_and(|suffix| suffix.starts_with('/'))
+                }
+                _ => false,
+            }
+        })
     })
 }
 
