@@ -452,9 +452,13 @@ impl std::error::Error for StartError {
     }
 }
 
+/// A source identity, its temporarily checked-out mutable callback, and
+/// at most one retained event under upstream backpressure.
+type ProducerSlot = (Key, Option<Box<dyn Producer>>, Option<InputEvent>);
+
 #[derive(Default)]
 struct ProducerState {
-    producers: Vec<(Key, Option<Box<dyn Producer>>, Option<InputEvent>)>,
+    producers: Vec<ProducerSlot>,
     next: usize,
     retired: bool,
 }
