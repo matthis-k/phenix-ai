@@ -2,7 +2,8 @@
 //!
 //! Grants authorize exact writes, not reads or semantic claims. The host must
 //! construct registrations itself; accepting a registration from a plugin is not
-//! a security boundary. Only root public scope is editable in this version.
+//! a security boundary. Root topology edits remain public-only. A composite may
+//! explicitly expose child replacement seams, still requiring exact host grants.
 //!
 //! # Selection and replay
 //! Dependencies must exist and form a DAG. Transitive dependencies order writes;
@@ -96,8 +97,14 @@ pub enum Edit {
 impl Edit {
     fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
         match self {
-            Self::Add { path, definition } | Self::Replace { path, definition } => {
+            Self::Add { path, definition } => {
                 public_path(path)?;
+                definition_origin(definition, origin, path)?;
+            }
+            Self::Replace { path, definition } => {
+                for part in path.split('/') {
+                    public_path(part)?;
+                }
                 definition_origin(definition, origin, path)?;
             }
             Self::Connect(edge) => {
@@ -579,6 +586,16 @@ fn replay(
     let invalid = || ComposeError::InvalidEdit(format!("{}: {edit:?}", registration.id));
     match edit {
         Edit::Add { path, definition } | Edit::Replace { path, definition } => {
+            if matches!(edit, Edit::Replace { .. }) && path.contains('/') {
+                replace_nested(network, path, definition, &registration.origin)?;
+                let root = path.split('/').next().unwrap();
+                collect_component_obligations(
+                    &network.instances[root],
+                    root,
+                    &mut network.requirements,
+                );
+                return Ok(());
+            }
             if matches!(edit, Edit::Add { .. }) {
                 if network.instances.contains_key(path) {
                     return Err(invalid());
@@ -719,5 +736,55 @@ fn replay(
             splices.insert(anchor.clone(), (output.clone(), capacity));
         }
     }
+    Ok(())
+}
+
+/// Copy-on-write replacement through explicit *immediate-child* seams. A
+/// root-level host grant never bypasses a composite author's private boundary.
+fn replace_nested(
+    network: &mut NetworkDef,
+    path: &str,
+    definition: &Arc<ComponentDef>,
+    origin: &GraphOrigin,
+) -> Result<(), ComposeError> {
+    let (parent, remainder) = path
+        .split_once('/')
+        .ok_or_else(|| ComposeError::PrivateEditScope(path.into()))?;
+    let ancestor = network
+        .instances
+        .get(parent)
+        .ok_or_else(|| ComposeError::InvalidEdit(format!("unknown composite {parent}")))?
+        .clone();
+    let Body::Composite(child) = ancestor.body() else {
+        return Err(ComposeError::PrivateEditScope(path.into()));
+    };
+    let immediate = remainder.split('/').next().unwrap();
+    if !child.replacement_points.contains(immediate) {
+        return Err(ComposeError::PrivateEditScope(path.into()));
+    }
+    let mut updated = (**child).clone();
+    if remainder.contains('/') {
+        replace_nested(&mut updated, remainder, definition, origin)?;
+    } else {
+        let previous = updated.instances.get(remainder).ok_or_else(|| {
+            ComposeError::InvalidEdit(format!("unknown nested component {path}"))
+        })?;
+        if previous.interface() != definition.interface() {
+            return Err(NetworkError::InterfaceMismatch(path.into()).into());
+        }
+        updated.instances.insert(
+            remainder.into(),
+            Arc::new((**definition).clone().with_origin(origin.clone())),
+        );
+        collect_component_obligations(
+            &updated.instances[remainder],
+            remainder,
+            &mut updated.requirements,
+        );
+    }
+    network.instances.insert(
+        parent.into(),
+        Arc::new(ancestor.with_updated_network(updated)),
+    );
     Ok(())
 }
