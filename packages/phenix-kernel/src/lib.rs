@@ -1298,6 +1298,46 @@ mod tests {
     }
 
     #[test]
+    fn producer_wake_registration_may_inspect_inventory() {
+        use std::sync::Weak;
+
+        struct WakeProbe(Weak<Kernel>);
+        impl Producer for WakeProbe {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                let kernel = self.0.upgrade().unwrap();
+                let state = kernel
+                    .producers
+                    .try_lock()
+                    .expect("producer inventory locked during wake registration");
+                assert_eq!(state.producers.len(), 1);
+                assert!(state.producers[0].1.is_none());
+                true
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "reentrant-waker",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "waker"),
+            Some(Box::new(WakeProbe(Arc::downgrade(&kernel)))),
+            None,
+        ));
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        kernel.run_until(&wake, |_| {}).unwrap();
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+    }
+
+    #[test]
     fn producer_poll_may_inspect_inventory_without_a_mutex_deadlock() {
         use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
 
