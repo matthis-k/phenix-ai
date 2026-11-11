@@ -1323,12 +1323,11 @@ mod tests {
             kernel
                 .routes
                 .insert(key.clone(), BTreeSet::from(["in".to_owned()]));
-            kernel
-                .producers
-                .get_mut()
-                .unwrap()
-                .producers
-                .push((key, Box::new(OneShot(false)), None));
+            kernel.producers.get_mut().unwrap().producers.push((
+                key,
+                Box::new(OneShot(false)),
+                None,
+            ));
             kernel
         });
 
@@ -1337,5 +1336,4 @@ mod tests {
         assert!(kernel.run_steps(8).unwrap().steps > 0);
         assert!(selected.load(Ordering::SeqCst) > 0);
     }
-
 }
