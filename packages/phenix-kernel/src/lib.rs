@@ -1015,12 +1015,13 @@ impl Kernel {
 
             let polled = match pending {
                 Some(event) => Ok(Some(event)),
-                None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    producer.poll()
-                })) {
-                    Ok(result) => result,
-                    Err(_) => Err("producer poll panicked".into()),
-                },
+                None => {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| producer.poll()))
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err("producer poll panicked".into()),
+                    }
+                }
             };
             let mut retained = None;
             let mut terminal_poll = false;
@@ -1133,7 +1134,9 @@ impl Kernel {
                 let (key, producer, _) = &mut state.producers[index];
                 (
                     key.clone(),
-                    producer.take().expect("exclusive producer wake registration"),
+                    producer
+                        .take()
+                        .expect("exclusive producer wake registration"),
                 )
             };
             // Producer callbacks never run under inventory locks, including
@@ -1206,7 +1209,10 @@ mod tests {
             runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot},
         };
         use std::num::NonZeroUsize;
-        use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
+        use std::sync::{
+            Weak,
+            atomic::{AtomicUsize, Ordering},
+        };
 
         struct InspectInventory(Weak<Kernel>, Arc<AtomicUsize>);
         impl ReadinessPolicy for InspectInventory {
@@ -1339,7 +1345,10 @@ mod tests {
 
     #[test]
     fn producer_poll_may_inspect_inventory_without_a_mutex_deadlock() {
-        use std::sync::{Weak, atomic::{AtomicUsize, Ordering}};
+        use std::sync::{
+            Weak,
+            atomic::{AtomicUsize, Ordering},
+        };
 
         struct Probe(Weak<Kernel>, Arc<AtomicUsize>);
         impl Producer for Probe {
@@ -1456,7 +1465,8 @@ mod tests {
             .map(|name| {
                 (
                     Key::new("test", name),
-                    Some(Box::new(Source(Arc::downgrade(&kernel), drops.clone())) as Box<dyn Producer>),
+                    Some(Box::new(Source(Arc::downgrade(&kernel), drops.clone()))
+                        as Box<dyn Producer>),
                     None,
                 )
             })
