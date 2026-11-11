@@ -296,3 +296,63 @@ fn ancestor_and_nested_replacements_conflict_unless_explicitly_dependent() {
         "sibling[new[Q]]"
     );
 }
+
+#[test]
+fn frozen_nested_contract_requirements_survive_replacement() {
+    use phenix_graph::Contract;
+    let claim = Contract::new("test/required-leaf", stage("base").interface().clone()).unwrap();
+
+    // Build an explicitly claimed leaf and checkpoint that claim as a
+    // final-state obligation before exposing it to replacement.
+    let mut inner_builder = NetworkBuilder::from_def(&inner(true));
+    let old_leaf = inner_builder.component("leaf").unwrap();
+    let claimed = Arc::new((*stage("base")).clone().claim(&claim).unwrap());
+    inner_builder.replace(&old_leaf, claimed).unwrap();
+    inner_builder.require_contract("leaf", &claim).unwrap();
+    let inner = inner_builder.build().unwrap();
+
+    let mut outer_builder = NetworkBuilder::from_def(&outer(true, true));
+    let child = outer_builder.component("inner").unwrap();
+    outer_builder
+        .replace(&child, Arc::new(ComponentDef::composite(inner)))
+        .unwrap();
+    let secured_outer = outer_builder.build().unwrap();
+
+    let base = composer(true, true);
+    let mut root_builder = NetworkBuilder::from_def(base.current().network());
+    let module = root_builder.component("m").unwrap();
+    root_builder
+        .replace(
+            &module,
+            Arc::new(ComponentDef::composite(secured_outer)),
+        )
+        .unwrap();
+    let mut secured = Composer::new(root_builder.build().unwrap()).unwrap();
+
+    // Identical ports alone cannot silently delete an established contract.
+    assert!(matches!(
+        secured.register([replacement(
+            "m/inner/leaf",
+            stage("unclaimed"),
+            [Footprint::Component("m/inner/leaf".to_owned())],
+        )]),
+        Err(ComposeError::Network(_))
+    ));
+    assert_eq!(
+        run(&mut secured.current().compiled().start()),
+        "sibling[base[Q]]"
+    );
+
+    let claimed_replacement = Arc::new((*stage("claimed")).clone().claim(&claim).unwrap());
+    secured
+        .register([replacement(
+            "m/inner/leaf",
+            claimed_replacement,
+            [Footprint::Component("m/inner/leaf".to_owned())],
+        )])
+        .unwrap();
+    assert_eq!(
+        run(&mut secured.current().compiled().start()),
+        "sibling[claimed[Q]]"
+    );
+}
