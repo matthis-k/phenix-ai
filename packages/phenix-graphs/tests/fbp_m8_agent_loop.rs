@@ -226,16 +226,22 @@ fn receive(session: &mut NetworkSession, prompt: &str) -> String {
         .inject("prompt", Value::local(prompt.to_owned()))
         .unwrap();
     let report = session.run_until_idle(128);
-    assert!(!report.budget_exhausted, "unexpected unbounded process loop");
+    assert!(
+        !report.budget_exhausted,
+        "unexpected unbounded process loop"
+    );
     assert_ne!(report.state, SessionState::Failed);
     let reply = session.take_output("reply").unwrap().unwrap();
     (*reply.value().borrow::<String>().unwrap()).clone()
 }
 fn session(composer: &Composer) -> NetworkSession {
-    composer.current().compiled().start_with_options(SessionOptions {
-        capture_capacity: NonZeroUsize::new(1).unwrap(),
-        ..Default::default()
-    })
+    composer
+        .current()
+        .compiled()
+        .start_with_options(SessionOptions {
+            capture_capacity: NonZeroUsize::new(1).unwrap(),
+            ..Default::default()
+        })
 }
 
 #[test]
