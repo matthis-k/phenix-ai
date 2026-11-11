@@ -1026,6 +1026,11 @@ impl NetworkSession {
         self.signal.invalidate();
     }
     pub fn cancel(&mut self) {
+        // A terminal result is final. In particular, do not turn a failure
+        // into cancellation or dispose captures intentionally retained by fail.
+        if self.terminal.is_some() || self.is_completed() {
+            return;
+        }
         self.stop_processes();
         for queue in self.transport.queues() {
             for packet in queue.packets() {
@@ -1041,6 +1046,16 @@ impl NetworkSession {
             .saturating_add(self.transport.cancel());
         self.terminal = Some(SessionState::Cancelled);
     }
+    fn is_completed(&self) -> bool {
+        self.processes.iter().all(|p| p.done)
+            && self.transport.queues().iter().all(ConnectionQueue::is_empty)
+            && self
+                .ingress
+                .values()
+                .flatten()
+                .all(|q| self.transport.queues()[*q].writer_closed())
+    }
+
     pub fn state(&mut self) -> SessionState {
         self.refresh();
         if let Some(state) = self.terminal {
@@ -1050,12 +1065,7 @@ impl NetworkSession {
             return SessionState::Runnable;
         }
         let drained = self.transport.queues().iter().all(|q| q.is_empty());
-        let ingress_closed = self
-            .ingress
-            .values()
-            .flatten()
-            .all(|q| self.transport.queues()[*q].writer_closed());
-        if self.processes.iter().all(|p| p.done) && drained && ingress_closed {
+        if self.is_completed() {
             return SessionState::Completed;
         }
         if !drained
