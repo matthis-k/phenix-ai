@@ -322,10 +322,7 @@ fn frozen_nested_contract_requirements_survive_replacement() {
     let mut root_builder = NetworkBuilder::from_def(base.current().network());
     let module = root_builder.component("m").unwrap();
     root_builder
-        .replace(
-            &module,
-            Arc::new(ComponentDef::composite(secured_outer)),
-        )
+        .replace(&module, Arc::new(ComponentDef::composite(secured_outer)))
         .unwrap();
     let mut secured = Composer::new(root_builder.build().unwrap()).unwrap();
 
