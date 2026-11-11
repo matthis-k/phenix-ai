@@ -1344,8 +1344,9 @@ mod tests {
         let events = kernel.drain(1);
         assert_eq!(events.len(), 1);
         assert!(events[0].result.is_ok());
-        assert_eq!(selected.load(Ordering::SeqCst), 0);
-        assert!(kernel.run_steps(8).unwrap().steps > 0);
+        // Reservation is eager between polls, but the callback must see
+        // the producer inventory unlocked.
         assert!(selected.load(Ordering::SeqCst) > 0);
+        assert!(kernel.run_steps(8).unwrap().steps > 0);
     }
 }
