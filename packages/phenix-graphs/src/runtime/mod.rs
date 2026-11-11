@@ -1048,7 +1048,11 @@ impl NetworkSession {
     }
     fn is_completed(&self) -> bool {
         self.processes.iter().all(|p| p.done)
-            && self.transport.queues().iter().all(ConnectionQueue::is_empty)
+            && self
+                .transport
+                .queues()
+                .iter()
+                .all(ConnectionQueue::is_empty)
             && self
                 .ingress
                 .values()
