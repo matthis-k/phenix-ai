@@ -213,3 +213,74 @@ fn replacement_manifest_is_authoring_scoped_and_additions_rollback_safe() {
     let restored = NetworkBuilder::from_def(&snapshot).build().unwrap();
     assert_eq!(restored.replacement_points(), snapshot.replacement_points());
 }
+
+#[test]
+fn ancestor_and_nested_replacements_conflict_unless_explicitly_dependent() {
+    fn registration_named(
+        id: &str,
+        deps: &[&str],
+        path: &str,
+        definition: Arc<ComponentDef>,
+        priority: i64,
+    ) -> Registration {
+        Registration::new(
+            id,
+            deps.iter().map(|id| (*id).to_owned()),
+            priority,
+            GraphOrigin::default().child(),
+            [Footprint::Component(path.to_owned())],
+            NetworkPatch::new([Edit::Replace {
+                path: path.to_owned(),
+                definition,
+            }]),
+        )
+    }
+
+    let parent = registration_named(
+        "parent",
+        &[],
+        "m",
+        Arc::new(ComponentDef::composite(outer(true, true))),
+        0,
+    );
+    let child = registration_named("child", &[], "m/inner/leaf", stage("new"), 0);
+    let mut overlapping = composer(true, true);
+    assert!(matches!(
+        overlapping.register([parent.clone(), child.clone()]),
+        Err(ComposeError::Conflict { .. })
+    ));
+    assert_eq!(
+        run(&mut overlapping.current().compiled().start()),
+        "sibling[base[Q]]"
+    );
+
+    // Higher priority wins as a whole, never silently replays both edits.
+    let mut winner = composer(true, true);
+    let high_parent = registration_named(
+        "parent",
+        &[],
+        "m",
+        Arc::new(ComponentDef::composite(outer(true, true))),
+        5,
+    );
+    winner.register([child.clone(), high_parent]).unwrap();
+    assert_eq!(
+        winner.current().active().iter().cloned().collect::<Vec<_>>(),
+        vec!["parent"]
+    );
+    assert_eq!(
+        run(&mut winner.current().compiled().start()),
+        "sibling[base[Q]]"
+    );
+
+    // Dependency makes the order explicit; the narrowed child seam survives
+    // replacement of the parent definition and is applied afterward.
+    let mut dependent = composer(true, true);
+    let dependent_child =
+        registration_named("child", &["parent"], "m/inner/leaf", stage("new"), 0);
+    dependent.register([dependent_child, parent]).unwrap();
+    assert_eq!(
+        run(&mut dependent.current().compiled().start()),
+        "sibling[new[Q]]"
+    );
+}
