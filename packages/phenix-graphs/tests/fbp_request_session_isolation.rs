@@ -98,8 +98,12 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     // The arrival order *across sessions* is crossed, yet each owned FIFO
     // only contains its own request packets. No packet skips a FIFO head.
     active[a].inject_request(ra, "a", Value::of(1_i64)).unwrap();
-    active[b].inject_request(rb, "b", Value::of(20_i64)).unwrap();
-    active[b].inject_request(rb, "a", Value::of(10_i64)).unwrap();
+    active[b]
+        .inject_request(rb, "b", Value::of(20_i64))
+        .unwrap();
+    active[b]
+        .inject_request(rb, "a", Value::of(10_i64))
+        .unwrap();
     active[a].inject_request(ra, "b", Value::of(2_i64)).unwrap();
     active[a].close_request(ra).unwrap();
     active[b].close_request(rb).unwrap();
@@ -109,15 +113,9 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
         assert!(!report.budget_exhausted);
         assert!(session.failure().is_none());
     }
-    let first = active[a]
-        .take_request_output(ra, "out")
-        .unwrap()
-        .unwrap();
+    let first = active[a].take_request_output(ra, "out").unwrap().unwrap();
     assert_eq!(first.value().get::<i64>().unwrap(), 3);
-    let second = active[b]
-        .take_request_output(rb, "out")
-        .unwrap()
-        .unwrap();
+    let second = active[b].take_request_output(rb, "out").unwrap().unwrap();
     assert_eq!(second.value().get::<i64>().unwrap(), 30);
     assert_eq!(
         active[a].request_status(ra).unwrap(),
