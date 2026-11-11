@@ -64,9 +64,9 @@ fn start_bounded(
     compiled: &CompiledNetwork,
     active: &mut Vec<NetworkSession>,
     maximum: usize,
-) -> Result<usize, ()> {
-    if active.len() == maximum {
-        return Err(());
+) -> Option<usize> {
+    if active.len() >= maximum {
+        return None;
     }
     let mut options = SessionOptions {
         capture_capacity: one(),
@@ -74,7 +74,7 @@ fn start_bounded(
     };
     options.readiness.insert("join".into(), Readiness::All);
     active.push(compiled.start_with_options(options));
-    Ok(active.len() - 1)
+    Some(active.len() - 1)
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     let mut active = Vec::new();
     let a = start_bounded(&compiled, &mut active, 2).unwrap();
     let b = start_bounded(&compiled, &mut active, 2).unwrap();
-    assert!(start_bounded(&compiled, &mut active, 2).is_err());
+    assert!(start_bounded(&compiled, &mut active, 2).is_none());
 
     let ra = active[a].begin_request(Some("out")).unwrap();
     let rb = active[b].begin_request(Some("out")).unwrap();
