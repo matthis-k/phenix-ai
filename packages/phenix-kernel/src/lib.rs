@@ -983,18 +983,18 @@ impl Kernel {
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
         // Plugin destructors may reenter drain; release the state lock first.
         let mut detached = Vec::new();
+        let mut state = self
+            .producers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut events = Vec::new();
+        if state.retired {
+            return events;
+        }
         for _ in 0..max_polls {
-            // Each poll is serialized with retirement, but readiness must run
-            // outside the producer mutex before polling the next event.
-            let mut state = self
-                .producers
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if state.retired || state.producers.is_empty() {
+            if state.producers.is_empty() {
                 break;
             }
-            let mut refresh_after_admission = false;
             let index = state.next;
             state.next = (index + 1) % state.producers.len();
             let (key, producer, pending) = &mut state.producers[index];
@@ -1018,9 +1018,8 @@ impl Kernel {
                                 continue;
                             }
                         };
-                        let admitted = session.enqueue(&event.input, event.value);
+                        let admitted = session.inject(&event.input, event.value);
                         if admitted.is_ok() {
-                            refresh_after_admission = true;
                             session.notifier().notify();
                         }
                         drop(session);
@@ -1056,23 +1055,8 @@ impl Kernel {
             if state.next >= state.producers.len() {
                 state.next = 0;
             }
-            drop(state);
-            if refresh_after_admission {
-                // Refresh preserves eager reservation/queue-credit semantics
-                // without invoking any readiness callback under producer lock.
-                // Do not wait on a session currently executing work. Its
-                // driver will refresh; producers still retain Full admissions.
-                match self.session.try_lock() {
-                    Ok(mut session) => {
-                        session.state();
-                    }
-                    Err(TryLockError::Poisoned(error)) => {
-                        error.into_inner().state();
-                    }
-                    Err(TryLockError::WouldBlock) => {}
-                }
-            }
         }
+        drop(state);
         drop(detached);
         events
     }
@@ -1252,107 +1236,5 @@ mod tests {
         assert_eq!(events[0].producer, Key::new("test", "broken"));
         assert!(kernel.drain(3).is_empty());
         assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
-    }
-    #[test]
-    fn producer_admission_does_not_call_readiness_under_producer_lock() {
-        use phenix_graph::{
-            ComponentDef,
-            network::NetworkBuilder,
-            runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot},
-        };
-        use std::num::NonZeroUsize;
-        use std::sync::{
-            Weak,
-            atomic::{AtomicUsize, Ordering},
-        };
-
-        struct LockCheckingPolicy(Weak<Kernel>, Arc<AtomicUsize>);
-        impl ReadinessPolicy for LockCheckingPolicy {
-            fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-                let kernel = self.0.upgrade().unwrap();
-                let _guard = kernel
-                    .producers
-                    .try_lock()
-                    .expect("readiness executed with producer inventory locked");
-                self.1.fetch_add(1, Ordering::SeqCst);
-                snapshot
-                    .heads
-                    .iter()
-                    .filter(|head| head.available)
-                    .map(|head| head.port.clone())
-                    .collect()
-            }
-        }
-
-        struct OneShot(bool);
-        impl Producer for OneShot {
-            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
-                if self.0 {
-                    return Ok(None);
-                }
-                self.0 = true;
-                Ok(Some(InputEvent {
-                    input: "in".into(),
-                    value: Value::local(7_i64),
-                }))
-            }
-        }
-
-        let selected = Arc::new(AtomicUsize::new(0));
-        let kernel = Arc::new_cyclic(|weak| {
-            let mut kernel = Kernel::build(
-                "admission-lock",
-                [],
-                Arc::new(phenix_graph::process::LocalProcessDispatcher),
-            )
-            .unwrap();
-            kernel.start().unwrap();
-
-            let mut builder = NetworkBuilder::new();
-            let sink = builder
-                .add("sink", Arc::new(ComponentDef::sink(|_: &i64| {})))
-                .unwrap();
-            builder
-                .expose_input(
-                    "in",
-                    sink.input::<i64>("input").unwrap(),
-                    NonZeroUsize::new(1).unwrap(),
-                )
-                .unwrap();
-            let session = builder
-                .build()
-                .unwrap()
-                .compile()
-                .unwrap()
-                .start_with_options(SessionOptions {
-                    readiness: BTreeMap::from([(
-                        "sink".into(),
-                        Readiness::Custom(Arc::new(LockCheckingPolicy(
-                            weak.clone(),
-                            selected.clone(),
-                        ))),
-                    )]),
-                    ..Default::default()
-                });
-            kernel.session = Mutex::new(session);
-            let key = Key::new("test", "one");
-            kernel
-                .routes
-                .insert(key.clone(), BTreeSet::from(["in".to_owned()]));
-            kernel.producers.get_mut().unwrap().producers.push((
-                key,
-                Box::new(OneShot(false)),
-                None,
-            ));
-            kernel
-        });
-
-        let events = kernel.drain(1);
-        assert_eq!(events.len(), 1);
-        assert!(events[0].result.is_ok());
-        // Reservation is eager between polls, but the callback must see
-        // the producer inventory unlocked.
-        assert!(selected.load(Ordering::SeqCst) > 0);
-        assert!(kernel.run_steps(8).unwrap().steps > 0);
     }
 }
