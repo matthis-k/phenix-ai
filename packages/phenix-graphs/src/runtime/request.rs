@@ -131,6 +131,10 @@ pub struct RequestWork {
     pub waiting_input: usize,
     pub waiting_wake: usize,
     pub publication_pending: usize,
+    /// Number of distinct full capture FIFOs targeted by this request's
+    /// retained, uncommitted publications. Passive snapshot only: the host
+    /// must consume or explicitly dispose buffered captures to free capacity.
+    pub capture_backpressure: usize,
     /// Bounded all-optional closure obligations registered by admitted roots.
     pub closure_pending: usize,
 }
@@ -328,6 +332,17 @@ impl NetworkSession {
                 .sum(),
             ..Default::default()
         };
+        let blocked_captures: BTreeSet<_> = self
+            .processes
+            .iter()
+            .filter(|p| p.request == Some(id) && p.pending.is_some())
+            .flat_map(|p| p.pending_targets.iter().copied())
+            .filter(|queue| {
+                matches!(&self.endpoints[*queue].1, QueueEndpoint::Capture(_))
+                    && self.transport.queues()[*queue].is_full()
+            })
+            .collect();
+        work.capture_backpressure = blocked_captures.len();
         for p in self.processes.iter().filter(|p| p.request == Some(id)) {
             match p.handoff.state() {
                 HandoffState::Ready => work.ready += 1,
