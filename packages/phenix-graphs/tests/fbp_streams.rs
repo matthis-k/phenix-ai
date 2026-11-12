@@ -848,6 +848,7 @@ fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
     }
     s.close_request(a).unwrap();
     s.close_request(b).unwrap();
+    assert!(s.correlation_blocks().is_empty());
     s.run_until_idle(100);
     // B cannot be extracted ahead of A from the shared capture FIFO.
     assert!(s.take_request_output(b, "out").unwrap().is_none());
@@ -885,8 +886,18 @@ fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
     }
     blocked.close_request(a).unwrap();
     blocked.close_request(b).unwrap();
+    let mismatch = blocked.correlation_blocks();
+    assert_eq!(mismatch.len(), 1);
+    assert_eq!(mismatch[0].path, "join");
+    assert_eq!(
+        mismatch[0].heads,
+        vec![("a".into(), vec![a]), ("b".into(), vec![b])]
+    );
+    // Read-only diagnosis does not reserve, dequeue or discard any packet.
+    assert_eq!(blocked.correlation_blocks(), mismatch);
     assert_eq!(blocked.run_until_idle(100).steps, 0);
     assert_eq!(blocked.state(), SessionState::Waiting);
+    assert_eq!(blocked.correlation_blocks(), mismatch);
     assert_eq!(blocked.request_status(a).unwrap(), RequestStatus::Pending);
 }
 
@@ -1597,6 +1608,18 @@ fn closure_finished_and_complete_report_undelivered_input_without_capture_rollba
         assert!(s.take_output("out").unwrap().is_none());
         assert_eq!(s.state(), SessionState::Failed);
     }
+}
+
+#[test]
+fn correlation_diagnostics_ignore_unscoped_inputs_and_incomplete_joins() {
+    let mut incomplete = correlated_join();
+    incomplete.inject("a", Value::of(1_i64)).unwrap();
+    assert!(incomplete.correlation_blocks().is_empty());
+
+    let mut unscoped = correlated_join();
+    unscoped.inject("a", Value::of(1_i64)).unwrap();
+    unscoped.inject("b", Value::of(2_i64)).unwrap();
+    assert!(unscoped.correlation_blocks().is_empty());
 }
 
 #[test]

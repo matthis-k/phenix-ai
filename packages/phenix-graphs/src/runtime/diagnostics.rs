@@ -5,7 +5,74 @@ pub struct BlockedCycle {
     pub processes: Vec<usize>,
     pub queues: Vec<QueueWait>,
 }
+
+/// Snapshot of `Readiness::All` input heads that cannot be correlated
+/// without changing their FIFO order. It is not a proof of global deadlock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorrelationBlock {
+    pub process: usize,
+    pub path: String,
+    /// One entry per required input port: all scoped requests present at
+    /// physical queue heads (not at any later position in the queue).
+    pub heads: Vec<(String, Vec<RequestId>)>,
+}
 impl NetworkSession {
+    /// Inspect authenticated request heads without driving the session.
+    /// Does not bypass FIFO, inspect packet values or call readiness policies.
+    /// A mismatched snapshot may become obsolete after other graph activity.
+    pub fn correlation_blocks(&self) -> Vec<CorrelationBlock> {
+        let mut result = Vec::new();
+        for (index, process) in self.processes.iter().enumerate() {
+            if process.done
+                || process.handoff.state() != HandoffState::Idle
+                || process.inputs.len() < 2
+                || !matches!(
+                    process.waiting_policy.as_ref().unwrap_or(&process.policy),
+                    Readiness::All
+                )
+            {
+                continue;
+            }
+            let mut heads = Vec::with_capacity(process.inputs.len());
+            let mut intersection: Option<BTreeSet<RequestId>> = None;
+            let mut eligible = true;
+            for port in &process.inputs {
+                let mut ids = BTreeSet::new();
+                for queue in &port.queues {
+                    let Some(packet) = self.transport.queues()[*queue].head() else {
+                        continue;
+                    };
+                    let Some(request) = packet.metadata().and_then(|m| m.request()) else {
+                        eligible = false;
+                        break;
+                    };
+                    if !self.requests.contains_key(&request) {
+                        eligible = false;
+                        break;
+                    }
+                    ids.insert(request);
+                }
+                if !eligible || ids.is_empty() {
+                    eligible = false;
+                    break;
+                }
+                intersection = Some(match intersection {
+                    Some(previous) => previous.intersection(&ids).copied().collect(),
+                    None => ids.clone(),
+                });
+                heads.push((port.name.clone(), ids.into_iter().collect()));
+            }
+            if eligible && intersection.as_ref().is_some_and(BTreeSet::is_empty) {
+                result.push(CorrelationBlock {
+                    process: index,
+                    path: self.compiled.processes()[index].path().to_owned(),
+                    heads,
+                });
+            }
+        }
+        result
+    }
+
     pub(super) fn fail_input(&mut self, index: usize, reason: &str) {
         self.input_failure = self.processes[index]
             .inputs

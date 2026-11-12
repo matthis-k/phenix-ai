@@ -24,7 +24,7 @@ mod readiness;
 mod recovery;
 mod request;
 mod wake;
-pub use diagnostics::BlockedCycle;
+pub use diagnostics::{BlockedCycle, CorrelationBlock};
 pub use readiness::{InputHead, Readiness, ReadinessPolicy, ReadinessSnapshot};
 pub use request::{
     CaptureMetadata, RequestDisposal, RequestError, RequestId, RequestInjectionError,
