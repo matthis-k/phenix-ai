@@ -166,7 +166,7 @@ fn measure(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64
     let sample = |session: &mut phenix_graph::runtime::NetworkSession, value: usize| {
         let id = session.begin_request(None).unwrap();
         session
-            .inject_request_local(id, "trigger", black_box(value as u64))
+            .inject_request(id, "trigger", Value::of(black_box(value as u64)))
             .unwrap();
         session.close_request(id).unwrap();
         let report = session.run_until_idle(4 * expected_steps + 32);
@@ -247,9 +247,9 @@ mod tests {
         );
         let mut session = network.start_with_options(opts);
         let id = session.begin_request(None).unwrap();
-        session.inject_request_local(id, "trigger", 7_u64).unwrap();
+        session.inject_request(id, "trigger", Value::of(7_u64)).unwrap();
         session
-            .inject_request_local(id, "unrelated-0", 8_u64)
+            .inject_request(id, "unrelated-0", Value::of(8_u64))
             .unwrap();
         session.close_request(id).unwrap();
         let first = session.run_until_idle(1);
