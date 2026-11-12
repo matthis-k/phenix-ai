@@ -1216,8 +1216,10 @@ impl Kernel {
         events
     }
 
-    /// Drive a started kernel until shutdown, delivering events without retaining reports.
-    /// Every producer must support wake registration. Shutdown is checked between
+    /// Drive a started kernel until shutdown or normal network completion,
+    /// delivering events without retaining reports. Failed and cancelled
+    /// sessions return `SessionStopped`, including if terminal on entry.
+    /// Live producers must support wake registration. Shutdown is checked between
     /// bounded driver iterations; it cannot preempt a running step or callback.
     pub fn run_until(
         &self,
@@ -1231,9 +1233,26 @@ impl Kernel {
         // handle; the actual drain mutex is still taken after session access.
         let registration_scope =
             KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
-        let (mut listener, notifier) = self
-            .with_session(|session| (session.wake_listener(), session.notifier()))
+        let (mut listener, notifier, initial_state, cause) = self
+            .with_session(|session| {
+                (
+                    session.wake_listener(),
+                    session.notifier(),
+                    session.state(),
+                    session.failure().map(str::to_owned),
+                )
+            })
             .map_err(|_| DriverError::ReentrantSession)?;
+        match initial_state {
+            SessionState::Completed => return Ok(()),
+            SessionState::Failed | SessionState::Cancelled => {
+                return Err(DriverError::SessionStopped {
+                    state: initial_state,
+                    cause,
+                });
+            }
+            _ => {}
+        }
         *wake.0.notifier.lock().unwrap() = Some(notifier);
         let drain = self
             .producer_drain
@@ -1307,6 +1326,9 @@ impl Kernel {
                 }
             }
             let report = self.run_steps(64).unwrap();
+            if report.state == SessionState::Completed {
+                return Ok(());
+            }
             if matches!(report.state, SessionState::Failed | SessionState::Cancelled) {
                 return Err(DriverError::SessionStopped {
                     state: report.state,
