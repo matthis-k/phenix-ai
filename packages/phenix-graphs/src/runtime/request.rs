@@ -309,10 +309,11 @@ impl NetworkSession {
             .iter()
             .enumerate()
             .any(|(index, p)| p.request == Some(id) || self.closure_obligation(index, id))
-            || self.transport.queues().iter().any(|q| {
-                q.packets()
-                    .any(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-            })
+            || self
+                .transport
+                .queues()
+                .iter()
+                .any(|queue| queue.request_count(id) != 0)
     }
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
@@ -324,11 +325,7 @@ impl NetworkSession {
                 .transport
                 .queues()
                 .iter()
-                .map(|q| {
-                    q.packets()
-                        .filter(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-                        .count()
-                })
+                .map(|queue| queue.request_count(id))
                 .sum(),
             ..Default::default()
         };
@@ -439,5 +436,144 @@ impl NetworkSession {
                 .is_none_or(|expected| expected == name);
         request.invalid |= !valid;
         request.captures = request.captures.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+mod queue_request_index_tests {
+    use super::*;
+    use crate::connection::{ConnectionQueue, ConnectionSet, FanoutTarget};
+    use std::num::NonZeroUsize;
+
+    fn request(sequence: u64) -> RequestId {
+        RequestId {
+            session: 11,
+            generation: 3,
+            sequence,
+        }
+    }
+
+    fn packet(request: Option<RequestId>, value: i64) -> Packet {
+        let mut packet = Packet::new(Value::of(value));
+        packet.metadata = Some(Arc::new(CaptureMetadata {
+            session: 11,
+            generation: 3,
+            process: Some(0),
+            output: "out".into(),
+            activation: 1,
+            request,
+            capture: None,
+        }));
+        packet
+    }
+
+    fn queue(capacity: usize) -> ConnectionQueue {
+        ConnectionQueue::new(
+            NonZeroUsize::new(capacity).unwrap(),
+            Value::of(0_i64).identity().clone(),
+        )
+    }
+
+    #[test]
+    fn indexed_queue_tracks_duplicate_requests_middle_removal_and_reader_disposal() {
+        let a = request(1);
+        let b = request(2);
+        let foreign = RequestId { session: 12, ..a };
+        let mut queue = queue(4);
+        queue.push(packet(Some(a), 1)).unwrap();
+        queue.push(packet(Some(b), 2)).unwrap();
+        queue.push(packet(Some(a), 3)).unwrap();
+        queue.push(packet(None, 4)).unwrap();
+
+        assert_eq!(queue.request_count(a), 2);
+        assert_eq!(queue.request_count(b), 1);
+        assert_eq!(queue.request_count(foreign), 0);
+        assert_eq!(
+            queue.push(packet(Some(foreign), 5)).unwrap_err().0,
+            ConnectionError::Full
+        );
+        assert_eq!(queue.request_count(foreign), 0);
+        assert_eq!(queue.pop_at(1).unwrap().value().get::<i64>().unwrap(), 2);
+        assert_eq!(queue.request_count(b), 0);
+        assert_eq!(queue.request_count(a), 2);
+        assert_eq!(queue.pop().unwrap().value().get::<i64>().unwrap(), 1);
+        assert_eq!(queue.request_count(a), 1);
+        assert_eq!(queue.pop_at(1).unwrap().value().get::<i64>().unwrap(), 4);
+        assert_eq!(queue.request_count(a), 1);
+
+        // Closing only the writer retains the accepted queue and index.
+        queue.close_writer();
+        assert_eq!(queue.request_count(a), 1);
+        let disposed = queue.close_reader();
+        assert_eq!(disposed.len(), 1);
+        assert_eq!(queue.request_count(a), 0);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn atomic_fanout_full_retry_and_disposal_preserve_exact_request_counts() {
+        let a = request(1);
+        let b = request(2);
+        let mut transport = ConnectionSet::new(vec![queue(3), queue(1)]);
+        let targets = [FanoutTarget::identity(0), FanoutTarget::identity(1)];
+        let mut first = transport.prepare(&packet(Some(a), 10), &targets).unwrap();
+        first.stamp_capture(1, "capture");
+        transport.commit(&mut first).unwrap();
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert_eq!(transport.queues()[1].request_count(a), 1);
+
+        let mut second = transport.prepare(&packet(Some(b), 20), &targets).unwrap();
+        assert_eq!(transport.commit(&mut second), Err(ConnectionError::Full));
+        assert_eq!(second.retained_packets(), 2);
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.queues()[1].request_count(b), 0);
+
+        // Free just one destination; replay the retained transaction without
+        // re-preparing adapters or admitting a partial fanout.
+        let old = transport.pop(1).unwrap();
+        assert_eq!(old.metadata().unwrap().request(), Some(a));
+        assert_eq!(old.metadata().unwrap().capture(), Some("capture"));
+        transport.commit(&mut second).unwrap();
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert_eq!(transport.queues()[0].request_count(b), 1);
+        assert_eq!(transport.queues()[1].request_count(a), 0);
+        assert_eq!(transport.queues()[1].request_count(b), 1);
+        assert_eq!(transport.discard_request(a), 1);
+        assert_eq!(transport.discard_request(a), 0);
+        assert_eq!(transport.queues()[0].request_count(a), 0);
+        assert_eq!(transport.queues()[0].request_count(b), 1);
+        assert_eq!(
+            transport
+                .pop_at(0, 0)
+                .unwrap()
+                .value()
+                .get::<i64>()
+                .unwrap(),
+            20
+        );
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.cancel(), 1);
+        assert_eq!(transport.queues()[1].request_count(b), 0);
+        assert_eq!(transport.queues()[1].len(), 0);
+    }
+
+    #[test]
+    fn invalid_admissions_do_not_create_phantom_request_membership() {
+        let a = request(1);
+        let b = request(2);
+        let mut queue = queue(2);
+        queue.push(packet(Some(a), 7)).unwrap();
+        let wrong = Packet::new(Value::of(String::from("wrong type")));
+        assert_eq!(queue.push(wrong).unwrap_err().0, ConnectionError::WrongType);
+        assert_eq!(queue.request_count(a), 1);
+
+        let mut transport = ConnectionSet::new(vec![queue]);
+        let invalid = [FanoutTarget::identity(0), FanoutTarget::identity(12)];
+        assert!(transport.prepare(&packet(Some(b), 8), &invalid).is_err());
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert_eq!(transport.discard_request(b), 0);
+        assert_eq!(transport.discard_request(a), 1);
+        assert_eq!(transport.queues()[0].request_count(a), 0);
     }
 }
