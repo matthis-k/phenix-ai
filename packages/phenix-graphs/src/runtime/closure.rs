@@ -95,10 +95,17 @@ impl NetworkSession {
         if !scope.sealed {
             return false;
         }
+        // Request roots register their entire downstream reachability. An
+        // upstream process outside this scope cannot own or publish packets
+        // bearing this request ID. Host ingress queues remain checked.
+        let relevant = |queue: usize| match &self.endpoints[queue].0 {
+            QueueEndpoint::Process { index, .. } => scope.reachable.contains(index),
+            QueueEndpoint::Input(_) | QueueEndpoint::Capture(_) => true,
+        };
         let queues = &self.processes[index].inputs[port].queues;
         if queues
             .iter()
-            .any(|q| self.transport.queues()[*q].request_count(request) != 0)
+            .any(|q| relevant(*q) && self.transport.queues()[*q].request_count(request) != 0)
         {
             return false;
         }
@@ -106,7 +113,9 @@ impl NetworkSession {
         let mut stack = vec![];
         for queue in queues {
             if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
-                stack.push(*index);
+                if scope.reachable.contains(index) {
+                    stack.push(*index);
+                }
             }
         }
         while let Some(producer) = stack.pop() {
@@ -118,6 +127,9 @@ impl NetworkSession {
                 return false;
             }
             for queue in p.inputs.iter().flat_map(|port| &port.queues) {
+                if !relevant(*queue) {
+                    continue;
+                }
                 if self.transport.queues()[*queue].request_count(request) != 0 {
                     return false;
                 }
