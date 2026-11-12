@@ -260,7 +260,9 @@ fn request_scoped_capture_skips_unrelated_buffered_head_without_reordering_globa
         capture_capacity: NonZeroUsize::new(2).unwrap(),
         ..Default::default()
     };
-    options.readiness.insert("join".into(), Readiness::CorrelatedAll);
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
     let mut session = compiled.start_with_options(options);
     let first = session.begin_request(Some("out")).unwrap();
     let second = session.begin_request(Some("out")).unwrap();
@@ -291,7 +293,12 @@ fn request_scoped_capture_skips_unrelated_buffered_head_without_reordering_globa
         session.request_status(second).unwrap(),
         RequestStatus::Settled { captures: 1 }
     );
-    assert!(session.take_request_output(second, "out").unwrap().is_none());
+    assert!(
+        session
+            .take_request_output(second, "out")
+            .unwrap()
+            .is_none()
+    );
     let a = session.take_output("out").unwrap().unwrap();
     assert_eq!(a.value().get::<i64>().unwrap(), 3);
     assert_eq!(a.metadata().unwrap().request(), Some(first));
@@ -310,7 +317,9 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
         capture_capacity: NonZeroUsize::new(2).unwrap(),
         ..Default::default()
     };
-    options.readiness.insert("join".into(), Readiness::CorrelatedAll);
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
     let mut session = compiled.start_with_options(options.clone());
     let mut other = compiled.start_with_options(options);
     let own = session.begin_request(None).unwrap();
