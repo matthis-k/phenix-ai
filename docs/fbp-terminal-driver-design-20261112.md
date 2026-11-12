@@ -21,9 +21,12 @@ A new scheduler or notification service is unnecessary.
 
 ## Phase 1 — smallest safe change
 
-- For a session `Completed` on entry, `run_until` returns `Ok(())`
-  without registering producers or blocking. `Failed` and `Cancelled`
-  on entry return the existing `DriverError::SessionStopped` with cause.
+- For a session `Failed` or `Cancelled` on entry, return the existing
+  `DriverError::SessionStopped` without registering producers. Retain
+  wake-registration callbacks for already-`Completed` sessions that still
+  have registered producers, so existing wake callback and producer event
+  error contracts are exercised. An empty-`Completed` session has no
+  producers and returns `Ok(())` after one nonblocking driver iteration.
 - For a session that transitions to `Completed` in a driver iteration,
   also return `Ok(())`. Failure and cancellation behavior is unchanged.
 - Move the cancellation regression to a genuinely live open-ingress
@@ -40,3 +43,12 @@ provider authority, request cancellation or wake handling. `Completed`
 is a successful terminal outcome for the blocking driver, while failure
 and cancellation remain typed errors. This is a behavioral API correction,
 not a compatibility alias.
+
+## Phase 4 regression scope clarification
+
+The original unit and plugin callback tests intentionally install producers on
+a network with no processes. Their `set_waker` / `poll` behavior remains
+observable, so the Completed fast return occurs after the normal bounded
+iteration, not before registration. On entry, only Failed and Cancelled skip
+registration. This avoids silently weakening existing panic and leased-error
+regressions.

@@ -21,3 +21,17 @@ tests pass. Verify new test enters Quiescent and preserves Cancelled.
 Verify Completed exits before unsupported producer waker registration.
 Use exact-head CI and normal unmodified `flake.nix` to accept.
 No general cross-thread deadlock guarantee is made.
+
+## Phase 2 counterexample from existing callback tests
+
+Early success for every already-Completed session skips wake-registration
+callbacks even when producers are installed on an empty graph, breaking the
+existing `WakeRegistrationPanicked` and `EventCallbackPanicked` regressions.
+Do **not** weaken those tests solely to accommodate a terminal fast path.
+
+Revised choice: Failed/Cancelled return on entry, but Completed is reported
+as `Ok` after the existing registration/first bounded iteration. This
+fixes the empty-session hang without silently removing callback checks.
+The limitation is that a completed graph with an unsupported waker may still
+report `UnsupportedWake` before completion; changing producer shutdown
+precedence requires a separate policy/design decision.

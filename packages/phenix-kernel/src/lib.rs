@@ -1244,7 +1244,6 @@ impl Kernel {
             })
             .map_err(|_| DriverError::ReentrantSession)?;
         match initial_state {
-            SessionState::Completed => return Ok(()),
             SessionState::Failed | SessionState::Cancelled => {
                 return Err(DriverError::SessionStopped {
                     state: initial_state,
