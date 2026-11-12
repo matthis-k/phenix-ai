@@ -76,7 +76,7 @@ impl<'a> DirectDrainScope<'a> {
     fn enter(owner: &'a AtomicUsize) -> Option<Self> {
         owner
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < DRIVER_OWNER - 1).then_some(count + 1)
+                (count < DRIVER_OWNER - 1).then(|| count + 1)
             })
             .ok()
             .map(|_| Self(owner))
