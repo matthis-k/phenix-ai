@@ -5,6 +5,11 @@ pub enum Readiness {
     #[default]
     Any,
     All,
+    /// Opt-in request-scoped join. Selects the earliest packet of one request
+    /// from each bounded input queue, even behind another request's head.
+    /// Preserves order within each request, not global cross-request FIFO.
+    /// Unscoped packets remain strictly head-only.
+    CorrelatedAll,
     AtLeast(NonZeroUsize),
     /// Omit optional inputs only at actual EOS or scheduler-proven request-local
     /// upstream closure. Sealing a request alone is not closure evidence.
@@ -21,6 +26,7 @@ impl std::fmt::Debug for Readiness {
         match self {
             Self::Any => f.write_str("Any"),
             Self::All => f.write_str("All"),
+            Self::CorrelatedAll => f.write_str("CorrelatedAll"),
             Self::AtLeast(n) => f.debug_tuple("AtLeast").field(n).finish(),
             Self::Optional { required, optional } => f
                 .debug_struct("Optional")
@@ -48,7 +54,7 @@ pub trait ReadinessPolicy: Send + Sync {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
 }
 pub(super) struct Reservation {
-    pub ports: Vec<(usize, Option<usize>)>,
+    pub ports: Vec<(usize, Option<(usize, usize)>)>,
     request: Option<RequestId>,
 }
 
@@ -85,15 +91,31 @@ impl NetworkSession {
             policy,
         )
     }
-    fn head_for(&self, index: usize, port: usize, request: Option<RequestId>) -> Option<usize> {
-        let p = &self.processes[index].inputs[port];
-        (0..p.queues.len())
-            .map(|offset| p.queues[(p.cursor + offset) % p.queues.len()])
-            .find(|q| {
-                self.transport.queues()[*q]
-                    .head()
-                    .is_some_and(|packet| packet.metadata().and_then(|m| m.request()) == request)
-            })
+    fn packet_for(
+        &self,
+        index: usize,
+        port: usize,
+        request: Option<RequestId>,
+        correlated: bool,
+    ) -> Option<(usize, usize)> {
+        let input = &self.processes[index].inputs[port];
+        for offset in 0..input.queues.len() {
+            let queue = input.queues[(input.cursor + offset) % input.queues.len()];
+            let packets = &self.transport.queues()[queue];
+            let position = if correlated && request.is_some() {
+                packets
+                    .packets()
+                    .position(|packet| packet.metadata().and_then(|m| m.request()) == request)
+            } else {
+                packets.head().and_then(|packet| {
+                    (packet.metadata().and_then(|m| m.request()) == request).then_some(0)
+                })
+            };
+            if let Some(position) = position {
+                return Some((queue, position));
+            }
+        }
+        None
     }
     pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
         let p = &self.processes[index];
@@ -105,7 +127,7 @@ impl NetworkSession {
                 .iter()
                 .position(|port| &port.name == waiting)
                 .unwrap();
-            let queue = self.head_for(index, port, p.request);
+            let queue = self.packet_for(index, port, p.request, false);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
                 return Err(format!(
@@ -124,17 +146,24 @@ impl NetworkSession {
         let order: Vec<_> = (0..count)
             .map(|offset| (p.cursor + offset) % count)
             .collect();
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        let correlated = matches!(policy, Readiness::CorrelatedAll);
         let mut candidates = vec![];
         for port in &order {
             let input = &p.inputs[*port];
             for offset in 0..input.queues.len() {
-                if let Some(head) = self.transport.queues()
-                    [input.queues[(input.cursor + offset) % input.queues.len()]]
-                .head()
-                {
-                    let request = head.metadata().and_then(|m| m.request());
-                    if !candidates.contains(&request) {
-                        candidates.push(request);
+                let queue = input.queues[(input.cursor + offset) % input.queues.len()];
+                for (position, packet) in self.transport.queues()[queue].packets().enumerate() {
+                    if position > 0 && !correlated {
+                        break;
+                    }
+                    let request = packet.metadata().and_then(|m| m.request());
+                    // A global (unscoped) packet is never dequeued out of FIFO
+                    // order, even under this explicit request correlation policy.
+                    if position == 0 || request.is_some() {
+                        if !candidates.contains(&request) {
+                            candidates.push(request);
+                        }
                     }
                 }
             }
@@ -158,7 +187,7 @@ impl NetworkSession {
                     .iter()
                     .map(|port| InputHead {
                         port: p.inputs[*port].name.clone(),
-                        available: self.head_for(index, *port, request).is_some(),
+                        available: self.packet_for(index, *port, request, correlated).is_some(),
                         closed: self.input_closed_for(index, *port, request),
                     })
                     .collect(),
@@ -184,7 +213,7 @@ impl NetworkSession {
                             format!("required input {name} closed before its staged reservation")
                         })
                     }
-                    Readiness::All => snapshot
+                    Readiness::All | Readiness::CorrelatedAll => snapshot
                         .heads
                         .iter()
                         .find(|h| !h.available && h.closed)
@@ -218,7 +247,7 @@ impl NetworkSession {
             }
             let names = match policy {
                 Readiness::Any => available.into_iter().take(1).collect(),
-                Readiness::All if available.len() == count => available,
+                Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
                 Readiness::AtLeast(n) if available.len() >= n.get() => {
                     available.into_iter().take(n.get()).collect()
                 }
@@ -262,7 +291,7 @@ impl NetworkSession {
                     .iter()
                     .position(|port| port.name == name)
                     .ok_or_else(|| format!("unknown readiness port {name}"))?;
-                let queue = self.head_for(index, port, request);
+                let queue = self.packet_for(index, port, request, correlated);
                 if ports.iter().any(|(selected, _)| *selected == port)
                     || (queue.is_none() && !self.input_closed_for(index, port, request))
                 {
@@ -310,10 +339,10 @@ impl NetworkSession {
             let global_eos = self.closed(index, port);
             let p = &mut self.processes[index].inputs[port];
             if let Some(queue) = queue {
-                let packet = self.transport.pop(queue).unwrap();
+                let packet = self.transport.pop_at(queue.0, queue.1).unwrap();
                 inputs.insert(p.name.clone(), packet.into_value());
-                p.cursor =
-                    (p.queues.iter().position(|q| *q == queue).unwrap() + 1) % p.queues.len();
+                p.cursor = (p.queues.iter().position(|q| *q == queue.0).unwrap() + 1)
+                    % p.queues.len();
             } else {
                 if global_eos {
                     p.eos_delivered = true;

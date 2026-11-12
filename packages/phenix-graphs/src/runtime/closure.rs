@@ -24,7 +24,7 @@ impl NetworkSession {
             return p.handoff.state() == HandoffState::WaitingInput;
         }
         match p.waiting_policy.as_ref().unwrap_or(&p.policy) {
-            Readiness::All => available < p.inputs.len(),
+            Readiness::All | Readiness::CorrelatedAll => available < p.inputs.len(),
             Readiness::AtLeast(n) => available < n.get(),
             Readiness::Optional { required, optional } => {
                 required.iter().any(|name| {

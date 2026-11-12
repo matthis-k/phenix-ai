@@ -2,6 +2,7 @@
 //!
 //! These types own payloads, not readiness history. A policy may inspect heads
 //! but may not skip earlier packets or create an auxiliary payload buffer.
+
 pub use crate::value::Leased;
 use crate::{GraphOrigin, TypeIdentity, Value};
 use std::collections::{BTreeSet, VecDeque};
@@ -116,6 +117,11 @@ impl ConnectionQueue {
     pub fn pop(&mut self) -> Option<Packet> {
         self.packets.pop_front()
     }
+    /// Explicit correlated-mode extraction, preserving order among all
+    /// remaining packets and never increasing the queue's bounded capacity.
+    pub fn pop_at(&mut self, offset: usize) -> Option<Packet> {
+        self.packets.remove(offset)
+    }
     pub fn close_writer(&mut self) {
         self.writer_closed = true;
     }
@@ -223,6 +229,9 @@ impl ConnectionSet {
     }
     pub fn pop(&mut self, index: usize) -> Option<Packet> {
         self.queues.get_mut(index)?.pop()
+    }
+    pub fn pop_at(&mut self, index: usize, offset: usize) -> Option<Packet> {
+        self.queues.get_mut(index)?.pop_at(offset)
     }
     /// Explicit request disposal, not delivery or rollback. Unrelated packets
     /// retain their exact FIFO order and queue reader/writer state is unchanged.

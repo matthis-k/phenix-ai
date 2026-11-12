@@ -863,7 +863,7 @@ impl Process for CorrelatedJoin {
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(a + b))))
     }
 }
-fn correlated_join() -> phenix_graph::runtime::NetworkSession {
+fn correlated_join_with(policy: Readiness) -> phenix_graph::runtime::NetworkSession {
     let mut b = NetworkBuilder::new();
     let p = b
         .node(
@@ -893,13 +893,72 @@ fn correlated_join() -> phenix_graph::runtime::NetworkSession {
         .unwrap();
     let mut options = options();
     options.capture_capacity = NonZeroUsize::new(2).unwrap();
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), policy);
     b.build()
         .unwrap()
         .compile()
         .unwrap()
         .start_with_options(options)
 }
+fn correlated_join() -> phenix_graph::runtime::NetworkSession {
+    correlated_join_with(Readiness::All)
+}
+
+#[test]
+fn correlated_all_crossed_heads_settle_in_one_bounded_shared_session() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let mut session = correlated_join_with(Readiness::CorrelatedAll);
+    let a = session.begin_request(Some("out")).unwrap();
+    let b = session.begin_request(Some("out")).unwrap();
+    for (request, port, value) in [
+        (a, "a", 1_i64),
+        (b, "b", 20),
+        (b, "a", 10),
+        (a, "b", 2),
+    ] {
+        session.inject_request(request, port, Value::of(value)).unwrap();
+    }
+    session.close_request(a).unwrap();
+    session.close_request(b).unwrap();
+    assert_eq!(session.run_until_idle(100).state, SessionState::Waiting);
+    assert_eq!(
+        session.take_request_output(a, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        3
+    );
+    assert_eq!(
+        session.take_request_output(b, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        30
+    );
+    assert_eq!(session.request_status(a).unwrap(), RequestStatus::Settled { captures: 1 });
+    assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 1 });
+    assert!(session.correlation_blocks().is_empty());
+}
+
+#[test]
+fn correlated_all_cancelled_request_releases_only_its_own_packets() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let mut session = correlated_join_with(Readiness::CorrelatedAll);
+    let a = session.begin_request(Some("out")).unwrap();
+    let b = session.begin_request(Some("out")).unwrap();
+    session.inject_request(a, "a", Value::of(1_i64)).unwrap();
+    session.inject_request(b, "b", Value::of(20_i64)).unwrap();
+    session.inject_request(b, "a", Value::of(10_i64)).unwrap();
+    session.close_request(a).unwrap();
+    session.close_request(b).unwrap();
+    // A incomplete request must not consume B's packets or prevent an
+    // ordinary request-local cancellation from disposing only A's queue.
+    session.cancel_request(a).unwrap();
+    assert_eq!(session.request_status(a).unwrap(), RequestStatus::Cancelled);
+    session.run_until_idle(100);
+    assert_eq!(
+        session.take_request_output(b, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        30
+    );
+    assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 1 });
+}
+
 #[test]
 fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
     use phenix_graph::runtime::RequestStatus;
