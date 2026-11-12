@@ -224,6 +224,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn reachable_closure_fanin_and_chain_smoke() {
         super::measure("fan-in", 8, 3);
