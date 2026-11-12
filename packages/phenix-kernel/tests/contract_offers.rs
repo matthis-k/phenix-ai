@@ -1,21 +1,11 @@
-use phenix_graph::{DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor};
-use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+mod support;
+use phenix_graph::{
+    compose::{Edit, NetworkPatch},
+    process::LocalProcessDispatcher,
 };
+use phenix_kernel::{ContractDefinition, ContractRequirement, Kernel, Key, NetworkOffer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
-
-fn contract() -> GraphContract {
-    GraphContract::new(
-        "example/service@1",
-        InterfaceShape::new()
-            .input_slot("run", "value", DeclaredValue::local::<i64>())
-            .unwrap()
-            .output("value", DeclaredValue::local::<i64>())
-            .unwrap(),
-    )
-    .unwrap()
-}
 
 #[derive(Clone, Copy)]
 struct Plugin {
@@ -28,9 +18,9 @@ impl PluginInstance for Plugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         into.add(ContractDefinition {
             id: "definition".into(),
-            contract: contract(),
+            contract: support::contract("example/service@1"),
         })?;
-        into.add(GraphOffer {
+        into.add(NetworkOffer {
             id: "offer".into(),
             producer: Key::new("provider", "main"),
             unit: if self.missing_path {
@@ -46,53 +36,21 @@ impl PluginInstance for Plugin {
             consumer: Key::new("provider", "consumer"),
             contract: Key::new("provider", "definition"),
         })?;
-        into.add(Contribution {
-            id: "consumer".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(|_| Ok(())),
-        })?;
-        let config = *self;
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                if config.module {
-                    let mut module = GraphBuilder::new("implementation");
-                    let node = module.node("private", |x: i64| x + 1)?;
-                    module.expose_input_field(
-                        "run",
-                        phenix_graph::SlotField::<(), i64>::new("value"),
-                        node.inlet(),
-                    )?;
-                    module.expose_output("value", node.output())?;
-                    if config.claim {
-                        module.implements_public(&contract())?;
-                    }
-                    graph.instance("service", &module.module())?;
-                } else {
-                    graph.node("service", |x: i64| x + 1)?;
-                    if config.claim {
-                        graph.implements("service", &contract())?;
-                    }
-                }
-                Ok(())
-            }),
-        })?;
+        into.add(support::contribution("consumer", NetworkPatch::new([])))?;
+        into.add(support::contribution(
+            "main",
+            support::patch("service", self.module, self.claim, 1, "example/service@1"),
+        ))?;
         if self.late_edit {
-            into.add(Contribution {
-                id: "late".into(),
-                requires: vec![Key::new("provider", "main")],
-                routes: vec![],
-                compose: Box::new(|context| {
-                    let graph = &mut *context.graph;
-                    *graph = GraphBuilder::new("late");
-                    graph.node("service", |x: i64| x + 2)?;
-                    Ok(())
-                }),
-            })?;
+            let mut late = support::contribution(
+                "late",
+                NetworkPatch::new([Edit::Replace {
+                    path: "service".into(),
+                    definition: support::definition(self.module, false, 2, "example/service@1"),
+                }]),
+            );
+            late.requires.push(Key::new("provider", "main"));
+            into.add(late)?;
         }
         Ok(())
     }
@@ -100,10 +58,6 @@ impl PluginInstance for Plugin {
 
 #[test]
 fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection() {
-    let mut catalog = PluginCatalog::new();
-    let key = catalog
-        .register("provider", |config: Plugin| Ok(config))
-        .unwrap();
     for module in [false, true] {
         for failure in [
             None,
@@ -112,21 +66,18 @@ fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection()
             Some("selection"),
             Some("late"),
         ] {
-            let mut plugins = catalog.instance();
-            let snapshot = plugins
-                .load(
-                    &key,
-                    Plugin {
-                        module,
-                        claim: failure != Some("claim"),
-                        missing_path: failure == Some("path"),
-                        late_edit: failure == Some("late"),
-                    },
-                )
-                .unwrap();
-            let mut policy = ImportPolicy::default();
+            let snapshot = support::snapshot(
+                "provider",
+                Plugin {
+                    module,
+                    claim: failure != Some("claim"),
+                    missing_path: failure == Some("path"),
+                    late_edit: failure == Some("late"),
+                },
+            );
+            let mut options = support::options(std::slice::from_ref(&snapshot));
             if failure == Some("selection") {
-                policy.selections.insert(
+                options.imports.selections.insert(
                     Key::new("provider", "request"),
                     Key::new("provider", "absent"),
                 );
@@ -134,15 +85,11 @@ fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection()
             let result = Kernel::build_with_options(
                 "host",
                 [snapshot],
-                Arc::new(LocalExecutor),
-                phenix_kernel::BuildOptions {
-                    imports: policy,
-                    ..Default::default()
-                },
-            )
-            .map_err(|error| error.to_string());
+                Arc::new(LocalProcessDispatcher),
+                options,
+            );
             if let Some(failure) = failure {
-                let error = result.err().expect("invalid offer must fail");
+                let error = result.err().unwrap().to_string();
                 let expected = match failure {
                     "path" | "selection" => "absent",
                     _ => "claim",
@@ -165,43 +112,24 @@ struct ForeignPlugin {
 impl PluginInstance for ForeignPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         if !self.replace {
-            return into.add(GraphOffer {
+            return into.add(NetworkOffer {
                 id: "stolen".into(),
                 producer: Key::new("provider", "main"),
                 unit: "service".into(),
                 contract: Key::new("provider", "definition"),
             });
         }
-        let module = self.module;
-        into.add(Contribution {
-            id: "patch".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: vec![],
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                if module {
-                    let mut child = GraphBuilder::new("replacement");
-                    let node = child.node("private", |x: i64| x + 10)?;
-                    child.expose_input_field(
-                        "run",
-                        phenix_graph::SlotField::<(), i64>::new("value"),
-                        node.inlet(),
-                    )?;
-                    child.expose_output("value", node.output())?;
-                    child.implements_public(&contract())?;
-                    graph.replace("service", child.module())?;
-                } else {
-                    let mut replacement =
-                        phenix_graph::NodeTemplate::local_function(|x: i64| x + 10);
-                    replacement.claims.push(contract());
-                    graph.replace("service", replacement)?;
-                }
-                Ok(())
-            }),
-        })
+        let mut patch = support::contribution(
+            "patch",
+            NetworkPatch::new([Edit::Replace {
+                path: "service".into(),
+                definition: support::definition(self.module, true, 10, "example/service@1"),
+            }]),
+        );
+        patch.requires.push(Key::new("provider", "main"));
+        into.add(patch)
     }
 }
-
 #[test]
 fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
     let mut catalog = PluginCatalog::new();
@@ -228,13 +156,17 @@ fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
             plugins
                 .load(&foreign, ForeignPlugin { module, replace })
                 .unwrap();
-            let error = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-                .err()
-                .unwrap();
-            assert!(
-                error.to_string().contains("origin mismatch"),
-                "module={module}, replace={replace}: {error}"
-            );
+            let snapshots: Vec<_> = plugins.snapshots().collect();
+            let options = support::options(&snapshots);
+            let error = Kernel::build_with_options(
+                "host",
+                snapshots,
+                Arc::new(LocalProcessDispatcher),
+                options,
+            )
+            .err()
+            .unwrap();
+            assert!(error.to_string().contains("origin mismatch"), "{error}");
         }
     }
 }

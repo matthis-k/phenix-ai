@@ -1,80 +1,34 @@
-//! Graph-native, snapshot-based derived values. No cache or independent scheduler.
+//! Snapshot-derived values authored exclusively as native FBP components.
+//! Build and binding perform no reads. Observation activation subscribes before
+//! bootstrap; demand queries use bounded native request scopes, never a scheduler
+//! or a cached latest value. All members of a derived join share one source root.
 //!
-//! Declare nodes in ordinary kernel contributions. [`DerivedRuntime::build`]
-//! calls `Kernel::build` and binds queries by exact action identity in that final
-//! deployment, including declarations composed outside the runtime builder.
-//! Binding also requires the named refresh route to take one payload and target
-//! only that root's refresh inlet. A parent module must explicitly export and
-//! bind this route; a missing, redirected or fan-out route fails before any wave.
-//! Reusing an action in multiple physical nodes is ambiguous and cannot be bound.
-//! Deliberately redeploying the same compiled graph is supported; each bound query
-//! borrows its owning engine. Queries are host-only: dispatch of any node through
-//! a DerivedRuntime rejects nested queries, including queries of another runtime.
-//! [`DerivedHost`] installs this guard unconditionally for host generations,
-//! including delegated execution threads. Prepare with [`QuerySpec::validate_binding`]
-//! and query after publication with [`DerivedGeneration::query`]. Explicit
-//! [`QuerySpec::bind_engine`] is low-level: arbitrary engines cannot guarantee
-//! host-only dispatch or kernel started-state admission.
-//! Stored and derived inputs cannot be mixed in a tuple: explicitly declare one
-//! [`GraphDeriveExt::sources`] group and reuse it with `derive_from` instead.
-//! All values are local Rust types with `Clone + Send + Sync + 'static` bounds.
-//! Arity 1-4 is supported. Field/method-based closures may need explicit argument
-//! annotations; the canonical arithmetic `|a, b| a + b` infers its types.
+//! Authoring additions are transactional. Failed demand requests restart only
+//! affected processes; cancellation does not undo already committed effects.
 //!
-//! ```ignore
-//! // Inside Contribution::compose, with previously authorized cell handles:
-//! let sum = graph.derive("sum", (&a, &b), |a, b| a + b)?;
-//! let twice = graph.derive("twice", (&sum,), |sum| sum * 2)?;
-//! let spec = graph.query_spec("sum.query", &sum)?;
-//! // Store both sum and spec in plugin-owned state for the host.
-//! let observation = sum.observation(16);
-//! // Declare observation.route() in Contribution::routes, and call
-//! // observation.activate() only in Contribution::activate.
-//!
-//! // Host: this calls the ordinary Kernel::build, including compile/preflight.
-//! let mut runtime = DerivedRuntime::build("app", snapshots, executor)?;
-//! runtime.start()?;
-//! let query = runtime.bind_query(&spec)?;
-//! let current = query.query()?; // Kernel::fire, one demand wave, full snapshot
-//! ```
-//!
-//! Only same-mount atomic snapshots are accepted. Unrelated roots may perform
-//! redundant reads; there is no automatic regrouping, memoization, materialization,
-//! stale `latest()`, or dynamic dependency tracking. A query refreshes every sibling
-//! on its root, including ordinary downstream effects, not just its selected node.
-//! Native source errors cross the graph boundary as `source[MissingInput]` or
-//! `source[Storage]` plus the native diagnostic (including `Codec`/`Denied`). Host
-//! construction and activation preserve the typed storage error in [`Error::Storage`].
-//!
-//! Mixing stored and derived inputs requires an explicit unified source group:
+//! Stored and derived inputs cannot be mixed implicitly:
 //! ```compile_fail
-//! use phenix_graph::GraphBuilder;
-//! use phenix_storage::{scoped::{ReadCell, Stored}};
+//! use phenix_graph::network::NetworkBuilder;
+//! use phenix_storage::scoped::{ReadCell, Stored};
 //! use phenix_storage_graph::derived::{DerivedRef, GraphDeriveExt};
 //! fn mixed<T: Stored + Clone + Send + Sync + 'static>(
-//!     graph: &mut GraphBuilder, a: &ReadCell<T>, b: &DerivedRef<T>
+//!     graph: &mut NetworkBuilder, cell: &ReadCell<T>, value: &DerivedRef<T>,
 //! ) where T::Format: Send + Sync {
-//!     graph.derive("mixed", (a, b), |_: T, _: T| ()).unwrap();
+//!     graph.derive("mixed", (cell, value), |_: T, _: T| ()).unwrap();
 //! }
 //! ```
-//!
-//! Derived outputs retain their Rust type when wired to ordinary consumers:
+//! Native endpoints retain Rust type identity:
 //! ```compile_fail
-//! use phenix_graph::GraphBuilder;
+//! use phenix_graph::network::{InputRef, NetworkBuilder};
 //! use phenix_storage_graph::derived::DerivedRef;
-//! fn wrong_consumer(graph: &mut GraphBuilder, value: &DerivedRef<i64>) {
-//!     let text = graph.node("text", |value: String| value).unwrap();
-//!     graph.connect(value.output(), text.inlet()).unwrap();
+//! fn wrong(graph: &mut NetworkBuilder, value: &DerivedRef<i64>, to: InputRef<String>) {
+//!     graph.connect(value.output(), to, std::num::NonZeroUsize::new(1).unwrap()).unwrap();
 //! }
 //! ```
-//!
-//! Handles are immutable outputs, created after their inputs, so a pure derived
-//! cycle is not constructible. General graph edges remain unrestricted.
+//! Owned native dispatchers cannot replay an old completion by cloning it:
 //! ```compile_fail
-//! use phenix_graph::GraphBuilder;
-//! use phenix_storage_graph::derived::GraphDeriveExt;
-//! let mut graph = GraphBuilder::new("cycle");
-//! let cycle = graph.derive("cycle", (&cycle,), |x: i64| x + 1);
+//! use phenix_graph::process::CompletedStep;
+//! fn replay(completed: &CompletedStep) -> CompletedStep { completed.clone() }
 //! ```
 mod host;
 mod inputs;
@@ -84,11 +38,18 @@ mod source;
 pub use host::{DerivedGeneration, DerivedHost};
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
-pub use query::{DerivedRuntime, QueryHandle, QuerySpec};
+pub use query::{DerivedRuntime, QueryHandle, QuerySpec, QueryValue};
 
-use phenix_graph::{GraphBuilder, OutputRef};
+use phenix_graph::{
+    component::{ComponentDef, DefinitionKey},
+    network::{ComponentRef, NetworkBuilder, NetworkError, OutputRef},
+};
 use phenix_storage::snapshot::ReadSource;
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
+
+pub(crate) fn capacity() -> NonZeroUsize {
+    NonZeroUsize::new(1).unwrap()
+}
 
 #[derive(Clone, Debug)]
 pub enum RefreshCause {
@@ -108,6 +69,13 @@ pub enum Error {
     NestedQuery,
     PublicationCount(usize),
     InvalidPublication,
+    Request(phenix_graph::runtime::RequestError),
+    Unsettled,
+    RequestInterrupted {
+        cause: Box<Error>,
+        cancelled_jobs: Vec<phenix_graph::process::StepTicket>,
+        disposal: phenix_graph::runtime::RequestDisposal,
+    },
     Wave(Vec<String>),
 }
 impl std::fmt::Display for Error {
@@ -118,8 +86,10 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Kernel(error) => Some(error.as_ref()),
-            Self::Storage(error) => Some(error),
+            Self::Kernel(e) => Some(e.as_ref()),
+            Self::Storage(e) => Some(e),
+            Self::Request(e) => Some(e),
+            Self::RequestInterrupted { cause, .. } => Some(cause.as_ref()),
             _ => None,
         }
     }
@@ -129,22 +99,35 @@ impl From<String> for Error {
         Self::Graph(e)
     }
 }
+impl From<NetworkError> for Error {
+    fn from(e: NetworkError) -> Self {
+        Self::Graph(e.to_string())
+    }
+}
 impl From<phenix_storage::Error> for Error {
     fn from(e: phenix_storage::Error) -> Self {
         Self::Storage(e)
+    }
+}
+impl From<phenix_graph::runtime::RequestError> for Error {
+    fn from(e: phenix_graph::runtime::RequestError) -> Self {
+        Self::Request(e)
     }
 }
 
 pub(crate) struct Root {
     trigger: String,
     sources: Vec<ReadSource>,
-    action: Arc<dyn phenix_graph::NodeAction>,
+    definition: Arc<ComponentDef>,
+    capture: String,
+    errors: String,
 }
 
-/// An authoring endpoint and refresh lineage, never a computed value cache.
+/// Typed native endpoint and source lineage, not a value cache.
 #[derive(Clone)]
 pub struct DerivedRef<T: Clone + Send + Sync + 'static> {
     pub(crate) output: OutputRef<T>,
+    pub(crate) component: ComponentRef,
     pub(crate) root: Arc<Root>,
 }
 impl<T: Clone + Send + Sync + 'static> DerivedRef<T> {
@@ -156,6 +139,10 @@ impl<T: Clone + Send + Sync + 'static> DerivedRef<T> {
     }
     pub fn observation(&self, capacity: usize) -> Observation {
         Observation::new(self.root.clone(), capacity)
+    }
+    pub(crate) fn validate(&self, graph: &NetworkBuilder) -> Result<(), Error> {
+        graph.inspect(&self.component)?;
+        Ok(())
     }
 }
 
@@ -191,14 +178,7 @@ pub trait GraphDeriveExt {
     ) -> Result<QuerySpec<T>, Error>;
 }
 
-pub(crate) fn staged<T>(
-    graph: &mut GraphBuilder,
-    edit: impl FnOnce(&mut phenix_graph::authoring::GraphAdditions<'_>) -> Result<T, Error>,
-) -> Result<T, Error> {
-    graph.additions(edit)
-}
-
-impl GraphDeriveExt for GraphBuilder {
+impl GraphDeriveExt for NetworkBuilder {
     fn sources<I: StoredInputs>(
         &mut self,
         name: &str,
@@ -213,9 +193,11 @@ impl GraphDeriveExt for GraphBuilder {
         let root = Arc::new(Root {
             trigger: format!("{name}.refresh"),
             sources,
-            action: source::action::<I>(inputs, reader),
+            definition: source::definition::<I>(inputs, reader)?,
+            capture: format!("{name}.snapshot"),
+            errors: format!("{name}.errors"),
         });
-        staged(self, |g| source::lower::<I>(g, name, root.clone()))
+        self.additions(|graph| source::lower::<I>(graph, name, root))
     }
     fn derive<I, F, O, M>(
         &mut self,
@@ -227,7 +209,7 @@ impl GraphDeriveExt for GraphBuilder {
         I: DeriveInputs<F, O, M>,
         O: Clone + Send + Sync + 'static,
     {
-        inputs.lower(self, name, function)
+        self.additions(|graph| inputs.lower(graph, name, function))
     }
     fn derive_from<V, F, O>(
         &mut self,
@@ -240,15 +222,14 @@ impl GraphDeriveExt for GraphBuilder {
         F: TupleFunction<V, O>,
         O: Clone + Send + Sync + 'static,
     {
-        let function = Arc::new(function);
-        staged(self, |g| {
-            let function = function.clone();
-            let node = g
-                .node(name, move |values: V| function.call(values))
-                .map_err(|e| Error::Graph(e.to_string()))?;
-            g.connect(group.output(), node.inlet())?;
+        self.additions(|graph| {
+            group.validate(graph)?;
+            let definition = source::transform(move |v: V| function.call(v))?;
+            let component = graph.add(name, definition)?;
+            graph.connect(group.output(), component.input("run")?, capacity())?;
             Ok(DerivedRef {
-                output: node.output(),
+                output: component.output("value")?,
+                component,
                 root: group.root.clone(),
             })
         })
@@ -258,6 +239,6 @@ impl GraphDeriveExt for GraphBuilder {
         name: &str,
         value: &DerivedRef<T>,
     ) -> Result<QuerySpec<T>, Error> {
-        query::lower(self, name, value)
+        self.additions(|graph| query::lower(graph, name, value))
     }
 }

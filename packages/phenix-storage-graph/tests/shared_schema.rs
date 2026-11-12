@@ -1,4 +1,4 @@
-use phenix_graph::{ContractValue, InputSlot, Value};
+use phenix_graph::{ContractValue, PortDef, TypeIdentity, Value};
 use phenix_storage::{Address, Codec, Error, Grant, Operation, Registry, SchemaCodec, Scope};
 
 #[derive(ContractValue)]
@@ -51,7 +51,10 @@ fn structural_identity_is_used_by_graph_slots_and_values() {
     assert_eq!(Item::wire_schema(), Independent::wire_schema());
     assert_ne!(Item::wire_schema(), Incompatible::wire_schema());
     assert_ne!(Outer::wire_schema(), OtherOuter::wire_schema());
-    assert_eq!(InputSlot::immediate::<Item>(0).schema, Item::wire_schema());
+    assert_eq!(
+        PortDef::wire::<Item>("item").unwrap().value,
+        TypeIdentity::Wire(Item::wire_schema())
+    );
     let value = Value::of(Item { value: 42 });
     assert_eq!(value.get::<Independent>().unwrap().value, 42);
     assert!(value.get::<Incompatible>().is_err());

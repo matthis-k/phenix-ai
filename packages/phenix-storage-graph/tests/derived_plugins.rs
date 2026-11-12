@@ -1,9 +1,14 @@
 #[path = "../examples/derived.rs"]
+#[allow(dead_code)]
 mod example;
 
 use example::*;
-use phenix_graph::LocalExecutor;
-use phenix_kernel::{Contribution, Kernel, Key};
+use phenix_graph::{
+    compose::NetworkPatch, network::NetworkBuilder, process::LocalProcessDispatcher,
+};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Kernel, Key,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::{Operation, scoped};
 use phenix_storage_graph::derived::{DerivedRuntime, GraphDeriveExt, QuerySpec};
@@ -154,10 +159,30 @@ fn reader_snapshots_rebuild_and_failed_candidate_does_not_poison_exports() {
         .unwrap();
     let snapshots: Vec<_> = plugins.snapshots().collect();
     // This failure occurs after the reader has registered both candidate artifacts.
-    assert!(DerivedRuntime::build("failed", snapshots.clone(), Arc::new(LocalExecutor)).is_err());
+    assert!(
+        DerivedRuntime::build_with_options(
+            "failed",
+            snapshots.clone(),
+            Arc::new(LocalProcessDispatcher),
+            build_options()
+        )
+        .is_err()
+    );
     fail.store(false, Ordering::SeqCst);
-    let mut a = DerivedRuntime::build("a", snapshots.clone(), Arc::new(LocalExecutor)).unwrap();
-    let mut b = DerivedRuntime::build("b", snapshots, Arc::new(LocalExecutor)).unwrap();
+    let mut a = DerivedRuntime::build_with_options(
+        "a",
+        snapshots.clone(),
+        Arc::new(LocalProcessDispatcher),
+        build_options(),
+    )
+    .unwrap();
+    let mut b = DerivedRuntime::build_with_options(
+        "b",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        build_options(),
+    )
+    .unwrap();
     let key = Key::new("derive", "derive");
     let qa = a.kernel().export::<reader::Queries>(&key).unwrap().clone();
     let qb = b.kernel().export::<reader::Queries>(&key).unwrap().clone();
@@ -173,8 +198,8 @@ fn reader_snapshots_rebuild_and_failed_candidate_does_not_poison_exports() {
     );
     b.start().unwrap();
     a.start().unwrap();
-    assert_eq!(a.bind_query(&qa.sum).unwrap().query().unwrap(), 0);
-    assert_eq!(b.bind_query(&qb.sum).unwrap().query().unwrap(), 0);
+    assert_eq!(*a.bind_query(&qa.sum).unwrap().query().unwrap(), 0);
+    assert_eq!(*b.bind_query(&qb.sum).unwrap().query().unwrap(), 0);
 }
 
 struct FailCandidate(Arc<AtomicBool>);
@@ -185,13 +210,14 @@ impl PluginInstance for FailCandidate {
             id: "fail".into(),
             requires: vec![Key::new("derive", "derive")],
             routes: vec![],
-            compose: Box::new(move |_| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
                 if fail.load(Ordering::SeqCst) {
                     Err("candidate rejected".into())
                 } else {
-                    Ok(())
+                    Ok(CandidateArtifacts::default())
                 }
-            }),
+            })),
         })
     }
 }
@@ -206,16 +232,22 @@ impl PluginInstance for SelectedReader {
             id: "reader".into(),
             requires: vec![],
             routes: vec!["values.refresh".into()],
-            compose: Box::new(move |context| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
                 let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
-                let graph = &mut *context.graph;
+                let mut graph = NetworkBuilder::new();
                 let group = graph.sources("values", (&a, &b))?;
                 let sum = graph.derive_from("sum", &group, |a: Amount, b: Amount| a.0 + b.0)?;
                 let query = graph.query_spec("query", &sum)?;
                 let observation = group.observation(16);
-                context.export(query)?;
-                context.activate(move || observation.activate().map_err(Into::into))
-            }),
+                let mut artifacts = CandidateArtifacts {
+                    patch: Some(patch(graph.build()?)),
+                    ..Default::default()
+                };
+                artifacts.export(query)?;
+                artifacts.activate(move || observation.activate().map_err(Into::into))?;
+                Ok(artifacts)
+            })),
         })
     }
 }
@@ -241,39 +273,82 @@ fn starting_a_after_b_uses_as_exact_observation() {
         .load(&kind, SelectedReader(selected.clone()))
         .unwrap();
     let snapshots: Vec<_> = plugins.snapshots().collect();
-    let mut a = DerivedRuntime::build("a", snapshots.clone(), Arc::new(LocalExecutor)).unwrap();
+    let mut options = BuildOptions::default();
+    use phenix_graph::{
+        compose::{ConnectionKey, Footprint},
+        network::PortPath,
+    };
+    let p = |process: &str, port: &str| PortPath {
+        process: process.into(),
+        port: port.into(),
+    };
+    options.composition.insert(
+        Key::new("selected", "reader"),
+        CompositionPolicy {
+            grants: [
+                Footprint::Component("values".into()),
+                Footprint::Component("sum".into()),
+                Footprint::Component("query".into()),
+                Footprint::InputExport("values.refresh".into()),
+                Footprint::OutputExport("query".into()),
+                Footprint::Connection(ConnectionKey::new(p("values", "value"), p("sum", "run"))),
+                Footprint::Connection(ConnectionKey::new(p("sum", "value"), p("query", "run"))),
+            ]
+            .into(),
+            priority: 0,
+        },
+    );
+    options
+        .composition
+        .get_mut(&Key::new("selected", "reader"))
+        .unwrap()
+        .grants
+        .extend([
+            Footprint::OutputExport("values.snapshot".into()),
+            Footprint::OutputExport("values.errors".into()),
+        ]);
+    let first_options = BuildOptions {
+        composition: options.composition.clone(),
+        ..Default::default()
+    };
+    let mut a = DerivedRuntime::build_with_options(
+        "a",
+        snapshots.clone(),
+        Arc::new(LocalProcessDispatcher),
+        first_options,
+    )
+    .unwrap();
     *selected.lock().unwrap() = second.readers[0].clone();
-    let mut b = DerivedRuntime::build("b", snapshots, Arc::new(LocalExecutor)).unwrap();
+    let mut b = DerivedRuntime::build_with_options(
+        "b",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
     b.start().unwrap();
     a.start().unwrap();
     for runtime in [&mut a, &mut b] {
         assert_eq!(runtime.drain(64).len(), 1); // Bootstrap only.
+        runtime.kernel().run_steps(128).unwrap();
     }
     first.write(true, 7).unwrap();
     let events = a.drain(64);
     assert!(!events.is_empty());
-    assert!(
-        events
-            .into_iter()
-            .all(|event| event.result.unwrap().success())
-    );
+    assert!(events.into_iter().all(|event| event.result.is_ok()));
     assert!(b.drain(64).is_empty());
     second.write(false, 11).unwrap();
     assert!(a.drain(64).is_empty());
     let events = b.drain(64);
     assert!(!events.is_empty());
-    assert!(
-        events
-            .into_iter()
-            .all(|event| event.result.unwrap().success())
-    );
+    assert!(events.into_iter().all(|event| event.result.is_ok()));
     for (runtime, expected) in [(&a, 7), (&b, 11)] {
         let query = runtime
             .kernel()
             .export::<QuerySpec<i64>>(&Key::new("selected", "reader"))
             .unwrap();
         assert_eq!(
-            runtime.bind_query(query).unwrap().query().unwrap(),
+            *runtime.bind_query(query).unwrap().query().unwrap(),
             expected
         );
     }
@@ -286,10 +361,13 @@ impl PluginInstance for CompetingFactories {
             id: "competing".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(|context| {
-                context.activate(|| panic!("must not activate"))?;
-                context.activate(|| panic!("must not activate"))
-            }),
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(|_| {
+                let mut artifacts = CandidateArtifacts::default();
+                artifacts.activate(|| panic!("must not activate"))?;
+                artifacts.activate(|| panic!("must not activate"))?;
+                Ok(artifacts)
+            })),
         })
     }
 }
@@ -302,9 +380,13 @@ fn duplicate_candidate_factories_are_rejected_not_silently_overridden() {
         .unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&kind, CompetingFactories).unwrap();
-    let error = Kernel::build("competing", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .unwrap();
+    let error = Kernel::build(
+        "competing",
+        plugins.snapshots(),
+        Arc::new(LocalProcessDispatcher),
+    )
+    .err()
+    .unwrap();
     assert!(
         error
             .to_string()

@@ -1,6 +1,7 @@
 //! Three independent plugins; only the host chooses paths and grants.
-use phenix_graph::{LocalExecutor, Value};
-use phenix_kernel::{Contribution, Kernel};
+pub(crate) mod support;
+use phenix_graph::{Value, compose::NetworkPatch, process::LocalProcessDispatcher};
+use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, Kernel};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::scoped::{
     BindingTarget, Identity, ResourceId, ScopeKind, Storage, StorageClass, Stored, XdgPaths,
@@ -77,15 +78,16 @@ pub mod writer {
                 id: "writer".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
                         .ok_or("writer storage not injected")?
                         .project()?
                         .config::<AgentConfig>("phenix.agent/settings")?;
                     let log = writes.clone();
-                    let node = graph.node("save_config", move |update: Update| {
+                    let node = support::local_sink(move |update: Update| {
                         log.lock().unwrap().push(
                             kv.compare_exchange(
                                 "default",
@@ -94,11 +96,10 @@ pub mod writer {
                             )
                             .map_err(text),
                         );
-                    })?;
-                    let input = graph.expose_input("config_update", node.inlet())?;
-                    graph.trigger("configure", [input])?;
-                    Ok(())
-                }),
+                    });
+                    context.patch = Some(support::input_patch("save_config", "configure", node));
+                    Ok(context)
+                })),
             })
         }
     }
@@ -155,20 +156,23 @@ pub mod observer {
                 id: "observer".into(),
                 requires: vec![],
                 routes: vec!["config_changed".into()],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
                         .ok_or("observer storage not injected")?
                         .project()?
                         .config::<ObservedConfig>("phenix.agent/settings")?;
                     let log = reads.clone();
-                    let node =
-                        graph.node("refresh_config", move |_notice: phenix_storage::Notice| {
-                            log.lock().unwrap().push(kv.get("default").map_err(text));
-                        })?;
-                    let input = graph.expose_input("config_notice", node.inlet())?;
-                    graph.trigger("config_changed", [input])?;
+                    let node = support::local_sink(move |_notice: phenix_storage::Notice| {
+                        log.lock().unwrap().push(kv.get("default").map_err(text));
+                    });
+                    context.patch = Some(support::input_patch(
+                        "refresh_config",
+                        "config_changed",
+                        node,
+                    ));
                     let source = source.clone();
                     context.activate(move || {
                         let subscription = source
@@ -181,8 +185,9 @@ pub mod observer {
                             subscription,
                             "config_changed",
                         )))
-                    })
-                }),
+                    })?;
+                    Ok(context)
+                })),
             })
         }
     }
@@ -208,12 +213,13 @@ pub mod code_index {
             let results = self.results.clone();
             registrar.add(Contribution {
                 id: "index".into(), requires: vec![], routes: vec![],
-                compose: Box::new(move |context| {
-                    let graph = &mut *context.graph;
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut context = CandidateArtifacts::default();
                     let sql = storage.get().ok_or("index storage not injected")?.project()?
                         .sql(StorageClass::Data, "phenix.code/index")?;
                     let log = results.clone();
-                    let node = graph.node("index_symbols", move |symbol: String| {
+                    let node = support::local_sink(move |symbol: String| {
                         let result = sql.transaction(|tx| {
                             tx.execute("CREATE TABLE IF NOT EXISTS symbols (name TEXT PRIMARY KEY, evidence TEXT NOT NULL)", &[])?;
                             tx.execute("CREATE INDEX IF NOT EXISTS symbols_evidence ON symbols(evidence)", &[])?;
@@ -223,11 +229,10 @@ pub mod code_index {
                                 &[&"src/mock.rs:7"], |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?)))
                         }).map_err(text);
                         log.lock().unwrap().push(result);
-                    }).map_err(text)?;
-                    let input = graph.expose_input("symbol", node.inlet())?;
-                    graph.trigger("index", [input])?;
-                    Ok(())
-                }),
+                    });
+                    context.patch = Some(support::input_patch("index_symbols", "index", node));
+                    Ok(context)
+                })),
             })
         }
     }
@@ -371,8 +376,29 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
     index_slot
         .set(index_view.clone())
         .map_err(|_| "index already injected")?;
-    let mut kernel = Kernel::build("scoped-storage", snapshots, Arc::new(LocalExecutor))
-        .map_err(|error| error.to_string())?;
+    let mut options = BuildOptions::default();
+    support::allow(&mut options, "writer", "writer", "save_config", "configure");
+    support::allow(
+        &mut options,
+        "observer",
+        "observer",
+        "refresh_config",
+        "config_changed",
+    );
+    support::allow(
+        &mut options,
+        "code-index",
+        "index",
+        "index_symbols",
+        "index",
+    );
+    let mut kernel = Kernel::build_with_options(
+        "scoped-storage",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .map_err(|error| error.to_string())?;
     kernel.start().map_err(|error| error.to_string())?;
     Ok(Demo {
         kernel,
@@ -388,25 +414,25 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
 pub fn run() -> Result<(), String> {
     let root = tempfile::tempdir().map_err(text)?;
     let demo = build(root.path(), "project-one")?;
-    assert!(
-        demo.kernel
-            .fire(
-                "configure",
-                vec![Value::local(writer::Update {
-                    expected: None,
-                    config: writer::AgentConfig {
-                        model: "local-model".into()
-                    },
-                })]
-            )?
-            .success()
-    );
+    demo.kernel
+        .inject(
+            "configure",
+            Value::local(writer::Update {
+                expected: None,
+                config: writer::AgentConfig {
+                    model: "local-model".into(),
+                },
+            }),
+        )
+        .map_err(text)?;
+    demo.kernel.run_steps(64)?;
     assert!(demo.writes.lock().unwrap()[0].is_ok());
     let events = demo.kernel.drain(16);
     assert_eq!(events.len(), 1);
     for event in events {
-        assert!(event.result.map_err(|e| format!("{e:?}"))?.success());
+        event.result.map_err(text)?;
     }
+    demo.kernel.run_steps(64)?;
     assert_eq!(
         demo.reads.lock().unwrap()[0]
             .as_ref()
@@ -417,11 +443,10 @@ pub fn run() -> Result<(), String> {
             .0,
         "local-model"
     );
-    assert!(
-        demo.kernel
-            .fire("index", vec![Value::local("Agent::run".to_string())])?
-            .success()
-    );
+    demo.kernel
+        .inject("index", Value::local("Agent::run".to_string()))
+        .map_err(text)?;
+    demo.kernel.run_steps(64)?;
     assert_eq!(demo.evidence.lock().unwrap()[0].as_ref().unwrap().len(), 1);
     Ok(())
 }

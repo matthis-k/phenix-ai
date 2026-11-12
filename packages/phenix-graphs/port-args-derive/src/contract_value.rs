@@ -1,11 +1,68 @@
 //! Explicit-schema, length-delimited record codec generation.
 use proc_macro2::TokenStream as Tokens;
 use quote::quote;
-use syn::{DeriveInput, LitStr};
+use syn::ext::IdentExt;
+use syn::{Data, DeriveInput, Fields, GenericArgument, LitStr, PathArguments, Type};
+
+struct FieldSpec {
+    ident: syn::Ident,
+    value_type: Type,
+    optional: bool,
+    name: LitStr,
+}
+
+fn fields(input: &DeriveInput) -> syn::Result<Vec<FieldSpec>> {
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "ContractValue requires a non-generic named struct",
+        ));
+    }
+    let Data::Struct(data) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "derive requires a struct",
+        ));
+    };
+    let Fields::Named(fields) = &data.fields else {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "derive requires named fields",
+        ));
+    };
+    Ok(fields
+        .named
+        .iter()
+        .map(|field| {
+            let ident = field.ident.clone().expect("named field");
+            let inner = match &field.ty {
+                Type::Path(path) => path.path.segments.last().and_then(|segment| {
+                    if segment.ident != "Option" {
+                        return None;
+                    }
+                    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+                        return None;
+                    };
+                    match args.args.first()? {
+                        GenericArgument::Type(ty) if args.args.len() == 1 => Some(ty.clone()),
+                        _ => None,
+                    }
+                }),
+                _ => None,
+            };
+            FieldSpec {
+                name: LitStr::new(&ident.unraw().to_string(), ident.span()),
+                ident,
+                optional: inner.is_some(),
+                value_type: inner.unwrap_or_else(|| field.ty.clone()),
+            }
+        })
+        .collect())
+}
 
 pub(super) fn derive(input: DeriveInput) -> syn::Result<Tokens> {
     let ident = &input.ident;
-    let fields = super::fields(&input, false)?;
+    let fields = fields(&input)?;
     let mut schema: Option<LitStr> = None;
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("contract")) {
         attr.parse_nested_meta(|meta| {

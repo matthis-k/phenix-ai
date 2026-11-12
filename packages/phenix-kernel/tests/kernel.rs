@@ -1,5 +1,16 @@
-use phenix_graph::{CompileLimits, GraphBuilder, LocalExecutor, Value};
-use phenix_kernel::{Contribution, Kernel, Key, Notice, Producer};
+mod support;
+use phenix_graph::{
+    Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    process::{
+        ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher,
+        ProcessExecutionGuard,
+    },
+    runtime::SessionState,
+};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, Contribution, InputEvent, Kernel, Key, Producer,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{
     collections::VecDeque,
@@ -30,10 +41,10 @@ impl Drop for Plugin {
 }
 struct Source {
     _mark: Mark,
-    notices: VecDeque<Result<Notice, String>>,
+    notices: VecDeque<Result<InputEvent, String>>,
 }
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         self.notices.pop_front().transpose().map_err(Into::into)
     }
 }
@@ -49,22 +60,28 @@ impl PluginInstance for Plugin {
             id: "main".into(),
             requires: self.requires.clone(),
             routes: vec![name.clone()],
-            compose: Box::new(move |context| {
-                let g = &mut *context.graph;
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut context = CandidateArtifacts::default();
                 log.lock().unwrap().push(format!("compose:{name}"));
-                if compile_fail {
-                    *g = GraphBuilder::new("invalid").limits(CompileLimits {
-                        max_work: 0,
-                        ..Default::default()
-                    });
-                }
                 let mark = Mark(format!("engine:{name}"), log.clone());
-                let n = g.node(&name, move |x: i64| {
+                let n = support::sink(move |_: i64| {
                     mark.1.lock().unwrap().push(format!("execute:{}", mark.0));
-                    x + 1
-                })?;
-                let input = g.expose_input(format!("input_{name}"), n.inlet())?;
-                g.trigger(&name, [input])?;
+                });
+                context.patch = Some(NetworkPatch::new([
+                    Edit::Add {
+                        path: name.clone(),
+                        definition: n,
+                    },
+                    Edit::ExposeInput {
+                        name: name.clone(),
+                        targets: vec![support::path(
+                            if compile_fail { "missing" } else { &name },
+                            "run",
+                        )],
+                        capacity: support::capacity(),
+                    },
+                ]));
                 let start_log = start_log.clone();
                 let start_name = start_name.clone();
                 context.activate(move || {
@@ -78,21 +95,40 @@ impl PluginInstance for Plugin {
                     Ok(Box::new(Source {
                         _mark: Mark(format!("producer:{start_name}"), start_log.clone()),
                         notices: VecDeque::from([
-                            Ok(Notice {
-                                trigger: start_name.clone(),
-                                values: vec![Value::local(1_i64)],
+                            Ok(InputEvent {
+                                input: start_name.clone(),
+                                value: Value::local(1_i64),
                             }),
-                            Ok(Notice {
-                                trigger: "missing".into(),
-                                values: vec![],
+                            Ok(InputEvent {
+                                input: "missing".into(),
+                                value: Value::local(()),
                             }),
                             Err("poll failed".into()),
                         ]),
                     }))
-                })
-            }),
+                })?;
+                Ok(context)
+            })),
         })
     }
+}
+fn build(
+    name: &str,
+    snapshots: Vec<phenix_plugin::PluginSnapshot>,
+    dispatcher: Arc<dyn ProcessDispatcher>,
+) -> Result<Kernel, phenix_kernel::ResolutionError> {
+    let mut options = BuildOptions::default();
+    for owner in ["alpha", "beta"] {
+        support::grant(
+            &mut options,
+            Key::new(owner, "main"),
+            [
+                Footprint::Component(owner.into()),
+                Footprint::InputExport(owner.into()),
+            ],
+        );
+    }
+    Kernel::build_with_options(name, snapshots, dispatcher, options)
 }
 fn snapshots(
     a: Vec<Key>,
@@ -134,14 +170,14 @@ fn snapshots(
 #[test]
 fn loader_order_waves_bounds_and_lifetimes() {
     let log = Log::default();
-    let mut kernel = Kernel::build(
+    let mut kernel = build(
         "test",
         snapshots(vec![Key::new("beta", "main")], vec![], false, false, &log),
-        Arc::new(LocalExecutor),
+        Arc::new(LocalProcessDispatcher),
     )
     .unwrap();
     assert_eq!(*log.lock().unwrap(), ["compose:beta", "compose:alpha"]);
-    assert!(kernel.fire("alpha", vec![Value::local(4_i64)]).is_err());
+    assert!(kernel.inject("alpha", Value::local(4_i64)).is_err());
     assert!(kernel.drain(10).is_empty());
     kernel.start().unwrap();
     assert!(matches!(
@@ -155,13 +191,9 @@ fn loader_order_waves_bounds_and_lifetimes() {
     assert!(kernel.drain(0).is_empty());
     let events = kernel.drain(2);
     assert_eq!(events[0].producer, Key::new("beta", "main"));
-    assert!(events.iter().all(|e| e.result.as_ref().unwrap().success()));
-    assert!(
-        kernel
-            .fire("alpha", vec![Value::local(4_i64)])
-            .unwrap()
-            .success()
-    );
+    assert!(events.iter().all(|e| e.result.is_ok()));
+    kernel.run_steps(100).unwrap();
+    support::run(&kernel, "alpha", 4);
     assert!(kernel.drain(4).iter().all(|e| e.result.is_err()));
     assert!(kernel.drain(10).is_empty());
     drop(kernel);
@@ -203,10 +235,10 @@ fn dependencies_fail_before_composition() {
         ),
     ] {
         let log = Log::default();
-        let error = Kernel::build(
+        let error = build(
             "test",
             snapshots(a, b, false, false, &log),
-            Arc::new(LocalExecutor),
+            Arc::new(LocalProcessDispatcher),
         )
         .err()
         .unwrap();
@@ -222,7 +254,7 @@ fn dependencies_fail_before_composition() {
     let mut selected = snapshots(vec![], vec![], false, false, &log);
     selected.push(selected[0].clone());
     assert!(
-        Kernel::build("test", selected, Arc::new(LocalExecutor))
+        build("test", selected, Arc::new(LocalProcessDispatcher))
             .err()
             .unwrap()
             .to_string()
@@ -233,19 +265,19 @@ fn dependencies_fail_before_composition() {
 fn compile_failure_never_starts_and_startup_rolls_back() {
     let log = Log::default();
     assert!(
-        Kernel::build(
+        build(
             "test",
             snapshots(vec![], vec![], true, false, &log),
-            Arc::new(LocalExecutor)
+            Arc::new(LocalProcessDispatcher)
         )
         .is_err()
     );
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("start:")));
     log.lock().unwrap().clear();
-    let mut kernel = Kernel::build(
+    let mut kernel = build(
         "test",
         snapshots(vec![], vec![], false, true, &log),
-        Arc::new(LocalExecutor),
+        Arc::new(LocalProcessDispatcher),
     )
     .unwrap();
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("start:")));
@@ -260,7 +292,7 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
         "startup failed"
     );
     assert!(kernel.drain(10).is_empty());
-    assert!(kernel.fire("alpha", vec![Value::local(1_i64)]).is_err());
+    assert!(kernel.inject("alpha", Value::local(1_i64)).is_err());
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("engine:")));
     // Retrying runs factories again rather than retaining a partial activation.
     assert_eq!(
@@ -276,6 +308,13 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
         2
     );
     drop(kernel);
+    assert!(
+        !log.lock()
+            .unwrap()
+            .iter()
+            .any(|event| event.starts_with("plugin:"))
+    );
+    drop(error);
     let log = log.lock().unwrap();
     assert!(log.contains(&"producer:alpha".into()));
     assert!(!log.contains(&"producer:beta".into()));
@@ -296,32 +335,35 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
         }
     }
 }
-struct FailingExecutor;
-impl phenix_graph::Executor for FailingExecutor {
-    fn dispatch(
-        &self,
-        _: &dyn phenix_graph::NodeAction,
-        _: phenix_graph::InvocationCtx,
-    ) -> Result<Vec<phenix_graph::Emission>, String> {
+struct FailingDispatcher;
+struct FailingGuard;
+impl ProcessExecutionGuard for FailingGuard {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
         Err("execution failed".into())
+    }
+}
+impl ProcessDispatcher for FailingDispatcher {
+    fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+        DispatchResult::Completed(job.with_guard(Arc::new(FailingGuard)).run())
     }
 }
 #[test]
 fn wave_failures_remain_reports_and_do_not_stop_draining() {
     let log = Log::default();
-    let mut kernel = Kernel::build(
+    let mut kernel = build(
         "test",
         snapshots(vec![], vec![], false, false, &log),
-        Arc::new(FailingExecutor),
+        Arc::new(FailingDispatcher),
     )
     .unwrap();
     kernel.start().unwrap();
     let events = kernel.drain(4);
     assert_eq!(events.len(), 4);
-    assert!(!events[0].result.as_ref().unwrap().success());
-    assert!(!events[1].result.as_ref().unwrap().success());
+    assert!(events[0].result.is_ok());
+    assert!(events[1].result.is_ok());
     assert!(events[2].result.is_err());
     assert!(events[3].result.is_err());
+    assert_eq!(kernel.run_steps(100).unwrap().state, SessionState::Failed);
 }
 
 struct DriverPlugin {
@@ -333,7 +375,7 @@ struct WakeSource {
     wake: Option<phenix_kernel::WakeHandle>,
 }
 impl Producer for WakeSource {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         self.polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Notification during polling must not be lost before the driver waits.
         if let Some(wake) = self.wake.take() {
@@ -353,19 +395,28 @@ impl PluginInstance for DriverPlugin {
             id: "driver".into(),
             requires: vec![],
             routes: self.routes.clone(),
-            compose: Box::new(move |context| {
-                let g = &mut *context.graph;
-                let n = g.node("sink", |_: i64| ())?;
-                let input = g.expose_input("in", n.inlet())?;
-                g.trigger("run", [input])?;
+            patch: NetworkPatch::new([
+                Edit::Add {
+                    path: "sink".into(),
+                    definition: support::sink(|_| {}),
+                },
+                Edit::ExposeInput {
+                    name: "run".into(),
+                    targets: vec![support::path("sink", "run")],
+                    capacity: support::capacity(),
+                },
+            ]),
+            prepare: Some(Box::new(move |_| {
+                let mut context = CandidateArtifacts::default();
                 let polls = polls.clone();
                 context.activate(move || {
                     Ok(Box::new(WakeSource {
                         polls: polls.clone(),
                         wake: None,
                     }))
-                })
-            }),
+                })?;
+                Ok(context)
+            })),
         })
     }
 }
@@ -385,7 +436,14 @@ fn driver_kernel(
             },
         )
         .unwrap();
-    Kernel::build("driver", plugins.snapshots(), Arc::new(LocalExecutor))
+    let snapshots: Vec<_> = plugins.snapshots().collect();
+    let options = support::options(&snapshots);
+    Kernel::build_with_options(
+        "driver",
+        snapshots,
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
 }
 #[test]
 fn routes_are_preflighted_without_activation() {
@@ -408,10 +466,10 @@ fn driver_handles_shutdown_during_poll_and_rejects_legacy_sources() {
     kernel.start().unwrap();
     kernel.run_until(&wake, |_| panic!("idle")).unwrap();
     assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let mut kernel = Kernel::build(
+    let mut kernel = build(
         "legacy",
         snapshots(vec![], vec![], false, false, &Log::default()),
-        Arc::new(LocalExecutor),
+        Arc::new(LocalProcessDispatcher),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -426,10 +484,10 @@ fn driver_handles_shutdown_during_poll_and_rejects_legacy_sources() {
 }
 #[test]
 fn producer_errors_are_distinct_from_admission_and_wave_failures() {
-    let mut kernel = Kernel::build(
+    let mut kernel = build(
         "errors",
         snapshots(vec![], vec![], false, false, &Log::default()),
-        Arc::new(LocalExecutor),
+        Arc::new(LocalProcessDispatcher),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -446,7 +504,7 @@ fn producer_errors_are_distinct_from_admission_and_wave_failures() {
 
 #[test]
 fn empty_driver_blocks_until_cross_thread_shutdown() {
-    let mut kernel = Kernel::build("empty", vec![], Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build("empty", vec![], Arc::new(LocalProcessDispatcher)).unwrap();
     kernel.start().unwrap();
     let wake = phenix_kernel::WakeHandle::default();
     let driver_wake = wake.clone();
@@ -470,7 +528,7 @@ fn empty_driver_blocks_until_cross_thread_shutdown() {
 fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable() {
     struct Broken(Arc<std::sync::atomic::AtomicUsize>);
     impl Producer for Broken {
-        fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+        fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Err("permanent".into())
         }
@@ -485,10 +543,13 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
                 id: "broken".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |c| {
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut c = CandidateArtifacts::default();
                     let polls = polls.clone();
-                    c.activate(move || Ok(Box::new(Broken(polls.clone()))))
-                }),
+                    c.activate(move || Ok(Box::new(Broken(polls.clone()))))?;
+                    Ok(c)
+                })),
             })
         }
     }
@@ -497,7 +558,12 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     let key = catalog.register("broken", |p: Broken| Ok(p)).unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&key, Broken(polls.clone())).unwrap();
-    let mut kernel = Kernel::build("broken", plugins.snapshots(), Arc::new(LocalExecutor)).unwrap();
+    let mut kernel = Kernel::build(
+        "broken",
+        plugins.snapshots(),
+        Arc::new(LocalProcessDispatcher),
+    )
+    .unwrap();
     kernel.start().unwrap();
     assert_eq!(kernel.drain(100).len(), 1);
     assert!(kernel.drain(100).is_empty());
@@ -506,7 +572,7 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     let mut kernel = Kernel::build(
         "broken-driver",
         plugins.snapshots(),
-        Arc::new(LocalExecutor),
+        Arc::new(LocalProcessDispatcher),
     )
     .unwrap();
     kernel.start().unwrap();

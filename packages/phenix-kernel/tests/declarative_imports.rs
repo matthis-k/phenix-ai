@@ -1,9 +1,12 @@
+mod support;
 use phenix_graph::{
-    DeclaredValue, GraphBuilder, GraphContract, InterfaceShape, LocalExecutor, Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    contract::Contract,
+    process::LocalProcessDispatcher,
 };
 use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
-    ResolutionError,
+    CandidateArtifacts, ContractDefinition, ContractRequirement, Contribution, ImportPolicy,
+    Kernel, Key, NetworkOffer, ResolutionError,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::BTreeSet;
@@ -12,16 +15,8 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-fn contract(id: &str) -> GraphContract {
-    GraphContract::new(
-        id,
-        InterfaceShape::new()
-            .input_slot("run", "value", DeclaredValue::local::<i64>())
-            .unwrap()
-            .output("value", DeclaredValue::local::<i64>())
-            .unwrap(),
-    )
-    .unwrap()
+fn contract(id: &str) -> Contract {
+    support::contract(id)
 }
 
 #[derive(Clone)]
@@ -58,7 +53,7 @@ impl PluginInstance for Provider {
             id: "definition".into(),
             contract: contract(self.semantic),
         })?;
-        into.add(GraphOffer {
+        into.add(NetworkOffer {
             id: "offer".into(),
             unit: self.path.clone(),
             producer: self
@@ -72,34 +67,19 @@ impl PluginInstance for Provider {
             id: self.actual_composer.into(),
             requires: self.requires.clone(),
             routes: vec![],
-            compose: Box::new(move |context| {
+            patch: support::patch(&self.path, self.module, true, self.increment, self.semantic),
+            prepare: Some(Box::new(move |_| {
                 config.compositions.fetch_add(1, Ordering::SeqCst);
-                let graph = &mut *context.graph;
-                let increment = config.increment;
-                if config.module {
-                    let mut child = GraphBuilder::new(format!("module-{}", config.path));
-                    let node = child.node("private", move |v: i64| v + increment)?;
-                    child.expose_input_field(
-                        "run",
-                        phenix_graph::SlotField::<(), i64>::new("value"),
-                        node.inlet(),
-                    )?;
-                    child.expose_output("value", node.output())?;
-                    child.implements_public(&contract(config.semantic))?;
-                    graph.instance(&config.path, &child.module())?;
-                } else {
-                    graph.node(&config.path, move |v: i64| v + increment)?;
-                    graph.implements(&config.path, &contract(config.semantic))?;
-                }
-                Ok(())
-            }),
+                Ok(CandidateArtifacts::default())
+            })),
         })?;
         if self.actual_composer != "main" {
             into.add(Contribution {
                 id: "main".into(),
                 requires: vec![Key::new(&owner, self.actual_composer)],
                 routes: vec![],
-                compose: Box::new(|_| Ok(())),
+                patch: NetworkPatch::new([]),
+                prepare: None,
             })?;
         }
         Ok(())
@@ -124,33 +104,33 @@ impl PluginInstance for Consumer {
             id: "main".into(),
             requires: vec![],
             routes: vec![],
-            compose: Box::new(move |context| {
-                let selected = context.import("service")?;
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |context| {
+                assert!(context.import("service").is_ok());
                 assert!(context.import("undeclared").is_err());
+                assert!(context.bind_import("undeclared").is_err());
+                assert!(context.inspect_network().is_err());
                 config.compositions.fetch_add(1, Ordering::SeqCst);
-                let graph = &mut *context.graph;
-                let bound = selected.bind(graph)?.operation()?;
-                let run = bound
-                    .inlets::<i64, phenix_graph::LocalValue>()
-                    .port(phenix_graph::InletPort::<i64, i64>::new("run"));
-                assert!(
-                    run.field(phenix_graph::SlotField::<i64, i64>::new("private"))
-                        .target()
-                        .is_err()
-                );
-                assert!(bound.output::<String, phenix_graph::LocalValue>().is_err());
-                let input = run.target()?;
-                let output = bound.output::<i64, phenix_graph::LocalValue>()?;
-                let observed = config.observed.clone();
-                let sink = graph.node("sink", move |v: i64| {
-                    observed.lock().unwrap().push(v);
-                    v
-                })?;
-                graph.connect(output, sink.inlet())?;
-                let public = graph.expose_input("request", input)?;
-                graph.trigger("run", [public])?;
-                Ok(())
-            }),
+                let bound = context.bind_import("service")?;
+                assert!(bound.input::<i64>("private").is_err());
+                assert!(bound.output::<String>("value").is_err());
+                bound.input::<i64>("run")?;
+                bound.output::<i64>("value")?;
+                let mut artifacts = CandidateArtifacts::default();
+                artifacts.export(config.observed.clone())?;
+                artifacts.patch = Some(NetworkPatch::new([
+                    Edit::ExposeInput {
+                        name: "request".into(),
+                        targets: vec![support::path(bound.path(), "run")],
+                        capacity: support::capacity(),
+                    },
+                    Edit::ExposeOutput {
+                        name: "result".into(),
+                        from: support::path(bound.path(), "value"),
+                    },
+                ]));
+                Ok(artifacts)
+            })),
         })
     }
 }
@@ -167,15 +147,44 @@ fn selected(owner: &str) -> ImportPolicy {
     policy
 }
 fn build(snapshots: Vec<PluginSnapshot>, policy: &ImportPolicy) -> Result<Kernel, ResolutionError> {
+    let mut options = support::options(&snapshots);
+    options.imports = policy.clone();
+    support::grant(
+        &mut options,
+        Key::new("a-consumer", "main"),
+        [
+            Footprint::InputExport("request".into()),
+            Footprint::OutputExport("result".into()),
+        ],
+    );
     Kernel::build_with_options(
         "imports",
         snapshots,
-        Arc::new(LocalExecutor),
-        phenix_kernel::BuildOptions {
-            imports: policy.clone(),
-            ..Default::default()
-        },
+        Arc::new(LocalProcessDispatcher),
+        options,
     )
+}
+
+fn execute(kernel: &Kernel, value: i64) {
+    support::run(kernel, "request", value);
+    let value = kernel
+        .with_session(|session| {
+            session
+                .take_output("result")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>()
+                .copied()
+                .unwrap()
+        })
+        .unwrap();
+    kernel
+        .export::<Arc<Mutex<Vec<i64>>>>(&Key::new("a-consumer", "main"))
+        .unwrap()
+        .lock()
+        .unwrap()
+        .push(value);
 }
 
 #[test]
@@ -272,17 +281,8 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
         .unwrap();
         old.start().unwrap();
         switched.start().unwrap();
-        assert!(
-            old.fire("run", vec![Value::local(1_i64)])
-                .unwrap()
-                .success()
-        );
-        assert!(
-            switched
-                .fire("run", vec![Value::local(1_i64)])
-                .unwrap()
-                .success()
-        );
+        execute(&old, 1);
+        execute(&switched, 1);
         let staged = plugins
             .prepare_reload(&z, Provider::new("renamed", module, 30, &count))
             .unwrap();
@@ -298,16 +298,8 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
         .unwrap();
         plugins.commit(staged).unwrap();
         new.start().unwrap();
-        assert!(
-            new.fire("run", vec![Value::local(1_i64)])
-                .unwrap()
-                .success()
-        );
-        assert!(
-            old.fire("run", vec![Value::local(2_i64)])
-                .unwrap()
-                .success()
-        );
+        execute(&new, 1);
+        execute(&old, 2);
         assert_eq!(*observed.lock().unwrap(), [11, 21, 31, 12]);
     }
 }
@@ -420,7 +412,7 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 id: "definition".into(),
                 contract: contract("service@1"),
             })?;
-            into.add(GraphOffer {
+            into.add(NetworkOffer {
                 id: "offer".into(),
                 producer: Key::new("combined", "main"),
                 unit: "provider".into(),
@@ -435,20 +427,21 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 id: "main".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(|cx| {
-                    let selected = cx.import("service")?;
-                    cx.graph.node("provider", |v: i64| v + 1)?;
-                    cx.graph.implements("provider", &contract("service@1"))?;
-                    let input = selected
-                        .bind(cx.graph)?
-                        .operation()?
-                        .inlets::<i64, phenix_graph::LocalValue>()
-                        .port(phenix_graph::InletPort::<i64, i64>::new("run"))
-                        .target()?;
-                    let public = cx.graph.expose_input("request", input)?;
-                    cx.graph.trigger("run", [public])?;
-                    Ok(())
-                }),
+                patch: NetworkPatch::new([
+                    Edit::Add {
+                        path: "provider".into(),
+                        definition: support::definition(false, true, 1, "service@1"),
+                    },
+                    Edit::ExposeInput {
+                        name: "request".into(),
+                        targets: vec![support::path("provider", "run")],
+                        capacity: support::capacity(),
+                    },
+                ]),
+                prepare: Some(Box::new(|cx| {
+                    cx.bind_import("service")?.input::<i64>("run")?;
+                    Ok(CandidateArtifacts::default())
+                })),
             })
         }
     }
@@ -466,11 +459,6 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
         }
         let mut kernel = build(plugins.snapshots().collect(), &policy).unwrap();
         kernel.start().unwrap();
-        assert!(
-            kernel
-                .fire("run", vec![Value::local(1_i64)])
-                .unwrap()
-                .success()
-        );
+        support::run(&kernel, "request", 1);
     }
 }

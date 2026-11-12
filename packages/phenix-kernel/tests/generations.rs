@@ -1,6 +1,11 @@
-use phenix_graph::{CompileLimits, GraphBuilder, LocalExecutor, Value};
+mod support;
+use phenix_graph::{
+    Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    process::LocalProcessDispatcher,
+};
 use phenix_kernel::host::{Candidate, Generation, KernelHost, LifecycleError};
-use phenix_kernel::{BuildOptions, Contribution, Key, Notice, Producer};
+use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, InputEvent, Key, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::sync::{Arc, Barrier, Mutex, mpsc};
 
@@ -51,11 +56,11 @@ impl Drop for Plugin {
 
 struct Source(String, Log);
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         self.1.lock().unwrap().push(format!("poll:{}", self.0));
-        Ok(Some(Notice {
-            trigger: self.0.clone(),
-            values: vec![Value::local(1_i64)],
+        Ok(Some(InputEvent {
+            input: self.0.clone(),
+            value: Value::local(1_i64),
         }))
     }
 }
@@ -80,24 +85,19 @@ impl PluginInstance for Plugin {
             id: "main".into(),
             requires: self.requires.clone(),
             routes: vec![name.clone()],
-            compose: Box::new(move |context| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut context = CandidateArtifacts::default();
                 log.lock()
                     .unwrap()
                     .push(format!("compose:{name}:{revision}"));
                 context.export(Artifact(format!("export:{name}:{revision}"), log.clone()))?;
                 let action_guard = Artifact(format!("action:{name}:{revision}"), log.clone());
                 let factory_guard = Artifact(format!("factory:{name}:{revision}"), log.clone());
-                let graph = &mut *context.graph;
-                if compile_fail {
-                    *graph = GraphBuilder::new("invalid").limits(CompileLimits {
-                        max_work: 0,
-                        ..Default::default()
-                    });
-                }
                 let action_log = log.clone();
                 let action_name = name.clone();
                 let action_gate = gate.clone();
-                let node = graph.node(&name, move |x: i64| {
+                let node = support::sink(move |_: i64| {
                     let _ = &action_guard;
                     if let Some(gate) = &action_gate {
                         gate.0.wait();
@@ -107,10 +107,21 @@ impl PluginInstance for Plugin {
                         .lock()
                         .unwrap()
                         .push(format!("fire:{action_name}:{revision}"));
-                    x + revision as i64
-                })?;
-                let input = graph.expose_input(format!("input_{name}"), node.inlet())?;
-                graph.trigger(&name, [input])?;
+                });
+                context.patch = Some(NetworkPatch::new([
+                    Edit::Add {
+                        path: name.clone(),
+                        definition: node,
+                    },
+                    Edit::ExposeInput {
+                        name: name.clone(),
+                        targets: vec![support::path(
+                            if compile_fail { "missing" } else { &name },
+                            "run",
+                        )],
+                        capacity: support::capacity(),
+                    },
+                ]));
                 let start_log = start_log.clone();
                 let start_name = start_name.clone();
                 context.activate(move || {
@@ -127,8 +138,8 @@ impl PluginInstance for Plugin {
                 if compose_fail {
                     return Err("composition failed".into());
                 }
-                Ok(())
-            }),
+                Ok(context)
+            })),
         })
     }
 }
@@ -136,20 +147,32 @@ impl PluginInstance for Plugin {
 fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Result<Candidate, LifecycleError> {
     host.prepare(
         stages,
-        BuildOptions::default(),
-        Arc::new(LocalExecutor),
+        options(),
+        Arc::new(LocalProcessDispatcher),
         "generation",
         |_| Ok(()),
     )
 }
 
 fn fire(generation: &Generation, name: &str) {
-    assert!(
-        generation
-            .fire(name, vec![Value::local(5_i64)])
-            .unwrap()
-            .success()
-    );
+    generation.run_steps(100).unwrap();
+    generation.inject(name, Value::local(5_i64)).unwrap();
+    generation.run_steps(100).unwrap();
+}
+
+fn options() -> BuildOptions {
+    let mut options = BuildOptions::default();
+    for name in ["alpha", "beta"] {
+        support::grant(
+            &mut options,
+            Key::new(name, "main"),
+            [
+                Footprint::Component(name.into()),
+                Footprint::InputExport(name.into()),
+            ],
+        );
+    }
+    options
 }
 
 #[test]
@@ -224,7 +247,7 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
     fire(&latest, "beta");
     let empty = host.publish(candidate).unwrap();
     assert_eq!(host.plugins().snapshots().count(), 0);
-    assert!(empty.fire("alpha", vec![Value::local(1_i64)]).is_err());
+    assert!(empty.inject("alpha", Value::local(1_i64)).is_err());
     assert!(latest.drain(100).is_empty());
     fire(&old, "beta");
     drop(old);
@@ -267,8 +290,8 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
         let result = if mode == 2 {
             host.prepare(
                 stages,
-                BuildOptions::default(),
-                Arc::new(LocalExecutor),
+                options(),
+                Arc::new(LocalProcessDispatcher),
                 "binding",
                 |_| Err("store refused".into()),
             )
@@ -300,7 +323,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
                     .enumerate()
                     .filter_map(|(index, event)| (event == &artifact).then_some(index))
                     .collect();
-                if mode == 0 || (mode == 4 && name == "beta") {
+                if mode == 0 || (matches!(mode, 1 | 4) && name == "beta") {
                     assert!(positions.is_empty(), "{events:?}");
                 } else {
                     assert_eq!(positions.len(), 1, "{events:?}");
@@ -415,7 +438,7 @@ fn publication_does_not_wait_for_old_explicit_wave_or_callback() {
     )
     .unwrap();
     let old = host.publish(candidate).unwrap();
-    assert!(old.with_engine(|engine| engine.trigger_targets("alpha").is_some()));
+    assert!(old.compiled().inputs().contains_key("alpha"));
     let candidate = prepare(&host, vec![host.plugins().prepare_unload(&a).unwrap()]).unwrap();
     let reader = old.clone();
     let wave = std::thread::spawn(move || fire(&reader, "alpha"));
@@ -424,10 +447,10 @@ fn publication_does_not_wait_for_old_explicit_wave_or_callback() {
     let (release, released) = mpsc::channel();
     let reader = old.clone();
     let callback = std::thread::spawn(move || {
-        reader.with_engine(|engine| {
+        reader.with_kernel(|kernel| {
             entered.send(()).unwrap();
             released.recv().unwrap();
-            assert!(engine.trigger_targets("alpha").is_some());
+            assert!(kernel.compiled().inputs().contains_key("alpha"));
         })
     });
     // The callback must enter even while the explicit wave is blocked.
@@ -456,11 +479,9 @@ fn publication_does_not_wait_for_old_explicit_wave_or_callback() {
     let (host, current) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert!(old.drain(100).is_empty());
-    assert!(old.with_engine(|engine| engine.trigger_targets("alpha").is_some()));
-    assert!(old.with_engine(|_| {
-        old.with_kernel(|kernel| kernel.engine().trigger_targets("alpha").is_some())
-    }));
-    assert!(current.with_engine(|engine| engine.trigger_targets("alpha").is_none()));
+    assert!(old.compiled().inputs().contains_key("alpha"));
+    assert!(old.with_kernel(|kernel| kernel.compiled().inputs().contains_key("alpha")));
+    assert!(!current.compiled().inputs().contains_key("alpha"));
 }
 
 #[test]

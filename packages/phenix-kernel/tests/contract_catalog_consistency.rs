@@ -1,217 +1,169 @@
-use phenix_graph::{DeclaredValue, GraphContract, InterfaceShape, LocalExecutor};
-use phenix_kernel::{
-    ContractDefinition, ContractRequirement, Contribution, GraphOffer, ImportPolicy, Kernel, Key,
+mod support;
+use phenix_graph::{
+    Interface, PortDef,
+    component::ComponentDef,
+    compose::{Edit, NetworkPatch},
+    contract::Contract,
+    process::LocalProcessDispatcher,
 };
-use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+use phenix_kernel::{ContractDefinition, ContractRequirement, Kernel, Key, NetworkOffer};
+use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::Arc;
-
-fn contract(id: &str, result: DeclaredValue) -> GraphContract {
-    GraphContract::new(
-        id,
-        InterfaceShape::new()
-            .input_slot("run", "value", DeclaredValue::local::<i64>())
-            .unwrap()
-            .output("value", result)
-            .unwrap(),
-    )
-    .unwrap()
-}
 
 #[derive(Clone, Copy)]
 enum Case {
     DifferentAdvertisedContract,
     EquivalentDefinitions,
-    UnofferedGraphConflict,
+    UnofferedNetworkConflict,
 }
-
 struct Fixture(Case);
-
 impl PluginInstance for Fixture {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let x = contract("example/x@1", DeclaredValue::local::<i64>());
-        let y = match self.0 {
-            Case::DifferentAdvertisedContract => {
-                contract("example/y@1", DeclaredValue::local::<i64>())
-            }
-            Case::EquivalentDefinitions | Case::UnofferedGraphConflict => x.clone(),
+    fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+        let x = support::contract("example/x@1");
+        let y = if matches!(self.0, Case::DifferentAdvertisedContract) {
+            support::contract("example/y@1")
+        } else {
+            x.clone()
         };
-        registrar.add(ContractDefinition {
+        into.add(ContractDefinition {
             id: "x".into(),
             contract: x.clone(),
         })?;
-        if !matches!(self.0, Case::UnofferedGraphConflict) {
-            registrar.add(ContractDefinition {
+        let patch = if matches!(self.0, Case::UnofferedNetworkConflict) {
+            let conflicting = Contract::new(
+                "example/x@1",
+                Arc::new(
+                    Interface::new(
+                        [PortDef::local::<i64>("run")],
+                        [PortDef::local::<String>("value")],
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+            NetworkPatch::new([Edit::Add {
+                path: "service".into(),
+                definition: Arc::new(
+                    ComponentDef::primitive(
+                        conflicting.required().clone(),
+                        Arc::new(|| support::Transform {
+                            increment: 0,
+                            emitted: false,
+                        }),
+                    )
+                    .claim(&conflicting)
+                    .unwrap(),
+                ),
+            }])
+        } else {
+            into.add(ContractDefinition {
                 id: "y".into(),
                 contract: y.clone(),
             })?;
-            registrar.add(GraphOffer {
+            into.add(NetworkOffer {
                 id: "offer".into(),
                 producer: Key::new("provider", "compose"),
                 unit: "service".into(),
                 contract: Key::new("provider", "x"),
             })?;
-            registrar.add(ContractRequirement {
+            into.add(ContractRequirement {
                 id: "request".into(),
                 consumer: Key::new("provider", "consumer"),
                 contract: Key::new("provider", "y"),
             })?;
-            registrar.add(Contribution {
-                id: "consumer".into(),
-                requires: vec![],
-                routes: vec![],
-                compose: Box::new(|_| Ok(())),
-            })?;
-        }
-        let case = self.0;
-        registrar.add(Contribution {
-            id: "compose".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(move |context| {
-                let graph = &mut *context.graph;
-                match case {
-                    Case::DifferentAdvertisedContract | Case::EquivalentDefinitions => {
-                        graph.node("service", |v: i64| v + 1)?;
-                        graph.implements("service", &x)?;
-                        if matches!(case, Case::DifferentAdvertisedContract) {
-                            graph.implements("service", &y)?;
-                        }
-                    }
-                    Case::UnofferedGraphConflict => {
-                        graph.node("service", |v: i64| v.to_string())?;
-                        graph.implements(
-                            "service",
-                            &contract("example/x@1", DeclaredValue::local::<String>()),
-                        )?;
-                    }
-                }
-                Ok(())
-            }),
-        })
+            into.add(support::contribution("consumer", NetworkPatch::new([])))?;
+            let definition = support::definition(false, true, 1, x.id());
+            NetworkPatch::new([Edit::Add {
+                path: "service".into(),
+                definition: Arc::new((*definition).clone().claim(&y).unwrap()),
+            }])
+        };
+        into.add(support::contribution("compose", patch))
     }
 }
-
 fn build(case: Case) -> Result<Kernel, String> {
-    let mut catalog = PluginCatalog::new();
-    let key = catalog
-        .register("provider", |case: Case| Ok(Fixture(case)))
-        .unwrap();
-    let mut plugins = catalog.instance();
-    let provider = plugins.load(&key, case).unwrap();
-    let mut policy = ImportPolicy::default();
-    if !matches!(case, Case::UnofferedGraphConflict) {
-        policy.selections.insert(
+    let snapshot = support::snapshot("provider", Fixture(case));
+    let mut options = support::options(std::slice::from_ref(&snapshot));
+    if !matches!(case, Case::UnofferedNetworkConflict) {
+        options.imports.selections.insert(
             Key::new("provider", "request"),
             Key::new("provider", "offer"),
         );
     }
     Kernel::build_with_options(
         "host",
-        [provider],
-        Arc::new(LocalExecutor),
-        phenix_kernel::BuildOptions {
-            imports: policy,
-            ..Default::default()
-        },
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
     )
     .map_err(|error| error.to_string())
 }
-
 #[test]
 fn a_requirement_cannot_reinterpret_an_offer_advertising_another_contract() {
-    let failure = build(Case::DifferentAdvertisedContract)
-        .err()
-        .expect("a mismatched advertised contract must fail");
     assert!(
-        failure.contains("advertising an incompatible contract"),
-        "{failure}"
+        build(Case::DifferentAdvertisedContract)
+            .err()
+            .unwrap()
+            .contains("advertising an incompatible contract")
     );
 }
-
 #[test]
 fn equivalent_named_contract_definitions_can_have_distinct_plugin_keys() {
-    build(Case::EquivalentDefinitions)
-        .expect("identical named contract definitions should interoperate");
+    build(Case::EquivalentDefinitions).unwrap();
 }
-
 #[test]
-fn conflicting_registered_contract_and_unoffered_graph_claim_fail_closed() {
-    let failure = build(Case::UnofferedGraphConflict)
-        .err()
-        .expect("unoffered conflicting graph claims must be rejected");
+fn conflicting_registered_contract_and_unoffered_network_claim_fail_closed() {
     assert!(
-        failure.contains("host/graph contract catalog conflict"),
-        "{failure}"
+        build(Case::UnofferedNetworkConflict)
+            .err()
+            .unwrap()
+            .contains("catalog conflict")
     );
 }
-
-struct HonestOffer;
-
-impl PluginInstance for HonestOffer {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(ContractDefinition {
-            id: "x".into(),
-            contract: contract("example/x@1", DeclaredValue::local::<i64>()),
-        })?;
-        registrar.add(GraphOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: "service".into(),
-            contract: Key::new("provider", "x"),
-        })?;
-        registrar.add(Contribution {
-            id: "main".into(),
-            requires: Vec::new(),
-            routes: Vec::new(),
-            compose: Box::new(|context| {
-                let graph = &mut *context.graph;
-                graph.node("service", |v: i64| v + 1)?;
-                Ok(())
-            }),
-        })
-    }
-}
-
-struct ForeignClaim;
-
-impl PluginInstance for ForeignClaim {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "mutate".into(),
-            requires: vec![Key::new("provider", "main")],
-            routes: Vec::new(),
-            compose: Box::new(|context| {
-                let graph = &mut *context.graph;
-                graph
-                    .implements(
-                        "service",
-                        &contract("example/x@1", DeclaredValue::local::<i64>()),
-                    )
-                    .map_err(Into::into)
-            }),
-        })
-    }
-}
-
 #[test]
 fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
-    let mut catalog = PluginCatalog::new();
-    let provider = catalog
-        .register("provider", |_: ()| Ok(HonestOffer))
-        .unwrap();
-    let foreign = catalog
-        .register("foreign", |_: ()| Ok(ForeignClaim))
-        .unwrap();
-    let mut plugins = catalog.instance();
-    plugins.load(&provider, ()).unwrap();
-    plugins.load(&foreign, ()).unwrap();
-    let failure = Kernel::build("host", plugins.snapshots(), Arc::new(LocalExecutor))
-        .err()
-        .expect("foreign semantic claim mutation must fail");
+    // There is no claim-mutation edit. Even a claimed replacement needs an exact
+    // host write grant and changes producer provenance, so cannot fix this offer.
+    struct Honest;
+    impl PluginInstance for Honest {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            into.add(ContractDefinition {
+                id: "x".into(),
+                contract: support::contract("example/x@1"),
+            })?;
+            into.add(NetworkOffer {
+                id: "offer".into(),
+                producer: Key::new("provider", "main"),
+                unit: "service".into(),
+                contract: Key::new("provider", "x"),
+            })?;
+            into.add(support::contribution(
+                "main",
+                support::patch("service", false, false, 1, "example/x@1"),
+            ))?;
+            let mut foreign = support::contribution(
+                "foreign",
+                NetworkPatch::new([Edit::Replace {
+                    path: "service".into(),
+                    definition: support::definition(false, true, 1, "example/x@1"),
+                }]),
+            );
+            foreign.requires.push(Key::new("provider", "main"));
+            into.add(foreign)
+        }
+    }
+    let snapshot = support::snapshot("provider", Honest);
+    let options = support::options(std::slice::from_ref(&snapshot));
     assert!(
-        failure
-            .to_string()
-            .contains("another contribution generation"),
-        "{failure}"
+        Kernel::build_with_options(
+            "host",
+            [snapshot],
+            Arc::new(LocalProcessDispatcher),
+            options
+        )
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("origin mismatch")
     );
 }

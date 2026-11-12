@@ -1,6 +1,11 @@
-use phenix_graph::{LocalExecutor, Value};
+mod support;
+use phenix_graph::{
+    Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    process::LocalProcessDispatcher,
+};
 use phenix_kernel::host::{Candidate, Generation, KernelHost, LifecycleError};
-use phenix_kernel::{BuildOptions, Contribution, Notice, Producer};
+use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, InputEvent, Key, Producer};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
 use std::sync::{
     Arc, Barrier, Mutex,
@@ -46,7 +51,7 @@ struct Source {
 }
 
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         let tick = self.polls.fetch_add(1, Ordering::SeqCst) + 1;
         if tick == 1
             && let Some(gate) = &self.gate
@@ -54,9 +59,9 @@ impl Producer for Source {
             gate.0.wait();
             gate.1.wait();
         }
-        Ok(Some(Notice {
-            trigger: "tick".into(),
-            values: vec![Value::local(tick as i64)],
+        Ok(Some(InputEvent {
+            input: "tick".into(),
+            value: Value::local(tick as i64),
         }))
     }
 }
@@ -71,17 +76,27 @@ impl PluginInstance for Plugin {
             id: "source".into(),
             requires: vec![],
             routes: vec!["tick".into()],
-            compose: Box::new(move |context| {
+            patch: NetworkPatch::new([]),
+            prepare: Some(Box::new(move |_| {
+                let mut context = CandidateArtifacts::default();
                 context.export(Guard("export", id, log.clone()))?;
                 let action = Guard("action", id, log.clone());
                 let action_log = log.clone();
-                let node = context.graph.node("clock", move |tick: i64| {
+                let node = support::sink(move |tick: i64| {
                     action.touch();
                     action_log.lock().unwrap().push(format!("tick:{id}:{tick}"));
-                    tick
-                })?;
-                let input = context.graph.expose_input("clock", node.inlet())?;
-                context.graph.trigger("tick", [input])?;
+                });
+                context.patch = Some(NetworkPatch::new([
+                    Edit::Add {
+                        path: "clock".into(),
+                        definition: node,
+                    },
+                    Edit::ExposeInput {
+                        name: "tick".into(),
+                        targets: vec![support::path("clock", "run")],
+                        capacity: std::num::NonZeroUsize::new(3).unwrap(),
+                    },
+                ]));
                 let factory = Guard("factory", id, log.clone());
                 let log = log.clone();
                 let polls = polls.clone();
@@ -94,17 +109,27 @@ impl PluginInstance for Plugin {
                         gate: gate.clone(),
                         _guard: Guard("producer", id, log.clone()),
                     }))
-                })
-            }),
+                })?;
+                Ok(context)
+            })),
         })
     }
 }
 
 fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("clock", "source"),
+        [
+            Footprint::Component("clock".into()),
+            Footprint::InputExport("tick".into()),
+        ],
+    );
     host.prepare(
         stages,
-        BuildOptions::default(),
-        Arc::new(LocalExecutor),
+        options,
+        Arc::new(LocalProcessDispatcher),
         "retirement",
         |_| Ok(()),
     )
@@ -114,7 +139,7 @@ fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
 fn assert_live(generation: &Generation) {
     let events = generation.drain(1);
     assert_eq!(events.len(), 1);
-    assert!(events[0].result.as_ref().unwrap().success());
+    assert!(events[0].result.is_ok());
 }
 
 #[test]
@@ -159,11 +184,7 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     gate.1.wait();
     let events = drain.join().unwrap();
     assert_eq!(events.len(), 3);
-    assert!(
-        events
-            .iter()
-            .all(|event| event.result.as_ref().unwrap().success())
-    );
+    assert!(events.iter().all(|event| event.result.is_ok()));
     let (host, current, polls) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert_eq!(current.epoch(), 2);
@@ -171,6 +192,8 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
         assert!(old.drain(10).is_empty());
     }
     assert_eq!(polls.load(Ordering::SeqCst), 3);
+    // Retirement stops owned producers, not already admitted work or explicit queries.
+    old.run_steps(100).unwrap();
     assert_eq!(
         log.lock()
             .unwrap()

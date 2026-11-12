@@ -5,7 +5,7 @@
 //! Dynamically linked cdylibs require a separate ABI adapter (not Rust Any).
 use crate::{CallbackPhase, Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
-use phenix_graph::{CompiledGraph, GraphContract, GraphOrigin};
+use phenix_graph::{GraphOrigin, contract::Contract, network::CompiledNetwork};
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet},
@@ -165,8 +165,8 @@ impl PluginSnapshot {
     pub fn bind<C: Contribution>(
         &self,
         id: &str,
-        requested: &GraphContract,
-        graph: &CompiledGraph,
+        requested: &Contract,
+        graph: &CompiledNetwork,
     ) -> Result<ContributionHandle<C>, Failure> {
         (|| {
             let handle = self.get::<C>(id).ok_or_else(|| {
@@ -175,13 +175,13 @@ impl PluginSnapshot {
                     "missing contribution or type mismatch",
                 )
             })?;
-            let path = handle.graph_unit().ok_or_else(|| {
+            let path = handle.component_path().ok_or_else(|| {
                 Failure::new(
                     Code::MissingBinding,
-                    "contribution has no graph unit locator",
+                    "contribution has no component locator",
                 )
             })?;
-            let unit = graph.find(path).ok_or_else(|| {
+            let unit = graph.inspect(path).map_err(|_| {
                 Failure::new(
                     Code::MissingBinding,
                     format!(
@@ -191,7 +191,8 @@ impl PluginSnapshot {
                 )
             })?;
             if !unit
-                .origin()
+                .origin
+                .as_ref()
                 .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
             {
                 return Err(Failure::new(
@@ -199,20 +200,22 @@ impl PluginSnapshot {
                     format!("compiled unit {path}: contribution generation origin mismatch"),
                 ));
             }
-            requested.check_implementation(&unit).map_err(|error| {
-                Failure::with_source(
-                    Code::SchemaRejected,
-                    format!(
-                        "compiled unit {path}, contribution {id}, contract {}",
-                        requested.id()
-                    ),
-                    Box::new(error),
-                )
-            })?;
+            graph
+                .check_implementation(path, requested)
+                .map_err(|error| {
+                    Failure::with_source(
+                        Code::SchemaRejected,
+                        format!(
+                            "compiled unit {path}, contribution {id}, contract {}",
+                            requested.id()
+                        ),
+                        Box::new(error),
+                    )
+                })?;
             Ok(handle)
         })()
         .map_err(|error: Failure| {
-            let mut error = error.at(self.name(), CallbackPhase::Bind);
+            let mut error = error.at(self.name(), CallbackPhase::Bind, self.loaded.clone());
             error
                 .context
                 .as_mut()
@@ -324,20 +327,27 @@ impl PluginSet {
             Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
         })?;
         let instance = (factory.make)(Box::new(configuration))
-            .map_err(|error| error.at(key.name(), CallbackPhase::Construct))?;
+            .map_err(|error| error.at(key.name(), CallbackPhase::Construct, factory.clone()))?;
         let mut registrar = Registrar::new(key.name())?;
-        instance
-            .contribute(&mut registrar)
-            .map_err(|error| error.at(key.name(), CallbackPhase::Contribute))?;
-        if registrar.owner() != key.name() {
-            return Err(
-                Failure::new(Code::Denied, "plugin replaced registrar owner")
-                    .at(key.name(), CallbackPhase::Contribute),
-            );
+        let failure = match instance.contribute(&mut registrar) {
+            Err(error) => Some(error),
+            Ok(()) if registrar.owner() != key.name() => Some(Failure::new(
+                Code::Denied,
+                "plugin replaced registrar owner",
+            )),
+            Ok(()) => None,
+        };
+        let contributions = registrar.finish();
+        if let Some(error) = failure {
+            return Err(error.at(
+                key.name(),
+                CallbackPhase::Contribute,
+                Arc::new((contributions, instance, factory)),
+            ));
         }
         Ok(Arc::new(Loaded {
             graph_origin: GraphOrigin::default(),
-            contributions: registrar.finish(),
+            contributions,
             _implementation: instance,
             _factory: factory,
             name: key.name().to_owned(),
@@ -635,7 +645,13 @@ mod tests {
             let context = error.context.as_ref().unwrap();
             assert_eq!(context.plugin, "broken");
             assert_eq!(context.phase, phase);
-            let source = error.source().unwrap().downcast_ref::<Failure>().unwrap();
+            let source = error
+                .source()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<Failure>()
+                .unwrap();
             assert_eq!(
                 source
                     .source()

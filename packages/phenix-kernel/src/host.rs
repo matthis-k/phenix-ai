@@ -3,8 +3,17 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
-use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
-use phenix_graph::{Engine, Executor, InputAddr, NodeAction, TriggerSelector, Value, WaveReport};
+use crate::{
+    BuildOptions, CallbackError, Kernel, KernelLockScope, Key, ProducerEvent, ResolutionError,
+    StartError,
+};
+use phenix_graph::{
+    Value,
+    component::DefinitionKey,
+    network::{CompiledNetwork, ComponentSnapshot, NetworkError, PhysicalDeclaration},
+    process::ProcessDispatcher,
+    runtime::{InjectionError, NetworkSession, RunReport},
+};
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
 use std::sync::Arc;
 
@@ -16,6 +25,7 @@ pub enum LifecycleError {
     Binding(CallbackError),
     StaleCandidate,
     EpochExhausted,
+    ReentrantDrain,
 }
 
 impl std::fmt::Display for LifecycleError {
@@ -27,6 +37,9 @@ impl std::fmt::Display for LifecycleError {
             Self::Binding(error) => write!(f, "generation binding: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
+            Self::ReentrantDrain => {
+                f.write_str("publication attempted during its own producer drain")
+            }
         }
     }
 }
@@ -44,8 +57,8 @@ impl std::error::Error for LifecycleError {
 }
 
 /// An immutable generation identity with serialized producer access. No mutable
-/// kernel or producer access escapes. Explicit engine calls remain valid after
-/// replacement, but retired producers can never admit another notice.
+/// kernel or producer access escapes. Explicit session calls remain valid after
+/// replacement, but retired producers can never admit another event.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -56,23 +69,29 @@ impl Generation {
         self.epoch
     }
 
-    /// Scoped read-only access includes generation-owned exports and the engine.
-    /// Explicit reads and engine calls do not acquire the producer lock.
+    /// Scoped access includes generation-owned exports and explicit session calls.
+    /// Explicit reads and session calls do not acquire the producer lock.
     pub fn with_kernel<R>(&self, read: impl FnOnce(&Kernel) -> R) -> R {
         read(&self.kernel)
     }
 
-    /// Engine-only view, independent of producer polling and retirement.
-    pub fn with_engine<R>(&self, read: impl FnOnce(&Engine) -> R) -> R {
-        self.with_kernel(|kernel| read(kernel.engine()))
+    pub fn compiled(&self) -> &CompiledNetwork {
+        self.kernel.compiled()
     }
 
-    pub fn fire<T: TriggerSelector>(
+    pub fn with_session<R>(
         &self,
-        trigger: T,
-        values: Vec<Value>,
-    ) -> Result<WaveReport, String> {
-        self.with_engine(|engine| engine.fire(trigger, values))
+        use_session: impl FnOnce(&mut NetworkSession) -> R,
+    ) -> Result<R, String> {
+        self.kernel.with_session(use_session)
+    }
+
+    pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
+        self.kernel.inject(input, value)
+    }
+
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+        self.kernel.run_steps(budget)
     }
 
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
@@ -80,7 +99,7 @@ impl Generation {
     }
 }
 
-/// Private execution state: there is intentionally no generation/engine getter.
+/// Private execution state: there is intentionally no generation/session getter.
 /// A candidate is bound to both the preparing host and its publication epoch.
 pub struct Candidate {
     host: Arc<()>,
@@ -90,20 +109,20 @@ pub struct Candidate {
 }
 
 /// Preparation-only inspection capability. It exposes exports and deployment
-/// identities, but no kernel, engine, wave admission, or producer access.
+/// identities, but no kernel, session admission, or producer access.
 /// Exports are arbitrary application values; their external effects are not
 /// sandboxed or rolled back by the host.
 ///
 /// ```compile_fail
 /// use phenix_kernel::host::Binding;
 /// fn admit(binding: &Binding<'_>) {
-///     binding.engine().fire("refresh", vec![]);
+///     binding.with_session(|session| session.inject_local("refresh", 1_i64));
 /// }
 /// ```
 /// ```compile_fail
 /// use phenix_kernel::host::Binding;
 /// fn admit(binding: &Binding<'_>) {
-///     binding.fire("refresh", vec![]);
+///     binding.compiled().start();
 /// }
 /// ```
 pub struct Binding<'a> {
@@ -115,12 +134,28 @@ impl Binding<'_> {
         self.kernel.export(key)
     }
 
-    pub fn node_ids_for_action(&self, action: &Arc<dyn NodeAction>) -> Vec<u16> {
-        self.kernel.engine().node_ids_for_action(action)
+    pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
+        self.kernel.compiled().inspect(path)
     }
 
-    pub fn trigger_targets(&self, name: &str) -> Option<&[Vec<InputAddr>]> {
-        self.kernel.engine().trigger_targets(name)
+    pub fn lookup_definition(
+        &self,
+        key: DefinitionKey,
+    ) -> Result<PhysicalDeclaration, NetworkError> {
+        self.kernel.compiled().lookup_definition(key)
+    }
+
+    pub fn input_targets(&self, name: &str) -> Option<&[(usize, String)]> {
+        self.kernel.compiled().inputs().get(name).map(Vec::as_slice)
+    }
+
+    /// Inspect the exact compiled capture source without exposing session admission.
+    pub fn output_source(&self, output: &str) -> Option<(usize, &str)> {
+        self.kernel
+            .compiled()
+            .outputs()
+            .get(output)
+            .map(|(index, port)| (*index, port.as_str()))
     }
 }
 
@@ -161,7 +196,7 @@ impl KernelHost {
         &self,
         stages: Vec<StagedPlugin>,
         options: BuildOptions,
-        executor: Arc<dyn Executor>,
+        dispatcher: Arc<dyn ProcessDispatcher>,
         name: impl Into<String>,
         bind: impl FnOnce(&Binding<'_>) -> Result<(), CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
@@ -173,9 +208,18 @@ impl KernelHost {
             .plugins
             .candidate_snapshots(&stages)
             .map_err(LifecycleError::Plugins)?;
-        let mut kernel = Kernel::build_with_options(name, snapshots, executor, options)
+        let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        bind(&Binding { kernel: &kernel }).map_err(LifecycleError::Binding)?;
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            bind(&Binding { kernel: &kernel })
+        }))
+        .unwrap_or_else(|_| Err("generation binding panicked".into()))
+        .map_err(|cause| {
+            LifecycleError::Binding(phenix_plugin::lease_callback_error(
+                cause,
+                kernel.code_lease.clone(),
+            ))
+        })?;
         kernel.start().map_err(LifecycleError::Start)?;
         Ok(Candidate {
             host: self.identity.clone(),
@@ -186,13 +230,34 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement waits only for producer drains, never explicit waves or queries.
+    /// Retirement waits only for producer drains, never explicit session work or queries.
     /// Producer destructors run after the transition.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
         }
-        let mut old = self.active.as_ref().map(|generation| {
+        // Own an Arc separately from the mutable active pointer. It keeps
+        // the old kernel and plugin code leased through retirement and Drops.
+        let retiring = self.active.clone();
+        // Reject same-thread publication from a producer callback before
+        // blocking on the whole-drain gate. Other threads still wait normally.
+        let drain_scope = retiring
+            .as_ref()
+            .map(|generation| {
+                KernelLockScope::enter(&generation.kernel.producer_drain)
+                    .ok_or(LifecycleError::ReentrantDrain)
+            })
+            .transpose()?;
+        // The whole-drain gate is acquired before the inventory lock. A
+        // running drain finishes all of its polls before retirement begins.
+        let drain = retiring.as_ref().map(|generation| {
+            generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+        });
+        let mut old = retiring.as_ref().map(|generation| {
             generation
                 .kernel
                 .producers
@@ -209,10 +274,13 @@ impl KernelHost {
         drop(old);
         self.epoch = candidate.generation.epoch;
         let previous = self.active.replace(candidate.generation.clone());
+        drop(drain);
+        drop(drain_scope);
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
         drop(previous);
+        drop(retiring);
         Ok(candidate.generation)
     }
 }
@@ -220,6 +288,11 @@ impl KernelHost {
 impl Drop for KernelHost {
     fn drop(&mut self) {
         if let Some(generation) = &self.active {
+            let drain = generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut state = generation
                 .kernel
                 .producers
@@ -228,6 +301,7 @@ impl Drop for KernelHost {
             state.retired = true;
             let producers = std::mem::take(&mut state.producers);
             drop(state);
+            drop(drain);
             drop(producers);
         }
     }
@@ -236,14 +310,14 @@ impl Drop for KernelHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Contribution, Notice, Producer};
-    use phenix_graph::LocalExecutor;
+    use crate::{CandidateArtifacts, Contribution, InputEvent, Producer};
+    use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
     use phenix_plugin::{PluginCatalog, PluginInstance, Registrar};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Source;
     impl Producer for Source {
-        fn poll(&mut self) -> Result<Option<Notice>, CallbackError> {
+        fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
             Ok(None)
         }
     }
@@ -257,16 +331,68 @@ mod tests {
                 id: "source".into(),
                 requires: vec![],
                 routes: vec![],
-                compose: Box::new(move |context| {
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let calls = calls.clone();
-                    context.activate(move || {
+                    let mut artifacts = CandidateArtifacts::default();
+                    artifacts.activate(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
                         Ok(Box::new(Source))
-                    })
-                }),
+                    })?;
+                    Ok(artifacts)
+                })),
             })
         }
+    }
+
+    #[test]
+    fn publication_rejects_same_thread_reentry_into_a_held_producer_drain() {
+        let mut host = KernelHost::new(PluginCatalog::new().instance());
+        let first = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "initial",
+                |_| Ok(()),
+            )
+            .unwrap();
+        let active = host.publish(first).unwrap();
+        let replacement = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "replacement",
+                |_| Ok(()),
+            )
+            .unwrap();
+
+        // A producer callback holds exactly these two guards during a drain.
+        let scope = crate::KernelLockScope::enter(&active.kernel.producer_drain).unwrap();
+        let gate = active.kernel.producer_drain.lock().unwrap();
+        let error = match host.publish(replacement) {
+            Ok(_) => panic!("recursive publication must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LifecycleError::ReentrantDrain));
+        assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
+        assert_eq!(active.epoch(), 1);
+        drop(gate);
+        drop(scope);
+
+        // Failed publication did not consume the epoch or poison the gate.
+        let next = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "next",
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(host.publish(next).unwrap().epoch(), 2);
     }
 
     #[test]
@@ -286,7 +412,7 @@ mod tests {
             .prepare(
                 vec![stage],
                 BuildOptions::default(),
-                Arc::new(LocalExecutor),
+                Arc::new(LocalProcessDispatcher),
                 "last",
                 |_| Ok(()),
             )
@@ -304,7 +430,7 @@ mod tests {
             let result = host.prepare(
                 stages,
                 BuildOptions::default(),
-                Arc::new(LocalExecutor),
+                Arc::new(LocalProcessDispatcher),
                 "exhausted",
                 |_| panic!("binding must not run after epoch exhaustion"),
             );

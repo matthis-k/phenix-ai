@@ -1,7 +1,5 @@
 use super::*;
-use phenix_graph::{
-    Emission, InputSlot, InvocationCtx, NodeAction, NodeTemplate, OutputSlot, Port, emit_local,
-};
+use phenix_graph::{PortDef, Value};
 use phenix_storage::{
     scoped::{OptionalReadCell, ReadCell, Stored},
     snapshot::{ReadSource, SnapshotEntry},
@@ -63,19 +61,10 @@ pub trait TupleFunction<V, O>: Send + Sync + 'static {
 }
 pub struct StoredMode;
 pub struct DerivedMode;
-struct Join<F>(F);
-impl<F> NodeAction for Join<F>
-where
-    F: Fn(InvocationCtx) -> Result<Vec<Emission>, String> + Send + Sync,
-{
-    fn execute(&self, ctx: InvocationCtx) -> Result<Vec<Emission>, String> {
-        (self.0)(ctx)
-    }
-}
 pub trait DeriveInputs<F, O: Clone + Send + Sync + 'static, M> {
     fn lower(
         self,
-        graph: &mut GraphBuilder,
+        graph: &mut NetworkBuilder,
         name: &str,
         function: F,
     ) -> Result<DerivedRef<O>, Error>;
@@ -88,33 +77,18 @@ where
 {
     fn lower(
         self,
-        graph: &mut GraphBuilder,
+        graph: &mut NetworkBuilder,
         name: &str,
         function: F,
     ) -> Result<DerivedRef<O>, Error> {
-        let inputs = self.owned();
-        let sources = I::sources(&inputs);
-        let reader = Arc::new(phenix_storage::snapshot::SnapshotReader::new(
-            sources.clone(),
-            phenix_storage::snapshot::ReadConsistency::AtomicWithinMount,
-        )?);
-        let root = Arc::new(Root {
-            trigger: format!("{name}.sources.refresh"),
-            sources,
-            action: source::action::<I>(inputs, reader),
-        });
-        let function = Arc::new(function);
-        staged(graph, |g| {
-            let group = source::lower::<I>(g, &format!("{name}.sources"), root.clone())?;
-            let function = function.clone();
-            let node = g
-                .node(name, move |v: I::Values| function.call(v))
-                .map_err(|e| Error::Graph(e.to_string()))?;
-            g.connect(group.output(), node.inlet())?;
-            Ok(DerivedRef {
-                output: node.output(),
-                root: root.clone(),
-            })
+        let definition = source::transform(move |values: I::Values| function.call(values))?;
+        let group = graph.sources(&format!("{name}.sources"), self)?;
+        let component = graph.add(name, definition)?;
+        graph.connect(group.output(), component.input("run")?, capacity())?;
+        Ok(DerivedRef {
+            output: component.output("value")?,
+            component,
+            root: group.root,
         })
     }
 }
@@ -134,27 +108,20 @@ macro_rules! tuples {
         impl<F, O, $($T),+> DeriveInputs<F, O, DerivedMode> for ($(&DerivedRef<$T>,)+)
         where $($T: Clone + Send + Sync + 'static,)+ O: Clone + Send + Sync + 'static,
             F: Fn($($T),+) -> O + Send + Sync + 'static {
-            fn lower(self, graph: &mut GraphBuilder, name: &str, function: F) -> Result<DerivedRef<O>, Error> {
+            fn lower(self, graph: &mut NetworkBuilder, name: &str, function: F) -> Result<DerivedRef<O>, Error> {
                 let root = self.0.root.clone();
                 if $( !Arc::ptr_eq(&root, &self.$i.root) )||+ { return Err(Error::MultipleRefreshRoots); }
-                let function = Arc::new(function);
-                staged(graph, |g| {
-                    let join = format!("{name}.join");
-                    g.add(&join, NodeTemplate::with_action_factory(0,
-                        vec![Port::all(0, vec![$(InputSlot::local::<$T>($i).named(stringify!($i))),+]).named("run")],
-                        OutputSlot::local::<($($T,)+)>(0).named("value"),
-                        || Join(|mut ctx: InvocationCtx| Ok(vec![emit_local(0, ($(ctx.take_local::<$T>($i)?,)+))])),
-                    )).map_err(|e| Error::Graph(e.to_string()))?;
-                    $(g.connect(self.$i.output(), g.discover(&join)?
-                        .inlets::<Self, phenix_graph::LocalValue>()
-                        .port(phenix_graph::InletPort::<Self, Self>::new("run"))
-                        .field(phenix_graph::SlotField::<Self, $T>::new(stringify!($i))).target()?)?;)+
-                    let function = function.clone();
-                    let node = g.node(name, move |values: ($($T,)+)| function($(values.$i),+))
-                        .map_err(|e| Error::Graph(e.to_string()))?;
-                    g.connect(g.discover(&join)?.output::<($($T,)+), phenix_graph::LocalValue>()?, node.inlet())?;
-                    Ok(DerivedRef { output: node.output(), root: root.clone() })
-                })
+                $(self.$i.validate(graph)?;)+
+                let definition = source::function(
+                    [$(PortDef::local::<$T>(stringify!($i))),+], PortDef::local::<O>("value"),
+                    move |ctx| Ok(Value::local(function($(
+                        ctx.take(stringify!($i)).ok_or("missing input")?
+                            .borrow::<$T>().ok_or("wrong input type")?.clone()
+                    ),+))),
+                )?;
+                let component = graph.add(name, definition)?;
+                $(graph.connect(self.$i.output(), component.input::<$T>(stringify!($i))?, capacity())?;)+
+                Ok(DerivedRef { output: component.output("value")?, component, root })
             }
         }
     };

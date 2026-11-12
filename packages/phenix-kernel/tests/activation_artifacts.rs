@@ -1,5 +1,12 @@
-use phenix_graph::{CompileLimits, GraphBuilder, LocalExecutor};
-use phenix_kernel::{Contribution, Kernel, Key, Notice, Producer};
+mod support;
+use phenix_graph::{
+    Value,
+    compose::{Edit, Footprint, NetworkPatch},
+    process::LocalProcessDispatcher,
+};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, Contribution, InputEvent, Kernel, Key, Producer,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::sync::{
     Arc, Mutex,
@@ -32,7 +39,7 @@ struct Source {
     _mark: Mark,
 }
 impl Producer for Source {
-    fn poll(&mut self) -> Result<Option<Notice>, phenix_kernel::CallbackError> {
+    fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
         self.state.polls.fetch_add(1, Ordering::SeqCst);
         Ok(None)
     }
@@ -68,13 +75,9 @@ impl PluginInstance for Plugin {
                 } else {
                     vec![]
                 },
-                compose: Box::new(move |context| {
-                    if failure == "compile" && name == "a" {
-                        *context.graph = GraphBuilder::new("invalid").limits(CompileLimits {
-                            max_work: 0,
-                            ..Default::default()
-                        });
-                    }
+                patch: NetworkPatch::new([]),
+                prepare: Some(Box::new(move |_| {
+                    let mut context = CandidateArtifacts::default();
                     let id = composed.fetch_add(1, Ordering::SeqCst);
                     let state = Arc::new(State {
                         id,
@@ -84,7 +87,18 @@ impl PluginInstance for Plugin {
                     });
                     context.export(state.clone())?;
                     let action = Mark(format!("engine:{name}:{id}"), log.clone());
-                    context.graph.node(name, move |_: i64| action.touch())?;
+                    let definition = support::function(move |value: i64| {
+                        action.touch();
+                        value
+                    });
+                    let mut edits = vec![Edit::Add {
+                        path: name.into(),
+                        definition,
+                    }];
+                    if failure == "compile" && name == "a" {
+                        edits.push(Edit::AddSource("missing".into()));
+                    }
+                    context.patch = Some(NetworkPatch::new(edits));
                     let factory = Mark(format!("factory:{name}:{id}"), log.clone());
                     let activations = activations.clone();
                     let log = log.clone();
@@ -103,8 +117,8 @@ impl PluginInstance for Plugin {
                     if failure == "compose" {
                         return Err("composition failed".into());
                     }
-                    Ok(())
-                }),
+                    Ok(context)
+                })),
             })?;
         }
         Ok(())
@@ -121,11 +135,29 @@ fn snapshots(plugin: Plugin) -> Vec<PluginSnapshot> {
     plugins.snapshots().collect()
 }
 
+fn build(
+    name: &str,
+    snapshots: Vec<PluginSnapshot>,
+) -> Result<Kernel, phenix_kernel::ResolutionError> {
+    let mut options = BuildOptions::default();
+    for name in ["a", "b"] {
+        support::grant(
+            &mut options,
+            Key::new("plugin", name),
+            [
+                Footprint::Component(name.into()),
+                Footprint::Source("missing".into()),
+            ],
+        );
+    }
+    Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options)
+}
+
 #[test]
 fn artifacts_and_engine_drop_before_plugin_leases_on_success_and_build_failure() {
     for failure in ["", "unstarted", "compose", "compile", "route"] {
         let log = Log::default();
-        let result = Kernel::build(
+        let result = build(
             "drop-order",
             snapshots(Plugin {
                 log: log.clone(),
@@ -133,7 +165,6 @@ fn artifacts_and_engine_drop_before_plugin_leases_on_success_and_build_failure()
                 activations: Arc::default(),
                 failure,
             }),
-            Arc::new(LocalExecutor),
         );
         if matches!(failure, "" | "unstarted") {
             let mut kernel = result.unwrap();
@@ -143,7 +174,7 @@ fn artifacts_and_engine_drop_before_plugin_leases_on_success_and_build_failure()
             assert!(log.lock().unwrap().is_empty());
             drop(kernel);
         } else {
-            assert!(result.is_err(), "{failure}");
+            drop(result.err().expect(failure));
         }
         let events = log.lock().unwrap();
         assert_eq!(
@@ -181,8 +212,8 @@ fn nth_activation_failure_retries_the_exact_composed_state_without_recomposition
         activations: activations.clone(),
         failure: "activation",
     });
-    let mut first = Kernel::build("first", snapshots.clone(), Arc::new(LocalExecutor)).unwrap();
-    let mut second = Kernel::build("second", snapshots, Arc::new(LocalExecutor)).unwrap();
+    let mut first = build("first", snapshots.clone()).unwrap();
+    let mut second = build("second", snapshots).unwrap();
     let state = |kernel: &Kernel, name| {
         kernel
             .export::<Arc<State>>(&Key::new("plugin", name))
@@ -203,7 +234,7 @@ fn nth_activation_failure_retries_the_exact_composed_state_without_recomposition
     assert_eq!(first.start().unwrap_err().to_string(), expected.to_string());
     assert_eq!(*log.lock().unwrap(), [format!("producer:a:{}", a.id)]);
     assert!(first.drain(4).is_empty());
-    assert!(first.fire("missing", vec![]).is_err());
+    assert!(first.inject("missing", Value::local(())).is_err());
     first.start().unwrap();
     assert!(matches!(
         first.start().unwrap_err(),
