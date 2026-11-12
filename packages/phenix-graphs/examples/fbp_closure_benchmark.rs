@@ -201,11 +201,7 @@ fn measure(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let iterations: usize = args
-        .next()
-        .unwrap_or_else(|| "250".into())
-        .parse()
-        .unwrap();
+    let iterations: usize = args.next().unwrap_or_else(|| "250".into()).parse().unwrap();
     let breadths: Vec<_> = args.map(|s| s.parse::<usize>().unwrap()).collect();
     let breadths = if breadths.is_empty() {
         vec![0, 16, 64, 128]
@@ -219,7 +215,9 @@ fn main() {
                 continue;
             }
             let (compile_ms, start_ms, mean, p50) = measure(mode, count, iterations);
-            println!("{mode},{count},{iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0}");
+            println!(
+                "{mode},{count},{iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0}"
+            );
         }
     }
 }
@@ -247,17 +245,16 @@ mod tests {
         );
         let mut session = network.start_with_options(opts);
         let id = session.begin_request(None).unwrap();
-        session.inject_request(id, "trigger", Value::of(7_u64)).unwrap();
+        session
+            .inject_request(id, "trigger", Value::of(7_u64))
+            .unwrap();
         session
             .inject_request(id, "unrelated-0", Value::of(8_u64))
             .unwrap();
         session.close_request(id).unwrap();
         let first = session.run_until_idle(1);
         assert_eq!(first.steps, 1);
-        assert_eq!(
-            session.request_status(id).unwrap(),
-            RequestStatus::Pending
-        );
+        assert_eq!(session.request_status(id).unwrap(), RequestStatus::Pending);
         assert_eq!(hits.load(Ordering::Relaxed), 0);
         let rest = session.run_until_idle(32);
         assert_eq!(rest.steps, 2);
