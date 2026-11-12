@@ -3,7 +3,9 @@ use phenix_graph::{
     interface::{Interface, PortDef},
     network::{CompiledNetwork, NetworkBuilder},
     process::{Process, ProcessContext, ProcessEmission, Step},
-    runtime::{NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState},
+    runtime::{
+        NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState,
+    },
 };
 use std::{
     num::NonZeroUsize,
@@ -111,7 +113,8 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
 
     assert!(session.run_until_idle(64).steps > 0);
     assert_eq!(
-        session.take_output("output")
+        session
+            .take_output("output")
             .unwrap()
             .unwrap()
             .value()
