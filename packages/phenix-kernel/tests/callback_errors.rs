@@ -242,7 +242,10 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     // typed poll error can still be observed, and no extra producer is created.
     let event = kernel.drain(1).pop().expect("producer slot lost");
     assert_eq!(event.producer, Key::new("plugin", "callback"));
-    let error = event.result.err().expect("expected one terminal poll error");
+    let error = event
+        .result
+        .err()
+        .expect("expected one terminal poll error");
     assert_cause(&error, &identity);
     assert!(kernel.drain(1).is_empty());
 }
