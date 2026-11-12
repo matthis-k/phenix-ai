@@ -546,6 +546,10 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(other_calls.load(Ordering::SeqCst), 0);
             assert_eq!(drops.load(Ordering::SeqCst), 2);
+            assert!(
+                generation.kernel.driver_wake.lock().unwrap().is_none(),
+                "driver wake registration must be released on every exit"
+            );
             assert_eq!(
                 generation.with_session(|session| session.state()).unwrap(),
                 phenix_graph::runtime::SessionState::Quiescent,
