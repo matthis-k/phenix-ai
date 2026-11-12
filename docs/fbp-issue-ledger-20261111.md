@@ -14,11 +14,13 @@ the exact-head CI, not that a universal security/progress proof exists;
 is not accepted as a solved limitation; **Policy** needs an explicit decision.
 Historical phase documents remain source records, not current status authorities.
 
-The *implementation* matrix now contains **9 previously verified fixes,
-5 partially addressed issues and 19 still open/in progress**. This branch's
-Q8 report update has its own acceptance gate: once its exact final-head
-CI passes, Q8 becomes the **10th verified** issue and the open count falls
-to **18**. H6 has a measured hot-vs-idle baseline but stays partial.
+Against the verified #1266 head `e1b4b99b33a2c5c22599f4668ff069721a1d3756`,
+the matrix now has **10 verified fixes, 5 partial, 18 open**:
+Q8's stale report/ledger is reconciled and
+[exact-head six-job CI #43202338522](https://github.com/matthis-k/phenix-ai/actions/runs/43202338522)
+passed. This new H4 prefilter candidate is a further **partial** improvement,
+subject to its own exact-head CI and benchmark checks.
+Once verified, the matrix becomes **10 verified, 6 partial, 17 open**.
 This ledger/report update itself is still awaiting exact-head CI; Q8 remains
 in progress until that gate passes.
 
@@ -28,7 +30,7 @@ in progress until that gate passes.
 | H2 Callback panic containment | Verified (scoped) | PR #1263 (`72d56e41`), `43185486539`: preparation, activation, host binding, producer wake and host event callback unwind paths return typed errors; `panic=abort` and callback side effects remain outside guarantee. |
 | H3a Inventory lock inversion on producer admission | Verified | Native inventory, drain, and whole-drain retirement regressions pass in exact-head PR #1265 CI `43197663375`; polls/admissions run outside inventory mutex. |
 | H3b Session/drain recursive callback reentrancy | Partial | PRs #1263/#1265: recursion guard lifetime, typed same-thread errors, known cross-thread session/drain cycle, and exclusive driver lease verified. `KernelHost::drop`, external callback synchronizers, direct-drain vs driver ownership remain open. |
-| H4 Full-inventory scheduling scans | Open | `NetworkSession::refresh` scans process inventory and repeats upon finishing a process. Activation-scaled benchmark and controlled optimization not yet accepted. |
+| H4 Full-inventory scheduling scans | Partial — measured constant-factor improvement, CI pending | The new read-only idle/open-input prefilter skips expensive readiness selection for known no-work processes, preserves full scan O(V). On AMD EPYC 7763, the 256-process sparse-input benchmark went ~59.7→9.8 µs/event across separate runs. [Optimized run #43202997957](https://github.com/matthis-k/phenix-ai/actions/runs/43202997957); dedicated EOS/custom policy regression and exact-head CI pending. Event-indexed scheduling remains open. |
 | H5 Expensive closure analysis | Partial | Compiled downstream adjacency removes repeated whole-edge scans, but request closure continues inspecting queued packets; missing measured stress and complexity envelope. |
 | H6 No native performance baseline | Partial — first real measurement | Three release-mode repetitions on Ubuntu 24.04 / Rust 1.96.1, [CI #43201132241](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241), raw CSV artifact 13934274002. One active ingress among 1–256 processes rises ~0.68→31.9 µs/event. Still need allocator/RSS, correlated joins, multiple active branches and pinned-environment repeatability. |
 | H7 Request isolation not complete | Open | CorrelatedAll and per-request session workaround exist, but multi-request shared-session fairness, cancellation isolation, and policy guarantees not fully proved. |
@@ -56,7 +58,7 @@ in progress until that gate passes.
 | Q5 Concurrency testing not exhaustive | Open — improved evidence | Deterministic kernel concurrency regressions now include cross-thread cycle and driver lease, but there is no exhaustive state-space/lock-order model. |
 | Q6 Diagnostics intentionally minimal | Open | Diagnostics still intentionally minimal; richer actionable deadlock/readiness explanations remain to build. |
 | Q7 Error reporting uneven | Open | Error handling still mixes strings and typed outcomes; code lease/source preservation needs a public API pass. |
-| Q8 Final reports stale | Report refreshed; exact-head verification gate | This branch replaces the obsolete 2026-11-11 worktree report and CI-pending ledger with current PR/commit references. Close when all final-head CI jobs pass and evidence links match the updated report. |
+| Q8 Final reports stale | Verified | Refreshed report and 33-issue ledger committed in PR #1266; [exact-head six-job CI #43202338522](https://github.com/matthis-k/phenix-ai/actions/runs/43202338522) passed on `e1b4b99b33a2c5c22599f4668ff069721a1d3756`. Current per-issue status continues in this row set. |
 
 ## Acceptance and nonclaims
 
