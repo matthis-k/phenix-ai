@@ -118,10 +118,10 @@ impl NetworkSession {
         let mut visited = BTreeSet::new();
         let mut stack = vec![];
         for queue in queues {
-            if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
-                if whole_graph || scope.reachable.contains(index) {
-                    stack.push(*index);
-                }
+            if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0
+                && (whole_graph || scope.reachable.contains(index))
+            {
+                stack.push(*index);
             }
         }
         while let Some(producer) = stack.pop() {
