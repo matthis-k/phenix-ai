@@ -8,7 +8,13 @@ use phenix_graph::{
     process::{Process, ProcessContext, ProcessEmission, Step},
     runtime::{NetworkSession, Readiness, RequestError, RequestStatus, SessionOptions},
 };
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
@@ -16,6 +22,7 @@ fn one() -> NonZeroUsize {
 
 struct Join {
     emitted: bool,
+    shared_effects: Arc<AtomicUsize>,
 }
 impl Process for Join {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
@@ -25,11 +32,12 @@ impl Process for Join {
         }
         let a = cx.take("a").ok_or("join missing a")?.get::<i64>()?;
         let b = cx.take("b").ok_or("join missing b")?.get::<i64>()?;
+        self.shared_effects.fetch_add(1, Ordering::SeqCst);
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(a + b))))
     }
 }
-fn compiled_join() -> CompiledNetwork {
+fn compiled_join(shared_effects: Arc<AtomicUsize>) -> CompiledNetwork {
     let mut builder = NetworkBuilder::new();
     let joined = builder
         .node(
@@ -44,7 +52,10 @@ fn compiled_join() -> CompiledNetwork {
                 )
                 .unwrap(),
             ),
-            Arc::new(|| Join { emitted: false }),
+            Arc::new(move || Join {
+                emitted: false,
+                shared_effects: shared_effects.clone(),
+            }),
         )
         .unwrap();
     for port in ["a", "b"] {
@@ -79,7 +90,10 @@ fn start_bounded(
 
 #[test]
 fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping_fifo() {
-    let compiled = compiled_join();
+    // Independent process instances can still share explicitly supplied state.
+    // This does not grant implicit cross-session access or relax queue FIFO.
+    let shared_effects = Arc::new(AtomicUsize::new(0));
+    let compiled = compiled_join(shared_effects.clone());
     let mut active = Vec::new();
     let a = start_bounded(&compiled, &mut active, 2).unwrap();
     let b = start_bounded(&compiled, &mut active, 2).unwrap();
@@ -125,6 +139,7 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
         active[b].request_status(rb).unwrap(),
         RequestStatus::Settled { captures: 1 }
     );
+    assert_eq!(shared_effects.load(Ordering::SeqCst), 2);
 
     active[a].release_request(ra).unwrap();
     active[b].release_request(rb).unwrap();

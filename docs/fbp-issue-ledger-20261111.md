@@ -11,9 +11,10 @@ not an accepted limitation.
 
 | Issue | Resolved? | Evidence / remaining acceptance |
 | --- | --- | --- |
-| H1 Shared-session FIFO correlation head blocking | No | `runtime/readiness.rs`, `runtime/mod.rs`; require per-request correlation and bounded-lane adversarial tests |
+| H1 Shared-session FIFO correlation head blocking | Open for single shared session | `fbp_streams::all_join_keeps_requests_separate_and_never_skips_a_fifo_head` demonstrates the deadlock case; `fbp_request_session_isolation.rs` now proves crossed requests can settle in bounded independent sessions while sharing explicitly supplied state. No head-skipping, dynamic-lane or shared-process guarantee is claimed. |
 | H2 Callback panic containment | Partial; CI pending | Kernel preparation and activation now catch panics into contribution-scoped leased errors; `callback_errors.rs` covers preservation of the active generation. Process factories, steps, readiness and polls already have catch boundaries. Wake registration and arbitrary host callbacks still need explicit policy/review. |
-| H3 Producer/session callback reentrancy deadlocks | No | `phenix-kernel/src/lib.rs` locks producer and session state; rejected partial lock change documented in `fbp-followup-adversarial-20261111.md`; independent policy needed |
+| H3a Inventory lock inversion on producer admission | Code fixed; CI pending | `Kernel::drain` takes a producer out of inventory before polling/admitting and restores it after callback, under a separate whole-drain gate; `eager_readiness_during_drain_may_inspect_unlocked_inventory` and `generation_retirement::blocked_poll_finishes_its_drain_before_publication_retires_the_source` cover both lock and retirement invariants. |
+| H3b Session/drain recursive callback reentrancy | Open | `ReadinessPolicy::select` still runs under the session mutex and a recursive `Producer::poll -> drain` blocks on the whole-drain gate. Arbitrary reentrancy cannot be claimed without a separate error contract or execution boundary. |
 | H4 Full-inventory scheduling scans | No | `runtime/mod.rs::refresh` walks process inventory; need activation-scaled measurements before refactor |
 | H5 Expensive closure analysis | No | `runtime/closure.rs`; need bounded stress and topology-aware cost evidence |
 | H6 No native performance baseline | No | `docs/fbp-measurements.md` records source counts, not throughput/allocations; add benchmarks with reproducible inputs |
@@ -76,3 +77,18 @@ Regression: a published old generation survives both failure modes; exact
 contribution and error phase are reported. Producer disposal and startup retry
 remain separate existing tests. `Producer::set_waker` intentionally continues
 to resume panic and is not classified as fixed by H2. Final-head CI is required.
+
+## H1/H3 evidence correction
+
+The original H3 row overstated a stale producer-inventory lock defect. Source audit
+on 2026-11-12 confirmed `Kernel::drain` already extracts the producer, releases
+the inventory mutex, polls or admits under the separate whole-drain gate,
+and restores the slot. Whole-drain completion before publication is tested and
+must not be weakened by a superficial per-poll unlock fix.
+
+H1 has a deliberate, tested workaround for primary independent agent requests:
+one bounded `NetworkSession` per request. The crossed-session test now also
+shares an explicit `Arc<AtomicUsize>` through distinct process instances,
+proving global application state can coexist with isolation. This **does not**
+address crossed FIFO heads within one physical shared process and does not
+permit unbounded session admission; retain H1 as open for that use case.
