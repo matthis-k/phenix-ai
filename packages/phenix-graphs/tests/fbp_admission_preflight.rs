@@ -95,7 +95,7 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
         )]),
         ..Default::default()
     };
-    let mut failed = compiled.start_with_options(invalid_readiness);
+    let failed = compiled.start_with_options(invalid_readiness);
     assert_eq!(failed.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 0);
 
@@ -103,7 +103,7 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     invalid_resource
         .resources
         .insert("unknown".to_owned(), vec![]);
-    let mut failed = compiled.start_with_options(invalid_resource);
+    let failed = compiled.start_with_options(invalid_resource);
     assert_eq!(failed.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 0);
 
@@ -111,11 +111,11 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     invalid_output
         .discard_outputs
         .insert(("worker".to_owned(), "missing".to_owned()));
-    let mut failed = compiled.start_with_options(invalid_output);
+    let failed = compiled.start_with_options(invalid_output);
     assert_eq!(failed.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 0);
 
-    let mut valid = compiled.start();
+    let valid = compiled.start();
     // An unconnected input may legitimately deliver EOS immediately.
     assert_ne!(valid.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 1);

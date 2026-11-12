@@ -1067,7 +1067,13 @@ impl NetworkSession {
         if let Some(state) = self.terminal {
             return state;
         }
-        if !self.ready.is_empty() {
+        if !self.ready.is_empty()
+            || self.processes.iter().any(|process| {
+                process.wake.pending.load(Ordering::Acquire)
+                    && (process.handoff.state() == HandoffState::WaitingWake
+                        || (process.source && process.handoff.state() == HandoffState::Idle))
+            })
+        {
             return SessionState::Runnable;
         }
         let drained = self.transport.queues().iter().all(|q| q.is_empty());

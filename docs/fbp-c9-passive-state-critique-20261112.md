@@ -26,3 +26,23 @@ it would expose scheduling semantics the existing `next_job` already owns.
 Conditional acceptance: minimal signature/call removal plus a strong
 callback-counter regression and exact-head CI; no runtime behavior changes
 beyond read-only observation.
+
+## Phase 2 revision — wake status must be observable
+
+The previous critique missed that a pending atomic wake is itself observable
+readiness, even before the scheduler consumes it. A passive `state()` that
+only reads the `ready` queue regresses the established wake contract.
+
+The revised approach is accepted only if:
+1. It checks the existing atomic pending bit for Idle source processes and
+   WaitingWake continuations, without `swap` or `refresh`.
+2. It does not treat an arbitrary non-source Idle process as schedulable merely
+   because its wake flag is true.
+3. Existing wake, closure, cancellation, and request tests remain untouched.
+4. The new callback-counter regression does not assume startup eagerly
+   selects with empty queues.
+5. Exact-head CI demonstrates both state purity and wake visibility.
+
+The resulting behavior is a read-only *up-to-date wake-visible snapshot*;
+it still cannot guarantee scheduling of a concurrent event that arrives
+just after the atomic load. This is a bounded, documented tradeoff.

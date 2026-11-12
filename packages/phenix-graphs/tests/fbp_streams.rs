@@ -11,7 +11,7 @@ use std::{
     num::NonZeroUsize,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -71,10 +71,13 @@ fn options() -> SessionOptions {
     }
 }
 
-struct ReadinessCalls(Arc<AtomicUsize>);
+struct ReadinessCalls(Arc<AtomicUsize>, Arc<AtomicBool>);
 impl ReadinessPolicy for ReadinessCalls {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
         self.0.fetch_add(1, Ordering::SeqCst);
+        if !self.1.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
         snapshot
             .heads
             .iter()
@@ -89,28 +92,32 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let effects = Arc::new(AtomicUsize::new(0));
     let compiled = counter(effects.clone());
     let calls = Arc::new(AtomicUsize::new(0));
+    let allowed = Arc::new(AtomicBool::new(false));
     let mut config = options();
     config.readiness.insert(
         "counter".into(),
-        Readiness::Custom(Arc::new(ReadinessCalls(calls.clone()))),
+        Readiness::Custom(Arc::new(ReadinessCalls(calls.clone(), allowed.clone()))),
     );
     let mut session = compiled.start_with_options(config);
     let before_query = calls.load(Ordering::SeqCst);
-    assert!(before_query > 0, "startup is allowed to perform readiness");
-
-    let snapshot: &NetworkSession = &session;
-    for _ in 0..4 {
-        assert_eq!(snapshot.state(), SessionState::Quiescent);
-    }
+    // Startup has no input heads, so the custom policy need not be invoked.
+    assert_eq!(session.state(), SessionState::Quiescent);
     assert_eq!(calls.load(Ordering::SeqCst), before_query);
     assert_eq!(effects.load(Ordering::SeqCst), 0);
 
     session.inject("input", Value::of(2_i64)).unwrap();
     let after_admission = calls.load(Ordering::SeqCst);
     assert!(after_admission > before_query, "admission still schedules");
-    assert_eq!(session.state(), SessionState::Runnable);
+    let snapshot: &NetworkSession = &session;
+    for _ in 0..4 {
+        assert_eq!(snapshot.state(), SessionState::Waiting);
+    }
     assert_eq!(calls.load(Ordering::SeqCst), after_admission);
 
+    allowed.store(true, Ordering::SeqCst);
+    // A pure observation does not drive a newly enabled readiness policy.
+    assert_eq!(snapshot.state(), SessionState::Waiting);
+    assert_eq!(calls.load(Ordering::SeqCst), after_admission);
     assert!(session.run_until_idle(64).steps > 0);
     assert_eq!(
         session
@@ -2716,7 +2723,7 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
         }),
     )
     .unwrap();
-    let mut failed = b.build().unwrap().compile().unwrap().start();
+    let failed = b.build().unwrap().compile().unwrap().start();
     assert_eq!(failed.state(), SessionState::Failed);
     assert!(failed.failure().unwrap().contains("factory panicked"));
     let spawns = Arc::new(AtomicUsize::new(0));

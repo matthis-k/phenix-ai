@@ -48,3 +48,33 @@ correctly. Read-only `&NetworkSession` must be able to query `state()`.
 All earlier EOS, request, and completion tests must pass without weakened
 assertions. Verify strict formatting, clippy, full graph/kernel/storage tests,
 feature variations, and final-head CI.
+
+## Phase 1 revision — counterexample from first implementation
+
+The initial passive implementation (commit `3de96f5`) failed two real tests
+on [CI 43140435885](https://github.com/matthis-k/phenix-ai/actions/runs/43140435885):
+
+- `wake_latch_notifies_before_wait_cross_thread_and_invalidates` observed
+  `Quiescent` instead of `Runnable` after a source wake. The former active
+  `state()` call consumed the wake via `refresh`; a passive snapshot
+  must instead *observe* the pending atomic bit without clearing it or
+  scheduling/reserving a process.
+- The new callback-counter test assumed a custom readiness policy is always
+  called at startup. Without any ingress head there is no candidate request,
+  so the assumption was false.
+
+**Revised design:** retain `state(&self)` as a pure query, but classify
+`Runnable` when a pending wake exists on a live source in Idle state or
+a handoff in WaitingWake state. Use `Ordering::Acquire`; do not clear the bit.
+No readiness callback, transaction or process step runs during observation.
+A wake is still consumed only by `refresh` during a driver call. A wake
+arriving concurrently can race the observation, as with any snapshot.
+
+**Revised regression:** place an input head under a deliberately nonselecting
+custom readiness policy; prove normal injection invokes it, repeated immutable
+`state()` queries do not, then enable the policy and drive explicitly.
+Existing cross-thread wake latch test retains its original assertion.
+
+Rejected: weaken the wake test to `Quiescent`, or reintroduce `refresh()` into
+`state()`. These would respectively degrade established UX or reinstate
+the original non-passive defect.
