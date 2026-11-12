@@ -33,3 +33,25 @@ Phase 2 verdict: conditionally accepted for this private guard with tests
 covering recursive session/drain/wake, normal independent kernels and exact
 head CI. If it requires a second scheduler or weakens retirement's whole
 drain guarantee, return to Phase 1.
+
+## Phase 2 extension — publish/retire must share the lock policy
+
+The first implementation guarded `Kernel::drain` but not
+`KernelHost::publish`, whose *same* gate can be reentered by a callback.
+A guard covering only one acquisition path is insufficient.
+
+Accepted correction: wrap publication's acquisition of the retiring
+generation's exact gate in the same thread-local identity scope. On
+same-thread reentry, return `LifecycleError::ReentrantDrain` **before**
+`PluginSet::commit_batch`, inventory mutation or epoch advancement.
+This must not use `try_lock` and reject unrelated threads.
+
+A test holds that exact gate and scope to model a running poll callback,
+attempts publication on the same thread, checks typed failure and unchanged
+generation, releases the gate, then publishes normally. Cross-thread
+publisher waiting for an in-flight drain remains an existing guaranteed
+behavior.
+
+Unresolved explicitly: `KernelHost::Drop` cannot return an error and
+must not be assumed safe to invoke from a callback holding the same gate;
+other multi-thread callback wait cycles remain outside this mitigation.

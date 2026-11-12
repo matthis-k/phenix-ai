@@ -3,7 +3,10 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
-use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
+use crate::{
+    BuildOptions, CallbackError, Kernel, KernelLockScope, Key, ProducerEvent, ResolutionError,
+    StartError,
+};
 use phenix_graph::{
     Value,
     component::DefinitionKey,
@@ -22,6 +25,7 @@ pub enum LifecycleError {
     Binding(CallbackError),
     StaleCandidate,
     EpochExhausted,
+    ReentrantDrain,
 }
 
 impl std::fmt::Display for LifecycleError {
@@ -33,6 +37,7 @@ impl std::fmt::Display for LifecycleError {
             Self::Binding(error) => write!(f, "generation binding: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
+            Self::ReentrantDrain => f.write_str("publication attempted during its own producer drain"),
         }
     }
 }
@@ -232,6 +237,15 @@ impl KernelHost {
         // Own an Arc separately from the mutable active pointer. It keeps
         // the old kernel and plugin code leased through retirement and Drops.
         let retiring = self.active.clone();
+        // Reject same-thread publication from a producer callback before
+        // blocking on the whole-drain gate. Other threads still wait normally.
+        let drain_scope = retiring
+            .as_ref()
+            .map(|generation| {
+                KernelLockScope::enter(&generation.kernel.producer_drain)
+                    .ok_or(LifecycleError::ReentrantDrain)
+            })
+            .transpose()?;
         // The whole-drain gate is acquired before the inventory lock. A
         // running drain finishes all of its polls before retirement begins.
         let drain = retiring.as_ref().map(|generation| {
@@ -259,6 +273,7 @@ impl KernelHost {
         self.epoch = candidate.generation.epoch;
         let previous = self.active.replace(candidate.generation.clone());
         drop(drain);
+        drop(drain_scope);
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
@@ -327,6 +342,55 @@ mod tests {
                 })),
             })
         }
+    }
+
+    #[test]
+    fn publication_rejects_same_thread_reentry_into_a_held_producer_drain() {
+        let mut host = KernelHost::new(PluginCatalog::new().instance());
+        let first = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "initial",
+                |_| Ok(()),
+            )
+            .unwrap();
+        let active = host.publish(first).unwrap();
+        let replacement = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "replacement",
+                |_| Ok(()),
+            )
+            .unwrap();
+
+        // A producer callback holds exactly these two guards during a drain.
+        let scope = crate::KernelLockScope::enter(&active.kernel.producer_drain).unwrap();
+        let gate = active.kernel.producer_drain.lock().unwrap();
+        let error = match host.publish(replacement) {
+            Ok(_) => panic!("recursive publication must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LifecycleError::ReentrantDrain));
+        assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
+        assert_eq!(active.epoch(), 1);
+        drop(gate);
+        drop(scope);
+
+        // Failed publication did not consume the epoch or poison the gate.
+        let next = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "next",
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(host.publish(next).unwrap().epoch(), 2);
     }
 
     #[test]

@@ -76,3 +76,27 @@ the existing typed wake panic error with owned producer restored. Existing
 whole-drain retirement, FIFO, producer fairness and ordinary multi-thread
 contention remain unchanged. Verify all workspace tests, strict Clippy,
 rustfmt, no-default tests and exact-head CI.
+
+## Phase 1 extension — publication lock is part of the same deadlock surface
+
+During diff review, `KernelHost::publish` was found to lock the old
+`Kernel::producer_drain` directly. A producer poll callback can invoke
+`KernelHost::publish` on its own host and deadlock behind its *own* gate,
+even though `Kernel::drain` has the new same-thread guard.
+
+Apply the **same** `KernelLockScope` to `publish` before acquiring the
+old generation's whole-drain gate. Return a dedicated
+`LifecycleError::ReentrantDrain` before committing plugin changes or
+swapping generations. Once the gate is released, publication proceeds with
+the original whole-drain retirement semantics and without changing
+cross-thread serialization.
+
+No new lock, retry queue or reentrant executor is added. If the candidate
+is consumed on an error, its owned resources drop normally. Tests assert
+the active pointer/epoch are unchanged after rejected reentry and a later
+ordinary publication succeeds.
+
+`KernelHost::Drop` still directly acquires the gate and has no fallible
+error channel. In-callback host destruction remains an unsupported
+self-reentrant operation; a separate Drop policy is required rather than
+silently racing an in-flight drain or inventing a cancellation mechanism.
