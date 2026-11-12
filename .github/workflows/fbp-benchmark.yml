@@ -1,0 +1,44 @@
+name: "FBP Native Runtime Benchmark"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/examples/fbp_benchmark.rs"
+      - ".github/workflows/fbp-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-fbp-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Environment metadata
+        run: |
+          mkdir -p artifacts
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "date_utc=$(date -u +%FT%TZ)"
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            nix --version
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          cat artifacts/environment.txt
+      - name: Repeated release-mode native benchmark
+        run: |
+          set -euo pipefail
+          for repetition in 1 2 3; do
+            nix develop --command cargo run --locked --release -q -p phenix-graph --example fbp_benchmark -- 5000 1 16 64 256 > "artifacts/fbp-benchmark-${repetition}.csv"
+            cat "artifacts/fbp-benchmark-${repetition}.csv"
+          done
+      - name: Preserve raw results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-fbp-benchmark-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
