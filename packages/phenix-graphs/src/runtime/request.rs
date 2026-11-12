@@ -478,10 +478,7 @@ mod queue_request_index_tests {
     fn indexed_queue_tracks_duplicate_requests_middle_removal_and_reader_disposal() {
         let a = request(1);
         let b = request(2);
-        let foreign = RequestId {
-            session: 12,
-            ..a
-        };
+        let foreign = RequestId { session: 12, ..a };
         let mut queue = queue(4);
         queue.push(packet(Some(a), 1)).unwrap();
         queue.push(packet(Some(b), 2)).unwrap();
@@ -545,7 +542,15 @@ mod queue_request_index_tests {
         assert_eq!(transport.discard_request(a), 0);
         assert_eq!(transport.queues()[0].request_count(a), 0);
         assert_eq!(transport.queues()[0].request_count(b), 1);
-        assert_eq!(transport.pop_at(0, 0).unwrap().value().get::<i64>().unwrap(), 20);
+        assert_eq!(
+            transport
+                .pop_at(0, 0)
+                .unwrap()
+                .value()
+                .get::<i64>()
+                .unwrap(),
+            20
+        );
         assert_eq!(transport.queues()[0].request_count(b), 0);
         assert_eq!(transport.cancel(), 1);
         assert_eq!(transport.queues()[1].request_count(b), 0);
