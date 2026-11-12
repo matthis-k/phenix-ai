@@ -373,6 +373,8 @@ mod tests {
         enum Trigger {
             Poll,
             Wake,
+            WakeUnsupported,
+            WakePanics,
             Never,
         }
 
@@ -397,9 +399,18 @@ mod tests {
 
             fn set_waker(&mut self, _: crate::WakeHandle) -> bool {
                 self.calls.fetch_add(1, Ordering::SeqCst);
-                if matches!(self.trigger, Trigger::Wake) {
+                if matches!(
+                    self.trigger,
+                    Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                ) {
                     OWNER.with(|owner| drop(owner.borrow_mut().take()));
                     assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                    if matches!(self.trigger, Trigger::WakeUnsupported) {
+                        return false;
+                    }
+                    if matches!(self.trigger, Trigger::WakePanics) {
+                        panic!("intentional wake-registration failure");
+                    }
                 }
                 true
             }
@@ -422,7 +433,12 @@ mod tests {
             }
         }
 
-        for trigger in [Trigger::Poll, Trigger::Wake] {
+        for trigger in [
+            Trigger::Poll,
+            Trigger::Wake,
+            Trigger::WakeUnsupported,
+            Trigger::WakePanics,
+        ] {
             let calls = Arc::new(AtomicUsize::new(0));
             let other_calls = Arc::new(AtomicUsize::new(0));
             let drops = Arc::new(AtomicUsize::new(0));
@@ -432,7 +448,10 @@ mod tests {
                         .unwrap();
                 kernel.start().unwrap();
 
-                if matches!(trigger, Trigger::Wake) {
+                if matches!(
+                    trigger,
+                    Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                ) {
                     // Wake registration is skipped on a Completed network.
                     // Construct a live ingress so the callback really runs.
                     let mut builder = phenix_graph::network::NetworkBuilder::new();
@@ -488,10 +507,20 @@ mod tests {
 
             match trigger {
                 Trigger::Poll => assert!(generation.drain(3).is_empty()),
-                Trigger::Wake => {
+                Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics => {
                     let wake = crate::WakeHandle::default();
                     wake.shutdown();
-                    assert_eq!(generation.kernel.run_until(&wake, |_| {}), Ok(()));
+                    let outcome = generation.kernel.run_until(&wake, |_| {});
+                    match outcome {
+                        Ok(()) => assert!(matches!(trigger, Trigger::Wake)),
+                        Err(crate::DriverError::UnsupportedWake { .. }) => {
+                            assert!(matches!(trigger, Trigger::WakeUnsupported));
+                        }
+                        Err(crate::DriverError::WakeRegistrationPanicked { .. }) => {
+                            assert!(matches!(trigger, Trigger::WakePanics));
+                        }
+                        other => panic!("unexpected wake-registration result: {other:?}"),
+                    }
                 }
                 Trigger::Never => unreachable!(),
             }
