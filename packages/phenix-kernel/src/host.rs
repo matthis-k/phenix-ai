@@ -459,10 +459,7 @@ mod tests {
 
                 if matches!(
                     trigger,
-                    Trigger::Poll
-                        | Trigger::Wake
-                        | Trigger::WakeUnsupported
-                        | Trigger::WakePanics
+                    Trigger::Poll | Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
                 ) {
                     // Both producer admission and wake registration need live
                     // ingress to prove no packet is admitted after retirement.
@@ -592,12 +589,8 @@ mod tests {
         for replace in [false, true] {
             let (registered, registration) = mpsc::channel();
             let (polled, poll) = mpsc::channel();
-            let mut kernel = Kernel::build(
-                "live-retirement",
-                [],
-                Arc::new(LocalProcessDispatcher),
-            )
-            .unwrap();
+            let mut kernel =
+                Kernel::build("live-retirement", [], Arc::new(LocalProcessDispatcher)).unwrap();
             kernel.start().unwrap();
 
             let mut builder = phenix_graph::network::NetworkBuilder::new();
@@ -667,7 +660,11 @@ mod tests {
             // generation's explicit native session remains operational.
             generation.inject("input", Value::local(7_i64)).unwrap();
             generation.run_steps(32).unwrap();
-            assert!(generation.with_session(|session| session.failure().is_none()).unwrap());
+            assert!(
+                generation
+                    .with_session(|session| session.failure().is_none())
+                    .unwrap()
+            );
         }
     }
 
