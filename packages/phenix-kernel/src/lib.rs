@@ -1246,7 +1246,10 @@ impl Kernel {
         if initial_state == SessionState::Completed {
             return Ok(());
         }
-        if matches!(initial_state, SessionState::Failed | SessionState::Cancelled) {
+        if matches!(
+            initial_state,
+            SessionState::Failed | SessionState::Cancelled
+        ) {
             return Err(DriverError::SessionStopped {
                 state: initial_state,
                 cause,
