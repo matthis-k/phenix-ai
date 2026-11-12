@@ -305,10 +305,13 @@ impl NetworkSession {
         Ok(())
     }
     fn request_live(&self, id: RequestId) -> bool {
-        self.processes
-            .iter()
-            .enumerate()
-            .any(|(index, p)| p.request == Some(id) || self.closure_obligation(index, id))
+        // Retain the conservative full active-owner check, but never ask
+        // for a request-local closure outside its registered reachability.
+        self.processes.iter().any(|p| p.request == Some(id))
+            || self.requests[&id]
+                .reachable
+                .iter()
+                .any(|index| self.closure_obligation(*index, id))
             || self
                 .transport
                 .queues()
@@ -318,8 +321,10 @@ impl NetworkSession {
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
         let mut work = RequestWork {
-            closure_pending: (0..self.processes.len())
-                .filter(|index| self.closure_obligation(*index, id))
+            closure_pending: self.requests[&id]
+                .reachable
+                .iter()
+                .filter(|index| self.closure_obligation(**index, id))
                 .count(),
             queued: self
                 .transport
