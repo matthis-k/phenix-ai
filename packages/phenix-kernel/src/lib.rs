@@ -1288,6 +1288,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_graph::process::LocalProcessDispatcher;
 
     #[test]
     fn recursive_session_calls_fail_fast_without_discarding_input_ownership() {
