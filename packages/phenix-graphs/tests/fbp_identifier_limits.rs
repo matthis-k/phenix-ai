@@ -18,8 +18,11 @@ fn identifier_limit_accepts_exact_boundary_and_rejects_next_byte() {
 
     assert!(Interface::new([PortDef::local::<i64>(boundary.clone())], []).is_ok());
     assert!(Interface::new([PortDef::local::<i64>(oversized.clone())], []).is_err());
-    assert!(Contract::new(boundary.clone(), Arc::new(Interface::default())).is_ok());
-    assert!(Contract::new(oversized.clone(), Arc::new(Interface::default())).is_err());
+    let contract_boundary = format!("{}/{}", "x".repeat(255), "x".repeat(256));
+    let contract_oversized = format!("{}/{}", "x".repeat(256), "x".repeat(256));
+    assert_eq!(contract_boundary.len(), MAX_IDENTIFIER_BYTES);
+    assert!(Contract::new(contract_boundary, Arc::new(Interface::default())).is_ok());
+    assert!(Contract::new(contract_oversized, Arc::new(Interface::default())).is_err());
 
     let mut builder = NetworkBuilder::new();
     let interface = Arc::new(Interface::default());
