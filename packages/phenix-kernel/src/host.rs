@@ -398,6 +398,10 @@ mod tests {
                     // The in-flight producer cannot be destroyed until its
                     // callback returns and the whole drain gate is released.
                     assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                    return Ok(Some(InputEvent {
+                        input: "in".into(),
+                        value: Value::local(7_i64),
+                    }));
                 }
                 Ok(None)
             }
@@ -455,9 +459,13 @@ mod tests {
 
                 if matches!(
                     trigger,
-                    Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                    Trigger::Poll
+                        | Trigger::Wake
+                        | Trigger::WakeUnsupported
+                        | Trigger::WakePanics
                 ) {
-                    // Wake registration is skipped on a Completed network.
+                    // Both producer admission and wake registration need live
+                    // ingress to prove no packet is admitted after retirement.
                     // Construct a live ingress so the callback really runs.
                     let mut builder = phenix_graph::network::NetworkBuilder::new();
                     let sink = builder
@@ -477,6 +485,10 @@ mod tests {
                         Mutex::new(builder.build().unwrap().compile().unwrap().start());
                 }
 
+                kernel.routes.insert(
+                    Key::new("test", "destroy-host"),
+                    std::collections::BTreeSet::from(["in".to_owned()]),
+                );
                 kernel.producers.get_mut().unwrap().producers = vec![
                     (
                         Key::new("test", "destroy-host"),
@@ -534,6 +546,11 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(other_calls.load(Ordering::SeqCst), 0);
             assert_eq!(drops.load(Ordering::SeqCst), 2);
+            assert_eq!(
+                generation.with_session(|session| session.state()).unwrap(),
+                phenix_graph::runtime::SessionState::Quiescent,
+                "an event returned after self-retirement must never enter the session"
+            );
             let state = generation.kernel.producers.lock().unwrap();
             assert!(state.retired);
             assert!(state.producers.is_empty());
