@@ -60,11 +60,7 @@ fn measure(depth: usize, scopes: usize, iterations: usize) -> [f64; 4] {
     let began_fill = Instant::now();
     for value in 0..=depth {
         session
-            .inject_request_local(
-                filler[value % scopes],
-                "input",
-                black_box(value as u64),
-            )
+            .inject_request_local(filler[value % scopes], "input", black_box(value as u64))
             .unwrap();
     }
     let fill_ns = began_fill.elapsed().as_nanos() as f64 / (depth + 1) as f64;
@@ -100,12 +96,7 @@ fn measure(depth: usize, scopes: usize, iterations: usize) -> [f64; 4] {
         .sum();
     assert_eq!(held_after, depth);
     assert_eq!(session.request_work(needle).unwrap().queued, 0);
-    [
-        fill_ns,
-        status_absent_ns,
-        work_absent_ns,
-        work_present_ns,
-    ]
+    [fill_ns, status_absent_ns, work_absent_ns, work_present_ns]
 }
 
 fn main() {
