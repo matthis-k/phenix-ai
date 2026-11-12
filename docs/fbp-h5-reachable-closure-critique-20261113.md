@@ -1,0 +1,16 @@
+# H5 reachability pruning — Phase 2 independent adversarial critique
+
+Date: 2026-11-13. Review of `fbp-h5-reachable-closure-design-20261113.md`.
+
+1. **Root tracking proof:** `note_request_root` is invoked after successful scoped injection or an admitted zero-input source; traverse `downstream` including cycles. If another scoped mutation path appears, audit it before pruning. A request may have several roots, so treat `reachable` as a union rather than a single chain.
+2. **Queue provenance:** Only process-owned upstream queues may be skipped when their producer is unreachable. Direct `QueueEndpoint::Input` ingress queues must keep their request-count check; a request's typed ingress can be admitted without that producer being already executing.
+3. **Conservative active checks:** Continue scanning all processes for `p.request == id` in `request_live`, so a bug in reachability bookkeeping cannot turn an active job into premature settlement. Do not replace the request-owned packet check with a topological shortcut; the per-queue committed-count index must remain consulted where relevant.
+4. **Scope mutation:** The reachability set is populated when request ingress commits and can grow before sealing. Pruning only occurs in `request_input_closed` after sealed. Do not cache pruned subgraphs across new roots.
+5. **No authority expansion:** Use the set only to restrict diagnostic/closure traversal. It does not authenticate request reads or introduce new content. Existing `check_request` owns validation and provenance.
+6. **No mistaken closure from other work:** An unrelated **unscoped or foreign-request** upstream branch may be live indefinitely. For request R's optional closure, it is not a blocker. A separate upstream branch carrying **R** is a blocker and must not be pruned. Test both against the baseline.
+7. **Cycles and diamonds:** The current DFS's visited set must remain for reachable cycles and multi-parent join; pruning cannot create infinite loops. Keep queue check before revisiting process only on visited paths as before.
+8. **Error/terminal precedence:** Do not change EOS detection, stale request errors, writer closed state, wake readiness, retained publication, or failure isolation. Regression suite must check these after pruning.
+9. **Benchmark honesty:** With fan-in N, some cost still scales O(N) because the physical port has N queues. Fully reachable chains remain O(N²) in the worst-case closure history; naive claims of O(1) completion or event-indexed scheduling are false. Compare end-to-end request wall time, not just `BTreeSet` membership.
+10. **Accepted limitations:** The compile-time topology remains fixed per compiled network and request-root reachability remains dynamic, yet its existing set is bounded by process inventory. No new memoization allocation. H5 is partial until closure-heavy workloads and regressions are verified. H4 full refresh and H6 pinned resource budgets are separate.
+
+**Disposition:** accept the minimal existing-set reachability restriction, retaining a conservative `p.request` scan and direct ingress packet checks. Phase 4 must verify tests, exact-head six-job CI, paired benchmark, and cost of the new set lookups; revert or revise if closure is weakened or performance materially regresses.
