@@ -2154,6 +2154,7 @@ mod tests {
             kernel: Weak<Kernel>,
             entered: mpsc::Sender<()>,
             proceed: mpsc::Receiver<()>,
+            completed: mpsc::Sender<()>,
         }
         impl Producer for CrossThread {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
@@ -2173,6 +2174,7 @@ mod tests {
                     phenix_graph::connection::ConnectionError::WouldBlock
                 );
                 assert_eq!(*rejected.value.borrow::<i64>().unwrap(), 13);
+                self.completed.send(()).unwrap();
                 true
             }
         }
@@ -2184,12 +2186,14 @@ mod tests {
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "cross-thread"),
             Some(Box::new(CrossThread {
                 kernel: Arc::downgrade(&kernel),
                 entered: entered_tx,
                 proceed: proceed_rx,
+                completed: completed_tx,
             })),
             None,
         ));
@@ -2204,6 +2208,7 @@ mod tests {
         kernel
             .with_session(|_| {
                 proceed_tx.send(()).unwrap();
+                completed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
                 assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
             })
             .unwrap();
