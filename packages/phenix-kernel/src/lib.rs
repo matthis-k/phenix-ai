@@ -2204,10 +2204,7 @@ mod tests {
         kernel
             .with_session(|_| {
                 proceed_tx.send(()).unwrap();
-                assert_eq!(
-                    kernel.drain(0).unwrap_err(),
-                    DriverError::AlreadyRunning
-                );
+                assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
             })
             .unwrap();
         assert_eq!(driver.join().unwrap(), Ok(()));
