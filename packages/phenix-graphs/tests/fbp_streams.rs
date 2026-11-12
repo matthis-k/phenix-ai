@@ -2916,21 +2916,13 @@ fn cancelling_committed_capture_is_explicit_disposal_not_state_or_publication_ro
         s.request_status(scopes[2]).unwrap(),
         RequestStatus::Settled { captures: 1 }
     );
-    for (id, value) in [(scopes[0], 1_i64)] {
-        assert_eq!(
-            s.take_request_output(id, "output")
-                .unwrap()
-                .unwrap()
-                .value()
-                .get::<i64>()
-                .unwrap(),
-            value
-        );
-        assert_eq!(
-            s.request_status(id).unwrap(),
-            RequestStatus::Settled { captures: 1 }
-        );
-    }
+    let first = s.take_request_output(scopes[0], "output").unwrap().unwrap();
+    assert_eq!(first.value().get::<i64>().unwrap(), 1);
+    assert_eq!(first.metadata().unwrap().request(), Some(scopes[0]));
+    assert_eq!(
+        s.request_status(scopes[0]).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
     assert_eq!(s.run_until_idle(30).publications, 0);
     assert_eq!(s.disposed_packets(), 1);
     let next = s.begin_request(Some("output")).unwrap();
