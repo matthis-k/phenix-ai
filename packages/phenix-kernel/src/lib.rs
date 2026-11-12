@@ -1650,13 +1650,16 @@ mod tests {
     }
 
     #[test]
-    fn recursive_drain_in_poll_is_contained_and_releases_the_whole_drain_gate() {
+    fn recursive_drain_in_poll_is_typed_and_preserves_producer() {
         use std::sync::Weak;
 
         struct Recursive(Weak<Kernel>);
         impl Producer for Recursive {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
-                self.0.upgrade().unwrap().drain(1);
+                assert_eq!(
+                    self.0.upgrade().unwrap().drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                );
                 Ok(None)
             }
         }
@@ -1672,15 +1675,13 @@ mod tests {
             None,
         ));
 
-        let events = kernel.drain(1);
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].producer, key);
-        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
-    fn recursive_drain_in_wake_registration_is_reported_without_losing_producer() {
+    fn recursive_drain_in_wake_registration_is_typed_without_losing_producer() {
         use std::sync::Weak;
 
         struct RecursiveWake(Weak<Kernel>);
@@ -1690,7 +1691,10 @@ mod tests {
             }
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
-                self.0.upgrade().unwrap().drain(1);
+                assert_eq!(
+                    self.0.upgrade().unwrap().drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                );
                 true
             }
         }
@@ -1706,14 +1710,11 @@ mod tests {
             Some(Box::new(RecursiveWake(Arc::downgrade(&kernel)))),
             None,
         ));
-        assert_eq!(
-            kernel
-                .run_until(&WakeHandle::default(), |_| {})
-                .unwrap_err(),
-            DriverError::WakeRegistrationPanicked { producer: key }
-        );
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
@@ -1752,7 +1753,7 @@ mod tests {
         wake.shutdown();
         assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
@@ -1785,7 +1786,7 @@ mod tests {
                 .unwrap_err(),
             DriverError::EventCallbackPanicked { producer: key }
         );
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
         assert!(
             kernel
                 .with_session(|session| session.failure().is_none())
@@ -1889,7 +1890,7 @@ mod tests {
             kernel
         });
         assert_eq!(selections.load(Ordering::SeqCst), 0);
-        let events = kernel.drain(1);
+        let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
         assert!(events[0].result.is_ok());
         assert!(selections.load(Ordering::SeqCst) > 0);
@@ -1974,7 +1975,7 @@ mod tests {
             Some(Box::new(Probe(Arc::downgrade(&kernel), calls.clone()))),
             None,
         ));
-        assert!(kernel.drain(3).is_empty());
+        assert!(kernel.drain(3).unwrap().is_empty());
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(kernel.producers.lock().unwrap().producers.len(), 1);
     }
@@ -2004,7 +2005,7 @@ mod tests {
             (Key::new("test", "broken"), Some(Box::new(Panics)), None),
             (Key::new("test", "live"), Some(Box::new(Idle)), None),
         ];
-        let events = kernel.drain(3);
+        let events = kernel.drain(3).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].producer.id, "broken");
         assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
@@ -2039,7 +2040,7 @@ mod tests {
                     assert!(state.producers.is_empty());
                     assert_eq!(state.next, 0);
                 }
-                assert!(kernel.drain(1).is_empty());
+                assert!(kernel.drain(1).unwrap().is_empty());
                 self.1.fetch_add(1, Ordering::SeqCst);
             }
         }
@@ -2064,7 +2065,7 @@ mod tests {
                 )
             })
             .collect();
-        let events = kernel.drain(2);
+        let events = kernel.drain(2).unwrap();
         assert_eq!(
             events
                 .iter()
@@ -2078,7 +2079,7 @@ mod tests {
                 .all(|event| matches!(event.result, Err(ProducerError::Poll(_))))
         );
         assert_eq!(drops.load(Ordering::SeqCst), 2);
-        assert!(kernel.drain(2).is_empty());
+        assert!(kernel.drain(2).unwrap().is_empty());
     }
 
     #[test]
@@ -2112,13 +2113,13 @@ mod tests {
                 )
             })
             .collect();
-        assert!(kernel.drain(0).is_empty());
+        assert!(kernel.drain(0).unwrap().is_empty());
         assert!(log.lock().unwrap().is_empty());
-        assert!(kernel.drain(1).is_empty());
-        let events = kernel.drain(1);
+        assert!(kernel.drain(1).unwrap().is_empty());
+        let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].producer, Key::new("test", "broken"));
-        assert!(kernel.drain(3).is_empty());
+        assert!(kernel.drain(3).unwrap().is_empty());
         assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
     }
 
@@ -2199,7 +2200,7 @@ mod tests {
         kernel
             .with_session(|_| {
                 proceed_tx.send(()).unwrap();
-                assert!(kernel.drain(0).is_empty());
+                assert!(kernel.drain(0).unwrap().is_empty());
             })
             .unwrap();
         assert_eq!(driver.join().unwrap(), Ok(()));
