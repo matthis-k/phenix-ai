@@ -1141,6 +1141,21 @@ impl Kernel {
         Ok(session.run_until_idle(budget))
     }
 
+    // Called only while holding producer_drain. Reentrant host destruction
+    // marks retirement while its callback's producer is still checked out;
+    // detach that restored slot only at the enclosing drain/registration exit.
+    fn take_retired_producers(&self) -> Vec<ProducerSlot> {
+        let mut state = self
+            .producers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !state.retired {
+            return Vec::new();
+        }
+        state.next = 0;
+        std::mem::take(&mut state.producers)
+    }
+
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
     /// calls. One whole drain is serialized against retirement, but callbacks
     /// and eager session admission do not hold the producer inventory mutex.
@@ -1257,9 +1272,11 @@ impl Kernel {
                 });
             }
         }
+        let retired = self.take_retired_producers();
         drop(drain);
         drop(scope);
         drop(detached);
+        drop(retired);
         events
     }
 
@@ -1321,12 +1338,18 @@ impl Kernel {
             .unwrap_or_else(|error| error.into_inner())
             .producers
             .len();
+        let mut registration_error = None;
         for index in 0..count {
             let (key, mut producer) = {
                 let mut state = self
                     .producers
                     .lock()
                     .unwrap_or_else(|error| error.into_inner());
+                // Host destruction inside the previous callback retired this
+                // generation. Never register another callback after that.
+                if state.retired {
+                    break;
+                }
                 let (key, producer, _) = &mut state.producers[index];
                 (
                     key.clone(),
@@ -1348,13 +1371,22 @@ impl Kernel {
             match registered {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Err(DriverError::UnsupportedWake { producer: key });
+                    registration_error = Some(DriverError::UnsupportedWake { producer: key });
+                    break;
                 }
-                Err(_) => return Err(DriverError::WakeRegistrationPanicked { producer: key }),
+                Err(_) => {
+                    registration_error = Some(DriverError::WakeRegistrationPanicked { producer: key });
+                    break;
+                }
             }
         }
+        let retired = self.take_retired_producers();
         drop(drain);
         drop(registration_scope);
+        drop(retired);
+        if let Some(error) = registration_error {
+            return Err(error);
+        }
         loop {
             {
                 if *wake.0.shutdown.lock().unwrap() {
