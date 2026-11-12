@@ -1182,8 +1182,10 @@ impl NetworkSession {
         if !drained
             || self.requests.iter().any(|(request, scope)| {
                 scope.sealed
-                    && (0..self.processes.len())
-                        .any(|index| self.closure_obligation(index, *request))
+                    && scope
+                        .reachable
+                        .iter()
+                        .any(|index| self.closure_obligation(*index, *request))
             })
             || self.processes.iter().any(|p| {
                 p.pending.is_some()
