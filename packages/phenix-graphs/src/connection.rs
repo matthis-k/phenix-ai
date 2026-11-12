@@ -170,6 +170,10 @@ pub enum ConnectionError {
     Cancelled,
     /// A kernel callback tried to acquire a session mutex already owned on this thread.
     Reentrant,
+    /// Session lock is held elsewhere, and a producer callback cannot safely
+    /// wait for it while holding the whole-drain/retirement gate. Caller keeps
+    /// ownership of the original input value and may retry after contention.
+    WouldBlock,
 }
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
