@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex, MutexGuard, TryLockError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -49,20 +49,42 @@ impl Drop for KernelLockScope {
     }
 }
 
-// The blocking driver owns producer wake registration for its entire lifetime.
-// An atomic lease avoids holding a mutex over user callbacks or waiting for shutdown.
-struct DriverScope<'a>(&'a AtomicBool);
+// One linearizable producer ownership word: 0 means free, MAX is a
+// whole-lifetime blocking driver, all other values count in-flight or
+// gate-queued manual drains. The producer_drain mutex still serializes
+// actual callbacks; the owner word prevents direct/driver mode overlap.
+const DRIVER_OWNER: usize = usize::MAX;
+
+struct DriverScope<'a>(&'a AtomicUsize);
 impl<'a> DriverScope<'a> {
-    fn enter(active: &'a AtomicBool) -> Option<Self> {
-        active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-            .then(|| Self(active))
+    fn enter(owner: &'a AtomicUsize) -> Result<Self, DriverError> {
+        match owner.compare_exchange(0, DRIVER_OWNER, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => Ok(Self(owner)),
+            Err(DRIVER_OWNER) => Err(DriverError::AlreadyRunning),
+            Err(_) => Err(DriverError::DrainInProgress),
+        }
     }
 }
 impl Drop for DriverScope<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.store(0, Ordering::Release);
+    }
+}
+
+struct DirectDrainScope<'a>(&'a AtomicUsize);
+impl<'a> DirectDrainScope<'a> {
+    fn enter(owner: &'a AtomicUsize) -> Option<Self> {
+        owner
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < DRIVER_OWNER - 1).then_some(count + 1)
+            })
+            .ok()
+            .map(|_| Self(owner))
+    }
+}
+impl Drop for DirectDrainScope<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -500,6 +522,7 @@ pub enum DriverError {
     ReentrantSession,
     ReentrantDrain,
     AlreadyRunning,
+    DrainInProgress,
     Retired,
     UnsupportedWake {
         producer: Key,
@@ -523,6 +546,7 @@ impl std::fmt::Display for DriverError {
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
+            Self::DrainInProgress => f.write_str("producer drain already admitted while starting driver"),
             Self::Retired => f.write_str("generation producers retired while driver was active"),
             Self::UnsupportedWake { producer } => write!(
                 f,
@@ -592,7 +616,7 @@ pub struct Kernel {
     // Serialize one whole drain against generation retirement. Inventory
     // mutations use a separate short lock; no user poll/readiness runs under it.
     producer_drain: Mutex<()>,
-    driver_active: AtomicBool,
+    producer_ownership: AtomicUsize,
     driver_wake: Mutex<Option<WakeHandle>>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
@@ -1041,7 +1065,7 @@ impl Kernel {
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
-            driver_active: AtomicBool::new(false),
+            producer_ownership: AtomicUsize::new(0),
             driver_wake: Mutex::new(None),
             artifacts,
             _leases: leases,
@@ -1199,11 +1223,24 @@ impl Kernel {
         std::mem::take(&mut state.producers)
     }
 
+    /// Perform bounded, serially admitted manual producer polls. A blocking
+    /// driver owns producer polling for its whole lifetime, so a competing
+    /// manual drain receives a typed error without touching any producer.
+    pub fn drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError> {
+        if KernelLockScope::held(&self.producer_drain) {
+            return Err(DriverError::ReentrantDrain);
+        }
+        let _owner = DirectDrainScope::enter(&self.producer_ownership)
+            .ok_or(DriverError::AlreadyRunning)?;
+        Ok(self.drain_owned(max_polls))
+    }
+
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
     /// calls. One whole drain is serialized against retirement, but callbacks
     /// and eager session admission do not hold the producer inventory mutex.
     /// A full input retains one event without repolling. No process code runs here.
-    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+    /// The blocking driver calls this only while holding its exclusive lease.
+    fn drain_owned(&self, max_polls: usize) -> Vec<ProducerEvent> {
         let scope = KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
         let drain = self
             .producer_drain
@@ -1347,7 +1384,7 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
-        let _driver = DriverScope::enter(&self.driver_active).ok_or(DriverError::AlreadyRunning)?;
+        let _driver = DriverScope::enter(&self.producer_ownership)?;
         let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
         let (mut listener, notifier, initial_state, cause) = self
             .with_session(|session| {
@@ -1466,7 +1503,7 @@ impl Kernel {
                 if self.producers_retired() {
                     return Err(DriverError::Retired);
                 }
-                for event in self.drain(1) {
+                for event in self.drain_owned(1) {
                     active = true;
                     let producer = event.producer.clone();
                     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
@@ -2087,14 +2124,20 @@ mod tests {
 
     #[test]
     fn rejected_second_driver_keeps_first_lease_active() {
-        let active = AtomicBool::new(false);
-        let first = DriverScope::enter(&active).unwrap();
-        assert!(DriverScope::enter(&active).is_none());
+        let owner = AtomicUsize::new(0);
+        let first = DriverScope::enter(&owner).unwrap();
+        assert_eq!(
+            DriverScope::enter(&owner).err(),
+            Some(DriverError::AlreadyRunning)
+        );
         // A rejected attempt must not construct a guard whose Drop releases
         // the first driver's still-active lease.
-        assert!(DriverScope::enter(&active).is_none());
+        assert_eq!(
+            DriverScope::enter(&owner).err(),
+            Some(DriverError::AlreadyRunning)
+        );
         drop(first);
-        let next = DriverScope::enter(&active).unwrap();
+        let next = DriverScope::enter(&owner).unwrap();
         drop(next);
     }
 
