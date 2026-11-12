@@ -178,7 +178,7 @@ fn loader_order_waves_bounds_and_lifetimes() {
     .unwrap();
     assert_eq!(*log.lock().unwrap(), ["compose:beta", "compose:alpha"]);
     assert!(kernel.inject("alpha", Value::local(4_i64)).is_err());
-    assert!(kernel.drain(10).is_empty());
+    assert!(kernel.drain(10).unwrap().is_empty());
     kernel.start().unwrap();
     assert!(matches!(
         kernel.start().unwrap_err(),
@@ -188,14 +188,14 @@ fn loader_order_waves_bounds_and_lifetimes() {
         *log.lock().unwrap(),
         ["compose:beta", "compose:alpha", "start:beta", "start:alpha"]
     );
-    assert!(kernel.drain(0).is_empty());
-    let events = kernel.drain(2);
+    assert!(kernel.drain(0).unwrap().is_empty());
+    let events = kernel.drain(2).unwrap();
     assert_eq!(events[0].producer, Key::new("beta", "main"));
     assert!(events.iter().all(|e| e.result.is_ok()));
     kernel.run_steps(100).unwrap();
     support::run(&kernel, "alpha", 4);
-    assert!(kernel.drain(4).iter().all(|e| e.result.is_err()));
-    assert!(kernel.drain(10).is_empty());
+    assert!(kernel.drain(4).unwrap().iter().all(|e| e.result.is_err()));
+    assert!(kernel.drain(10).unwrap().is_empty());
     drop(kernel);
     let log = log.lock().unwrap();
     for name in ["alpha", "beta"] {
@@ -291,7 +291,7 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
         std::error::Error::source(&error).unwrap().to_string(),
         "startup failed"
     );
-    assert!(kernel.drain(10).is_empty());
+    assert!(kernel.drain(10).unwrap().is_empty());
     assert!(kernel.inject("alpha", Value::local(1_i64)).is_err());
     assert!(!log.lock().unwrap().iter().any(|s| s.starts_with("engine:")));
     // Retrying runs factories again rather than retaining a partial activation.
@@ -357,7 +357,7 @@ fn wave_failures_remain_reports_and_do_not_stop_draining() {
     )
     .unwrap();
     kernel.start().unwrap();
-    let events = kernel.drain(4);
+    let events = kernel.drain(4).unwrap();
     assert_eq!(events.len(), 4);
     assert!(events[0].result.is_ok());
     assert!(events[1].result.is_ok());
@@ -480,7 +480,7 @@ fn driver_handles_shutdown_during_poll_and_rejects_legacy_sources() {
             .to_string()
             .contains("does not support")
     );
-    assert_eq!(kernel.drain(2).len(), 2);
+    assert_eq!(kernel.drain(2).unwrap().len(), 2);
 }
 #[test]
 fn producer_errors_are_distinct_from_admission_and_wave_failures() {
@@ -491,7 +491,7 @@ fn producer_errors_are_distinct_from_admission_and_wave_failures() {
     )
     .unwrap();
     kernel.start().unwrap();
-    let events = kernel.drain(6);
+    let events = kernel.drain(6).unwrap();
     assert!(matches!(
         events[2].result,
         Err(phenix_kernel::ProducerError::UndeclaredRoute(_))
@@ -603,8 +603,8 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     )
     .unwrap();
     kernel.start().unwrap();
-    assert_eq!(kernel.drain(100).len(), 1);
-    assert!(kernel.drain(100).is_empty());
+    assert_eq!(kernel.drain(100).unwrap().len(), 1);
+    assert!(kernel.drain(100).unwrap().is_empty());
     assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
     polls.store(0, std::sync::atomic::Ordering::SeqCst);
     let mut kernel = open_ingress_driver_kernel("broken-driver", plugins.snapshots());

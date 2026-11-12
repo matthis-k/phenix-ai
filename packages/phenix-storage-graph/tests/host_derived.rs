@@ -130,7 +130,7 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
     assert_eq!(*new.query(&new_spec).unwrap(), 30);
     assert!(new.query(&old_spec).is_err());
     assert!(old.query(&new_spec).is_err());
-    assert!(old.drain(10).is_empty());
+    assert!(old.drain(10).unwrap().is_empty());
     assert_eq!(*old.query(&old_spec).unwrap(), 8);
     first.put(&first.b, 7);
     assert_eq!(*old.query(&old_spec).unwrap(), 10);
@@ -214,7 +214,7 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         assert_eq!(*generation.query(&spec).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(entered.load(Ordering::SeqCst) >= 6);
-        generation.drain(1);
+        generation.drain(1).unwrap();
         generation.run_steps(128).unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(

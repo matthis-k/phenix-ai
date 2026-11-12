@@ -329,17 +329,17 @@ fn starting_a_after_b_uses_as_exact_observation() {
     b.start().unwrap();
     a.start().unwrap();
     for runtime in [&mut a, &mut b] {
-        assert_eq!(runtime.drain(64).len(), 1); // Bootstrap only.
+        assert_eq!(runtime.drain(64).unwrap().len(), 1); // Bootstrap only.
         runtime.kernel().run_steps(128).unwrap();
     }
     first.write(true, 7).unwrap();
-    let events = a.drain(64);
+    let events = a.drain(64).unwrap();
     assert!(!events.is_empty());
     assert!(events.into_iter().all(|event| event.result.is_ok()));
-    assert!(b.drain(64).is_empty());
+    assert!(b.drain(64).unwrap().is_empty());
     second.write(false, 11).unwrap();
-    assert!(a.drain(64).is_empty());
-    let events = b.drain(64);
+    assert!(a.drain(64).unwrap().is_empty());
+    let events = b.drain(64).unwrap();
     assert!(!events.is_empty());
     assert!(events.into_iter().all(|event| event.result.is_ok()));
     for (runtime, expected) in [(&a, 7), (&b, 11)] {

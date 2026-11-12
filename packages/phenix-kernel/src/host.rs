@@ -94,7 +94,7 @@ impl Generation {
         self.kernel.run_steps(budget)
     }
 
-    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+    pub fn drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, crate::DriverError> {
         self.kernel.drain(max_polls)
     }
 }
@@ -520,7 +520,7 @@ mod tests {
             });
 
             match trigger {
-                Trigger::Poll => assert!(generation.drain(3).is_empty()),
+                Trigger::Poll => assert!(generation.drain(3).unwrap().is_empty()),
                 Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics => {
                     let wake = crate::WakeHandle::default();
                     wake.shutdown();
@@ -559,7 +559,7 @@ mod tests {
 
             // Keeping a retired generation handle alive must not resurrect
             // callbacks or prevent immediate producer cleanup.
-            assert!(generation.drain(2).is_empty());
+            assert!(generation.drain(2).unwrap().is_empty());
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
     }
@@ -769,7 +769,7 @@ mod tests {
                 host.plugins().snapshot(&key).unwrap().revision(),
                 snapshot.revision()
             );
-            assert!(active.drain(1).is_empty());
+            assert!(active.drain(1).unwrap().is_empty());
         }
     }
 }

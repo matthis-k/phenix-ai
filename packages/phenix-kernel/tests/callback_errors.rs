@@ -132,7 +132,7 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
     assert!(matches!(&error, StartError::Activation { contribution, .. }
         if *contribution == Key::new("plugin", "callback")));
     assert_cause(&error, &identity);
-    assert!(kernel.drain(1).is_empty());
+    assert!(kernel.drain(1).unwrap().is_empty());
 
     // Unsupported wake registration is a live-session boundary. The
     // host's earlier Phase::Poll fixture stays an intentionally empty graph.
@@ -160,12 +160,12 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
             producer: Key::new("plugin", "callback")
         }
     );
-    let event = kernel.drain(1).pop().unwrap();
+    let event = kernel.drain(1).unwrap().pop().unwrap();
     assert_eq!(event.producer, Key::new("plugin", "callback"));
     let error = event.result.err().unwrap();
     assert!(matches!(&error, ProducerError::Poll(_)));
     assert_cause(&error, &identity);
-    assert!(kernel.drain(1).is_empty());
+    assert!(kernel.drain(1).unwrap().is_empty());
 }
 
 #[test]
@@ -274,11 +274,11 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     );
     // A failed registration must restore the owned producer slot. The original
     // typed poll error can still be observed, and no extra producer is created.
-    let event = kernel.drain(1).pop().expect("producer slot lost");
+    let event = kernel.drain(1).unwrap().pop().expect("producer slot lost");
     assert_eq!(event.producer, Key::new("plugin", "callback"));
     let error = event.result.expect_err("expected one terminal poll error");
     assert_cause(&error, &identity);
-    assert!(kernel.drain(1).is_empty());
+    assert!(kernel.drain(1).unwrap().is_empty());
 }
 
 #[test]
