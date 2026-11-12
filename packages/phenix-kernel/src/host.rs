@@ -427,12 +427,9 @@ mod tests {
             let other_calls = Arc::new(AtomicUsize::new(0));
             let drops = Arc::new(AtomicUsize::new(0));
             let generation = Arc::new_cyclic(|weak| {
-                let mut kernel = Kernel::build(
-                    "reentrant-host-drop",
-                    [],
-                    Arc::new(LocalProcessDispatcher),
-                )
-                .unwrap();
+                let mut kernel =
+                    Kernel::build("reentrant-host-drop", [], Arc::new(LocalProcessDispatcher))
+                        .unwrap();
                 kernel.start().unwrap();
 
                 if matches!(trigger, Trigger::Wake) {
@@ -440,7 +437,10 @@ mod tests {
                     // Construct a live ingress so the callback really runs.
                     let mut builder = phenix_graph::network::NetworkBuilder::new();
                     let sink = builder
-                        .add("sink", Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})))
+                        .add(
+                            "sink",
+                            Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})),
+                        )
                         .unwrap();
                     builder
                         .expose_input(
