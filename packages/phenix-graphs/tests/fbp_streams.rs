@@ -3432,10 +3432,7 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     assert!(session.failure().is_none());
     session.close_input("a").unwrap();
     session.close_input("b").unwrap();
-    assert_eq!(
-        session.run_until_idle(20).state,
-        SessionState::Completed
-    );
+    assert_eq!(session.run_until_idle(20).state, SessionState::Completed);
     let resumed = Arc::new(AtomicUsize::new(0));
     let mut missing =
         required_stage_session(required_b_optional_c(), false, false, resumed.clone());

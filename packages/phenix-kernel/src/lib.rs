@@ -1068,8 +1068,7 @@ impl Kernel {
     /// and eager session admission do not hold the producer inventory mutex.
     /// A full input retains one event without repolling. No process code runs here.
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
-        let scope = KernelLockScope::enter(&self.producer_drain)
-            .expect("recursive producer drain");
+        let scope = KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
         let drain = self
             .producer_drain
             .lock()
@@ -1201,8 +1200,8 @@ impl Kernel {
             .with_session(|session| (session.wake_listener(), session.notifier()))
             .unwrap();
         *wake.0.notifier.lock().unwrap() = Some(notifier);
-        let registration_scope = KernelLockScope::enter(&self.producer_drain)
-            .expect("recursive producer drain");
+        let registration_scope =
+            KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
         let drain = self
             .producer_drain
             .lock()
@@ -1292,19 +1291,11 @@ mod tests {
 
     #[test]
     fn recursive_session_calls_fail_fast_without_discarding_input_ownership() {
-        let mut kernel = Kernel::build(
-            "session-reentrancy",
-            [],
-            Arc::new(LocalProcessDispatcher),
-        )
-        .unwrap();
+        let mut kernel =
+            Kernel::build("session-reentrancy", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        let mut independent = Kernel::build(
-            "independent-session",
-            [],
-            Arc::new(LocalProcessDispatcher),
-        )
-        .unwrap();
+        let mut independent =
+            Kernel::build("independent-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         independent.start().unwrap();
 
         kernel
@@ -1329,7 +1320,10 @@ mod tests {
         // The first scope has left no stale thread-local owner behind.
         kernel.with_session(|_| ()).unwrap();
         assert_eq!(
-            kernel.inject("missing", Value::local(2_i64)).unwrap_err().reason,
+            kernel
+                .inject("missing", Value::local(2_i64))
+                .unwrap_err()
+                .reason,
             phenix_graph::connection::ConnectionError::InvalidDestination
         );
     }
@@ -1346,12 +1340,8 @@ mod tests {
             }
         }
 
-        let mut kernel = Kernel::build(
-            "recursive-drain",
-            [],
-            Arc::new(LocalProcessDispatcher),
-        )
-        .unwrap();
+        let mut kernel =
+            Kernel::build("recursive-drain", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive");
@@ -1384,12 +1374,8 @@ mod tests {
             }
         }
 
-        let mut kernel = Kernel::build(
-            "recursive-wake",
-            [],
-            Arc::new(LocalProcessDispatcher),
-        )
-        .unwrap();
+        let mut kernel =
+            Kernel::build("recursive-wake", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive-wake");
@@ -1399,7 +1385,9 @@ mod tests {
             None,
         ));
         assert_eq!(
-            kernel.run_until(&WakeHandle::default(), |_| {}).unwrap_err(),
+            kernel
+                .run_until(&WakeHandle::default(), |_| {})
+                .unwrap_err(),
             DriverError::WakeRegistrationPanicked { producer: key }
         );
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());

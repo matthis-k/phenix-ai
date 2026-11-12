@@ -57,10 +57,7 @@ fn three_closure_components_and_zero_output_sink() {
     let compiled = b.build().unwrap().compile().unwrap();
     for _ in 0..2 {
         let mut session = compiled.start();
-        assert_eq!(
-            session.run_until_idle(64).state,
-            SessionState::Completed
-        );
+        assert_eq!(session.run_until_idle(64).state, SessionState::Completed);
     }
     assert_eq!(*seen.lock().unwrap(), ["1", "2", "3", "1", "2", "3"]);
 }

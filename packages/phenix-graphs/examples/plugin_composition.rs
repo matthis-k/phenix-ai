@@ -96,10 +96,7 @@ fn run(composer: &Composer, expected: i64) -> Result<(), Box<dyn std::error::Err
         composer.current().compiled().inspect("b")?.origin
     );
     session.close_input("request")?;
-    assert_eq!(
-        session.run_until_idle(64).state,
-        SessionState::Completed
-    );
+    assert_eq!(session.run_until_idle(64).state, SessionState::Completed);
     println!("Native session: input 2 -> {expected}");
     Ok(())
 }
