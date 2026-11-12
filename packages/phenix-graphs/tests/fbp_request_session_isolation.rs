@@ -37,7 +37,7 @@ impl Process for Join {
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(a + b))))
     }
 }
-fn compiled_join(shared_effects: Arc<AtomicUsize>) -> CompiledNetwork {
+fn compiled_join(shared_effects: Arc<AtomicUsize>, capacity: NonZeroUsize) -> CompiledNetwork {
     let mut builder = NetworkBuilder::new();
     let joined = builder
         .node(
@@ -60,7 +60,7 @@ fn compiled_join(shared_effects: Arc<AtomicUsize>) -> CompiledNetwork {
         .unwrap();
     for port in ["a", "b"] {
         builder
-            .expose_input(port, joined.wire_input::<i64>(port).unwrap(), one())
+            .expose_input(port, joined.wire_input::<i64>(port).unwrap(), capacity)
             .unwrap();
     }
     builder
@@ -93,7 +93,7 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     // Independent process instances can still share explicitly supplied state.
     // This does not grant implicit cross-session access or relax queue FIFO.
     let shared_effects = Arc::new(AtomicUsize::new(0));
-    let compiled = compiled_join(shared_effects.clone());
+    let compiled = compiled_join(shared_effects.clone(), one());
     let mut active = Vec::new();
     let a = start_bounded(&compiled, &mut active, 2).unwrap();
     let b = start_bounded(&compiled, &mut active, 2).unwrap();
@@ -145,4 +145,110 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     active[b].release_request(rb).unwrap();
     active.remove(b);
     assert!(start_bounded(&compiled, &mut active, 2).is_some());
+}
+
+#[test]
+fn correlated_shared_session_keeps_crossed_request_pairs_isolated() {
+    // CorrelatedAll permits opt-in scoped selection past an unrelated FIFO
+    // head. Captures remain a single strict FIFO, so the host drains both.
+    let effects = Arc::new(AtomicUsize::new(0));
+    let compiled = compiled_join(effects.clone(), NonZeroUsize::new(2).unwrap());
+    let mut options = SessionOptions {
+        capture_capacity: NonZeroUsize::new(2).unwrap(),
+        ..Default::default()
+    };
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
+    let mut session = compiled.start_with_options(options);
+    let first = session.begin_request(Some("out")).unwrap();
+    let second = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(first, "a", Value::of(1_i64))
+        .unwrap();
+    session
+        .inject_request(second, "b", Value::of(20_i64))
+        .unwrap();
+    session
+        .inject_request(second, "a", Value::of(10_i64))
+        .unwrap();
+    session
+        .inject_request(first, "b", Value::of(2_i64))
+        .unwrap();
+    session.close_request(first).unwrap();
+    session.close_request(second).unwrap();
+
+    let report = session.run_until_idle(128);
+    assert!(!report.budget_exhausted);
+    assert!(session.failure().is_none());
+    let mut outputs = Vec::new();
+    for _ in 0..2 {
+        let packet = session.take_output("out").unwrap().unwrap();
+        let request = packet.metadata().unwrap().request().unwrap();
+        session.validate_capture(request, "out", &packet).unwrap();
+        outputs.push((request.sequence(), packet.value().get::<i64>().unwrap()));
+    }
+    outputs.sort_unstable_by_key(|(id, _)| *id);
+    assert_eq!(outputs, [(first.sequence(), 3), (second.sequence(), 30)]);
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    for request in [first, second] {
+        assert_eq!(
+            session.request_status(request).unwrap(),
+            RequestStatus::Settled { captures: 1 }
+        );
+        session.release_request(request).unwrap();
+    }
+}
+
+#[test]
+fn cancelling_queued_shared_request_preserves_other_correlated_work() {
+    let effects = Arc::new(AtomicUsize::new(0));
+    let compiled = compiled_join(effects.clone(), NonZeroUsize::new(2).unwrap());
+    let mut options = SessionOptions {
+        capture_capacity: NonZeroUsize::new(2).unwrap(),
+        ..Default::default()
+    };
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
+    let mut session = compiled.start_with_options(options);
+    let cancelled = session.begin_request(Some("out")).unwrap();
+    let survivor = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(cancelled, "a", Value::of(1_i64))
+        .unwrap();
+    session
+        .inject_request(survivor, "b", Value::of(20_i64))
+        .unwrap();
+    session
+        .inject_request(survivor, "a", Value::of(10_i64))
+        .unwrap();
+
+    let tickets = session.cancel_request(cancelled).unwrap();
+    assert!(tickets.is_empty());
+    assert_eq!(
+        session.request_status(cancelled).unwrap(),
+        RequestStatus::Cancelled
+    );
+    assert_eq!(
+        session.request_disposal(cancelled).unwrap().queued_packets,
+        1
+    );
+    session.close_request(survivor).unwrap();
+    let report = session.run_until_idle(128);
+    assert!(!report.budget_exhausted);
+    assert!(session.failure().is_none());
+    let packet = session
+        .take_request_output(survivor, "out")
+        .unwrap()
+        .unwrap();
+    assert_eq!(packet.value().get::<i64>().unwrap(), 30);
+    assert_eq!(packet.metadata().unwrap().request(), Some(survivor));
+    assert_eq!(
+        session.request_status(survivor).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    session.release_request(cancelled).unwrap();
+    session.release_request(survivor).unwrap();
 }
