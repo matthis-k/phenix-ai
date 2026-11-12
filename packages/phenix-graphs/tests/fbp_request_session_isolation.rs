@@ -312,16 +312,10 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
     };
     options.readiness.insert("join".into(), Readiness::CorrelatedAll);
     let mut session = compiled.start_with_options(options.clone());
-    let other = compiled.start_with_options(options);
+    let mut other = compiled.start_with_options(options);
     let own = session.begin_request(None).unwrap();
     // A foreign handle cannot read the head, even when it knows the name.
-    let foreign = other.begin_request(None);
-    // A separate mutable session is only needed to mint the foreign ID.
-    let mut other = other;
-    let foreign = match foreign {
-        Ok(id) => id,
-        Err(_) => other.begin_request(None).unwrap(),
-    };
+    let foreign = other.begin_request(None).unwrap();
 
     for (a, b) in [(1_i64, 2_i64), (10_i64, 20_i64)] {
         session.inject_request(own, "a", Value::of(a)).unwrap();
@@ -331,10 +325,10 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
     assert!(session.failure().is_none());
-    assert_eq!(
-        session.take_request_output(foreign, "out").unwrap_err(),
-        RequestError::Foreign
-    );
+    assert!(matches!(
+        session.take_request_output(foreign, "out"),
+        Err(RequestError::Foreign)
+    ));
     for expected in [3_i64, 30_i64] {
         let packet = session.take_request_output(own, "out").unwrap().unwrap();
         assert_eq!(packet.value().get::<i64>().unwrap(), expected);
