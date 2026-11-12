@@ -309,10 +309,11 @@ impl NetworkSession {
             .iter()
             .enumerate()
             .any(|(index, p)| p.request == Some(id) || self.closure_obligation(index, id))
-            || self.transport.queues().iter().any(|q| {
-                q.packets()
-                    .any(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-            })
+            || self
+                .transport
+                .queues()
+                .iter()
+                .any(|queue| queue.request_count(id) != 0)
     }
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
@@ -324,11 +325,7 @@ impl NetworkSession {
                 .transport
                 .queues()
                 .iter()
-                .map(|q| {
-                    q.packets()
-                        .filter(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-                        .count()
-                })
+                .map(|queue| queue.request_count(id))
                 .sum(),
             ..Default::default()
         };
