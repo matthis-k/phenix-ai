@@ -71,6 +71,15 @@ model changed. This is a narrow, shared-runner hot-vs-idle microbenchmark,
 or production-agent baseline. H6 remains partial;
 H4 is still not optimized.
 
+The first H4 optimization is now under test in
+[PR #1267](https://github.com/matthis-k/phenix-ai/pull/1267):
+a no-work prefilter avoids full readiness evaluation for empty,
+still-open input queues. On the same CPU model, a 256-process
+single-hot-input benchmark moved from ~59.7 to ~9.8 µs/event
+([measurements](fbp-h4-idle-prefilter-design-20261112.md)).
+This **does not eliminate O(V)** scanning; H4 remains partial only
+after the new candidate clears its own CI and review.
+
 Primary unresolved concerns: H3b host Drop and external cross-thread
 synchronizers; H4 refresh inventory scans; H5 residual packet closure scans;
 H6 measured performance; H7 shared-session request isolation/fairness;

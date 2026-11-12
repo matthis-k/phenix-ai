@@ -55,3 +55,30 @@ It deliberately does not optimize the O(V) inventory walk.
   machine-independent absolute speedup.
 - Do not call H4 fully fixed unless measured and generalized activation-scaled
   scheduling is implemented; if the prefilter does not materially help, revert.
+
+## Phase 4 — first measured evidence
+
+[Optimized run #43202997957](https://github.com/matthis-k/phenix-ai/actions/runs/43202997957)
+completed three release-mode 5,000-event repetitions with *exact* source
+head `c579883359cfb26c9198d024601a4f347ac9624f`, AMD EPYC 7763,
+Rust 1.96.1. Mean event latency median of three repetitions:
+
+| Total physical processes | Before (same CPU model, run #43201797923) | After (run #43202997957) |
+| ---: | ---: | ---: |
+| 1 | 1,062.8 ns | 946.7 ns |
+| 16 | 4,474.9 ns | 1,314.5 ns |
+| 64 | 15,644.7 ns | 3,003.7 ns |
+| 256 | 59,712.8 ns | 9,822.8 ns |
+
+The 256-process throughput proxy improved by approximately **6×**
+across different jobs using the same CPU model. Within-run scaling
+from 1 to 256 fell from ~56× to ~10×. Different GitHub-hosted VM
+instances and uncontrolled load preclude a precise causal speedup
+claim; benchmark code and toolchain are unchanged. The change is a
+low-risk **constant-factor improvement** that retains an O(V) scan.
+H4 still requires a fully event-indexed scheduling design to close.
+
+An integration regression now also verifies empty-but-open quiescence,
+subsequent EOS completion and repeated Custom policy evaluation.
+Exact final-head CI and a rerun of the benchmark are still required
+after this evidence commit.
