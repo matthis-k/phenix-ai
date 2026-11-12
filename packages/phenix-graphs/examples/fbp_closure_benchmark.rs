@@ -231,4 +231,41 @@ mod tests {
         super::measure("fan-in", 8, 3);
         super::measure("chain", 4, 3);
     }
+
+    #[test]
+    fn two_roots_owned_by_same_request_must_both_finish_before_optional_closure() {
+        use phenix_graph::runtime::{Readiness, SessionOptions};
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let network = super::compiled("fan-in", 1, hits.clone());
+        let mut opts = SessionOptions::default();
+        opts.readiness.insert(
+            "sink".into(),
+            Readiness::Optional {
+                required: vec![],
+                optional: vec!["opt".into()],
+            },
+        );
+        let mut session = network.start_with_options(opts);
+        let id = session.begin_request(None).unwrap();
+        session.inject_request_local(id, "trigger", 7_u64).unwrap();
+        session
+            .inject_request_local(id, "unrelated-0", 8_u64)
+            .unwrap();
+        session.close_request(id).unwrap();
+        let first = session.run_until_idle(1);
+        assert_eq!(first.steps, 1);
+        assert_eq!(
+            session.request_status(id).unwrap(),
+            RequestStatus::Pending
+        );
+        assert_eq!(hits.load(Ordering::Relaxed), 0);
+        let rest = session.run_until_idle(32);
+        assert_eq!(rest.steps, 2);
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            session.request_status(id).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
+        session.release_request(id).unwrap();
+    }
 }
