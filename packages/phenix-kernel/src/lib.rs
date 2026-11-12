@@ -578,8 +578,12 @@ impl Kernel {
     ) -> Result<Self, ResolutionError> {
         let policy = &options.imports;
         let snapshots: Vec<_> = snapshots.into_iter().collect();
-        let code_lease: Arc<dyn Send + Sync> =
-            Arc::new((options.execution.lease.take(), snapshots.clone()));
+        // Composition can temporarily inspect every candidate revision, but
+        // emitted packets and detached graph handles must retain only selected
+        // executable owners. Never pin defeated snapshots in their leases.
+        let host_lease = options.execution.lease.take();
+        let preparation_lease: Arc<dyn Send + Sync> =
+            Arc::new((host_lease.clone(), snapshots.clone()));
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
             if !owners.insert(snapshot.name()) {
@@ -846,7 +850,7 @@ impl Kernel {
                     || composer.current().compiled(),
                     |preview| preview.current().compiled(),
                 )
-                .with_lease(code_lease.clone());
+                .with_lease(preparation_lease.clone());
             let mut owned = match &contribution.prepare {
                 Some(prepare) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     prepare(&CandidateContext {
@@ -858,7 +862,7 @@ impl Kernel {
                 .unwrap_or_else(|_| Err("plugin preparation panicked".into()))
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
-                    cause: lease_callback_error(cause, code_lease.clone()),
+                    cause: lease_callback_error(cause, preparation_lease.clone()),
                 })?,
                 None => CandidateArtifacts::default(),
             };
@@ -888,13 +892,21 @@ impl Kernel {
                     },
                 })?;
         }
-        let compiled = composer.current().compiled().with_lease(code_lease.clone());
         let active = composer.current().active();
         let selected: BTreeSet<_> = keys
             .iter()
             .filter(|key| active.contains(&registration_ids[*key]))
             .cloned()
             .collect();
+        let selected_owners: BTreeSet<_> =
+            selected.iter().map(|key| key.owner.as_str()).collect();
+        let execution_snapshots: Vec<_> = snapshots
+            .iter()
+            .filter(|snapshot| selected_owners.contains(snapshot.name()))
+            .cloned()
+            .collect();
+        let code_lease: Arc<dyn Send + Sync> = Arc::new((host_lease, execution_snapshots));
+        let compiled = composer.current().compiled().with_lease(code_lease.clone());
         artifacts.retain(|key, _| selected.contains(key));
         let (keys, leases): (Vec<_>, Vec<_>) = keys
             .into_iter()
