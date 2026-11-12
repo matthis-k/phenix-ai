@@ -1243,14 +1243,11 @@ impl Kernel {
                 )
             })
             .map_err(|_| DriverError::ReentrantSession)?;
-        match initial_state {
-            SessionState::Failed | SessionState::Cancelled => {
-                return Err(DriverError::SessionStopped {
-                    state: initial_state,
-                    cause,
-                });
-            }
-            _ => {}
+        if matches!(initial_state, SessionState::Failed | SessionState::Cancelled) {
+            return Err(DriverError::SessionStopped {
+                state: initial_state,
+                cause,
+            });
         }
         *wake.0.notifier.lock().unwrap() = Some(notifier);
         let drain = self
