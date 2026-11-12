@@ -663,6 +663,30 @@ impl NetworkSession {
             debug_assert!(packets.is_empty());
         }
     }
+    // A process with only empty, open physical inputs cannot reserve a
+    // native packet or consume EOS. Keep custom policies and request-scoped
+    // closure on the full path: they can change without a physical packet.
+    fn idle_inputs_cannot_progress(&self, index: usize) -> bool {
+        let p = &self.processes[index];
+        !p.source
+            && !p.queued
+            && p.pending.is_none()
+            && !p.inputs.is_empty()
+            && self.requests.is_empty()
+            && !matches!(&p.policy, Readiness::Custom(_))
+            && !p
+                .waiting_policy
+                .as_ref()
+                .is_some_and(|policy| matches!(policy, Readiness::Custom(_)))
+            && p.inputs.iter().all(|port| {
+                !port.queues.is_empty()
+                    && port.queues.iter().all(|queue| {
+                        let queue = &self.transport.queues()[*queue];
+                        queue.is_empty() && !queue.writer_closed()
+                    })
+            })
+    }
+
     fn refresh(&mut self) {
         if self.terminal.is_some() {
             return;
@@ -686,6 +710,9 @@ impl NetworkSession {
                     state = HandoffState::Ready;
                 }
                 if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
+                    if self.idle_inputs_cannot_progress(index) {
+                        continue;
+                    }
                     let selected = match self.selection(index) {
                         Ok(selected) => selected,
                         Err(error) => {
