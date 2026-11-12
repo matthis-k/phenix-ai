@@ -502,10 +502,48 @@ fn producer_errors_are_distinct_from_admission_and_wave_failures() {
     ));
 }
 
+/// Construct a network that is idle but not completed: its input writer
+/// remains open, so the blocking driver must honor wake/shutdown contracts.
+fn open_ingress_driver_kernel(
+    name: &str,
+    snapshots: impl IntoIterator<Item = phenix_plugin::PluginSnapshot>,
+) -> Kernel {
+    struct OpenIngress;
+    impl PluginInstance for OpenIngress {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            registrar.add(Contribution {
+                id: "open".into(),
+                requires: vec![],
+                routes: vec![],
+                patch: NetworkPatch::new([
+                    Edit::Add {
+                        path: "open-sink".into(),
+                        definition: support::sink(|_| {}),
+                    },
+                    Edit::ExposeInput {
+                        name: "input".into(),
+                        targets: vec![support::path("open-sink", "run")],
+                        capacity: support::capacity(),
+                    },
+                ]),
+                prepare: None,
+            })
+        }
+    }
+    let mut snapshots: Vec<_> = snapshots.into_iter().collect();
+    snapshots.push(support::snapshot("driver-open-input", OpenIngress));
+    let options = support::options(&snapshots);
+    Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options).unwrap()
+}
+
 #[test]
-fn empty_driver_blocks_until_cross_thread_shutdown() {
-    let mut kernel = Kernel::build("empty", vec![], Arc::new(LocalProcessDispatcher)).unwrap();
+fn quiescent_driver_blocks_until_cross_thread_shutdown() {
+    let mut kernel = open_ingress_driver_kernel("quiescent", []);
     kernel.start().unwrap();
+    assert_eq!(
+        kernel.with_session(|session| session.state()).unwrap(),
+        SessionState::Quiescent
+    );
     let wake = phenix_kernel::WakeHandle::default();
     let driver_wake = wake.clone();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -569,12 +607,7 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     assert!(kernel.drain(100).is_empty());
     assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 1);
     polls.store(0, std::sync::atomic::Ordering::SeqCst);
-    let mut kernel = Kernel::build(
-        "broken-driver",
-        plugins.snapshots(),
-        Arc::new(LocalProcessDispatcher),
-    )
-    .unwrap();
+    let mut kernel = open_ingress_driver_kernel("broken-driver", plugins.snapshots());
     kernel.start().unwrap();
     let wake = phenix_kernel::WakeHandle::default();
     let driver_wake = wake.clone();
