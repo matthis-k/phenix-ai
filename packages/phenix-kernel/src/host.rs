@@ -276,6 +276,9 @@ impl KernelHost {
         let previous = self.active.replace(candidate.generation.clone());
         drop(drain);
         drop(drain_scope);
+        if let Some(generation) = &retiring {
+            generation.kernel.notify_driver_retirement();
+        }
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
@@ -300,6 +303,7 @@ impl Drop for KernelHost {
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
                     .retired = true;
+                generation.kernel.notify_driver_retirement();
                 return;
             }
             let drain = generation
@@ -316,6 +320,7 @@ impl Drop for KernelHost {
             let producers = std::mem::take(&mut state.producers);
             drop(state);
             drop(drain);
+            generation.kernel.notify_driver_retirement();
             drop(producers);
         }
     }
@@ -512,7 +517,9 @@ mod tests {
                     wake.shutdown();
                     let outcome = generation.kernel.run_until(&wake, |_| {});
                     match outcome {
-                        Ok(()) => assert!(matches!(trigger, Trigger::Wake)),
+                        Err(crate::DriverError::Retired) => {
+                            assert!(matches!(trigger, Trigger::Wake));
+                        }
                         Err(crate::DriverError::UnsupportedWake { .. }) => {
                             assert!(matches!(trigger, Trigger::WakeUnsupported));
                         }
