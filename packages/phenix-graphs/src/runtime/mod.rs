@@ -177,7 +177,6 @@ pub struct QueueWait {
     pub capacity: usize,
 }
 
-#[derive(Clone, Debug)]
 /// One outstanding owned worker job beyond its configured age limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OverdueJob {
@@ -185,6 +184,7 @@ pub struct OverdueJob {
     pub ticket: StepTicket,
 }
 
+#[derive(Clone, Debug)]
 pub struct ActivationMetadata {
     pub session: u64,
     pub generation: u64,
