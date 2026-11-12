@@ -67,3 +67,12 @@ using these kernel session APIs. Host Drop reentrancy has no Result channel and
 remains open for its own policy. External callback side effects are not
 transactionally rolled back. Single-driver restriction is per Kernel, not a
 global scheduler, and does not prevent direct Kernel::drain on other threads.
+
+## Phase 3 implementation note
+Producer callbacks use `try_lock` for three Kernel session entrypoints
+(`with_session`, `inject`, `run_steps`) and report a distinct busy condition
+without returning a success. Kernel::drain's own internal admission already
+used nonblocking `try_lock`. A per-kernel atomic RAII lease bounds one
+blocking-driver lifetime and preserves the existing specific `ReentrantDrain`
+error for same-thread nested calls. The implementation adds no worker thread,
+scheduler, incompatible aliases or fallback retry loop.

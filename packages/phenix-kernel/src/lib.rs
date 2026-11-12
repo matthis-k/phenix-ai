@@ -15,7 +15,10 @@ use std::{
     any::Any,
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, TryLockError},
+    sync::{
+        Arc, Mutex, MutexGuard, TryLockError,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 // Fail fast only on same-thread recursive access to an identical kernel mutex.
@@ -32,12 +35,34 @@ impl KernelLockScope {
             .with(|active| active.borrow_mut().insert(identity))
             .then(|| Self(identity))
     }
+
+    fn held<T>(lock: &Mutex<T>) -> bool {
+        let identity = lock as *const Mutex<T> as usize;
+        ACTIVE_KERNEL_LOCKS.with(|active| active.borrow().contains(&identity))
+    }
 }
 impl Drop for KernelLockScope {
     fn drop(&mut self) {
         ACTIVE_KERNEL_LOCKS.with(|active| {
             active.borrow_mut().remove(&self.0);
         });
+    }
+}
+
+// The blocking driver owns producer wake registration for its entire lifetime.
+// An atomic lease avoids holding a mutex over user callbacks or waiting for shutdown.
+struct DriverScope<'a>(&'a AtomicBool);
+impl<'a> DriverScope<'a> {
+    fn enter(active: &'a AtomicBool) -> Option<Self> {
+        active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then_some(Self(active))
+    }
+}
+impl Drop for DriverScope<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -455,6 +480,7 @@ pub enum DriverError {
     NotStarted,
     ReentrantSession,
     ReentrantDrain,
+    AlreadyRunning,
     UnsupportedWake {
         producer: Key,
     },
@@ -476,6 +502,7 @@ impl std::fmt::Display for DriverError {
             Self::NotStarted => f.write_str("kernel not started"),
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
+            Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -544,6 +571,7 @@ pub struct Kernel {
     // Serialize one whole drain against generation retirement. Inventory
     // mutations use a separate short lock; no user poll/readiness runs under it.
     producer_drain: Mutex<()>,
+    driver_active: AtomicBool,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
@@ -991,6 +1019,7 @@ impl Kernel {
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
+            driver_active: AtomicBool::new(false),
             artifacts,
             _leases: leases,
             keys,
@@ -1039,6 +1068,24 @@ impl Kernel {
         self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
+    // Producer callbacks run under producer_drain to keep generation retirement
+    // atomic. Never block on session while holding that gate: another thread
+    // can hold session and wait on drain. Ordinary callers keep blocking locks.
+    fn lock_session(&self) -> Result<MutexGuard<'_, NetworkSession>, ()> {
+        if KernelLockScope::held(&self.producer_drain) {
+            match self.session.try_lock() {
+                Ok(guard) => Ok(guard),
+                Err(TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+                Err(TryLockError::WouldBlock) => Err(()),
+            }
+        } else {
+            Ok(self
+                .session
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()))
+        }
+    }
+
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
@@ -1049,9 +1096,8 @@ impl Kernel {
         let _scope = KernelLockScope::enter(&self.session)
             .ok_or_else(|| "reentrant kernel session access".to_owned())?;
         let mut session = self
-            .session
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .lock_session()
+            .map_err(|_| "kernel session busy during producer callback".to_owned())?;
         let result = use_session(&mut session);
         session.notifier().notify();
         Ok(result)
@@ -1070,10 +1116,12 @@ impl Kernel {
                 value,
             });
         };
-        let mut session = self
-            .session
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let Ok(mut session) = self.lock_session() else {
+            return Err(InjectionError {
+                reason: phenix_graph::connection::ConnectionError::WouldBlock,
+                value,
+            });
+        };
         let result = session.inject(input, value);
         if result.is_ok() {
             session.notifier().notify();
@@ -1087,11 +1135,10 @@ impl Kernel {
         }
         let _scope = KernelLockScope::enter(&self.session)
             .ok_or_else(|| "reentrant kernel session access".to_owned())?;
-        Ok(self
-            .session
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .run_until_idle(budget))
+        let mut session = self
+            .lock_session()
+            .map_err(|_| "kernel session busy during producer callback".to_owned())?;
+        Ok(session.run_until_idle(budget))
     }
 
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
@@ -1229,10 +1276,14 @@ impl Kernel {
         if !self.started {
             return Err(DriverError::NotStarted);
         }
-        // Acquire the same-thread recursion guard before modifying the wake
-        // handle; the actual drain mutex is still taken after session access.
-        let registration_scope =
-            KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
+        // Same-thread reentry from set_waker/poll retains the specific
+        // ReentrantDrain diagnosis; distinct concurrent drivers are rejected
+        // by the per-kernel lifetime lease before any wake handle mutation.
+        if KernelLockScope::held(&self.producer_drain) {
+            return Err(DriverError::ReentrantDrain);
+        }
+        let _driver = DriverScope::enter(&self.driver_active)
+            .ok_or(DriverError::AlreadyRunning)?;
         let (mut listener, notifier, initial_state, cause) = self
             .with_session(|session| {
                 (
@@ -1255,6 +1306,11 @@ impl Kernel {
                 cause,
             });
         }
+        // Enter producer-drain scope only after the blocking session preflight.
+        // Callback session operations under this scope use try_lock and cannot
+        // form a cross-thread session->drain / drain->session wait cycle.
+        let registration_scope =
+            KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
         *wake.0.notifier.lock().unwrap() = Some(notifier);
         let drain = self
             .producer_drain
