@@ -288,6 +288,20 @@ impl KernelHost {
 impl Drop for KernelHost {
     fn drop(&mut self) {
         if let Some(generation) = &self.active {
+            // A producer callback may synchronously destroy its host while
+            // holding this generation's drain gate. Do not deadlock on the
+            // same mutex or detach its temporarily checked-out producer.
+            // The enclosing drain/registration restores the slot and retires
+            // all producers after releasing its gate and inventory locks.
+            if KernelLockScope::held(&generation.kernel.producer_drain) {
+                generation
+                    .kernel
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .retired = true;
+                return;
+            }
             let drain = generation
                 .kernel
                 .producer_drain
@@ -343,6 +357,156 @@ mod tests {
                     Ok(artifacts)
                 })),
             })
+        }
+    }
+
+    #[test]
+    fn host_drop_during_producer_callbacks_defers_retirement_and_destructors() {
+        use std::cell::RefCell;
+        use std::sync::{Mutex, Weak};
+
+        thread_local! {
+            static OWNER: RefCell<Option<KernelHost>> = const { RefCell::new(None) };
+        }
+
+        #[derive(Clone, Copy)]
+        enum Trigger {
+            Poll,
+            Wake,
+            Never,
+        }
+
+        struct RetireSource {
+            generation: Weak<Generation>,
+            trigger: Trigger,
+            calls: Arc<AtomicUsize>,
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Producer for RetireSource {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if matches!(self.trigger, Trigger::Poll) {
+                    OWNER.with(|owner| drop(owner.borrow_mut().take()));
+                    // The in-flight producer cannot be destroyed until its
+                    // callback returns and the whole drain gate is released.
+                    assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                }
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: crate::WakeHandle) -> bool {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if matches!(self.trigger, Trigger::Wake) {
+                    OWNER.with(|owner| drop(owner.borrow_mut().take()));
+                    assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                }
+                true
+            }
+        }
+
+        impl Drop for RetireSource {
+            fn drop(&mut self) {
+                let generation = self.generation.upgrade().unwrap();
+                let _gate = generation
+                    .kernel
+                    .producer_drain
+                    .try_lock()
+                    .expect("producer destroyed while drain gate is locked");
+                let _inventory = generation
+                    .kernel
+                    .producers
+                    .try_lock()
+                    .expect("producer destroyed while inventory is locked");
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        for trigger in [Trigger::Poll, Trigger::Wake] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let other_calls = Arc::new(AtomicUsize::new(0));
+            let drops = Arc::new(AtomicUsize::new(0));
+            let generation = Arc::new_cyclic(|weak| {
+                let mut kernel = Kernel::build(
+                    "reentrant-host-drop",
+                    [],
+                    Arc::new(LocalProcessDispatcher),
+                )
+                .unwrap();
+                kernel.start().unwrap();
+
+                if matches!(trigger, Trigger::Wake) {
+                    // Wake registration is skipped on a Completed network.
+                    // Construct a live ingress so the callback really runs.
+                    let mut builder = phenix_graph::network::NetworkBuilder::new();
+                    let sink = builder
+                        .add("sink", Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})))
+                        .unwrap();
+                    builder
+                        .expose_input(
+                            "in",
+                            sink.input::<i64>("input").unwrap(),
+                            std::num::NonZeroUsize::new(1).unwrap(),
+                        )
+                        .unwrap();
+                    kernel.session =
+                        Mutex::new(builder.build().unwrap().compile().unwrap().start());
+                }
+
+                kernel.producers.get_mut().unwrap().producers = vec![
+                    (
+                        Key::new("test", "destroy-host"),
+                        Some(Box::new(RetireSource {
+                            generation: weak.clone(),
+                            trigger,
+                            calls: calls.clone(),
+                            drops: drops.clone(),
+                        }) as Box<dyn Producer>),
+                        None,
+                    ),
+                    (
+                        Key::new("test", "must-not-run"),
+                        Some(Box::new(RetireSource {
+                            generation: weak.clone(),
+                            trigger: Trigger::Never,
+                            calls: other_calls.clone(),
+                            drops: drops.clone(),
+                        }) as Box<dyn Producer>),
+                        None,
+                    ),
+                ];
+                Generation { epoch: 1, kernel }
+            });
+
+            let mut host = KernelHost::new(PluginCatalog::new().instance());
+            host.epoch = 1;
+            host.active = Some(generation.clone());
+            OWNER.with(|owner| {
+                assert!(owner.borrow().is_none());
+                *owner.borrow_mut() = Some(host);
+            });
+
+            match trigger {
+                Trigger::Poll => assert!(generation.drain(3).is_empty()),
+                Trigger::Wake => {
+                    let wake = crate::WakeHandle::default();
+                    wake.shutdown();
+                    assert_eq!(generation.kernel.run_until(&wake, |_| {}), Ok(()));
+                }
+                Trigger::Never => unreachable!(),
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert_eq!(other_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(drops.load(Ordering::SeqCst), 2);
+            let state = generation.kernel.producers.lock().unwrap();
+            assert!(state.retired);
+            assert!(state.producers.is_empty());
+            drop(state);
+
+            // Keeping a retired generation handle alive must not resurrect
+            // callbacks or prevent immediate producer cleanup.
+            assert!(generation.drain(2).is_empty());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
     }
 
