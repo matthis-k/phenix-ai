@@ -483,6 +483,7 @@ impl phenix_plugin::Contribution for ContractRequirement {
 }
 
 /// One poll's admission outcome, distinct from subsequent session execution.
+#[derive(Debug)]
 pub struct ProducerEvent {
     pub producer: Key,
     pub result: Result<(), ProducerError>,
