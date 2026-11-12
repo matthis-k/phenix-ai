@@ -1229,8 +1229,8 @@ impl Kernel {
         }
         // Acquire the same-thread recursion guard before modifying the wake
         // handle; the actual drain mutex is still taken after session access.
-        let registration_scope = KernelLockScope::enter(&self.producer_drain)
-            .ok_or(DriverError::ReentrantDrain)?;
+        let registration_scope =
+            KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
         let (mut listener, notifier) = self
             .with_session(|session| (session.wake_listener(), session.notifier()))
             .map_err(|_| DriverError::ReentrantSession)?;
@@ -1299,10 +1299,8 @@ impl Kernel {
                 for event in self.drain(1) {
                     active = true;
                     let producer = event.producer.clone();
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        on_event(event)
-                    }))
-                    .is_err()
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
+                        .is_err()
                     {
                         return Err(DriverError::EventCallbackPanicked { producer });
                     }
@@ -1509,9 +1507,11 @@ mod tests {
             DriverError::EventCallbackPanicked { producer: key }
         );
         assert!(kernel.drain(1).is_empty());
-        assert!(kernel
-            .with_session(|session| session.failure().is_none())
-            .unwrap());
+        assert!(
+            kernel
+                .with_session(|session| session.failure().is_none())
+                .unwrap()
+        );
     }
 
     #[test]
