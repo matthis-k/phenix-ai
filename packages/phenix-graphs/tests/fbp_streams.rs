@@ -919,26 +919,18 @@ fn correlated_all_crossed_heads_settle_in_one_bounded_shared_session() {
     session.close_request(a).unwrap();
     session.close_request(b).unwrap();
     assert_eq!(session.run_until_idle(100).state, SessionState::Waiting);
-    assert_eq!(
-        session
-            .take_request_output(a, "out")
-            .unwrap()
-            .unwrap()
-            .value()
-            .get::<i64>()
-            .unwrap(),
-        3
-    );
-    assert_eq!(
-        session
-            .take_request_output(b, "out")
-            .unwrap()
-            .unwrap()
-            .value()
-            .get::<i64>()
-            .unwrap(),
-        30
-    );
+    // Captures retain their own global FIFO. The eagerly selectable B
+    // request may publish first; read FIFO and verify authenticated metadata.
+    let mut captured = Vec::new();
+    for _ in 0..2 {
+        let packet = session.take_output("out").unwrap().unwrap();
+        captured.push((
+            packet.metadata().unwrap().request().unwrap(),
+            packet.value().get::<i64>().unwrap(),
+        ));
+    }
+    captured.sort_by_key(|(request, _)| *request);
+    assert_eq!(captured, vec![(a, 3), (b, 30)]);
     assert_eq!(
         session.request_status(a).unwrap(),
         RequestStatus::Settled { captures: 1 }

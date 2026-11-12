@@ -26,3 +26,17 @@
 Accepted only as an **opt-in** shared-session correlation solution with
 distinct tests and no claim of global FIFO preservation in that mode.
 Run Phase 4 checks before calling the issue verified.
+
+## Phase 4 test correction — capture FIFO remains global
+
+The initial crossed-head regression read request A's capture before B.
+However B became eligible and was *admitted* as soon as the third packet
+arrived, while A's last input was still missing. B can legitimately publish
+first; the exported capture FIFO remains global and cannot skip B to hand
+A's packet out-of-order.
+
+CI 43147820467 caught this mistaken test assumption. The revised test
+drains the capture FIFO in its real order, then verifies each packet's
+authenticated `RequestId` and exact value, independent of request
+completion order. This is a test correction, not a weakening of output
+FIFO or a scheduler-order guarantee.
