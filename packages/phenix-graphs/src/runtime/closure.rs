@@ -96,11 +96,10 @@ impl NetworkSession {
             return false;
         }
         let queues = &self.processes[index].inputs[port].queues;
-        if queues.iter().any(|q| {
-            self.transport.queues()[*q]
-                .packets()
-                .any(|packet| packet.metadata().and_then(|m| m.request()) == Some(request))
-        }) {
+        if queues
+            .iter()
+            .any(|q| self.transport.queues()[*q].request_count(request) != 0)
+        {
             return false;
         }
         let mut visited = BTreeSet::new();
@@ -119,10 +118,7 @@ impl NetworkSession {
                 return false;
             }
             for queue in p.inputs.iter().flat_map(|port| &port.queues) {
-                if self.transport.queues()[*queue]
-                    .packets()
-                    .any(|packet| packet.metadata().and_then(|m| m.request()) == Some(request))
-                {
+                if self.transport.queues()[*queue].request_count(request) != 0 {
                     return false;
                 }
                 if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
