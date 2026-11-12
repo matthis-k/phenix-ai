@@ -198,7 +198,7 @@ fn moved_prepare_activation_and_poll_causes_pin_code_and_application_until_cause
             Phase::Poll => {
                 let mut kernel = result.unwrap();
                 kernel.start().unwrap();
-                let result = kernel.drain(1).pop().unwrap().result;
+                let result = kernel.drain(1).unwrap().pop().unwrap().result;
                 drop(kernel);
                 let error = result.unwrap_err();
                 inspect(&error);
