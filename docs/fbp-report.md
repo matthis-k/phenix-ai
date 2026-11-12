@@ -58,9 +58,14 @@ timing guarantees.
 snapshot to an older graph baseline and reported **15,688 → 7,645
 non-test graph/derive physical LOC**. This is a historical structural
 measurement, **not a current audited HEAD count and not a speedup**.
-No reproducible native runtime throughput/latency/allocation baseline
-was recorded there. The H6 benchmark must separately capture machine,
-CPU governor, toolchain, optimizations, test matrix and repeated raw data.
+The first **native runtime latency baseline** is now documented in
+[fbp-performance-benchmark.md](fbp-performance-benchmark.md), with
+three raw CSV repetitions from [CI #43201132241](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241).
+One active ingress showed approximately 47× higher mean event latency
+with 256 processes versus 1. This is a narrow, shared-runner hot-vs-idle
+microbenchmark, **not** an allocation, throughput under concurrency,
+pinned-environment or production agent baseline. H6 remains partial;
+H4 is still not optimized.
 
 Primary unresolved concerns: H3b host Drop and external cross-thread
 synchronizers; H4 refresh inventory scans; H5 residual packet closure scans;

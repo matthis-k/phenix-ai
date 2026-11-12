@@ -14,7 +14,10 @@ the exact-head CI, not that a universal security/progress proof exists;
 is not accepted as a solved limitation; **Policy** needs an explicit decision.
 Historical phase documents remain source records, not current status authorities.
 
-At this snapshot, **9 verified, 4 partial, 20 open/in progress**.
+At this snapshot, **9 verified, 5 partial, 19 open/in progress**.
+H6 now has a measured, narrow hot-vs-idle baseline; it is partial rather
+than unmeasured. Q8 remains in progress until the refreshed report's
+exact-head CI passes.
 This ledger/report update itself is still awaiting exact-head CI; Q8 remains
 in progress until that gate passes.
 
@@ -26,7 +29,7 @@ in progress until that gate passes.
 | H3b Session/drain recursive callback reentrancy | Partial | PRs #1263/#1265: recursion guard lifetime, typed same-thread errors, known cross-thread session/drain cycle, and exclusive driver lease verified. `KernelHost::drop`, external callback synchronizers, direct-drain vs driver ownership remain open. |
 | H4 Full-inventory scheduling scans | Open | `NetworkSession::refresh` scans process inventory and repeats upon finishing a process. Activation-scaled benchmark and controlled optimization not yet accepted. |
 | H5 Expensive closure analysis | Partial | Compiled downstream adjacency removes repeated whole-edge scans, but request closure continues inspecting queued packets; missing measured stress and complexity envelope. |
-| H6 No native performance baseline | Open | `docs/fbp-measurements.md` is a source-size comparison, not a runtime benchmark. Need repeatable throughput / p50/p95 / allocation measurements and environment metadata. |
+| H6 No native performance baseline | Partial — first real measurement | Three release-mode repetitions on Ubuntu 24.04 / Rust 1.96.1, [CI #43201132241](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241), raw CSV artifact 13934274002. One active ingress among 1–256 processes rises ~0.68→31.9 µs/event. Still need allocator/RSS, correlated joins, multiple active branches and pinned-environment repeatability. |
 | H7 Request isolation not complete | Open | CorrelatedAll and per-request session workaround exist, but multi-request shared-session fairness, cancellation isolation, and policy guarantees not fully proved. |
 | C1 Cancellation overwrites failure/completion | Verified | `fbp_terminal_transitions.rs`; Completed/Failed first-terminal-wins and cancelled Quiescent fixture verified in PR #1263 and #1265 exact-head CI. |
 | C2 Replayed frozen obligations duplicate | Verified | `fbp_obligation_dedup.rs` and replay/transaction regressions; code passes exact-head six-job CI `43197663375`. |

@@ -28,6 +28,43 @@ session, panic instead of treating it as an impressive throughput result.
 Alternative C: benchmark compilation alone: reject for H4, but report
 compile/start times as separate columns.
 
+## Measured baseline (CI #43201132241)
+
+This is **actual data**, not extrapolated or benchmark output invented
+from the source audit. The benchmark workflow on 2026-11-12 recorded
+three release-mode repetitions on a GitHub-hosted Ubuntu 24.04 runner
+(x86_64, 4 vCPU, AMD EPYC 9V45, kernel 7.0.0-1017-azure).
+Toolchain: Rust 1.96.1, Nix 2.35.6.
+The pull-request workflow checked out synthetic merge commit
+`332c0d87404e99d01b64b475d2d914f6b787d7de` containing
+benchmark source head `522cf3f935743363a21104da73f840e6721bfb60`,
+rather than checking out the head SHA directly.
+
+Run: [Actions #43201132241](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241).
+[Raw CSV and environment artifact](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241/artifacts/13934274002).
+Each repetition: 5,000 events and 64 warmups, inventory 1/16/64/256.
+
+| Processes | Mean ns/event rep 1 | rep 2 | rep 3 | Median of 3 means | Median p50 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 679.2 | 678.9 | 680.7 | 679.2 | 621 ns |
+| 16 | 2,541.1 | 2,463.9 | 2,448.5 | 2,463.9 | 2,413 ns |
+| 64 | 8,434.7 | 8,318.4 | 8,312.6 | 8,318.4 | 8,202 ns |
+| 256 | 32,094.2 | 31,285.6 | 32,342.5 | 32,094.2 | 31,057 ns |
+
+Under one active ingress, increasing total process count from 1 to 256
+raised mean event time by about **47×** in this shared-runner workload,
+supporting the H4 concern that full-inventory scheduling scans scale
+poorly for sparse activity. The 256-process median-of-three figure
+represents about **31–32 µs/event**, not a universal latency guarantee.
+Run-to-run variation remains visible, particularly at p95.
+
+**Interpretation boundary:** this is a native hot-vs-idle microbenchmark,
+not a representative agent latency measurement. The benchmark does not
+yet record allocations/RSS or multiple active branches, joins, requested
+correlation, deferred jobs, or concurrent host admission. Revalidate
+after H4 implementation on the **same** topology, toolchain, and runner
+class before claiming an optimization.
+
 ## Reproduction
 
 ```sh

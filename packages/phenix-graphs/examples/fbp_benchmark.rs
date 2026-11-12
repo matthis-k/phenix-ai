@@ -2,9 +2,7 @@
 //!
 //! cargo run --release -p phenix-graph --example fbp_benchmark -- 10000 1 16 64 256
 //! CSV on stdout; workload and environment metadata are printed on stderr.
-use phenix_graph::{
-    component::ComponentDef, network::NetworkBuilder, runtime::SessionState,
-};
+use phenix_graph::{component::ComponentDef, network::NetworkBuilder, runtime::SessionState};
 use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
 fn measure(processes: usize, iterations: usize) -> (f64, f64, f64, f64, f64) {
