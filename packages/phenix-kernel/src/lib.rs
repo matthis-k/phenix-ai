@@ -454,6 +454,7 @@ impl std::error::Error for ProducerError {
 pub enum DriverError {
     NotStarted,
     ReentrantSession,
+    ReentrantDrain,
     UnsupportedWake {
         producer: Key,
     },
@@ -474,6 +475,7 @@ impl std::fmt::Display for DriverError {
         match self {
             Self::NotStarted => f.write_str("kernel not started"),
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
+            Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -1225,12 +1227,14 @@ impl Kernel {
         if !self.started {
             return Err(DriverError::NotStarted);
         }
+        // Acquire the same-thread recursion guard before modifying the wake
+        // handle; the actual drain mutex is still taken after session access.
+        let registration_scope = KernelLockScope::enter(&self.producer_drain)
+            .ok_or(DriverError::ReentrantDrain)?;
         let (mut listener, notifier) = self
             .with_session(|session| (session.wake_listener(), session.notifier()))
             .map_err(|_| DriverError::ReentrantSession)?;
         *wake.0.notifier.lock().unwrap() = Some(notifier);
-        let registration_scope =
-            KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
         let drain = self
             .producer_drain
             .lock()
@@ -1433,6 +1437,44 @@ mod tests {
                 .unwrap_err(),
             DriverError::WakeRegistrationPanicked { producer: key }
         );
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+        assert!(kernel.drain(1).is_empty());
+    }
+
+    #[test]
+    fn recursive_run_until_during_wake_registration_is_typed_and_non_destructive() {
+        use std::sync::Weak;
+
+        struct Reenter(Weak<Kernel>);
+        impl Producer for Reenter {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                let kernel = self.0.upgrade().unwrap();
+                assert_eq!(
+                    kernel
+                        .run_until(&WakeHandle::default(), |_| {})
+                        .unwrap_err(),
+                    DriverError::ReentrantDrain
+                );
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("driver-reentry", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "driver-reentry"),
+            Some(Box::new(Reenter(Arc::downgrade(&kernel)))),
+            None,
+        ));
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).is_empty());
     }
