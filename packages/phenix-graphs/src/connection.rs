@@ -160,6 +160,8 @@ pub enum ConnectionError {
     ForeignTopology,
     AlreadyCommitted,
     Cancelled,
+    /// A kernel callback tried to acquire a session mutex already owned on this thread.
+    Reentrant,
 }
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

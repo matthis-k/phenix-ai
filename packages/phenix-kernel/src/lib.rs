@@ -13,9 +13,33 @@ pub use phenix_plugin::CallbackError;
 use phenix_plugin::{ContributionHandle, PluginSnapshot, lease_callback_error};
 use std::{
     any::Any,
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex, TryLockError},
 };
+
+// Fail fast only on same-thread recursive access to an identical kernel mutex.
+// Cross-thread contention still follows std::sync::Mutex's blocking semantics.
+thread_local! {
+    static ACTIVE_KERNEL_LOCKS: RefCell<BTreeSet<usize>> = RefCell::new(BTreeSet::new());
+}
+
+struct KernelLockScope(usize);
+impl KernelLockScope {
+    fn enter<T>(lock: &Mutex<T>) -> Option<Self> {
+        let identity = lock as *const Mutex<T> as usize;
+        ACTIVE_KERNEL_LOCKS
+            .with(|active| active.borrow_mut().insert(identity))
+            .then_some(Self(identity))
+    }
+}
+impl Drop for KernelLockScope {
+    fn drop(&mut self) {
+        ACTIVE_KERNEL_LOCKS.with(|active| {
+            active.borrow_mut().remove(&self.0);
+        });
+    }
+}
 
 /// Globally qualified contribution identity, ordered lexically by owner then id.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -991,6 +1015,8 @@ impl Kernel {
         if !self.started {
             return Err("kernel not started".into());
         }
+        let _scope = KernelLockScope::enter(&self.session)
+            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
         let mut session = self
             .session
             .lock()
@@ -1007,6 +1033,12 @@ impl Kernel {
                 value,
             });
         }
+        let Some(_scope) = KernelLockScope::enter(&self.session) else {
+            return Err(InjectionError {
+                reason: phenix_graph::connection::ConnectionError::Reentrant,
+                value,
+            });
+        };
         let mut session = self
             .session
             .lock()
@@ -1022,6 +1054,8 @@ impl Kernel {
         if !self.started {
             return Err("kernel not started".into());
         }
+        let _scope = KernelLockScope::enter(&self.session)
+            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
         Ok(self
             .session
             .lock()
@@ -1034,6 +1068,8 @@ impl Kernel {
     /// and eager session admission do not hold the producer inventory mutex.
     /// A full input retains one event without repolling. No process code runs here.
     pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+        let scope = KernelLockScope::enter(&self.producer_drain)
+            .expect("recursive producer drain");
         let drain = self
             .producer_drain
             .lock()
@@ -1145,6 +1181,7 @@ impl Kernel {
             }
         }
         drop(drain);
+        drop(scope);
         drop(detached);
         events
     }
@@ -1164,6 +1201,8 @@ impl Kernel {
             .with_session(|session| (session.wake_listener(), session.notifier()))
             .unwrap();
         *wake.0.notifier.lock().unwrap() = Some(notifier);
+        let registration_scope = KernelLockScope::enter(&self.producer_drain)
+            .expect("recursive producer drain");
         let drain = self
             .producer_drain
             .lock()
@@ -1207,6 +1246,7 @@ impl Kernel {
             }
         }
         drop(drain);
+        drop(registration_scope);
         loop {
             {
                 if *wake.0.shutdown.lock().unwrap() {
