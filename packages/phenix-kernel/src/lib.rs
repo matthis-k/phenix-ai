@@ -460,6 +460,9 @@ pub enum DriverError {
     WakeRegistrationPanicked {
         producer: Key,
     },
+    EventCallbackPanicked {
+        producer: Key,
+    },
     SessionStopped {
         state: SessionState,
         cause: Option<String>,
@@ -477,6 +480,9 @@ impl std::fmt::Display for DriverError {
             ),
             Self::WakeRegistrationPanicked { producer } => {
                 write!(f, "producer wake registration panicked: {producer:?}")
+            }
+            Self::EventCallbackPanicked { producer } => {
+                write!(f, "event callback panicked for producer: {producer:?}")
             }
             Self::SessionStopped { state, cause } => {
                 write!(f, "native session stopped: {state:?}: {cause:?}")
@@ -1288,7 +1294,14 @@ impl Kernel {
                 }
                 for event in self.drain(1) {
                     active = true;
-                    on_event(event);
+                    let producer = event.producer.clone();
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        on_event(event)
+                    }))
+                    .is_err()
+                    {
+                        return Err(DriverError::EventCallbackPanicked { producer });
+                    }
                 }
             }
             let report = self.run_steps(64).unwrap();
@@ -1422,6 +1435,41 @@ mod tests {
         );
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).is_empty());
+    }
+
+    #[test]
+    fn event_callback_panic_returns_typed_driver_error_without_poisoning_session() {
+        struct FailingProducer;
+        impl Producer for FailingProducer {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Err(Box::new(std::io::Error::other("producer failed")))
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("event-panic", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        let key = Key::new("test", "event-panic");
+        kernel.producers.lock().unwrap().producers.push((
+            key.clone(),
+            Some(Box::new(FailingProducer)),
+            None,
+        ));
+
+        assert_eq!(
+            kernel
+                .run_until(&WakeHandle::default(), |_| panic!("host callback panicked"))
+                .unwrap_err(),
+            DriverError::EventCallbackPanicked { producer: key }
+        );
+        assert!(kernel.drain(1).is_empty());
+        assert!(kernel
+            .with_session(|session| session.failure().is_none())
+            .unwrap());
     }
 
     #[test]
