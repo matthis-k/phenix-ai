@@ -21,12 +21,10 @@ A new scheduler or notification service is unnecessary.
 
 ## Phase 1 — smallest safe change
 
-- For a session `Failed` or `Cancelled` on entry, return the existing
-  `DriverError::SessionStopped` without registering producers. Retain
-  wake-registration callbacks for already-`Completed` sessions that still
-  have registered producers, so existing wake callback and producer event
-  error contracts are exercised. An empty-`Completed` session has no
-  producers and returns `Ok(())` after one nonblocking driver iteration.
+- For a session `Completed` on entry, immediately return `Ok(())`
+  without running or registering producers, whether or not they remain
+  installed. For `Failed`/`Cancelled`, return the existing
+  `DriverError::SessionStopped` before registration.
 - For a session that transitions to `Completed` in a driver iteration,
   also return `Ok(())`. Failure and cancellation behavior is unchanged.
 - Move the cancellation regression to a genuinely live open-ingress
@@ -46,9 +44,10 @@ not a compatibility alias.
 
 ## Phase 4 regression scope clarification
 
-The original unit and plugin callback tests intentionally install producers on
-a network with no processes. Their `set_waker` / `poll` behavior remains
-observable, so the Completed fast return occurs after the normal bounded
-iteration, not before registration. On entry, only Failed and Cancelled skip
-registration. This avoids silently weakening existing panic and leased-error
-regressions.
+The original unit and plugin callback tests installed producers on an
+already-Completed empty graph. Their purpose is to exercise wake registration,
+so they now use a genuinely live, open-ingress network instead of imposing a
+spurious callback obligation on terminal sessions. The plugin test supplies
+explicit host composition grants for its live sink/input patch. Separate
+regression proves that a Completed kernel with a producer lacking wake support
+returns normally without calling `set_waker` or polling the producer.

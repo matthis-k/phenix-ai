@@ -1,4 +1,8 @@
-use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
+mod support;
+use phenix_graph::{
+    compose::{Edit, NetworkPatch},
+    process::LocalProcessDispatcher,
+};
 use phenix_kernel::{
     BuildOptions, CallbackError, CandidateArtifacts, Contribution, DriverError, InputEvent, Kernel,
     Key, Producer, ProducerError, ResolutionError, StartError, WakeHandle,
@@ -47,7 +51,21 @@ impl PluginInstance for Plugin {
             id: "callback".into(),
             requires: vec![],
             routes: vec![],
-            patch: NetworkPatch::new([]),
+            patch: if matches!(phase, Phase::WakePanic) {
+                NetworkPatch::new([
+                    Edit::Add {
+                        path: "wake-sink".into(),
+                        definition: support::sink(|_| {}),
+                    },
+                    Edit::ExposeInput {
+                        name: "input".into(),
+                        targets: vec![support::path("wake-sink", "run")],
+                        capacity: support::capacity(),
+                    },
+                ])
+            } else {
+                NetworkPatch::new([])
+            },
             prepare: Some(Box::new(move |_| {
                 if matches!(phase, Phase::ComposePanic) {
                     panic!("deliberate preparation panic");
@@ -225,8 +243,14 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
         .unwrap();
     let mut plugins = catalog.instance();
     let snapshot = plugins.load(&key, Phase::WakePanic).unwrap();
-    let mut kernel =
-        Kernel::build("wake-panic", [snapshot], Arc::new(LocalProcessDispatcher)).unwrap();
+    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut kernel = Kernel::build_with_options(
+        "wake-panic",
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
     kernel.start().unwrap();
 
     let failure = kernel

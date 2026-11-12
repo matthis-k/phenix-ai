@@ -1243,6 +1243,9 @@ impl Kernel {
                 )
             })
             .map_err(|_| DriverError::ReentrantSession)?;
+        if initial_state == SessionState::Completed {
+            return Ok(());
+        }
         if matches!(initial_state, SessionState::Failed | SessionState::Cancelled) {
             return Err(DriverError::SessionStopped {
                 state: initial_state,
@@ -1345,6 +1348,54 @@ impl Kernel {
 mod tests {
     use super::*;
     use phenix_graph::process::LocalProcessDispatcher;
+
+    /// A deliberately live/open network for driver wake-registration callbacks.
+    /// An empty graph is already Completed and correctly skips those callbacks.
+    fn live_ingress_session() -> NetworkSession {
+        use phenix_graph::{ComponentDef, network::NetworkBuilder};
+        use std::num::NonZeroUsize;
+
+        let mut builder = NetworkBuilder::new();
+        let sink = builder
+            .add("sink", Arc::new(ComponentDef::sink(|_: &i64| {})))
+            .unwrap();
+        builder
+            .expose_input(
+                "input",
+                sink.input::<i64>("input").unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap();
+        let session = builder.build().unwrap().compile().unwrap().start();
+        assert_eq!(session.state(), SessionState::Quiescent);
+        session
+    }
+
+    #[test]
+    fn completed_session_skips_unsupported_wake_registration() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Unsupported(Arc<AtomicUsize>);
+        impl Producer for Unsupported {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
+        let mut kernel =
+            Kernel::build("already-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        let polls = Arc::new(AtomicUsize::new(0));
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "unsupported"),
+            Some(Box::new(Unsupported(polls.clone()))),
+            None,
+        ));
+        // Producer does not support set_waker, but no work is possible.
+        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+    }
 
     #[test]
     fn rejected_recursive_entry_retains_outer_kernel_lock_marker() {
@@ -1453,6 +1504,7 @@ mod tests {
         let mut kernel =
             Kernel::build("recursive-wake", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive-wake");
         kernel.producers.lock().unwrap().producers.push((
@@ -1495,6 +1547,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-reentry", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "driver-reentry"),
@@ -1524,6 +1577,7 @@ mod tests {
         let mut kernel =
             Kernel::build("event-panic", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
         let key = Key::new("test", "event-panic");
         kernel.producers.lock().unwrap().producers.push((
             key.clone(),
@@ -1675,6 +1729,7 @@ mod tests {
         )
         .unwrap();
         kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "waker"),

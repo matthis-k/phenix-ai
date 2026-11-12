@@ -35,3 +35,17 @@ fixes the empty-session hang without silently removing callback checks.
 The limitation is that a completed graph with an unsupported waker may still
 report `UnsupportedWake` before completion; changing producer shutdown
 precedence requires a separate policy/design decision.
+
+## Final Phase 2 decision — production semantics over stale fixtures
+
+Preserving wake callback execution on already-Completed graphs is an
+unnecessary error path: a terminal session can report unsupported wake
+registration despite having no possible work. This is a foreseeable
+primary-use-case defect, not an acceptable compatibility limitation.
+
+The wake registration and host callback tests must use an open-ingress
+Quiescent graph. The plugin test's exact host composition grants admit its
+test-only sink/input; no special production bypass is introduced. A
+Completed graph with an unsupported producer must exit successfully
+without invoking producer callbacks. This restores unconditional terminal
+success while keeping all existing callback panic regressions meaningful.
