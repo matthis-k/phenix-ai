@@ -3614,7 +3614,6 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     assert!(missing.failure().unwrap().contains("required input b"));
 }
 
-
 #[test]
 fn idle_input_prefilter_preserves_eos_and_custom_policy_rechecks() {
     use phenix_graph::component::ComponentDef;
