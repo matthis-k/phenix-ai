@@ -3,7 +3,7 @@ use phenix_graph::{
     interface::{Interface, PortDef},
     network::{CompiledNetwork, NetworkBuilder},
     process::{Process, ProcessContext, ProcessEmission, Step},
-    runtime::{Readiness, SessionOptions, SessionState},
+    runtime::{NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState},
 };
 use std::{
     num::NonZeroUsize,
@@ -67,6 +67,59 @@ fn options() -> SessionOptions {
         capture_capacity: one(),
         ..Default::default()
     }
+}
+
+struct ReadinessCalls(Arc<AtomicUsize>);
+impl ReadinessPolicy for ReadinessCalls {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        snapshot
+            .heads
+            .iter()
+            .filter(|head| head.available)
+            .map(|head| head.port.clone())
+            .collect()
+    }
+}
+
+#[test]
+fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
+    let effects = Arc::new(AtomicUsize::new(0));
+    let compiled = counter(effects.clone());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut config = options();
+    config.readiness.insert(
+        "counter".into(),
+        Readiness::Custom(Arc::new(ReadinessCalls(calls.clone()))),
+    );
+    let mut session = compiled.start_with_options(config);
+    let before_query = calls.load(Ordering::SeqCst);
+    assert!(before_query > 0, "startup is allowed to perform readiness");
+
+    let snapshot: &NetworkSession = &session;
+    for _ in 0..4 {
+        assert_eq!(snapshot.state(), SessionState::Quiescent);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), before_query);
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+
+    session.inject("input", Value::of(2_i64)).unwrap();
+    let after_admission = calls.load(Ordering::SeqCst);
+    assert!(after_admission > before_query, "admission still schedules");
+    assert_eq!(session.state(), SessionState::Runnable);
+    assert_eq!(calls.load(Ordering::SeqCst), after_admission);
+
+    assert!(session.run_until_idle(64).steps > 0);
+    assert_eq!(
+        session.take_output("output")
+            .unwrap()
+            .unwrap()
+            .value()
+            .get::<i64>()
+            .unwrap(),
+        2
+    );
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
 }
 
 #[test]

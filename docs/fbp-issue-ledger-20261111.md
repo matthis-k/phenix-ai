@@ -27,7 +27,7 @@ not an accepted limitation.
 | C6 Live process state not migrated | No | Generation replacement constructs a new network; define migration contract, or explicitly select restart/disposal policy |
 | C7 No general in-process plugin sandbox | No — architectural limit | Native Rust plugins share process privileges; do not claim an FBP capability view is a security sandbox |
 | C8 Code leases retain defeated snapshots | No | `phenix-kernel/src/lib.rs` code lease retains snapshot inventory; measure retained lifetime and isolate exact winners where safe |
-| C9 `state()` is not passive | No | `runtime/mod.rs::state` calls `refresh()`; state queries may execute readiness callbacks; require separate query semantics or explicit refresh naming |
+| C9 `state()` is not passive | Code fixed; CI pending | `NetworkSession::state(&self)` is now a passive snapshot without `refresh()`; `fbp_streams::session_state_is_read_only_and_does_not_execute_custom_readiness` verifies callback-count stability across repeated immutable queries and preserved eager admission. See C9 Phase 0/1 and Phase 2 docs. |
 | C10 `run_until_complete()` aliases `run_until_idle()` | Code fixed; CI pending | Removed redundant public alias and migrated native examples/tests to `run_until_idle` without execution change; Phase 0–2 in `fbp-c10-driver-api-design-20261112.md` and critique. Final-head CI required. |
 | A1 Replacement-only private nesting | No | `network.rs`, `compose/mod.rs`; exact private composition extension remains unimplemented |
 | A2 Rigid interface identity | No | `interface.rs`, `contract.rs`; design compatibility/projection only with evidence for real use cases |

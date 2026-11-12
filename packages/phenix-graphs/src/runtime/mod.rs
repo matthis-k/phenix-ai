@@ -1060,8 +1060,10 @@ impl NetworkSession {
                 .all(|q| self.transport.queues()[*q].writer_closed())
     }
 
-    pub fn state(&mut self) -> SessionState {
-        self.refresh();
+    /// Passive snapshot of already committed scheduler state.
+    /// A newly delivered wake is scheduled by the next driver operation,
+    /// never by a status query; no user readiness policy runs here.
+    pub fn state(&self) -> SessionState {
         if let Some(state) = self.terminal {
             return state;
         }
