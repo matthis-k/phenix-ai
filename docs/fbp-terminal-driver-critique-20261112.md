@@ -49,3 +49,23 @@ test-only sink/input; no special production bypass is introduced. A
 Completed graph with an unsupported producer must exit successfully
 without invoking producer callbacks. This restores unconditional terminal
 success while keeping all existing callback panic regressions meaningful.
+
+## CI-discovered fixture counterexamples (2026-11-12)
+
+CI [43184695814](https://github.com/matthis-k/phenix-ai/actions/runs/43184695814)
+passed the core formatting and new driver callback tests but found two older
+`kernel.rs` fixtures that incorrectly expected an empty, already-Completed
+network to keep polling or block for shutdown:
+`empty_driver_blocks_until_cross_thread_shutdown` and
+`permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable`.
+
+An empty network is a valid terminal session. Retain the production terminal
+fast path and move both tests to an explicitly open-ingress, Quiescent
+network. The fixture registers only an ordinary graph sink and input projection,
+with exact host composition grants. It adds no special kernel authority or
+hidden waker. An assertion checks Quiescent before exercising shutdown.
+The original direct producer polling error test remains unchanged.
+
+Do not relabel a completed session as Waiting just to preserve a test.
+Full exact-head Nix CI, all shards plus aggregation, remains the acceptance
+gate. The fixture is test-only and should not change runtime semantics.
