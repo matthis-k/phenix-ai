@@ -560,6 +560,7 @@ fn overlapping_write<'a>(
 
 fn public_path(path: &str) -> Result<(), ComposeError> {
     if path.is_empty()
+        || path.len() > crate::MAX_IDENTIFIER_BYTES
         || path.contains('/')
         || matches!(path, "." | "..")
         || path.chars().any(char::is_control)

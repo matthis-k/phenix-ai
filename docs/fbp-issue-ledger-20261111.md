@@ -35,7 +35,7 @@ not an accepted limitation.
 | A4 Layered typed authoring | No | `port_keys.rs`, derives and builder; evaluate public concept duplication against real examples |
 | A5 Physical string paths | No | `network.rs` and `port_keys.rs`; typed handles are not universally preserved after compilation |
 | A6 Admission payload validation ergonomics | No | `runtime/mod.rs`; compare runtime path validation with typed checked admission |
-| A7 Unbounded identifier sizes | No | Names/paths from plugin payloads; add explicit limits or justified host-controlled quotas |
+| A7 Unbounded identifier sizes | Code fixed; CI pending | A common 512-byte per-segment bound is validated on graph process names, ports, composition paths, contract identities and kernel contribution owner/ID before composition; `fbp_identifier_limits.rs` checks boundary admission and rejects oversized names. The pre-existing compile depth/work bounds still limit expansion. |
 | Q1 Large responsibility concentrations | No | `network.rs`, `runtime/mod.rs`, `compose/mod.rs`; first establish stable behavioral seams |
 | Q2 Whole-candidate recompilation | No | `Composer` recomposes/recompiles; measure then consider incremental compilation with identity invariants |
 | Q3 Dependency/conflict selection scaling | No | `compose/mod.rs`; stress diamond, skew, and adversarial priority graphs |

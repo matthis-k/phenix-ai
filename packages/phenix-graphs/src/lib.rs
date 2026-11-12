@@ -27,7 +27,7 @@ pub use compose::{
 pub use connection::{EdgeAdapter, IdentityEdgeAdapter};
 pub use contract::Contract;
 pub use interface::{Interface, InterfaceError, InterfacePhase, PortDef};
-pub use limits::CompileLimits;
+pub use limits::{CompileLimits, MAX_IDENTIFIER_BYTES};
 pub use network::{
     CompiledNetwork, ComponentRef, InputEndpoint, InputRef, NetworkBuilder, NetworkDef,
     NetworkError, OutputEndpoint, OutputRef, PortPath,

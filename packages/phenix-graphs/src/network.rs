@@ -864,6 +864,7 @@ fn check_type(
 }
 fn validate_process_name(name: &str) -> Result<(), NetworkError> {
     if name.is_empty()
+        || name.len() > crate::MAX_IDENTIFIER_BYTES
         || matches!(name, "." | "..")
         || name.contains('/')
         || name.chars().any(char::is_control)

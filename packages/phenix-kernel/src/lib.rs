@@ -586,6 +586,11 @@ impl Kernel {
             Arc::new((host_lease.clone(), snapshots.clone()));
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
+            if snapshot.name().len() > phenix_graph::MAX_IDENTIFIER_BYTES {
+                return Err(ResolutionError::Invalid(
+                    "plugin owner identifier exceeds size limit".into(),
+                ));
+            }
             if !owners.insert(snapshot.name()) {
                 return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
             }
@@ -596,6 +601,11 @@ impl Kernel {
         let mut pending = BTreeMap::new();
         for snapshot in &snapshots {
             for (_, kind, id) in snapshot.keys() {
+                if id.len() > phenix_graph::MAX_IDENTIFIER_BYTES {
+                    return Err(ResolutionError::Invalid(
+                        "plugin contribution identifier exceeds size limit".into(),
+                    ));
+                }
                 let key = Key::new(snapshot.name(), id);
                 macro_rules! collect {
                     ($ty:ty, $map:ident) => {
