@@ -546,7 +546,9 @@ impl std::fmt::Display for DriverError {
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
-            Self::DrainInProgress => f.write_str("producer drain already admitted while starting driver"),
+            Self::DrainInProgress => {
+                f.write_str("producer drain already admitted while starting driver")
+            }
             Self::Retired => f.write_str("generation producers retired while driver was active"),
             Self::UnsupportedWake { producer } => write!(
                 f,
@@ -1230,8 +1232,8 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
-        let _owner = DirectDrainScope::enter(&self.producer_ownership)
-            .ok_or(DriverError::AlreadyRunning)?;
+        let _owner =
+            DirectDrainScope::enter(&self.producer_ownership).ok_or(DriverError::AlreadyRunning)?;
         Ok(self.drain_owned(max_polls))
     }
 
@@ -2352,14 +2354,8 @@ mod tests {
         let driver = std::thread::spawn(move || worker_kernel.run_until(&worker_wake, |_| {}));
         registered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         first_poll_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(
-            kernel.drain(0).unwrap_err(),
-            DriverError::AlreadyRunning
-        );
-        assert_eq!(
-            kernel.drain(1).unwrap_err(),
-            DriverError::AlreadyRunning
-        );
+        assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
+        assert_eq!(kernel.drain(1).unwrap_err(), DriverError::AlreadyRunning);
         assert_eq!(
             kernel.producer_ownership.load(Ordering::Acquire),
             DRIVER_OWNER
