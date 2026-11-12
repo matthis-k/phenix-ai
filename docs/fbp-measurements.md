@@ -12,6 +12,10 @@ native FBP worktree, including new files and excluding deleted files. No final
 commit was created. Counts use the same physical/lexical conventions as the
 baseline inventory in `fbp-migration.md`; they do not measure runtime performance.
 
+See also [H6 native scheduling benchmark](fbp-performance-benchmark.md) for a
+reproducible *runtime* workload distinct from these physical source counts.
+The benchmark's performance evidence remains pending an actual recorded run.
+
 ## Totals
 
 | Graph and derive scope | Baseline | Native | Change |
