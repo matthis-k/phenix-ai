@@ -62,9 +62,13 @@ The first **native runtime latency baseline** is now documented in
 [fbp-performance-benchmark.md](fbp-performance-benchmark.md), with
 three raw CSV repetitions from [CI #43201132241](https://github.com/matthis-k/phenix-ai/actions/runs/43201132241).
 One active ingress showed approximately 47× higher mean event latency
-with 256 processes versus 1. This is a narrow, shared-runner hot-vs-idle
-microbenchmark, **not** an allocation, throughput under concurrency,
-pinned-environment or production agent baseline. H6 remains partial;
+with 256 processes versus 1 on AMD EPYC 9V45; an independent
+[second run](https://github.com/matthis-k/phenix-ai/actions/runs/43201797923)
+on AMD EPYC 7763 reported roughly 56× within-run slowdown.
+Cross-run absolute times must **not** be averaged because the CPU
+model changed. This is a narrow, shared-runner hot-vs-idle microbenchmark,
+**not** an allocation, concurrency throughput, pinned-environment
+or production-agent baseline. H6 remains partial;
 H4 is still not optimized.
 
 Primary unresolved concerns: H3b host Drop and external cross-thread

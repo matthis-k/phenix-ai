@@ -58,6 +58,20 @@ poorly for sparse activity. The 256-process median-of-three figure
 represents about **31–32 µs/event**, not a universal latency guarantee.
 Run-to-run variation remains visible, particularly at p95.
 
+### Independent repeat on another runner (#43201797923)
+
+A second successful three-repetition run on the same source workload but
+a different GitHub-hosted CPU (**AMD EPYC 7763**, 4 vCPU, same Rust 1.96.1)
+reported approximately **1.06 µs/event** for one process and
+**59–60 µs/event** for 256 processes (~56× within-run slowdown).
+[Run #43201797923](https://github.com/matthis-k/phenix-ai/actions/runs/43201797923)
+contains the raw CSV; its synthetic test-merge checkout was
+`e4eba8db8f87f42728e456ae7640a475a40b47c9`.
+**Do not average absolute times across the two CPU models.**
+The dedicated workflow is now configured to check out the exact
+pull-request head for subsequent runs and prints both source and
+workflow SHAs.
+
 **Interpretation boundary:** this is a native hot-vs-idle microbenchmark,
 not a representative agent latency measurement. The benchmark does not
 yet record allocations/RSS or multiple active branches, joins, requested
@@ -85,6 +99,14 @@ The workload isolates hot-admission scaling with total process count; it
 does not represent every graph (fanout, joins, requests, deferred jobs,
 backpressure, cancellation or public captures). Expand scenarios after the
 first baseline, never before without data.
+
+## Evidence policy
+
+New benchmark runs check out `github.event.pull_request.head.sha`
+rather than the default synthetic PR merge commit. For previous runs
+#43201132241 and #43201797923, the merge commits and actual benchmark
+source head are recorded explicitly. This records source identity without
+confusing an unrelated branch build with the measured candidate.
 
 ## Acceptance
 

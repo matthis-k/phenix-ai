@@ -14,10 +14,11 @@ the exact-head CI, not that a universal security/progress proof exists;
 is not accepted as a solved limitation; **Policy** needs an explicit decision.
 Historical phase documents remain source records, not current status authorities.
 
-At this snapshot, **9 verified, 5 partial, 19 open/in progress**.
-H6 now has a measured, narrow hot-vs-idle baseline; it is partial rather
-than unmeasured. Q8 remains in progress until the refreshed report's
-exact-head CI passes.
+The *implementation* matrix now contains **9 previously verified fixes,
+5 partially addressed issues and 19 still open/in progress**. This branch's
+Q8 report update has its own acceptance gate: once its exact final-head
+CI passes, Q8 becomes the **10th verified** issue and the open count falls
+to **18**. H6 has a measured hot-vs-idle baseline but stays partial.
 This ledger/report update itself is still awaiting exact-head CI; Q8 remains
 in progress until that gate passes.
 
@@ -55,7 +56,7 @@ in progress until that gate passes.
 | Q5 Concurrency testing not exhaustive | Open — improved evidence | Deterministic kernel concurrency regressions now include cross-thread cycle and driver lease, but there is no exhaustive state-space/lock-order model. |
 | Q6 Diagnostics intentionally minimal | Open | Diagnostics still intentionally minimal; richer actionable deadlock/readiness explanations remain to build. |
 | Q7 Error reporting uneven | Open | Error handling still mixes strings and typed outcomes; code lease/source preservation needs a public API pass. |
-| Q8 Final reports stale | In progress | This branch replaces outdated `fbp-report.md` and ledger with an exact-stack evidence map; must pass its own final-head CI before closing. |
+| Q8 Final reports stale | Report refreshed; exact-head verification gate | This branch replaces the obsolete 2026-11-11 worktree report and CI-pending ledger with current PR/commit references. Close when all final-head CI jobs pass and evidence links match the updated report. |
 
 ## Acceptance and nonclaims
 
