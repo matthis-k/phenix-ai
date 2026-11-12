@@ -57,7 +57,7 @@ impl<'a> DriverScope<'a> {
         active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-            .then_some(Self(active))
+            .then(|| Self(active))
     }
 }
 impl Drop for DriverScope<'_> {
