@@ -224,6 +224,9 @@ struct RuntimeProcess {
 
 pub struct NetworkSession {
     compiled: CompiledNetwork,
+    // Static topology for request-root reachability. Constructed once at
+    // start, avoiding an O(V*E) scan for each admitted request.
+    downstream: Vec<Vec<usize>>,
     transport: ConnectionSet,
     processes: Vec<RuntimeProcess>,
     ingress: BTreeMap<String, Vec<usize>>,
@@ -444,8 +447,13 @@ impl NetworkSession {
             ));
             captures.insert(name.clone(), index);
         }
+        let mut downstream = vec![Vec::new(); compiled.processes().len()];
+        for edge in compiled.connections() {
+            downstream[edge.from().0].push(edge.to().0);
+        }
         let mut session = Self {
             compiled,
+            downstream,
             transport: ConnectionSet::new(queues),
             processes,
             ingress,

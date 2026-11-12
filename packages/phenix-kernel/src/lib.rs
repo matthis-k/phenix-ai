@@ -908,8 +908,7 @@ impl Kernel {
             .filter(|key| active.contains(&registration_ids[*key]))
             .cloned()
             .collect();
-        let selected_owners: BTreeSet<_> =
-            selected.iter().map(|key| key.owner.as_str()).collect();
+        let selected_owners: BTreeSet<_> = selected.iter().map(|key| key.owner.as_str()).collect();
         let execution_snapshots: Vec<_> = snapshots
             .iter()
             .filter(|snapshot| selected_owners.contains(snapshot.name()))

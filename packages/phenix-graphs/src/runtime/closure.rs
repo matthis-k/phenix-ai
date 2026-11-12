@@ -59,13 +59,8 @@ impl NetworkSession {
             if !scope.reachable.insert(index) {
                 continue;
             }
-            for edge in self
-                .compiled
-                .connections()
-                .iter()
-                .filter(|edge| edge.from().0 == index)
-            {
-                stack.push(edge.to().0);
+            for child in &self.downstream[index] {
+                stack.push(*child);
             }
         }
     }

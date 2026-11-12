@@ -26,8 +26,14 @@ fn identifier_limit_accepts_exact_boundary_and_rejects_next_byte() {
 
     let mut builder = NetworkBuilder::new();
     let interface = Arc::new(Interface::default());
-    assert!(builder
-        .node(boundary, interface.clone(), Arc::new(|| Noop))
-        .is_ok());
-    assert!(builder.node(oversized, interface, Arc::new(|| Noop)).is_err());
+    assert!(
+        builder
+            .node(boundary, interface.clone(), Arc::new(|| Noop))
+            .is_ok()
+    );
+    assert!(
+        builder
+            .node(oversized, interface, Arc::new(|| Noop))
+            .is_err()
+    );
 }
