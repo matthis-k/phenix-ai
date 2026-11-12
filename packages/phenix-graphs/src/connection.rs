@@ -5,9 +5,9 @@
 //! authenticated request behind another request while preserving per-request
 //! order and the same fixed physical queue capacity; no extra buffer is owned.
 
+use crate::runtime::RequestId;
 pub use crate::value::Leased;
 use crate::{GraphOrigin, TypeIdentity, Value};
-use crate::runtime::RequestId;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::num::NonZeroUsize;
