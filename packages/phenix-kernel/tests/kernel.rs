@@ -533,13 +533,7 @@ fn open_ingress_driver_kernel(
     let mut snapshots: Vec<_> = snapshots.into_iter().collect();
     snapshots.push(support::snapshot("driver-open-input", OpenIngress));
     let options = support::options(&snapshots);
-    Kernel::build_with_options(
-        name,
-        snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
-    )
-    .unwrap()
+    Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options).unwrap()
 }
 
 #[test]
