@@ -7,7 +7,8 @@
 
 pub use crate::value::Leased;
 use crate::{GraphOrigin, TypeIdentity, Value};
-use std::collections::{BTreeSet, VecDeque};
+use crate::runtime::RequestId;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -68,6 +69,9 @@ pub struct ConnectionQueue {
     capacity: NonZeroUsize,
     identity: TypeIdentity,
     packets: VecDeque<Packet>,
+    // Bounded by the occupied queue: only request-owned committed packets
+    // contribute, and the last removal drops its key.
+    request_counts: BTreeMap<RequestId, usize>,
     writer_closed: bool,
     reader_closed: bool,
 }
@@ -77,6 +81,7 @@ impl ConnectionQueue {
             capacity,
             identity,
             packets: VecDeque::new(),
+            request_counts: BTreeMap::new(),
             writer_closed: false,
             reader_closed: false,
         }
@@ -96,6 +101,11 @@ impl ConnectionQueue {
     pub fn packets(&self) -> impl Iterator<Item = &Packet> {
         self.packets.iter()
     }
+    /// Passive request membership without inspecting payloads or FIFO offsets.
+    /// The queue is the sole owner of this committed-packet count.
+    pub(crate) fn request_count(&self, request: RequestId) -> usize {
+        self.request_counts.get(&request).copied().unwrap_or(0)
+    }
     pub fn is_full(&self) -> bool {
         self.len() == self.capacity()
     }
@@ -113,22 +123,60 @@ impl ConnectionQueue {
         if let Err(error) = self.check(&packet) {
             return Err((error, packet));
         }
-        self.packets.push_back(packet);
+        self.enqueue(packet);
         Ok(())
     }
+    // Only use after check() has accepted the packet. In particular, atomic
+    // fanout runs all destination checks before the first queue mutation.
+    fn enqueue(&mut self, packet: Packet) {
+        if let Some(request) = packet.metadata().and_then(|metadata| metadata.request()) {
+            *self.request_counts.entry(request).or_default() += 1;
+        }
+        self.packets.push_back(packet);
+    }
+    fn note_removal(&mut self, packet: &Packet) {
+        if let Some(request) = packet.metadata().and_then(|metadata| metadata.request()) {
+            let count = self
+                .request_counts
+                .get_mut(&request)
+                .expect("committed request packet must be indexed");
+            *count -= 1;
+            if *count == 0 {
+                self.request_counts.remove(&request);
+            }
+        }
+    }
     pub fn pop(&mut self) -> Option<Packet> {
-        self.packets.pop_front()
+        let packet = self.packets.pop_front()?;
+        self.note_removal(&packet);
+        Some(packet)
     }
     /// Explicit correlated-mode extraction, preserving order among all
     /// remaining packets and never increasing the queue's bounded capacity.
     pub fn pop_at(&mut self, offset: usize) -> Option<Packet> {
-        self.packets.remove(offset)
+        let packet = self.packets.remove(offset)?;
+        self.note_removal(&packet);
+        Some(packet)
+    }
+    /// Dispose one request's accepted packets without touching any other
+    /// request's FIFO positions. Unindexed requests cannot own a packet here.
+    fn discard_request(&mut self, request: RequestId) -> usize {
+        let Some(count) = self.request_counts.remove(&request) else {
+            return 0;
+        };
+        let before = self.packets.len();
+        self.packets.retain(|packet| {
+            packet.metadata().and_then(|metadata| metadata.request()) != Some(request)
+        });
+        debug_assert_eq!(before - self.packets.len(), count);
+        count
     }
     pub fn close_writer(&mut self) {
         self.writer_closed = true;
     }
     pub fn close_reader(&mut self) -> VecDeque<Packet> {
         self.reader_closed = true;
+        self.request_counts.clear();
         std::mem::take(&mut self.packets)
     }
     fn check(&self, packet: &Packet) -> Result<(), ConnectionError> {
@@ -244,13 +292,7 @@ impl ConnectionSet {
     pub fn discard_request(&mut self, request: crate::runtime::RequestId) -> usize {
         self.queues
             .iter_mut()
-            .map(|queue| {
-                let before = queue.len();
-                queue
-                    .packets
-                    .retain(|packet| packet.metadata().and_then(|m| m.request()) != Some(request));
-                before - queue.len()
-            })
+            .map(|queue| queue.discard_request(request))
             .sum()
     }
     pub fn close_writer(&mut self, index: usize) -> Result<(), ConnectionError> {
@@ -364,7 +406,7 @@ impl ConnectionSet {
             return Err(ConnectionError::Full);
         }
         for (index, packet) in transaction.prepared.drain(..) {
-            self.queues[index].packets.push_back(packet);
+            self.queues[index].enqueue(packet);
         }
         transaction.committed = true;
         Ok(())
