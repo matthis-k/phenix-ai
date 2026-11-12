@@ -203,7 +203,11 @@ impl KernelHost {
             .map_err(LifecycleError::Plugins)?;
         let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        bind(&Binding { kernel: &kernel }).map_err(|cause| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            bind(&Binding { kernel: &kernel })
+        }))
+        .unwrap_or_else(|_| Err("generation binding panicked".into()))
+        .map_err(|cause| {
             LifecycleError::Binding(phenix_plugin::lease_callback_error(
                 cause,
                 kernel.code_lease.clone(),

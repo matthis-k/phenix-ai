@@ -246,3 +246,49 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     assert_cause(&error, &identity);
     assert!(kernel.drain(1).is_empty());
 }
+
+#[test]
+fn panicking_host_binding_returns_typed_error_without_replacing_active_generation() {
+    let mut host = KernelHost::new(PluginCatalog::new().instance());
+    let initial = host
+        .prepare(
+            vec![],
+            BuildOptions::default(),
+            Arc::new(LocalProcessDispatcher),
+            "initial",
+            |_| Ok(()),
+        )
+        .unwrap();
+    let active = host.publish(initial).unwrap();
+    let old_epoch = active.epoch();
+
+    let error = host
+        .prepare(
+            vec![],
+            BuildOptions::default(),
+            Arc::new(LocalProcessDispatcher),
+            "panicking-binding",
+            |_| -> Result<(), CallbackError> {
+                panic!("intentional host binding panic");
+            },
+        )
+        .err()
+        .unwrap();
+    assert!(matches!(&error, LifecycleError::Binding(_)));
+    assert!(error.to_string().contains("generation binding panicked"));
+    assert!(Arc::ptr_eq(&host.active().unwrap(), &active));
+    assert_eq!(host.active().unwrap().epoch(), old_epoch);
+    assert_eq!(host.plugins().snapshots().count(), 0);
+
+    // Failed preparation did not consume the next publication epoch.
+    let after = host
+        .prepare(
+            vec![],
+            BuildOptions::default(),
+            Arc::new(LocalProcessDispatcher),
+            "after",
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(host.publish(after).unwrap().epoch(), old_epoch + 1);
+}
