@@ -1282,8 +1282,7 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
-        let _driver = DriverScope::enter(&self.driver_active)
-            .ok_or(DriverError::AlreadyRunning)?;
+        let _driver = DriverScope::enter(&self.driver_active).ok_or(DriverError::AlreadyRunning)?;
         let (mut listener, notifier, initial_state, cause) = self
             .with_session(|session| {
                 (
