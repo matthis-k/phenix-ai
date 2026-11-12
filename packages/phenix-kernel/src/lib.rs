@@ -1248,7 +1248,12 @@ impl Kernel {
             let outcome = match polled {
                 Ok(None) => None,
                 Ok(Some(event)) => {
-                    if !self.routes[&key].contains(&event.input) {
+                    // A producer may retire its own host while polled. Even
+                    // the event returned by that in-flight callback must not
+                    // enter the retired generation's native session.
+                    if self.producers_retired() {
+                        None
+                    } else if !self.routes[&key].contains(&event.input) {
                         Some(Err(ProducerError::UndeclaredRoute(event.input)))
                     } else {
                         // Session access stays nonblocking. On contention or
