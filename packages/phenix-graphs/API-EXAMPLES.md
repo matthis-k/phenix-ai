@@ -25,7 +25,7 @@ network.connect(source.output::<i64>("output")?, map.input::<i64>("input")?, cap
 network.connect(map.output::<i64>("output")?, sink.input::<i64>("input")?, capacity)?;
 network.start(&source)?;
 let mut session = network.build()?.compile()?.start();
-let report = session.run_until_complete(128);
+let report = session.run_until_idle(128);
 assert_eq!(report.state, phenix_graph::runtime::SessionState::Completed);
 assert_eq!(*observed.lock().unwrap(), [2, 4, 6]);
 # Ok::<(), Box<dyn std::error::Error>>(())
