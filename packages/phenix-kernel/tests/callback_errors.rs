@@ -25,6 +25,7 @@ enum Phase {
     Compose,
     Activate,
     Poll,
+    PollLive,
     ComposePanic,
     ActivatePanic,
     WakePanic,
@@ -51,7 +52,7 @@ impl PluginInstance for Plugin {
             id: "callback".into(),
             requires: vec![],
             routes: vec![],
-            patch: if matches!(phase, Phase::WakePanic) {
+            patch: if matches!(phase, Phase::WakePanic | Phase::PollLive) {
                 NetworkPatch::new([
                     Edit::Add {
                         path: "wake-sink".into(),
@@ -133,8 +134,17 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
     assert_cause(&error, &identity);
     assert!(kernel.drain(1).is_empty());
 
-    let snapshot = plugins.reload(&key, Phase::Poll).unwrap();
-    let mut kernel = Kernel::build("poll", [snapshot], Arc::new(LocalProcessDispatcher)).unwrap();
+    // Unsupported wake registration is a live-session boundary. The
+    // host's earlier Phase::Poll fixture stays an intentionally empty graph.
+    let snapshot = plugins.reload(&key, Phase::PollLive).unwrap();
+    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut kernel = Kernel::build_with_options(
+        "poll",
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
     assert_eq!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
