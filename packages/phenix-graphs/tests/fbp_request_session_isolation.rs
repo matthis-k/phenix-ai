@@ -206,15 +206,9 @@ fn cancelling_queued_shared_request_preserves_other_correlated_work() {
     let mut session = compiled.start_with_options(options);
     let cancelled = session.begin_request(Some("out")).unwrap();
     let survivor = session.begin_request(Some("out")).unwrap();
-    session
-        .inject_request_local(cancelled, "a", 1_i64)
-        .unwrap();
-    session
-        .inject_request_local(survivor, "b", 20_i64)
-        .unwrap();
-    session
-        .inject_request_local(survivor, "a", 10_i64)
-        .unwrap();
+    session.inject_request_local(cancelled, "a", 1_i64).unwrap();
+    session.inject_request_local(survivor, "b", 20_i64).unwrap();
+    session.inject_request_local(survivor, "a", 10_i64).unwrap();
 
     let tickets = session.cancel_request(cancelled).unwrap();
     assert!(tickets.is_empty());
