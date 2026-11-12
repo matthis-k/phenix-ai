@@ -1,5 +1,12 @@
 # FBP Source Measurements
 
+**Provenance caveat (2026-11-12):** The counts below describe the
+original native migration snapshot and do **not** purport to count current
+PR #1263/#1265 or the later benchmark branch. They are source-size
+measurements only; H6's runtime performance benchmark is a separate gate.
+See [fbp-report.md](fbp-report.md) and [the reconciled issue ledger](fbp-issue-ledger-20261111.md).
+
+
 Baseline: `32bbe60e6cd2ebd34a705486b4ef96e85245ee42`. After: current uncommitted
 native FBP worktree, including new files and excluding deleted files. No final
 commit was created. Counts use the same physical/lexical conventions as the

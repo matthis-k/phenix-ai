@@ -1,109 +1,101 @@
-# FBP code-review issue / resolved / evidence ledger
+# FBP issue–resolution–evidence ledger
 
-Updated 2026-11-11. Base review: **8.0/10**. This ledger distinguishes code
-presence from verification: a committed fix is **not** verified until a complete
-CI run on the exact final HEAD passes. No new score is asserted without that.
+Last reconciled: **2026-11-12**, against the verified stacked candidate:
+[PR #1263](https://github.com/matthis-k/phenix-ai/pull/1263) at `72d56e413321b58204280b8b6b1d29d6aa5e3f1a`
+and [PR #1265](https://github.com/matthis-k/phenix-ai/pull/1265) at `fe09a68da755a8a435a2df4927b47db0e3cc73eb`.
+The latter passes [exact-head six-job CI #43197663375](https://github.com/matthis-k/phenix-ai/actions/runs/43197663375);
+the former passes [exact-head CI #43185486539](https://github.com/matthis-k/phenix-ai/actions/runs/43185486539).
+**Both PRs remain unmerged; the original `impl/graph-consolidation-20261110` branch does not contain these fixes.**
+The status applies to the *full stacked candidate*, not to any unmerged individual base.
 
-Branch: `impl/graph-consolidation-20261110`.
-Review categories: H = high-impact runtime; C = concrete functional/security;
-A = architecture/API; Q = quality and evidence. Missing evidence is *open*,
-not an accepted limitation.
+Vocabulary: **Verified** means intended code behavior plus named regressions passes
+the exact-head CI, not that a universal security/progress proof exists;
+**Partial** means the named issue retains material uncovered cases; **Open**
+is not accepted as a solved limitation; **Policy** needs an explicit decision.
+Historical phase documents remain source records, not current status authorities.
 
-| Issue | Resolved? | Evidence / remaining acceptance |
+At this snapshot, **9 verified, 4 partial, 20 open/in progress**.
+This ledger/report update itself is still awaiting exact-head CI; Q8 remains
+in progress until that gate passes.
+
+| Issue | Status | Evidence / remaining acceptance |
 | --- | --- | --- |
-| H1 Shared-session FIFO correlation head blocking | Opt-in implementation; CI pending | `Readiness::CorrelatedAll` selects the earliest per-request packet in bounded queues, deliberately relaxing only cross-request FIFO; default `Readiness::All` remains strict. Regression covers crossed [A,B]/[B,A], request settlement and cancellation. No unbounded lanes; see H1 correlated-mode design/critique. |
-| H2 Callback panic containment | Partial; CI pending | Kernel preparation, activation and host generation-binding callbacks now catch panics into phase-scoped leased errors; `callback_errors.rs` covers active generation preservation. Driver wake registration returns `DriverError::WakeRegistrationPanicked` instead of unwinding and retains the producer. Factories, steps, readiness and polls already contain panics. Host `on_event` and panic-abort remain outside the guarantee. |
-| H3a Inventory lock inversion on producer admission | Code fixed; CI pending | `Kernel::drain` takes a producer out of inventory before polling/admitting and restores it after callback, under a separate whole-drain gate; `eager_readiness_during_drain_may_inspect_unlocked_inventory` and `generation_retirement::blocked_poll_finishes_its_drain_before_publication_retires_the_source` cover both lock and retirement invariants. |
-| H3b Session/drain recursive callback reentrancy | Partial; CI pending | `KernelLockScope` rejects same-thread recursive session access and drain; `KernelHost::publish` now returns typed `LifecycleError::ReentrantDrain` before mutation when called under its own gate. Native regressions preserve active epoch; host Drop and cross-thread callback wait cycles remain open. See revised H3b design/critique. |
-| H4 Full-inventory scheduling scans | No | `runtime/mod.rs::refresh` walks process inventory; need activation-scaled measurements before refactor |
-| H5 Expensive closure analysis | Partial; CI pending | Request-root reachability now uses a one-time `downstream` adjacency index, reducing each traversal from repeated edge scans to O(V+E) over reachable topology. Input-closure scans over queued packets remain; add measured stress and request scaling before marking fully resolved. |
-| H6 No native performance baseline | No | `docs/fbp-measurements.md` records source counts, not throughput/allocations; add benchmarks with reproducible inputs |
-| H7 Request isolation not complete | No | `runtime/request.rs`, FIFO and shared state; need independent request correlation, cancellation and fairness proofs |
-| C1 Cancellation overwrites failure/completion | Code fixed; CI pending | `33c6df726160`, `47e56d76bc03`, `fbp_terminal_transitions.rs`; verify exact-head CI |
-| C2 Replayed frozen obligations duplicate | Code fixed; CI pending | `f67b2df21ae8`, `6472a3452802`, `0800f267e783`, `4ec113e3f21c`, `fbp_obligation_dedup.rs`, transaction replay tests; verify CI |
-| C3 Retired generations remain callable | No — policy blocker | `phenix-kernel/src/host.rs` and `tests/generations.rs`; existing tests **require** archival explicit execution; see `docs/fbp-c3-c4-design-20261111.md`. Do not silently revoke admitted work |
-| C4 Full-network preparation inspection | Code fixed; CI pending | `CandidateContext::bind_import` is scoped, full `inspect_network()` requires exact host grant; `prepare_inspection.rs` tests default denial and exact-contribution non-bleed across 6 grant configurations; portable fixture and detached-code-leases test preserved; see revised Phase 1/2 docs |
-| C5 No built-in watchdog for deferred jobs | Host-supervised implementation; CI pending | Optional `SessionOptions::deferred_timeout`; `overdue_jobs(now)` is a passive typed report, `supervise_deferred(now)` invalidates overdue worker tickets and fails the session without reclaiming external job ownership. The bounded driver checks it; no hidden timers or preemption. New regression uses deterministic injected `Instant`. Host must continue driving/checking. |
-| C6 Live process state not migrated | No | Generation replacement constructs a new network; define migration contract, or explicitly select restart/disposal policy |
-| C7 No general in-process plugin sandbox | No — architectural limit | Native Rust plugins share process privileges; do not claim an FBP capability view is a security sandbox |
-| C8 Code leases retain defeated snapshots | Code fixed; CI pending | `Kernel::build_with_options` uses all snapshots only for temporary preparation, then builds execution leases from selected contribution owners. `code_leases::detached_compiled_network_does_not_pin_defeated_snapshot_revisions` checks defeated revisions release while selected ones remain safe. Explicit escaped preparation exports may retain their own leases. |
-| C9 `state()` is not passive | Revised code; CI pending | `NetworkSession::state(&self)` is a passive snapshot without `refresh()`; it reads pending wake bits without consuming them, preserving the original cross-thread wake assertion. New `fbp_streams` counter regression verifies repeated immutable queries never select readiness. First attempt failed CI 43140435885; revised Phase 1/2 documents the counterexample. |
-| C10 `run_until_complete()` aliases `run_until_idle()` | Code fixed; CI pending | Removed redundant public alias and migrated native examples/tests to `run_until_idle` without execution change; Phase 0–2 in `fbp-c10-driver-api-design-20261112.md` and critique. Final-head CI required. |
-| A1 Replacement-only private nesting | No | `network.rs`, `compose/mod.rs`; exact private composition extension remains unimplemented |
-| A2 Rigid interface identity | No | `interface.rs`, `contract.rs`; design compatibility/projection only with evidence for real use cases |
-| A3 Store coupled into graph-local types | No | `resource.rs`; check boundary against kernel/storage dependency direction |
-| A4 Layered typed authoring | No | `port_keys.rs`, derives and builder; evaluate public concept duplication against real examples |
-| A5 Physical string paths | No | `network.rs` and `port_keys.rs`; typed handles are not universally preserved after compilation |
-| A6 Admission payload validation ergonomics | No | `runtime/mod.rs`; compare runtime path validation with typed checked admission |
-| A7 Unbounded identifier sizes | Code fixed; CI pending | A common 512-byte per-segment bound is validated on graph process names, ports, composition paths, contract identities and kernel contribution owner/ID before composition; `fbp_identifier_limits.rs` checks boundary admission and rejects oversized names. The pre-existing compile depth/work bounds still limit expansion. |
-| Q1 Large responsibility concentrations | No | `network.rs`, `runtime/mod.rs`, `compose/mod.rs`; first establish stable behavioral seams |
-| Q2 Whole-candidate recompilation | No | `Composer` recomposes/recompiles; measure then consider incremental compilation with identity invariants |
-| Q3 Dependency/conflict selection scaling | No | `compose/mod.rs`; stress diamond, skew, and adversarial priority graphs |
-| Q4 No static liveness guarantee | No | Legal cycles; no sound analyzer/progress guarantee yet; avoid treating all stalls as errors |
-| Q5 Concurrency testing not exhaustive | No | Existing deterministic probes cover selected interleavings; expand model checks and lock-order testing |
-| Q6 Diagnostics intentionally minimal | No | `runtime/diagnostics.rs`; add actionable explanations without old wave engine |
-| Q7 Error reporting uneven | No | Mix of string errors and typed errors; audit public errors and preserve causes/leases |
-| Q8 Final reports stale | No | `docs/fbp-report.md` references an old uncommitted baseline; this tracker records newer code but a final exact-head report still must be generated |
+| H1 Shared-session FIFO correlation head blocking | Partial | `Readiness::CorrelatedAll` enables opt-in bounded correlated selection; independent requests can use separate sessions. Default strict FIFO / shared-state fairness remains a distinct design limit. |
+| H2 Callback panic containment | Verified (scoped) | PR #1263 (`72d56e41`), `43185486539`: preparation, activation, host binding, producer wake and host event callback unwind paths return typed errors; `panic=abort` and callback side effects remain outside guarantee. |
+| H3a Inventory lock inversion on producer admission | Verified | Native inventory, drain, and whole-drain retirement regressions pass in exact-head PR #1265 CI `43197663375`; polls/admissions run outside inventory mutex. |
+| H3b Session/drain recursive callback reentrancy | Partial | PRs #1263/#1265: recursion guard lifetime, typed same-thread errors, known cross-thread session/drain cycle, and exclusive driver lease verified. `KernelHost::drop`, external callback synchronizers, direct-drain vs driver ownership remain open. |
+| H4 Full-inventory scheduling scans | Open | `NetworkSession::refresh` scans process inventory and repeats upon finishing a process. Activation-scaled benchmark and controlled optimization not yet accepted. |
+| H5 Expensive closure analysis | Partial | Compiled downstream adjacency removes repeated whole-edge scans, but request closure continues inspecting queued packets; missing measured stress and complexity envelope. |
+| H6 No native performance baseline | Open | `docs/fbp-measurements.md` is a source-size comparison, not a runtime benchmark. Need repeatable throughput / p50/p95 / allocation measurements and environment metadata. |
+| H7 Request isolation not complete | Open | CorrelatedAll and per-request session workaround exist, but multi-request shared-session fairness, cancellation isolation, and policy guarantees not fully proved. |
+| C1 Cancellation overwrites failure/completion | Verified | `fbp_terminal_transitions.rs`; Completed/Failed first-terminal-wins and cancelled Quiescent fixture verified in PR #1263 and #1265 exact-head CI. |
+| C2 Replayed frozen obligations duplicate | Verified | `fbp_obligation_dedup.rs` and replay/transaction regressions; code passes exact-head six-job CI `43197663375`. |
+| C3 Retired generations remain callable | Open — policy decision | Retired generations intentionally retain explicit execution capability; existing tests require this. Define revocation/archival policy without destroying admitted work before changing behavior. |
+| C4 Full-network preparation inspection | Verified | Default-deny `CandidateContext` imported scope and per-contribution full-inspection grant covered by `prepare_inspection.rs`; exact-head CI green. |
+| C5 No built-in watchdog for deferred jobs | Partial — host-supervised | Timeout inspection and supervision APIs exist; they require a driving host and cannot preempt nonyielding delegated work. No autonomous watchdog/service. |
+| C6 Live process state not migrated | Open | New generation constructs a new session; no migration of live process state. Restart/disposal policy needs explicit accepted contract. |
+| C7 No general in-process plugin sandbox | Open — architectural limit | Rust-native in-process plugins share host process privileges. Scoped FBP contribution authority is not a security sandbox. |
+| C8 Code leases retain defeated snapshots | Verified | Selected contribution code leases avoid holding defeated snapshot revisions; detached object lease tests pass exact-head CI. |
+| C9 `state()` is not passive | Verified | `NetworkSession::state(&self)` is a passive immutable snapshot; readiness policy side-effect regression passes exact-head CI. |
+| C10 `run_until_complete()` aliases `run_until_idle()` | Verified | Removed redundant `run_until_complete` alias; all native references use `run_until_idle`; exact-head CI green. |
+| A1 Replacement-only private nesting | Open | No general private composite extension beyond replacement; needs use-case and interface design. |
+| A2 Rigid interface identity | Open | Exact interface identity constrains compatible replacement/projection; must specify safe compatibility before relaxing. |
+| A3 Store coupled into graph-local types | Open | Graph resource/store boundary and coupled local types need a dependency-layer audit, not arbitrary renaming. |
+| A4 Layered typed authoring | Open | Some authoring concepts overlap (`port_keys`, derives, builder). Evaluate consolidation with compiled example equivalence. |
+| A5 Physical string paths | Open | Physical string paths still escape typed handles in compilation and binding APIs. |
+| A6 Admission payload validation ergonomics | Open | Admission validation mixes runtime path/type checks; typed checked admission can improve ergonomics. |
+| A7 Unbounded identifier sizes | Verified | 512-byte per-segment bound on graph and kernel identifiers with boundary tests; exact-head CI green. |
+| Q1 Large responsibility concentrations | Open | `network.rs`, `runtime/mod.rs`, `compose/mod.rs` retain large responsibilities; refactor only after behavioral seams are tested. |
+| Q2 Whole-candidate recompilation | Open | Whole-candidate composition/compilation remains; need measurement before incremental optimization. |
+| Q3 Dependency/conflict selection scaling | Open | Dependency selection lacks systematic stress evidence for skew, diamonds, and adversarial priorities. |
+| Q4 No static liveness guarantee | Open | Cycles remain legal without a sound static progress guarantee; no liveness verifier accepted. |
+| Q5 Concurrency testing not exhaustive | Open — improved evidence | Deterministic kernel concurrency regressions now include cross-thread cycle and driver lease, but there is no exhaustive state-space/lock-order model. |
+| Q6 Diagnostics intentionally minimal | Open | Diagnostics still intentionally minimal; richer actionable deadlock/readiness explanations remain to build. |
+| Q7 Error reporting uneven | Open | Error handling still mixes strings and typed outcomes; code lease/source preservation needs a public API pass. |
+| Q8 Final reports stale | In progress | This branch replaces outdated `fbp-report.md` and ledger with an exact-stack evidence map; must pass its own final-head CI before closing. |
 
-## Current verification gate
+## Acceptance and nonclaims
 
-Most recent C4 code commit: `d00d0bf243fe737dc05f6e4c1fcfb606adf0c237`.
-After this ledger is committed, verify CI **on the resulting HEAD**, not an earlier
-run. A cancelled/superseded job is not a pass. The previous 4ec113e run was
-superseded before its matrix finished.
+- **M0–M3:** primitive/composite component model, native compiler and
+  host-authorized declarative composition substantively implemented.
+- **M4:** persistent runtime and cancellation substantially implemented;
+  H3b lifecycle/host destruction, H4/H6 cost and H7 shared-session fairness open.
+- **M5–M6:** native Kernel/StorageGraph integration, legacy-engine cutover
+  and deterministic agent example substantially implemented.
+- **M7:** **not complete**. No universal concurrent lifecycle proof,
+  benchmark-driven performance acceptance, retirement policy, or final
+  agent-product acceptance. Passing Rust/Nix tests is a gate, not M7 itself.
 
-## Next sequence
+### Evidence gates and provenance
 
-1. Close C1, C2, C4 only after exact-head CI and targeted diff review.
-2. C3 remains blocked on an explicit retirement policy; no silent ABI/behavior change.
-3. Work next on H1/H3 high-impact correlation and reentrancy, then C5/C9/C10 and
-   measurement gates. Every new abstraction follows Phase 0–4 of the design protocol.
+| Scope | Commit | Evidence |
+| --- | --- | --- |
+| Baseline native FBP branch | `89e00d06498979a2f231dfc8ca780eba44140d27` | Historic branch tip, *not* the terminal/driver fix |
+| H2, same-thread H3b and terminal driver | `72d56e413321b58204280b8b6b1d29d6aa5e3f1a` | [CI 43185486539](https://github.com/matthis-k/phenix-ai/actions/runs/43185486539), all six jobs green |
+| Cross-thread session/drain cycle, single-driver lease | `fe09a68da755a8a435a2df4927b47db0e3cc73eb` | [CI 43197663375](https://github.com/matthis-k/phenix-ai/actions/runs/43197663375), all six jobs green |
+| Refreshed ledger/report and new benchmark harness | This branch | Requires a distinct six-job CI on **its** final head |
 
-## H2 focused diff review — plugin callback panics
+For H1 strict FIFO vs `CorrelatedAll`, distinguish *opt-in matching*
+from default FIFO behavior. For C3, do not silently revoke archival work
+in the name of a security fix. For C7, in-process native code has the
+host's OS privileges. For H3b, the specific session/drain two-thread cycle
+is handled; unrelated user locks and `KernelHost::drop` are not.
 
-Scope is kernel-owned plugin `Contribution::prepare` and `CandidateArtifacts::activate`,
-both invoked outside the graph runtime. Their panics previously unwound through
-`Kernel::build_with_options` or `Kernel::start`, unlike process factories,
-steps, readiness, dispatch and polling, which already catch panics.
+### Next independent iterations
 
-The fix reuses the existing `ResolutionError::Composition` and
-`StartError::Activation` error paths and the exact snapshot code lease,
-with a stable non-reflective error message. It does not catch or conceal typed
-callback errors, fabricate rollback for external side effects, or reenter a
-partially started producer inventory. Caught panic payloads are dropped while
-the owning plugin code lease remains held.
+1. Finish Q8 refreshed report verification, introduce H6 reproducible
+   per-event/per-topology performance harness; only promote H6 when
+   actual measured results and environment are recorded.
+2. Define `KernelHost::drop` self-reentrancy and direct drain vs driver
+   ownership policy, then test the chosen semantics (H3b/Q5).
+3. Reproduce H7 shared-session starvation/fairness patterns with a
+   bounded reference model, separate from per-request session workaround.
+4. Establish H4 scheduling complexity/throughput baseline before altering
+   `refresh()`. Then address H5 residual closure scans and Q2/Q3.
+5. Obtain explicit decisions on C3/C6/C7, and review A1–A6/Q1/Q4/Q6/Q7
+   against real agent-loop use cases.
 
-Regression: a published old generation survives both failure modes; exact
-contribution and error phase are reported. Producer disposal and startup retry
-remain separate existing tests. `Producer::set_waker` intentionally continues
-to resume panic and is not classified as fixed by H2. Final-head CI is required.
-
-## H1/H3 evidence correction
-
-The original H3 row overstated a stale producer-inventory lock defect. Source audit
-on 2026-11-12 confirmed `Kernel::drain` already extracts the producer, releases
-the inventory mutex, polls or admits under the separate whole-drain gate,
-and restores the slot. Whole-drain completion before publication is tested and
-must not be weakened by a superficial per-poll unlock fix.
-
-H1 has a deliberate, tested workaround for primary independent agent requests:
-one bounded `NetworkSession` per request. The crossed-session test now also
-shares an explicit `Arc<AtomicUsize>` through distinct process instances,
-proving global application state can coexist with isolation. This **does not**
-address crossed FIFO heads within one physical shared process and does not
-permit unbounded session admission; retain H1 as open for that use case.
-
-## H2 wake-registration API revision — Phase 4 verification scope
-
-Unlike a plugin's `Producer::poll`, `Producer::set_waker` previously caught a
-panic only to resume unwinding through the public `run_until` driver. The
-new typed `WakeRegistrationPanicked { producer }` reports the exact owner
-without claiming the plugin's partially mutated state is safe for retry. The
-producer is put back into its slot before error propagation. The whole-drain
-gate remains held for registration and is automatically released on return.
-A native regression tests the typed outcome, retained producer and exact
-callback-error propagation from a subsequent poll.
-
-See `docs/fbp-wake-panic-design-20261112.md` and
-`docs/fbp-wake-panic-critique-20261112.md`. Final exact-head CI and diff
-review must still pass before the row is marked verified.
+The earlier file was dated 2026-11-11 and contained many
+`CI pending` entries despite later green exact-head runs. Those entries
+are superseded by this reconciled table; do not carry forward its obsolete
+verification text.
