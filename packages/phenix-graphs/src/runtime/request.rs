@@ -355,15 +355,15 @@ impl NetworkSession {
             return Err(RequestError::Stale);
         }
         let queue = *self.captures.get(name).ok_or(RequestError::UnknownOutput)?;
-        let Some(offset) = self.transport.queues()[queue]
+        let Some((offset, packet)) = self.transport.queues()[queue]
             .packets()
-            .position(|packet| packet.metadata().and_then(|m| m.request()) == Some(id))
+            .enumerate()
+            .find(|(_, packet)| packet.metadata().and_then(|m| m.request()) == Some(id))
         else {
             return Ok(None);
         };
         // Check the exact original packet before any ownership transfer. A
         // malformed matching capture must not be removed or skipped.
-        let packet = self.transport.queues()[queue].packets().nth(offset).unwrap();
         self.validate_capture(id, name, packet)?;
         let packet = self.transport.pop_at(queue, offset).unwrap();
         self.observe_capture(name, &packet);
