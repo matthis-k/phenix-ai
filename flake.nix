@@ -107,9 +107,9 @@
         name: packages: flags:
         mkRust {
           inherit name packages;
-          command = "cargo test --locked --offline ${
+          command = "timeout --signal=TERM --kill-after=15s 480s cargo test --locked --offline ${
             lib.concatMapStringsSep " " (p: "-p ${p}") packages
-          } ${flags}";
+          } ${flags} -- --nocapture";
         };
       allPackages = map (path: manifests.${path}.package.name) members;
       integrationPackages = lib.filter (
