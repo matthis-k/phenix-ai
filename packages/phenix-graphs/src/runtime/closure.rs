@@ -98,9 +98,15 @@ impl NetworkSession {
         // Request roots register their entire downstream reachability. An
         // upstream process outside this scope cannot own or publish packets
         // bearing this request ID. Host ingress queues remain checked.
-        let relevant = |queue: usize| match &self.endpoints[queue].0 {
-            QueueEndpoint::Process { index, .. } => scope.reachable.contains(index),
-            QueueEndpoint::Input(_) | QueueEndpoint::Capture(_) => true,
+        // A request reaching the entire compiled graph has nothing to prune.
+        // Avoid repeated tree lookups on long, wholly reachable closure chains.
+        let whole_graph = scope.reachable.len() == self.processes.len();
+        let relevant = |queue: usize| {
+            whole_graph
+                || match &self.endpoints[queue].0 {
+                    QueueEndpoint::Process { index, .. } => scope.reachable.contains(index),
+                    QueueEndpoint::Input(_) | QueueEndpoint::Capture(_) => true,
+                }
         };
         let queues = &self.processes[index].inputs[port].queues;
         if queues
@@ -113,7 +119,7 @@ impl NetworkSession {
         let mut stack = vec![];
         for queue in queues {
             if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
-                if scope.reachable.contains(index) {
+                if whole_graph || scope.reachable.contains(index) {
                     stack.push(*index);
                 }
             }
