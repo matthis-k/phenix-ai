@@ -32,3 +32,15 @@ executor or mutex type is needed.
 The existing `Kernel::drain` returns only a Vec and intentionally panics on
 same-thread recursion, which is already contained at producer callback
 boundaries. This change does not claim to solve cross-thread lock cycles.
+
+## Follow-up discovery — guard lifetime defect
+
+During the Phase 4 source audit, `KernelLockScope::enter` itself was found to
+use `bool::then_some(Self(identity))`. `then_some` eagerly evaluates and drops
+the guard on a rejected entry; its `Drop` erroneously removes the still-active
+outer lock marker, so subsequent recursive access can block on a real mutex.
+
+Replace it with lazy `bool::then(|| Self(identity))`. This changes no public
+types or intended policies. A deterministic unit test repeats the failed
+entry before dropping the outer scope, then confirms fresh entry succeeds.
+The existing recursive session test is also re-exercised.

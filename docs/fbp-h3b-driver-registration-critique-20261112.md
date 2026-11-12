@@ -26,3 +26,15 @@ mutex; that distinction is essential.
 The caller may still need an explicit shutdown for a successful run to end.
 The test supplies shutdown before registration to exercise the registration
 path without waiting for events.
+
+## Follow-up adversarial check — eager guard construction
+
+`bool::then_some` is not an interchangeable spelling for `bool::then`
+when `T: Drop`. The prior code removed a live recursion sentinel on
+failure. A direct repeated-entry regression catches the defect without
+attempting a potentially hanging mutex lock.
+
+The lazy constructor must run only after a successful insertion. Guard
+identity remains keyed to the exact mutex address, and outer `Drop`
+remains the sole owner of marker removal. This fixes same-thread sentinel
+lifetime, not cross-thread deadlock prevention.

@@ -30,7 +30,7 @@ impl KernelLockScope {
         let identity = lock as *const Mutex<T> as usize;
         ACTIVE_KERNEL_LOCKS
             .with(|active| active.borrow_mut().insert(identity))
-            .then_some(Self(identity))
+            .then(|| Self(identity))
     }
 }
 impl Drop for KernelLockScope {
@@ -1327,6 +1327,19 @@ impl Kernel {
 mod tests {
     use super::*;
     use phenix_graph::process::LocalProcessDispatcher;
+
+    #[test]
+    fn rejected_recursive_entry_retains_outer_kernel_lock_marker() {
+        let lock = Mutex::new(());
+        let outer = KernelLockScope::enter(&lock).unwrap();
+        assert!(KernelLockScope::enter(&lock).is_none());
+        // A failed second entry must not drop a temporary guard that removes
+        // the still-active outer marker.
+        assert!(KernelLockScope::enter(&lock).is_none());
+        drop(outer);
+        let next = KernelLockScope::enter(&lock).unwrap();
+        drop(next);
+    }
 
     #[test]
     fn recursive_session_calls_fail_fast_without_discarding_input_ownership() {
