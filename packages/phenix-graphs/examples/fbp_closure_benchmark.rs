@@ -66,7 +66,6 @@ fn compiled(mode: &str, breadth: usize, hits: Arc<AtomicUsize>) -> CompiledNetwo
         )
         .unwrap();
 
-    let mut options = Vec::new();
     if mode == "fan-in" {
         let captured = hits.clone();
         let sink = builder
@@ -83,7 +82,6 @@ fn compiled(mode: &str, breadth: usize, hits: Arc<AtomicUsize>) -> CompiledNetwo
                 NonZeroUsize::new(1).unwrap(),
             )
             .unwrap();
-        options.push("sink".to_owned());
         // Each unrelated producer is permanently open to independent host
         // ingress but has no request-R root. They share the optional port.
         for index in 0..breadth {
@@ -127,15 +125,10 @@ fn compiled(mode: &str, breadth: usize, hits: Arc<AtomicUsize>) -> CompiledNetwo
                 )
                 .unwrap();
             upstream = node.wire_output::<u64>("out").unwrap();
-            options.push(name);
         }
     }
 
-    let network = builder.build().unwrap().compile().unwrap();
-    // The actual all-optional readiness declarations are applied to each
-    // compiled node at SessionOptions creation time, not to the graph shape.
-    black_box(options);
-    network
+    builder.build().unwrap().compile().unwrap()
 }
 
 fn measure(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64) {
@@ -203,8 +196,7 @@ fn measure(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64
     );
     times.sort_by(|a, b| a.total_cmp(b));
     let median = times[(iterations - 1) / 2];
-    let p95 = times[(((iterations - 1) as f64) * 0.95).round() as usize];
-    (compile_ms, start_ms, mean, median.max(p95 * 0.0))
+    (compile_ms, start_ms, mean, median)
 }
 
 fn main() {
