@@ -21,7 +21,7 @@ use std::{
 // Fail fast only on same-thread recursive access to an identical kernel mutex.
 // Cross-thread contention still follows std::sync::Mutex's blocking semantics.
 thread_local! {
-    static ACTIVE_KERNEL_LOCKS: RefCell<BTreeSet<usize>> = RefCell::new(BTreeSet::new());
+    static ACTIVE_KERNEL_LOCKS: RefCell<BTreeSet<usize>> = const { RefCell::new(BTreeSet::new()) };
 }
 
 struct KernelLockScope(usize);
