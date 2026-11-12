@@ -453,6 +453,7 @@ impl std::error::Error for ProducerError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DriverError {
     NotStarted,
+    ReentrantSession,
     UnsupportedWake {
         producer: Key,
     },
@@ -469,6 +470,7 @@ impl std::fmt::Display for DriverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotStarted => f.write_str("kernel not started"),
+            Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -1198,7 +1200,7 @@ impl Kernel {
         }
         let (mut listener, notifier) = self
             .with_session(|session| (session.wake_listener(), session.notifier()))
-            .unwrap();
+            .map_err(|_| DriverError::ReentrantSession)?;
         *wake.0.notifier.lock().unwrap() = Some(notifier);
         let registration_scope =
             KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
@@ -1308,6 +1310,12 @@ mod tests {
                 assert_eq!(
                     kernel.run_steps(1).unwrap_err(),
                     "reentrant kernel session access"
+                );
+                assert_eq!(
+                    kernel
+                        .run_until(&WakeHandle::default(), |_| {})
+                        .unwrap_err(),
+                    DriverError::ReentrantSession
                 );
                 let error = kernel.inject("missing", Value::local(71_i64)).unwrap_err();
                 assert_eq!(

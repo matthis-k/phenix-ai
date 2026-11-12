@@ -41,6 +41,9 @@ independent. It is not a global scheduler, queue, or second lock.
 Error surface:
 - `Kernel::with_session` and `run_steps` already return `Result<_,String>`;
   return `Err("reentrant kernel session access")`.
+- `Kernel::run_until` returns `DriverError`; return an explicit
+  `DriverError::ReentrantSession` rather than unwrapping a failed internal
+  `with_session` and panicking.
 - `Kernel::inject` returns the original `Value` in its existing
   `InjectionError`; add the exact `ConnectionError::Reentrant` reason.
 - `Kernel::drain` returns a vector with no error channel; **fail fast with
