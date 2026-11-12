@@ -1,7 +1,9 @@
 //! Bounded FIFO transport and retained per-emission atomic fanout.
 //!
-//! These types own payloads, not readiness history. A policy may inspect heads
-//! but may not skip earlier packets or create an auxiliary payload buffer.
+//! These types own payloads, not readiness history. Strict readiness policies
+//! inspect only queue heads. The explicit CorrelatedAll policy may extract an
+//! authenticated request behind another request while preserving per-request
+//! order and the same fixed physical queue capacity; no extra buffer is owned.
 
 pub use crate::value::Leased;
 use crate::{GraphOrigin, TypeIdentity, Value};

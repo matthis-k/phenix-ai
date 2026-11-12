@@ -341,8 +341,8 @@ impl NetworkSession {
             if let Some(queue) = queue {
                 let packet = self.transport.pop_at(queue.0, queue.1).unwrap();
                 inputs.insert(p.name.clone(), packet.into_value());
-                p.cursor = (p.queues.iter().position(|q| *q == queue.0).unwrap() + 1)
-                    % p.queues.len();
+                p.cursor =
+                    (p.queues.iter().position(|q| *q == queue.0).unwrap() + 1) % p.queues.len();
             } else {
                 if global_eos {
                     p.eos_delivered = true;

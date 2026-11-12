@@ -911,27 +911,42 @@ fn correlated_all_crossed_heads_settle_in_one_bounded_shared_session() {
     let mut session = correlated_join_with(Readiness::CorrelatedAll);
     let a = session.begin_request(Some("out")).unwrap();
     let b = session.begin_request(Some("out")).unwrap();
-    for (request, port, value) in [
-        (a, "a", 1_i64),
-        (b, "b", 20),
-        (b, "a", 10),
-        (a, "b", 2),
-    ] {
-        session.inject_request(request, port, Value::of(value)).unwrap();
+    for (request, port, value) in [(a, "a", 1_i64), (b, "b", 20), (b, "a", 10), (a, "b", 2)] {
+        session
+            .inject_request(request, port, Value::of(value))
+            .unwrap();
     }
     session.close_request(a).unwrap();
     session.close_request(b).unwrap();
     assert_eq!(session.run_until_idle(100).state, SessionState::Waiting);
     assert_eq!(
-        session.take_request_output(a, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        session
+            .take_request_output(a, "out")
+            .unwrap()
+            .unwrap()
+            .value()
+            .get::<i64>()
+            .unwrap(),
         3
     );
     assert_eq!(
-        session.take_request_output(b, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        session
+            .take_request_output(b, "out")
+            .unwrap()
+            .unwrap()
+            .value()
+            .get::<i64>()
+            .unwrap(),
         30
     );
-    assert_eq!(session.request_status(a).unwrap(), RequestStatus::Settled { captures: 1 });
-    assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 1 });
+    assert_eq!(
+        session.request_status(a).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert_eq!(
+        session.request_status(b).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
     assert!(session.correlation_blocks().is_empty());
 }
 
@@ -953,10 +968,19 @@ fn correlated_all_cancelled_request_releases_only_its_own_packets() {
     assert_eq!(session.request_status(a).unwrap(), RequestStatus::Cancelled);
     session.run_until_idle(100);
     assert_eq!(
-        session.take_request_output(b, "out").unwrap().unwrap().value().get::<i64>().unwrap(),
+        session
+            .take_request_output(b, "out")
+            .unwrap()
+            .unwrap()
+            .value()
+            .get::<i64>()
+            .unwrap(),
         30
     );
-    assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 1 });
+    assert_eq!(
+        session.request_status(b).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
 }
 
 #[test]
