@@ -18,6 +18,7 @@ use crate::{GraphOrigin, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::Ordering};
+use std::time::{Duration, Instant};
 mod closure;
 mod diagnostics;
 mod readiness;
@@ -61,6 +62,10 @@ pub struct SessionOptions {
     pub resources: BTreeMap<String, Vec<ResourceGrant>>,
     pub max_requests: NonZeroUsize,
     pub request_failure_policy: RequestFailurePolicy,
+    /// Optional host-supervised age limit for outstanding owned jobs.
+    /// No background timer exists: a driver or explicit supervise_deferred
+    /// call checks this bound. Late completions return StaleCompletion.
+    pub deferred_timeout: Option<Duration>,
     /// Disable for request-driven source starts; only compiled sources are eligible.
     pub auto_start_sources: bool,
     pub dispatcher: Arc<dyn ProcessDispatcher>,
@@ -77,6 +82,7 @@ impl std::fmt::Debug for SessionOptions {
             .field("resources", &self.resources)
             .field("max_requests", &self.max_requests)
             .field("request_failure_policy", &self.request_failure_policy)
+            .field("deferred_timeout", &self.deferred_timeout)
             .finish_non_exhaustive()
     }
 }
@@ -89,6 +95,7 @@ impl Default for SessionOptions {
             resources: BTreeMap::new(),
             max_requests: NonZeroUsize::new(64).unwrap(),
             request_failure_policy: RequestFailurePolicy::FailSession,
+            deferred_timeout: None,
             auto_start_sources: true,
             dispatcher: Arc::new(LocalProcessDispatcher),
             execution_guard: None,
@@ -171,6 +178,13 @@ pub struct QueueWait {
 }
 
 #[derive(Clone, Debug)]
+/// One outstanding owned worker job beyond its configured age limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverdueJob {
+    pub process: usize,
+    pub ticket: StepTicket,
+}
+
 pub struct ActivationMetadata {
     pub session: u64,
     pub generation: u64,
@@ -229,6 +243,8 @@ pub struct NetworkSession {
     next_request: u64,
     max_requests: usize,
     request_failure_policy: RequestFailurePolicy,
+    deferred_timeout: Option<Duration>,
+    dispatched_at: BTreeMap<usize, Instant>,
     requests: BTreeMap<RequestId, request::RequestScope>,
     signal: Arc<WakeSignal>,
     dispatcher: Arc<dyn ProcessDispatcher>,
@@ -449,6 +465,8 @@ impl NetworkSession {
             next_request: 0,
             max_requests: options.max_requests.get(),
             request_failure_policy: options.request_failure_policy,
+            deferred_timeout: options.deferred_timeout,
+            dispatched_at: BTreeMap::new(),
             requests: BTreeMap::new(),
             signal: WakeSignal::new(),
             dispatcher: options.dispatcher,
@@ -728,9 +746,49 @@ impl NetworkSession {
         }
     }
 
+    /// Passive inspection of outstanding jobs whose configured age limit
+    /// elapsed. Never mutates a job, invokes a worker or reads wall-clock time.
+    pub fn overdue_jobs(&self, now: Instant) -> Vec<OverdueJob> {
+        let Some(timeout) = self.deferred_timeout else {
+            return Vec::new();
+        };
+        if self.terminal.is_some() {
+            return Vec::new();
+        }
+        self.dispatched_at
+            .iter()
+            .filter(|(_, admitted)| now.saturating_duration_since(**admitted) >= timeout)
+            .filter_map(|(index, _)| {
+                self.processes[*index]
+                    .handoff
+                    .outstanding()
+                    .map(|ticket| OverdueJob {
+                        process: *index,
+                        ticket,
+                    })
+            })
+            .collect()
+    }
+
+    /// Host-driven watchdog. Failing a session invalidates outstanding
+    /// tickets but cannot revoke worker ownership or undo external effects.
+    pub fn supervise_deferred(&mut self, now: Instant) -> Vec<OverdueJob> {
+        let overdue = self.overdue_jobs(now);
+        if let Some(first) = overdue.first() {
+            self.fail(format!(
+                "deferred job timeout for process {} at activation {} step {}",
+                first.process,
+                first.ticket.activation(),
+                first.ticket.sequence()
+            ));
+        }
+        overdue
+    }
+
     /// Ownership stays in the handoff. The driver may run jobs on other threads.
     /// Publication retries happen here, never by re-running a completed step.
     pub fn next_job(&mut self) -> Option<(usize, ActivationJob)> {
+        self.supervise_deferred(Instant::now());
         self.refresh();
         while let Some(index) = self.ready.pop_front() {
             self.processes[index].queued = false;
@@ -744,6 +802,9 @@ impl NetworkSession {
             }
             let mut job = self.processes[index].handoff.next_job().unwrap();
             let ticket = job.ticket();
+            if self.deferred_timeout.is_some() {
+                self.dispatched_at.insert(index, Instant::now());
+            }
             job = job.with_metadata(ActivationMetadata {
                 session: self.session_id,
                 generation: self.generation,
@@ -772,6 +833,7 @@ impl NetworkSession {
             return Err((HandoffError::ForeignCompletion, Box::new(completion)));
         };
         let result = p.handoff.complete(completion)?;
+        self.dispatched_at.remove(&index);
         self.last_step = Some(ActivationMetadata {
             session: self.session_id,
             generation: self.generation,
@@ -945,6 +1007,7 @@ impl NetworkSession {
             return Err((HandoffError::ForeignCompletion, job));
         };
         p.handoff.reject(job)?;
+        self.dispatched_at.remove(&index);
         self.refresh();
         Ok(())
     }
@@ -1003,6 +1066,7 @@ impl NetworkSession {
         self.terminal = Some(SessionState::Failed);
     }
     fn stop_processes(&mut self) {
+        self.dispatched_at.clear();
         for p in &mut self.processes {
             let ticket = p.handoff.cancel();
             if let Some(request) = p.request
@@ -1109,6 +1173,7 @@ impl NetworkSession {
     /// Both drivers stop at quiescence or external backpressure. Neither spins
     /// waiting for an ingress, capture consumer, worker completion, or wake.
     pub fn run_until_idle(&mut self, budget: usize) -> RunReport {
+        self.supervise_deferred(Instant::now());
         let before = self.publications;
         let mut steps = 0;
         while steps < budget {
@@ -1145,6 +1210,7 @@ impl NetworkSession {
                 }
             }
         }
+        self.supervise_deferred(Instant::now());
         let state = self.state();
         RunReport {
             state,

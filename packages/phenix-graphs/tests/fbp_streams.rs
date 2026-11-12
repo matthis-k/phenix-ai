@@ -133,6 +133,37 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
 }
 
 #[test]
+fn deferred_job_supervision_invalidates_ticket_without_reclaiming_owned_process() {
+    use phenix_graph::process::HandoffError;
+    use std::time::{Duration, Instant};
+
+    let compiled = counter(Arc::new(AtomicUsize::new(0)));
+    let mut config = options();
+    config.deferred_timeout = Some(Duration::from_secs(1));
+    let mut session = compiled.start_with_options(config);
+    session.inject("input", Value::of(7_i64)).unwrap();
+    let (_, job) = session.next_job().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let overdue = session.overdue_jobs(deadline);
+    assert_eq!(overdue.len(), 1);
+    assert_eq!(overdue[0].ticket, job.ticket());
+    assert_eq!(session.state(), SessionState::Waiting);
+    assert_eq!(session.supervise_deferred(deadline), overdue);
+    assert_eq!(session.state(), SessionState::Failed);
+    assert!(session.failure().unwrap().contains("deferred job timeout"));
+    assert!(session.overdue_jobs(deadline).is_empty());
+    let (reason, _returned) = session.complete_job(job.run()).unwrap_err();
+    assert_eq!(reason, HandoffError::StaleCompletion);
+
+    let mut unrestricted = compiled.start();
+    unrestricted.inject("input", Value::of(9_i64)).unwrap();
+    let (index, job) = unrestricted.next_job().unwrap();
+    assert!(unrestricted.overdue_jobs(deadline).is_empty());
+    unrestricted.complete(index, job.run()).unwrap();
+    assert_ne!(unrestricted.state(), SessionState::Failed);
+}
+
+#[test]
 fn persistent_injection_capacity_recovery_and_independent_sessions() {
     let compiled = counter(Arc::new(AtomicUsize::new(0)));
     let mut a = compiled.start_with_options(options());
