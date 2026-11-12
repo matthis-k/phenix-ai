@@ -1371,7 +1371,7 @@ mod tests {
                     error.reason,
                     phenix_graph::connection::ConnectionError::Reentrant
                 );
-                assert_eq!(error.value.get::<i64>().unwrap(), 71);
+                assert_eq!(*error.value.borrow::<i64>().unwrap(), 71);
                 independent.with_session(|_| ()).unwrap();
             })
             .unwrap();
