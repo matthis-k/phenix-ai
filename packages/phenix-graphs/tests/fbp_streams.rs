@@ -3653,9 +3653,10 @@ fn idle_input_prefilter_preserves_eos_and_custom_policy_rechecks() {
 
     let calls = Arc::new(AtomicUsize::new(0));
     let mut options = SessionOptions::default();
-    options
-        .readiness
-        .insert("idle".into(), Readiness::Custom(Arc::new(CountCalls(calls.clone()))));
+    options.readiness.insert(
+        "idle".into(),
+        Readiness::Custom(Arc::new(CountCalls(calls.clone()))),
+    );
     let mut custom = compiled.start_with_options(options);
     let before = calls.load(Ordering::SeqCst);
     let report = custom.run_until_idle(5);
