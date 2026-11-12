@@ -1,0 +1,16 @@
+# H5 queue index — independent Phase 2 adversarial critique
+
+Date: 2026-11-12; review subject: `fbp-h5-request-queue-index-design-20261112.md`.
+
+1. **Single owner:** Never expose mutable packets or index to callers. The only direct queue packet mutation outside `ConnectionQueue` is `ConnectionSet::commit` and `discard_request`; redirect both to methods that keep counts in sync. A second session-global map would be a maintenance trap.
+2. **Transactional atomicity:** In `ConnectionSet::commit`, validation of *all* destinations, including writer/reader closure, type and Full precedence, must occur before the first indexed enqueue. Any failure must leave all maps and queues untouched, with prepared fanout retained for retry. Do not re-run adapters.
+3. **Boundedness and count >1:** Multiple packets belonging to one request can inhabit a queue, including overlapping in-flight scope packets and duplicate producer activations; removing one must not erase membership. Remove the key only when its count reaches zero.
+4. **Middle removal and cancellation:** `take_request_output` calls `pop_at` on a nonhead packet. This must decrement only that packet's request; remaining packets retain FIFO. `discard_request` must leave foreign/unscoped packets unchanged and report exact disposed counts; ordinary `pop` still observes captures separately. `close_reader` and global session `cancel` must clear counts while preserving explicit returned disposal.
+5. **No external request IDs:** Captured `RequestId` includes session and generation. Indexing uses full identity and never application IDs. Count cannot be used to grant access; existing `check_request` is still mandatory.
+6. **Origin and metadata:** Pre-commit capture stamping alters the capture *name* only, not the owning `RequestId`. Index must derive from final packet metadata after preparation but before publish and must not mutate packet identity or value.
+7. **Performance/nonclaims:** Maintaining a `BTreeMap` costs O(log R) per enqueued/dequeued *scoped* packet and may regress tiny queue workloads. No wall-time speedup is measured by code review or CI; optional benchmark needs controlled workload and hardware. Avoid the false claim that upstream DFS is gone.
+8. **Static graph scope:** Keep request closure DFS/visited sets, dynamic readiness policies, user callbacks and EOS semantics unchanged. Do not replace correlated position selection with an index-only presence check.
+9. **Failure and panic:** Callback panics and cancellation after partial work must dispose through existing queue APIs, keeping counts valid. Index allocation failures are ordinary process OOM conditions, outside unwind containment.
+10. **Tests:** Exercise direct queue operations, duplicate requests, foreign ids, middle extraction, atomic Full retry, invalid destination, cancel/discard, plus high-level shared-session closure and cancellation regression corpus. Prefer deterministic assertions over sleep timing.
+
+Disposition: implement only the bounded per-queue count as an internal transport optimization. Revisit design if it adds session-level caches, new public APIs, or changes scheduling semantics. Phase 4 diff review and exact-head CI are mandatory; leave H5 partial absent measured improvement.
