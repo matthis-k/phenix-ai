@@ -31,3 +31,27 @@ readiness semantics must be demonstrably unchanged by all existing tests,
 and the benchmark must show material relative benefit. An isolated
 readiness side-effect or EOS regression blocks acceptance, irrespective
 of the benchmark numbers.
+
+## Phase 4 counterexample — readiness without a candidate
+
+Initial dedicated integration regression incorrectly assumed `Custom.select`
+must execute again when **every queue is empty and open**, and asserted a
+callback-count increase on `run_until_idle`. In this runtime, the native
+readiness engine invokes a custom policy only for an actual candidate
+packet or an outstanding request-closure obligation. An empty graph has
+neither; the callback is not owed a pass.
+
+CI [#43203931274](https://github.com/matthis-k/phenix-ai/actions/runs/43203931274)
+caught that mistaken test oracle, not a production scheduler regression.
+Revised fixture first injects one typed packet while `Custom.select`
+intentionally returns no ports. It then enables the policy through a
+shared atomic flag, without another admission, and checks that the
+next driver pass selects and consumes the *same retained packet*.
+The separate default-policy fixture still proves open-empty quiescence
+and closed-input EOS. No readiness callback was made mandatory on an
+empty graph, and no application-facing semantics were altered.
+
+Exact-head CI and benchmark after this correction are the final
+acceptance gates. Do not conceal genuine incomplete work by merely
+removing the assertion; the test must positively prove a legal
+candidate-dependent recheck.
