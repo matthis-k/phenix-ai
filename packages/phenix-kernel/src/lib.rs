@@ -1986,4 +1986,197 @@ mod tests {
         assert!(kernel.drain(3).is_empty());
         assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
     }
+
+    #[test]
+    fn rejected_second_driver_keeps_first_lease_active() {
+        let active = AtomicBool::new(false);
+        let first = DriverScope::enter(&active).unwrap();
+        assert!(DriverScope::enter(&active).is_none());
+        // A rejected attempt must not construct a guard whose Drop releases
+        // the first driver's still-active lease.
+        assert!(DriverScope::enter(&active).is_none());
+        drop(first);
+        let next = DriverScope::enter(&active).unwrap();
+        drop(next);
+    }
+
+    #[test]
+    fn producer_callback_never_waits_for_session_held_by_another_thread() {
+        use std::sync::{Weak, mpsc};
+        use std::time::Duration;
+
+        struct CrossThread {
+            kernel: Weak<Kernel>,
+            entered: mpsc::Sender<()>,
+            proceed: mpsc::Receiver<()>,
+        }
+        impl Producer for CrossThread {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.entered.send(()).unwrap();
+                self.proceed.recv_timeout(Duration::from_secs(2)).unwrap();
+                let kernel = self.kernel.upgrade().unwrap();
+                let busy = "kernel session busy during producer callback";
+                assert_eq!(kernel.with_session(|_| ()).unwrap_err(), busy);
+                assert_eq!(kernel.run_steps(1).unwrap_err(), busy);
+                let rejected = kernel.inject("input", Value::local(13_i64)).unwrap_err();
+                assert_eq!(
+                    rejected.reason,
+                    phenix_graph::connection::ConnectionError::WouldBlock
+                );
+                assert_eq!(*rejected.value.borrow::<i64>().unwrap(), 13);
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("cross-thread-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        let kernel = Arc::new(kernel);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (proceed_tx, proceed_rx) = mpsc::channel();
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "cross-thread"),
+            Some(Box::new(CrossThread {
+                kernel: Arc::downgrade(&kernel),
+                entered: entered_tx,
+                proceed: proceed_rx,
+            })),
+            None,
+        ));
+        let wake = WakeHandle::default();
+        wake.shutdown(); // Registration still happens; the driver then exits.
+        let driver_kernel = kernel.clone();
+        let driver = std::thread::spawn(move || driver_kernel.run_until(&wake, |_| {}));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // A owns session and waits for the producer drain mutex. B owns drain
+        // and attempts session APIs. With blocking locks, A and B deadlock.
+        kernel
+            .with_session(|_| {
+                proceed_tx.send(()).unwrap();
+                assert!(kernel.drain(0).is_empty());
+            })
+            .unwrap();
+        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert_eq!(
+            kernel.with_session(|session| session.state()).unwrap(),
+            SessionState::Quiescent
+        );
+    }
+
+    #[test]
+    fn uncontended_producer_callback_can_still_inspect_session() {
+        use std::sync::Weak;
+
+        struct Inspect(Weak<Kernel>);
+        impl Producer for Inspect {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                let kernel = self.0.upgrade().unwrap();
+                assert_eq!(
+                    kernel.with_session(|session| session.state()).unwrap(),
+                    SessionState::Quiescent
+                );
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("uncontended-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        let kernel = Arc::new(kernel);
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "inspect"),
+            Some(Box::new(Inspect(Arc::downgrade(&kernel)))),
+            None,
+        ));
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+    }
+
+    #[test]
+    fn competing_drivers_reject_before_wake_registration_and_release_on_exit() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct Paused {
+            entered: mpsc::Sender<()>,
+            proceed: mpsc::Receiver<()>,
+            first: bool,
+        }
+        impl Producer for Paused {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                if self.first {
+                    self.first = false;
+                    self.entered.send(()).unwrap();
+                    self.proceed.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("exclusive-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        let kernel = Arc::new(kernel);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (proceed_tx, proceed_rx) = mpsc::channel();
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "paused"),
+            Some(Box::new(Paused {
+                entered: entered_tx,
+                proceed: proceed_rx,
+                first: true,
+            })),
+            None,
+        ));
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        let first_kernel = kernel.clone();
+        let first = std::thread::spawn(move || first_kernel.run_until(&wake, |_| {}));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let competing = WakeHandle::default();
+        assert_eq!(
+            kernel.run_until(&competing, |_| {}),
+            Err(DriverError::AlreadyRunning)
+        );
+        assert!(competing.0.notifier.lock().unwrap().is_none());
+        proceed_tx.send(()).unwrap();
+        assert_eq!(first.join().unwrap(), Ok(()));
+
+        let next = WakeHandle::default();
+        next.shutdown();
+        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+    }
+
+    #[test]
+    fn driver_returns_when_a_live_network_completes_during_execution() {
+        let mut session = live_ingress_session();
+        session.inject("input", Value::local(3_i64)).unwrap();
+        session.close_input("input").unwrap();
+        assert_ne!(session.state(), SessionState::Completed);
+
+        let mut kernel =
+            Kernel::build("drain-to-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(session);
+        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        assert_eq!(
+            kernel.with_session(|session| session.state()).unwrap(),
+            SessionState::Completed
+        );
+    }
 }
