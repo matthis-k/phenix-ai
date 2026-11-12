@@ -1007,7 +1007,7 @@ fn correlated_all_cancelled_request_releases_only_its_own_packets() {
 }
 
 #[test]
-fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
+fn all_join_keeps_requests_separate_and_scoped_capture_reads_preserve_ownership() {
     use phenix_graph::runtime::RequestStatus;
     let mut s = correlated_join();
     let a = s.begin_request(Some("out")).unwrap();
@@ -1019,17 +1019,8 @@ fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
     s.close_request(b).unwrap();
     assert!(s.correlation_blocks().is_empty());
     s.run_until_idle(100);
-    // B cannot be extracted ahead of A from the shared capture FIFO.
-    assert!(s.take_request_output(b, "out").unwrap().is_none());
-    assert_eq!(
-        s.take_request_output(a, "out")
-            .unwrap()
-            .unwrap()
-            .value()
-            .get::<i64>()
-            .unwrap(),
-        3
-    );
+    // A request-scoped B read selects its own buffered packet past A.
+    // The later A read still receives A, without mixing requests.
     assert_eq!(
         s.take_request_output(b, "out")
             .unwrap()
@@ -1038,6 +1029,15 @@ fn all_join_keeps_requests_separate_and_never_skips_a_fifo_head() {
             .get::<i64>()
             .unwrap(),
         30
+    );
+    assert_eq!(
+        s.take_request_output(a, "out")
+            .unwrap()
+            .unwrap()
+            .value()
+            .get::<i64>()
+            .unwrap(),
+        3
     );
     assert_eq!(
         s.request_status(a).unwrap(),
@@ -2501,8 +2501,17 @@ fn queued_request_cancellation_preserves_other_requests_fifo_and_process_state()
     );
     s.complete_job(job.run()).unwrap();
     s.run_until_idle(50);
-    assert!(s.take_request_output(d, "output").unwrap().is_none());
-    for (id, expected) in [(held, 1_i64), (c, 3), (d, 6)] {
+    // D may now be read before earlier capture heads without consuming them.
+    // Its request metadata and the retained process state remain authoritative.
+    let d_packet = s.take_request_output(d, "output").unwrap().unwrap();
+    assert_eq!(d_packet.value().get::<i64>().unwrap(), 6);
+    assert_eq!(d_packet.metadata().unwrap().request(), Some(d));
+    assert_eq!(
+        s.request_status(d).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    s.release_request(d).unwrap();
+    for (id, expected) in [(held, 1_i64), (c, 3)] {
         let packet = s.take_request_output(id, "output").unwrap().unwrap();
         assert_eq!(packet.value().get::<i64>().unwrap(), expected);
         assert_eq!(
@@ -2898,12 +2907,16 @@ fn cancelling_committed_capture_is_explicit_disposal_not_state_or_publication_ro
     assert_eq!(s.request_disposal(cancelled).unwrap().queued_packets, 1);
     assert_eq!(s.request_disposal(cancelled).unwrap().activations, 0);
     assert_eq!(spawns.load(Ordering::SeqCst), 1);
-    assert!(
-        s.take_request_output(scopes[2], "output")
-            .unwrap()
-            .is_none()
+    // Scope 2's committed capture remains accessible despite scope 0's
+    // older buffered capture; cancellation only disposed scope 1.
+    let latest = s.take_request_output(scopes[2], "output").unwrap().unwrap();
+    assert_eq!(latest.value().get::<i64>().unwrap(), 6);
+    assert_eq!(latest.metadata().unwrap().request(), Some(scopes[2]));
+    assert_eq!(
+        s.request_status(scopes[2]).unwrap(),
+        RequestStatus::Settled { captures: 1 }
     );
-    for (id, value) in [(scopes[0], 1_i64), (scopes[2], 6)] {
+    for (id, value) in [(scopes[0], 1_i64)] {
         assert_eq!(
             s.take_request_output(id, "output")
                 .unwrap()
