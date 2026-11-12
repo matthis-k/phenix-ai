@@ -23,12 +23,20 @@ enum Phase {
     Poll,
     ComposePanic,
     ActivatePanic,
+    WakePanic,
 }
 struct Plugin(Phase, Arc<()>);
-struct Source(Arc<()>);
+struct Source(Arc<()>, bool);
 impl Producer for Source {
     fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
         Err(Box::new(Cause(self.0.clone())))
+    }
+
+    fn set_waker(&mut self, _wake: WakeHandle) -> bool {
+        if self.1 {
+            panic!("deliberate wake registration panic");
+        }
+        false
     }
 }
 impl PluginInstance for Plugin {
@@ -56,7 +64,10 @@ impl PluginInstance for Plugin {
                     if matches!(phase, Phase::Activate) {
                         return Err(Box::new(Cause(identity.clone())));
                     }
-                    Ok(Box::new(Source(identity.clone())))
+                    Ok(Box::new(Source(
+                        identity.clone(),
+                        matches!(phase, Phase::WakePanic),
+                    )))
                 })?;
                 Ok(artifacts)
             })),
@@ -202,4 +213,36 @@ fn panicking_plugin_prepare_and_activate_return_errors_and_preserve_active_gener
         assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
         assert_eq!(host.plugins().snapshot(&key).unwrap().revision(), 1);
     }
+}
+
+#[test]
+fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer() {
+    let identity = Arc::new(());
+    let mut catalog = PluginCatalog::new();
+    let captured = identity.clone();
+    let key = catalog
+        .register("plugin", move |phase| Ok(Plugin(phase, captured.clone())))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    let snapshot = plugins.load(&key, Phase::WakePanic).unwrap();
+    let mut kernel =
+        Kernel::build("wake-panic", [snapshot], Arc::new(LocalProcessDispatcher)).unwrap();
+    kernel.start().unwrap();
+
+    let failure = kernel
+        .run_until(&WakeHandle::default(), |_| panic!("driver must not run"))
+        .unwrap_err();
+    assert_eq!(
+        failure,
+        DriverError::WakeRegistrationPanicked {
+            producer: Key::new("plugin", "callback"),
+        }
+    );
+    // A failed registration must restore the owned producer slot. The original
+    // typed poll error can still be observed, and no extra producer is created.
+    let event = kernel.drain(1).pop().expect("producer slot lost");
+    assert_eq!(event.producer, Key::new("plugin", "callback"));
+    let error = event.result.err().expect("expected one terminal poll error");
+    assert_cause(&error, &identity);
+    assert!(kernel.drain(1).is_empty());
 }

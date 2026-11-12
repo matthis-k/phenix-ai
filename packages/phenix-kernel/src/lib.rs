@@ -432,6 +432,9 @@ pub enum DriverError {
     UnsupportedWake {
         producer: Key,
     },
+    WakeRegistrationPanicked {
+        producer: Key,
+    },
     SessionStopped {
         state: SessionState,
         cause: Option<String>,
@@ -446,6 +449,9 @@ impl std::fmt::Display for DriverError {
                 f,
                 "producer does not support wake notifications: {producer:?}"
             ),
+            Self::WakeRegistrationPanicked { producer } => {
+                write!(f, "producer wake registration panicked: {producer:?}")
+            }
             Self::SessionStopped { state, cause } => {
                 write!(f, "native session stopped: {state:?}: {cause:?}")
             }
@@ -1198,7 +1204,7 @@ impl Kernel {
                 Ok(false) => {
                     return Err(DriverError::UnsupportedWake { producer: key });
                 }
-                Err(panic) => std::panic::resume_unwind(panic),
+                Err(_) => return Err(DriverError::WakeRegistrationPanicked { producer: key }),
             }
         }
         drop(drain);

@@ -12,7 +12,7 @@ not an accepted limitation.
 | Issue | Resolved? | Evidence / remaining acceptance |
 | --- | --- | --- |
 | H1 Shared-session FIFO correlation head blocking | Open for single shared session | `fbp_streams::all_join_keeps_requests_separate_and_never_skips_a_fifo_head` demonstrates the deadlock case; `fbp_request_session_isolation.rs` now proves crossed requests can settle in bounded independent sessions while sharing explicitly supplied state. No head-skipping, dynamic-lane or shared-process guarantee is claimed. |
-| H2 Callback panic containment | Partial; CI pending | Kernel preparation and activation now catch panics into contribution-scoped leased errors; `callback_errors.rs` covers preservation of the active generation. Process factories, steps, readiness and polls already have catch boundaries. Wake registration and arbitrary host callbacks still need explicit policy/review. |
+| H2 Callback panic containment | Partial; CI pending | Kernel preparation and activation catch panics into contribution-scoped leased errors; `callback_errors.rs` covers preservation of active generation. Driver wake-registration panics now return `DriverError::WakeRegistrationPanicked` instead of unwinding, with producer slot restoration tested. Factories, steps, readiness and polls already contain panics. Arbitrary host callbacks and in-process aborts remain outside the guarantee. |
 | H3a Inventory lock inversion on producer admission | Code fixed; CI pending | `Kernel::drain` takes a producer out of inventory before polling/admitting and restores it after callback, under a separate whole-drain gate; `eager_readiness_during_drain_may_inspect_unlocked_inventory` and `generation_retirement::blocked_poll_finishes_its_drain_before_publication_retires_the_source` cover both lock and retirement invariants. |
 | H3b Session/drain recursive callback reentrancy | Open | `ReadinessPolicy::select` still runs under the session mutex and a recursive `Producer::poll -> drain` blocks on the whole-drain gate. Arbitrary reentrancy cannot be claimed without a separate error contract or execution boundary. |
 | H4 Full-inventory scheduling scans | No | `runtime/mod.rs::refresh` walks process inventory; need activation-scaled measurements before refactor |
@@ -92,3 +92,18 @@ shares an explicit `Arc<AtomicUsize>` through distinct process instances,
 proving global application state can coexist with isolation. This **does not**
 address crossed FIFO heads within one physical shared process and does not
 permit unbounded session admission; retain H1 as open for that use case.
+
+## H2 wake-registration API revision — Phase 4 verification scope
+
+Unlike a plugin's `Producer::poll`, `Producer::set_waker` previously caught a
+panic only to resume unwinding through the public `run_until` driver. The
+new typed `WakeRegistrationPanicked { producer }` reports the exact owner
+without claiming the plugin's partially mutated state is safe for retry. The
+producer is put back into its slot before error propagation. The whole-drain
+gate remains held for registration and is automatically released on return.
+A native regression tests the typed outcome, retained producer and exact
+callback-error propagation from a subsequent poll.
+
+See `docs/fbp-wake-panic-design-20261112.md` and
+`docs/fbp-wake-panic-critique-20261112.md`. Final exact-head CI and diff
+review must still pass before the row is marked verified.
