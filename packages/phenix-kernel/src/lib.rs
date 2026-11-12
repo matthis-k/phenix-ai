@@ -1291,6 +1291,122 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recursive_session_calls_fail_fast_without_discarding_input_ownership() {
+        let mut kernel = Kernel::build(
+            "session-reentrancy",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let mut independent = Kernel::build(
+            "independent-session",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        independent.start().unwrap();
+
+        kernel
+            .with_session(|_| {
+                assert_eq!(
+                    kernel.with_session(|_| ()).unwrap_err(),
+                    "reentrant kernel session access"
+                );
+                assert_eq!(
+                    kernel.run_steps(1).unwrap_err(),
+                    "reentrant kernel session access"
+                );
+                let error = kernel.inject("missing", Value::local(71_i64)).unwrap_err();
+                assert_eq!(
+                    error.reason,
+                    phenix_graph::connection::ConnectionError::Reentrant
+                );
+                assert_eq!(error.value.get::<i64>().unwrap(), 71);
+                independent.with_session(|_| ()).unwrap();
+            })
+            .unwrap();
+        // The first scope has left no stale thread-local owner behind.
+        kernel.with_session(|_| ()).unwrap();
+        assert_eq!(
+            kernel.inject("missing", Value::local(2_i64)).unwrap_err().reason,
+            phenix_graph::connection::ConnectionError::InvalidDestination
+        );
+    }
+
+    #[test]
+    fn recursive_drain_in_poll_is_contained_and_releases_the_whole_drain_gate() {
+        use std::sync::Weak;
+
+        struct Recursive(Weak<Kernel>);
+        impl Producer for Recursive {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.0.upgrade().unwrap().drain(1);
+                Ok(None)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "recursive-drain",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        let key = Key::new("test", "recursive");
+        kernel.producers.lock().unwrap().producers.push((
+            key.clone(),
+            Some(Box::new(Recursive(Arc::downgrade(&kernel)))),
+            None,
+        ));
+
+        let events = kernel.drain(1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].producer, key);
+        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
+        assert!(kernel.drain(1).is_empty());
+    }
+
+    #[test]
+    fn recursive_drain_in_wake_registration_is_reported_without_losing_producer() {
+        use std::sync::Weak;
+
+        struct RecursiveWake(Weak<Kernel>);
+        impl Producer for RecursiveWake {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.0.upgrade().unwrap().drain(1);
+                true
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "recursive-wake",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        let key = Key::new("test", "recursive-wake");
+        kernel.producers.lock().unwrap().producers.push((
+            key.clone(),
+            Some(Box::new(RecursiveWake(Arc::downgrade(&kernel)))),
+            None,
+        ));
+        assert_eq!(
+            kernel.run_until(&WakeHandle::default(), |_| {}).unwrap_err(),
+            DriverError::WakeRegistrationPanicked { producer: key }
+        );
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+        assert!(kernel.drain(1).is_empty());
+    }
+
+    #[test]
     fn eager_readiness_during_drain_may_inspect_unlocked_inventory() {
         use phenix_graph::{
             ComponentDef,
