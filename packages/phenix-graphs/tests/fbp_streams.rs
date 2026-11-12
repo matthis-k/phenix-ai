@@ -109,7 +109,7 @@ fn persistent_injection_capacity_recovery_and_independent_sessions() {
         3
     );
     a.close_input("input").unwrap();
-    assert_eq!(a.run_until_complete(100).state, SessionState::Completed);
+    assert_eq!(a.run_until_idle(100).state, SessionState::Completed);
     assert!(a.output_closed("output").unwrap());
 }
 
@@ -293,7 +293,7 @@ fn split_join_multiple_outputs_and_zero_output_sink() {
         assert_eq!(s.run_until_idle(100).state, SessionState::Quiescent);
     }
     s.close_input("input").unwrap();
-    assert_eq!(s.run_until_complete(100).state, SessionState::Completed);
+    assert_eq!(s.run_until_idle(100).state, SessionState::Completed);
 }
 
 struct Source {
@@ -446,7 +446,7 @@ fn wait_input_resumes_same_activation_for_values_and_eos() {
     }
     assert_eq!(total.load(Ordering::SeqCst), 5);
     s.close_input("b").unwrap();
-    assert_ne!(s.run_until_complete(10).state, SessionState::Completed);
+    assert_ne!(s.run_until_idle(10).state, SessionState::Completed);
     s.close_input("a").unwrap();
     assert_eq!(s.state(), SessionState::Completed);
 }
@@ -633,7 +633,7 @@ fn wrong_emitted_schema_fails_even_with_no_output_consumers() {
         .unwrap();
     b.start(&p).unwrap();
     let mut s = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(s.run_until_complete(10).state, SessionState::Failed);
+    assert_eq!(s.run_until_idle(10).state, SessionState::Failed);
     assert!(s.failure().unwrap().contains("invalid emission"));
 }
 
@@ -720,7 +720,7 @@ fn completion_requires_closed_ingress_and_drained_capture() {
     let mut s = counter(Arc::new(AtomicUsize::new(0))).start();
     s.inject("input", Value::of(1_i64)).unwrap();
     s.close_input("input").unwrap();
-    assert_eq!(s.run_until_complete(100).state, SessionState::Waiting);
+    assert_eq!(s.run_until_idle(100).state, SessionState::Waiting);
     assert!(!s.output_closed("output").unwrap());
     s.take_output("output").unwrap().unwrap();
     assert_eq!(s.state(), SessionState::Completed);
@@ -1184,10 +1184,10 @@ fn resources_reference_existing_store_and_require_explicit_per_process_grants() 
         vec![ResourceGrant::read(store.clone(), "value")],
     );
     assert_eq!(
-        c.start_with_options(opts).run_until_complete(10).state,
+        c.start_with_options(opts).run_until_idle(10).state,
         SessionState::Completed
     );
-    assert_eq!(c.start().run_until_complete(10).state, SessionState::Failed);
+    assert_eq!(c.start().run_until_idle(10).state, SessionState::Failed);
     let cx = ProcessContext::default()
         .with_resources(vec![ResourceGrant::write(store.clone(), "value")]);
     cx.write::<i64, _>("value", |v| *v = 10).unwrap();
@@ -1507,7 +1507,7 @@ fn optional_input_is_omitted_only_at_real_eos_not_open_idle() {
     assert_eq!(total.load(Ordering::SeqCst), 4);
     assert_ne!(s.state(), SessionState::Completed);
     s.close_input("required").unwrap();
-    assert_eq!(s.run_until_complete(100).state, SessionState::Completed);
+    assert_eq!(s.run_until_idle(100).state, SessionState::Completed);
 }
 
 struct ClosureJoin {
@@ -1580,7 +1580,7 @@ fn closure_finished_and_complete_report_undelivered_input_without_capture_rollba
         assert_eq!(s.run_until_idle(20).steps, 0);
         s.close_input("a").unwrap();
         s.close_input("b").unwrap();
-        let report = s.run_until_complete(20);
+        let report = s.run_until_idle(20);
         assert_eq!(report.state, SessionState::Failed);
         assert_eq!(report.disposed_packets, 1);
         assert_eq!(
@@ -3433,7 +3433,7 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     session.close_input("a").unwrap();
     session.close_input("b").unwrap();
     assert_eq!(
-        session.run_until_complete(20).state,
+        session.run_until_idle(20).state,
         SessionState::Completed
     );
     let resumed = Arc::new(AtomicUsize::new(0));

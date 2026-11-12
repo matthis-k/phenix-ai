@@ -247,7 +247,7 @@ fn main() {
         .unwrap();
     session.close_input("input").unwrap();
     assert_eq!(
-        session.run_until_complete(128).state,
+        session.run_until_idle(128).state,
         SessionState::Completed
     );
     assert_eq!(*seen.lock().unwrap(), [132, 1848]);

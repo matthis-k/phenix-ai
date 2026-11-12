@@ -58,7 +58,7 @@ fn three_closure_components_and_zero_output_sink() {
     for _ in 0..2 {
         let mut session = compiled.start();
         assert_eq!(
-            session.run_until_complete(64).state,
+            session.run_until_idle(64).state,
             SessionState::Completed
         );
     }
@@ -200,5 +200,5 @@ fn empty_source_finishes_without_emitting_or_calling_sink() {
     )
     .unwrap();
     let mut session = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(session.run_until_complete(8).state, SessionState::Completed);
+    assert_eq!(session.run_until_idle(8).state, SessionState::Completed);
 }

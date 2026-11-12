@@ -1147,9 +1147,6 @@ impl NetworkSession {
             budget_exhausted: steps == budget && state == SessionState::Runnable,
         }
     }
-    pub fn run_until_complete(&mut self, budget: usize) -> RunReport {
-        self.run_until_idle(budget)
-    }
 
     /// Actual full-queue publication dependencies, including external captures.
     /// These are diagnostics, not a proof that a cycle can make progress.

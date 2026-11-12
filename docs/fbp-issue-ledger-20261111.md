@@ -28,7 +28,7 @@ not an accepted limitation.
 | C7 No general in-process plugin sandbox | No — architectural limit | Native Rust plugins share process privileges; do not claim an FBP capability view is a security sandbox |
 | C8 Code leases retain defeated snapshots | No | `phenix-kernel/src/lib.rs` code lease retains snapshot inventory; measure retained lifetime and isolate exact winners where safe |
 | C9 `state()` is not passive | No | `runtime/mod.rs::state` calls `refresh()`; state queries may execute readiness callbacks; require separate query semantics or explicit refresh naming |
-| C10 `run_until_complete()` aliases `run_until_idle()` | No | `runtime/mod.rs`; remove misleading API or define truly distinct bounded semantics without fabricating progress |
+| C10 `run_until_complete()` aliases `run_until_idle()` | Code fixed; CI pending | Removed redundant public alias and migrated native examples/tests to `run_until_idle` without execution change; Phase 0–2 in `fbp-c10-driver-api-design-20261112.md` and critique. Final-head CI required. |
 | A1 Replacement-only private nesting | No | `network.rs`, `compose/mod.rs`; exact private composition extension remains unimplemented |
 | A2 Rigid interface identity | No | `interface.rs`, `contract.rs`; design compatibility/projection only with evidence for real use cases |
 | A3 Store coupled into graph-local types | No | `resource.rs`; check boundary against kernel/storage dependency direction |

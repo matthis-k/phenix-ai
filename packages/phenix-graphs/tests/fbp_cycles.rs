@@ -111,7 +111,7 @@ fn full_cycle_has_real_queue_dependencies_not_a_progress_guarantee() {
         .unwrap();
     let mut s = b.build().unwrap().compile().unwrap().start();
     s.inject("seed", Value::of(1_i64)).unwrap();
-    assert_eq!(s.run_until_complete(100).state, SessionState::Waiting);
+    assert_eq!(s.run_until_idle(100).state, SessionState::Waiting);
     let waits = s.blocked_queues();
     assert_eq!(waits.len(), 2);
     assert!(waits.iter().all(|q| q.occupancy == 1 && q.capacity == 1));
