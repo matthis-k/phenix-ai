@@ -2305,6 +2305,127 @@ mod tests {
     }
 
     #[test]
+    fn live_driver_exclusively_owns_polls_and_releases_manual_drain_after_exit() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        struct Idle {
+            polls: Arc<AtomicUsize>,
+            registered: mpsc::Sender<()>,
+            first_poll: mpsc::Sender<()>,
+        }
+        impl Producer for Idle {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polls.fetch_add(1, Ordering::SeqCst);
+                let _ = self.first_poll.send(());
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.registered.send(()).unwrap();
+                true
+            }
+        }
+
+        let (registered_tx, registered_rx) = mpsc::channel();
+        let (first_poll_tx, first_poll_rx) = mpsc::channel();
+        let polls = Arc::new(AtomicUsize::new(0));
+        let mut kernel =
+            Kernel::build("driver-vs-direct", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "idle"),
+            Some(Box::new(Idle {
+                polls: polls.clone(),
+                registered: registered_tx,
+                first_poll: first_poll_tx,
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+        let wake = WakeHandle::default();
+        let worker_wake = wake.clone();
+        let worker_kernel = kernel.clone();
+        let driver = std::thread::spawn(move || worker_kernel.run_until(&worker_wake, |_| {}));
+        registered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        first_poll_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            kernel.drain(0).unwrap_err(),
+            DriverError::AlreadyRunning
+        );
+        assert_eq!(
+            kernel.drain(1).unwrap_err(),
+            DriverError::AlreadyRunning
+        );
+        assert_eq!(
+            kernel.producer_ownership.load(Ordering::Acquire),
+            DRIVER_OWNER
+        );
+        wake.shutdown();
+        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
+        let before = polls.load(Ordering::SeqCst);
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert_eq!(polls.load(Ordering::SeqCst), before + 1);
+    }
+
+    #[test]
+    fn in_flight_direct_drain_denies_driver_without_registering_wake() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct Paused {
+            entered: mpsc::Sender<()>,
+            resume: mpsc::Receiver<()>,
+        }
+        impl Producer for Paused {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.entered.send(()).unwrap();
+                self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("direct-vs-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        let (entered, entered_rx) = mpsc::channel();
+        let (resume, resume_rx) = mpsc::channel();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "paused"),
+            Some(Box::new(Paused {
+                entered,
+                resume: resume_rx,
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+        let worker_kernel = kernel.clone();
+        let manual = std::thread::spawn(move || worker_kernel.drain(1));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let wake = WakeHandle::default();
+        assert_eq!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        );
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
+        resume.send(()).unwrap();
+        assert!(manual.join().unwrap().unwrap().is_empty());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
+        let next = WakeHandle::default();
+        next.shutdown();
+        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+    }
+
+    #[test]
     fn driver_returns_when_a_live_network_completes_during_execution() {
         let mut session = live_ingress_session();
         session.inject("input", Value::local(3_i64)).unwrap();
