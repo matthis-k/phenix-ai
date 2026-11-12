@@ -37,7 +37,9 @@ impl std::fmt::Display for LifecycleError {
             Self::Binding(error) => write!(f, "generation binding: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
-            Self::ReentrantDrain => f.write_str("publication attempted during its own producer drain"),
+            Self::ReentrantDrain => {
+                f.write_str("publication attempted during its own producer drain")
+            }
         }
     }
 }
