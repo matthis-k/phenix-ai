@@ -1375,7 +1375,8 @@ impl Kernel {
                     break;
                 }
                 Err(_) => {
-                    registration_error = Some(DriverError::WakeRegistrationPanicked { producer: key });
+                    registration_error =
+                        Some(DriverError::WakeRegistrationPanicked { producer: key });
                     break;
                 }
             }
