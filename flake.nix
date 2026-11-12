@@ -109,7 +109,7 @@
           inherit name packages;
           command = ''
             echo "Starting ${name} test targets (bounded to 480 seconds)"
-            ${pkgs.coreutils}/bin/timeout --signal=TERM --kill-after=15s 480s \\
+            ${pkgs.coreutils}/bin/timeout --signal=TERM --kill-after=15s 480s \
               cargo test --locked --offline ${lib.concatMapStringsSep " " (p: "-p ${p}") packages} ${flags} -- --nocapture
           '';
         };
