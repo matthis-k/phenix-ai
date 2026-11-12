@@ -55,7 +55,7 @@ ownership paths are now CI-verified.
 | Q5 Concurrency testing not exhaustive | Open — stronger scoped evidence | CI-verified two-thread regressions now cover session↔drain contention, callback-owned host drop, delayed retired-driver wake, a self-retiring producer's returned event, driver-versus-direct-drain admission, and release/retry. No Loom/model-checked interleaving coverage or external plugin-lock-order proof. |
 | Q6 Diagnostics intentionally minimal | Open | Diagnostics still intentionally minimal; richer actionable deadlock/readiness explanations remain to build. |
 | Q7 Error reporting uneven | Open | Error handling still mixes strings and typed outcomes; code lease/source preservation needs a public API pass. |
-| Q8 Final reports stale | Verified — reconciled as a candidate | The report and 33-finding ledger were initially verified by #1266 CI #43202338522 but later became stale. This revision reconciles candidate PR #1274, exact-head CI #43279922626, and the current 10/7/16 classification; this **documentation-only commit** needs its own exact-head CI before being marked final. |
+| Q8 Final reports stale | Verified — reconciled candidate | The report and 33-finding ledger were initially verified by #1266 CI #43202338522 but later became stale. This revision reconciles PR #1274, exact-head CI #43279922626, and the current 10/7/16 classification. This documentation-only PR must also pass exact-head CI for the revision to be verified. |
 
 ## Acceptance and nonclaims
 
@@ -89,7 +89,7 @@ ownership paths are now CI-verified.
 | Driver retirement notification | `081c439c7cc5146c5b3f6cb3275f08913e2d995f` (#1272) | [43265588314](https://github.com/matthis-k/phenix-ai/actions/runs/43265588314) |
 | Exclusive producer ownership | `08474b3d4cd8cdb257ed7a57097fde876afec754` (#1273) | [43277415425](https://github.com/matthis-k/phenix-ai/actions/runs/43277415425) |
 | Capacity-one backpressure visibility | `f81b49336dfce942f57dad1edc65add258be35fd` (#1274) | [43279922626](https://github.com/matthis-k/phenix-ai/actions/runs/43279922626) |
-| This documentation reconciliation | This branch | **Pending its own exact-head CI** |
+| This documentation reconciliation | This branch | Check this PR's exact-head CI; parent candidate CI alone does not validate docs |
 
 The table represents separate stacked candidates; never add their changes
 as though all independent branches had been merged. H1 opt-in correlated
@@ -115,5 +115,5 @@ requires consumer action or an explicitly budgeted alternate policy.
    protocol, with real agent-loop examples and concrete API/test evidence.
 
 **Do not carry forward historical `CI pending` labels or counts from older
-snapshots. This ledger itself should be treated as a candidate until its
-own exact-head six-job CI passes.**
+snapshots. For every new ledger edit, verify the exact changed head;
+the parent candidate's green CI is not interchangeable with this PR's checks.**
