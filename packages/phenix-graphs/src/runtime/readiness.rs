@@ -160,10 +160,8 @@ impl NetworkSession {
                     let request = packet.metadata().and_then(|m| m.request());
                     // A global (unscoped) packet is never dequeued out of FIFO
                     // order, even under this explicit request correlation policy.
-                    if position == 0 || request.is_some() {
-                        if !candidates.contains(&request) {
-                            candidates.push(request);
-                        }
+                    if (position == 0 || request.is_some()) && !candidates.contains(&request) {
+                        candidates.push(request);
                     }
                 }
             }
