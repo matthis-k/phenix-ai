@@ -2198,12 +2198,16 @@ mod tests {
         let driver_kernel = kernel.clone();
         let driver = std::thread::spawn(move || driver_kernel.run_until(&wake, |_| {}));
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        // A owns session and waits for the producer drain mutex. B owns drain
-        // and attempts session APIs. With blocking locks, A and B deadlock.
+        // A owns session while B owns the driver's producer lease and invokes
+        // callback session APIs. The callback must never wait for A's mutex;
+        // A cannot steal a manual producer drain from the active driver.
         kernel
             .with_session(|_| {
                 proceed_tx.send(()).unwrap();
-                assert!(kernel.drain(0).unwrap().is_empty());
+                assert_eq!(
+                    kernel.drain(0).unwrap_err(),
+                    DriverError::AlreadyRunning
+                );
             })
             .unwrap();
         assert_eq!(driver.join().unwrap(), Ok(()));
