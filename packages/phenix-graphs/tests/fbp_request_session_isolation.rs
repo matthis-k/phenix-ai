@@ -1,6 +1,6 @@
 //! M8: isolate correlated requests with existing bounded FBP sessions.
-//! A shared-session FIFO join intentionally remains head-only; this test does
-//! not claim to repair crossed-head blocking within *one* session.
+//! Default readiness stays FIFO, while explicit CorrelatedAll can select
+//! crossed requests. Capture capacity remains an independent backpressure bound.
 use phenix_graph::{
     Value,
     interface::{Interface, PortDef},
@@ -348,4 +348,90 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
         RequestStatus::Settled { captures: 2 }
     );
     session.release_request(own).unwrap();
+}
+
+fn saturated_shared_join() -> (NetworkSession, phenix_graph::runtime::RequestId, phenix_graph::runtime::RequestId, Arc<AtomicUsize>) {
+    let effects = Arc::new(AtomicUsize::new(0));
+    let compiled = compiled_join(effects.clone(), NonZeroUsize::new(2).unwrap());
+    let mut options = SessionOptions {
+        capture_capacity: one(),
+        ..Default::default()
+    };
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
+    let mut session = compiled.start_with_options(options);
+    let first = session.begin_request(Some("out")).unwrap();
+    let second = session.begin_request(Some("out")).unwrap();
+    for (request, a, b) in [(first, 1_i64, 2_i64), (second, 10_i64, 20_i64)] {
+        session.inject_request(request, "a", Value::of(a)).unwrap();
+        session.inject_request(request, "b", Value::of(b)).unwrap();
+        session.close_request(request).unwrap();
+    }
+    let report = session.run_until_idle(128);
+    assert!(!report.budget_exhausted);
+    assert!(session.failure().is_none());
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    (session, first, second, effects)
+}
+
+#[test]
+fn capture_capacity_one_reports_scoped_backpressure_without_discarding_any_output() {
+    let (mut session, first, second, effects) = saturated_shared_join();
+    let a = session.request_work(first).unwrap();
+    let b = session.request_work(second).unwrap();
+    assert_eq!(a.capture_backpressure, 0);
+    assert_eq!(b.capture_backpressure, 1);
+    assert_eq!(b.publication_pending, 1);
+    assert_eq!(session.request_work(second).unwrap(), b);
+    assert!(session.take_request_output(second, "out").unwrap().is_none());
+    assert!(session.blocked_queues().iter().any(|wait| {
+        wait.capacity == 1 && wait.occupancy == 1
+    }));
+    assert_eq!(session.request_status(second).unwrap(), RequestStatus::Pending);
+
+    // The ordinary host consumer can free the slot without affecting B's
+    // original prepared publication, provenance, or the join's side effects.
+    let first_packet = session.take_output("out").unwrap().unwrap();
+    assert_eq!(first_packet.metadata().unwrap().request(), Some(first));
+    assert_eq!(first_packet.value().get::<i64>().unwrap(), 3);
+    session.run_until_idle(128);
+    assert_eq!(session.request_work(second).unwrap().capture_backpressure, 0);
+    let second_packet = session.take_request_output(second, "out").unwrap().unwrap();
+    assert_eq!(second_packet.metadata().unwrap().request(), Some(second));
+    assert_eq!(second_packet.value().get::<i64>().unwrap(), 30);
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    for id in [first, second] {
+        assert_eq!(
+            session.request_status(id).unwrap(),
+            RequestStatus::Settled { captures: 1 }
+        );
+        session.release_request(id).unwrap();
+    }
+}
+
+#[test]
+fn cancelling_committed_head_capture_frees_capacity_for_unrelated_pending_request() {
+    let (mut session, first, second, effects) = saturated_shared_join();
+    assert_eq!(session.request_work(second).unwrap().capture_backpressure, 1);
+    assert_eq!(session.request_work(first).unwrap().ready, 0);
+    assert_eq!(session.request_work(first).unwrap().dispatched, 0);
+    assert_eq!(session.request_work(first).unwrap().publication_pending, 0);
+    assert!(session.cancel_request(first).unwrap().is_empty());
+    assert_eq!(session.request_status(first).unwrap(), RequestStatus::Cancelled);
+    assert_eq!(session.request_disposal(first).unwrap().queued_packets, 1);
+    assert!(session.failure().is_none());
+    session.run_until_idle(128);
+    assert_eq!(session.request_work(second).unwrap().capture_backpressure, 0);
+    let packet = session.take_request_output(second, "out").unwrap().unwrap();
+    assert_eq!(packet.metadata().unwrap().request(), Some(second));
+    assert_eq!(packet.value().get::<i64>().unwrap(), 30);
+    assert_eq!(
+        session.request_status(second).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert!(session.take_output("out").unwrap().is_none());
+    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    session.release_request(first).unwrap();
+    session.release_request(second).unwrap();
 }
