@@ -1,0 +1,86 @@
+name: "FBP H5 Request Index Paired Benchmark"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/examples/fbp_request_benchmark.rs"
+      - "packages/phenix-graphs/src/connection.rs"
+      - "packages/phenix-graphs/src/runtime/request.rs"
+      - "packages/phenix-graphs/src/runtime/closure.rs"
+      - ".github/workflows/fbp-h5-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-h5-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: indexed
+      - name: Checkout exact pre-index baseline
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # #1275 head immediately before the H5 per-queue index.
+          ref: 9911b42e3c0a3d84c7c60658090a51d426190dd1
+          path: baseline
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record source and machine provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate_source=$(git -C indexed rev-parse HEAD)"
+            echo "baseline_source=$(git -C baseline rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            echo "date_utc=$(date -u +%FT%TZ)"
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            nix --version
+            (cd indexed && nix develop --command rustc -vV)
+            (cd baseline && nix develop --command rustc -vV)
+          } > artifacts/environment.txt
+          cat artifacts/environment.txt
+      - name: Build identical benchmark source against both implementations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp indexed/packages/phenix-graphs/examples/fbp_request_benchmark.rs \
+            baseline/packages/phenix-graphs/examples/fbp_request_benchmark.rs
+          sha256sum indexed/packages/phenix-graphs/examples/fbp_request_benchmark.rs \
+            baseline/packages/phenix-graphs/examples/fbp_request_benchmark.rs \
+            > artifacts/benchmark-source-sha256.txt
+          cat artifacts/benchmark-source-sha256.txt
+          for variant in baseline indexed; do
+            (cd "$variant" && nix develop --command cargo build --locked --release -q -p phenix-graph \
+              --example fbp_request_benchmark)
+          done
+      - name: Three interleaved release-mode repetitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order=(baseline indexed)
+            else
+              order=(indexed baseline)
+            fi
+            for variant in "${order[@]}"; do
+              (cd "$variant" && ./target/release/examples/fbp_request_benchmark \
+                20000 8 64 256 1024) > "artifacts/${variant}-${repetition}.csv"
+              echo "version=${variant} repetition=${repetition}"
+              cat "artifacts/${variant}-${repetition}.csv"
+            done
+          done
+      - name: Preserve machine metadata and raw paired results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-h5-paired-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
