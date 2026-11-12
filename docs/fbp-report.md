@@ -83,6 +83,19 @@ benchmark; it remains an observed constant-factor improvement with O(V)
 correlated joins or production-agent performance budgets have passed
 formal acceptance.
 
+H5 now has a separate [paired public-API request benchmark](fbp-h5-paired-measurements-20261112.md)
+from [run #43321033238](https://github.com/matthis-k/phenix-ai/actions/runs/43321033238).
+On one AMD EPYC 9V74 shared runner, the *median of three* interleaved
+repetitions at queue depth 1,024 with one filler scope reduced
+absent-request work inspection from **2,340.4 to 24.1 ns/query (~97×)**,
+and absent-request status from **2,091.1 to 18.3 ns/query (~114×)**.
+At depth 8, read improvements were only ~1.4–1.6×; cold-start
+admission results showed no consistent speedup and sometimes regressed.
+The same benchmark source was compiled against exact pre-index and
+indexed runtime commits. This validates one bounded request-inspection
+workload, **not** upstream closure traversal, scheduler scaling,
+allocator/RSS or production-agent throughput. H5 remains Partial.
+
 ## Milestone and issue status
 
 | Milestone | Assessment |
