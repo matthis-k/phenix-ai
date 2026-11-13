@@ -203,6 +203,29 @@ impl Process for ProbedProcess {
 }
 
 #[test]
+fn handoff_cancel_reports_panicking_destructor_after_revoking_ownership() {
+    struct PanickingDrop;
+    impl Process for PanickingDrop {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for PanickingDrop {
+        fn drop(&mut self) {
+            panic!("process destructor panic");
+        }
+    }
+
+    let mut handoff = ProcessHandoff::new(Box::new(PanickingDrop));
+    assert_eq!(
+        handoff.cancel(),
+        Err(phenix_graph::process::HandoffCancelError::DestructorPanicked { ticket: None })
+    );
+    assert_eq!(handoff.state(), HandoffState::Cancelled);
+    assert_eq!(handoff.cancel(), Ok(None));
+}
+
+#[test]
 fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventory() {
     let drops = Arc::new(AtomicUsize::new(0));
     let process = ProbedProcess {
@@ -212,7 +235,7 @@ fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventor
     let mut handoff = ProcessHandoff::new(Box::new(process));
     handoff.admit(ProcessContext::default()).unwrap();
     let job = handoff.next_job().unwrap();
-    assert_eq!(handoff.cancel(), Some(job.ticket()));
+    assert_eq!(handoff.cancel().unwrap(), Some(job.ticket()));
     assert_eq!(drops.load(Ordering::SeqCst), 0);
     let (error, completion) = handoff.complete(job.run()).unwrap_err();
     assert_eq!(error, HandoffError::StaleCompletion);
@@ -220,7 +243,7 @@ fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventor
     assert!(handoff.admit(inputs(1)).is_err());
     drop(completion);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(handoff.cancel().is_none());
+    assert!(handoff.cancel().unwrap().is_none());
 }
 
 #[test]
@@ -317,7 +340,7 @@ fn late_completion_drops_process_before_code_lease() {
     }));
     handoff.admit(ProcessContext::default()).unwrap();
     let job = handoff.next_job().unwrap();
-    handoff.cancel();
+    handoff.cancel().unwrap();
     let (_, completion) = handoff.complete(job.run()).unwrap_err();
     assert_eq!(alive.load(Ordering::SeqCst), 1);
     drop(completion);
@@ -483,7 +506,7 @@ fn late_emission_payload_drops_before_its_job_releases_code_lease() {
     }));
     handoff.admit(ProcessContext::default()).unwrap();
     let completion = handoff.next_job().unwrap().run();
-    handoff.cancel();
+    handoff.cancel().unwrap();
     let (_, completion) = handoff.complete(completion).unwrap_err();
     assert_eq!(alive.load(Ordering::SeqCst), 1);
     drop(completion);

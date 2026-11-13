@@ -87,6 +87,8 @@ pub enum RequestError {
     CaptureCount(usize),
     NotSettled,
     RecoveryFailed,
+    ProcessDestructorPanicked,
+    PacketDestructorPanicked,
     Transport(ConnectionError),
 }
 #[derive(Debug)]
@@ -568,8 +570,8 @@ mod queue_request_index_tests {
         assert_eq!(transport.queues()[0].request_count(b), 1);
         assert_eq!(transport.queues()[1].request_count(a), 0);
         assert_eq!(transport.queues()[1].request_count(b), 1);
-        assert_eq!(transport.discard_request(a), 1);
-        assert_eq!(transport.discard_request(a), 0);
+        assert_eq!(transport.detach_request(a).len(), 1);
+        assert!(transport.detach_request(a).is_empty());
         assert_eq!(transport.queues()[0].request_count(a), 0);
         assert_eq!(transport.queues()[0].request_count(b), 1);
         assert_eq!(
@@ -582,7 +584,7 @@ mod queue_request_index_tests {
             20
         );
         assert_eq!(transport.queues()[0].request_count(b), 0);
-        assert_eq!(transport.cancel(), 1);
+        assert_eq!(transport.cancel().len(), 1);
         assert_eq!(transport.queues()[1].request_count(b), 0);
         assert_eq!(transport.queues()[1].len(), 0);
     }
@@ -602,8 +604,8 @@ mod queue_request_index_tests {
         assert!(transport.prepare(&packet(Some(b), 8), &invalid).is_err());
         assert_eq!(transport.queues()[0].request_count(b), 0);
         assert_eq!(transport.queues()[0].request_count(a), 1);
-        assert_eq!(transport.discard_request(b), 0);
-        assert_eq!(transport.discard_request(a), 1);
+        assert!(transport.detach_request(b).is_empty());
+        assert_eq!(transport.detach_request(a).len(), 1);
         assert_eq!(transport.queues()[0].request_count(a), 0);
     }
 }

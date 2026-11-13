@@ -230,6 +230,11 @@ impl ProcessContext {
             .iter()
             .map(|(name, value)| (name.as_str(), value))
     }
+
+    fn into_cleanup_parts(self) -> (Vec<Value>, Vec<ResourceGrant>) {
+        let Self { inputs, grants, .. } = self;
+        (inputs.into_values().collect(), grants)
+    }
 }
 
 /// A step identity is not a logical activation identity. Private fields prevent
@@ -391,6 +396,17 @@ impl fmt::Display for HandoffError {
 }
 impl std::error::Error for HandoffError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandoffCancelError {
+    DestructorPanicked { ticket: Option<StepTicket> },
+}
+impl fmt::Display for HandoffCancelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "process handoff cancellation: {self:?}")
+    }
+}
+impl std::error::Error for HandoffCancelError {}
+
 /// Exclusive ownership and activation accounting for one physical process.
 /// This is a handoff primitive, not a second graph scheduler. Queue reservation,
 /// readiness, routing, and publication are deliberately absent.
@@ -405,6 +421,50 @@ pub struct ProcessHandoff {
     outstanding: Option<StepTicket>,
     lease: Option<Arc<dyn Send + Sync>>,
 }
+
+pub(crate) struct CancelledProcess {
+    ticket: Option<StepTicket>,
+    context: Option<ProcessContext>,
+    process: Option<Box<dyn Process>>,
+    lease: Option<Arc<dyn Send + Sync>>,
+}
+
+impl CancelledProcess {
+    pub(crate) fn ticket(&self) -> Option<StepTicket> {
+        self.ticket
+    }
+
+    pub(crate) fn dispose(self) -> Result<Option<StepTicket>, HandoffCancelError> {
+        let Self {
+            ticket,
+            context,
+            process,
+            lease,
+        } = self;
+        let mut panicked = false;
+        if let Some(context) = context {
+            let (values, grants) = context.into_cleanup_parts();
+            for value in values {
+                panicked |= drop_catching(value);
+            }
+            for grant in grants {
+                panicked |= drop_catching(grant);
+            }
+        }
+        if let Some(process) = process {
+            panicked |= drop_catching(process);
+        }
+        if let Some(lease) = lease {
+            panicked |= drop_catching(lease);
+        }
+        if panicked {
+            Err(HandoffCancelError::DestructorPanicked { ticket })
+        } else {
+            Ok(ticket)
+        }
+    }
+}
+
 impl ProcessHandoff {
     pub fn new(process: Box<dyn Process>) -> Self {
         let owner = NEXT_OWNER
@@ -592,15 +652,24 @@ impl ProcessHandoff {
     }
     /// Invalidates authority before releasing owned state. The returned ticket
     /// remains runner inventory: it does not imply that external work stopped.
-    pub fn cancel(&mut self) -> Option<StepTicket> {
+    /// A destructor panic is returned only after all handoff-owned fields have
+    /// been detached and each cleanup drop has been attempted.
+    pub fn cancel(&mut self) -> Result<Option<StepTicket>, HandoffCancelError> {
+        self.cancel_detach().dispose()
+    }
+
+    /// Invalidate the handoff now and return plugin-owned state for destruction
+    /// after the enclosing request/session transition is fully visible.
+    pub(crate) fn cancel_detach(&mut self) -> CancelledProcess {
         self.state = HandoffState::Cancelled;
         // Cancellation is terminal; no future admission can reuse this owner.
         self.generation = self.generation.saturating_add(1);
-        let ticket = self.outstanding.take();
-        self.context = None;
-        self.process = None;
-        self.lease = None;
-        ticket
+        CancelledProcess {
+            ticket: self.outstanding.take(),
+            context: self.context.take(),
+            process: self.process.take(),
+            lease: self.lease.take(),
+        }
     }
     fn require(&self, state: HandoffState) -> Result<(), HandoffError> {
         if self.state == state {
@@ -632,4 +701,8 @@ impl ProcessHandoff {
         drop(guard);
         drop(job.lease);
     }
+}
+
+fn drop_catching<T>(value: T) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(value))).is_err()
 }
