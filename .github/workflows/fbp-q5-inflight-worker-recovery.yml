@@ -1,0 +1,62 @@
+name: "FBP Q5 In-Flight Worker Recovery"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/tests/fbp_inflight_worker_recovery.rs"
+      - "docs/fbp-q5-inflight-deferred-recovery-20261113.md"
+      - ".github/workflows/fbp-q5-inflight-worker-recovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-worker-cancellation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record source and execution environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name):' || true
+            nix --version
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          sha256sum packages/phenix-graphs/tests/fbp_inflight_worker_recovery.rs > artifacts/source-hashes.txt
+          cat artifacts/environment.txt
+          cat artifacts/source-hashes.txt
+      - name: Repeat real in-flight cancellation and fresh completion 12 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUST_BACKTRACE=1
+          for repeat in $(seq 1 12); do
+            nix develop --command cargo test --locked -q \
+              -p phenix-graph --test fbp_inflight_worker_recovery \
+              -- --test-threads=1 \
+              > "artifacts/worker-$repeat.log" 2>&1 || {
+                cat "artifacts/worker-$repeat.log"
+                exit 1
+              }
+            echo "repeat $repeat: 48 cancel/recovery interleavings passed"
+            tail -n 4 "artifacts/worker-$repeat.log"
+          done
+      - name: Save checks and exact-head provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-q5-inflight-recovery-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
