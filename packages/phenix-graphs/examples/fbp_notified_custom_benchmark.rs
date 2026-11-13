@@ -128,7 +128,12 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
     samples.sort_by(|a, b| a.total_cmp(b));
     let p50 = samples[(iterations - 1) / 2];
     let p95 = samples[(((iterations - 1) as f64) * 0.95).round() as usize];
-    (elapsed * 1e9 / (iterations + warmup) as f64, p50, p95, new_calls)
+    (
+        elapsed * 1e9 / (iterations + warmup) as f64,
+        p50,
+        p95,
+        new_calls,
+    )
 }
 
 fn main() {
