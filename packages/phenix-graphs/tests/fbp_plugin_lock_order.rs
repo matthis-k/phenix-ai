@@ -112,7 +112,9 @@ fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
 
-fn simple_network(factory: impl phenix_graph::process::ProcessFactory) -> phenix_graph::network::CompiledNetwork {
+fn simple_network(
+    factory: impl phenix_graph::process::ProcessFactory,
+) -> phenix_graph::network::CompiledNetwork {
     let mut builder = NetworkBuilder::new();
     let worker = builder
         .node(
