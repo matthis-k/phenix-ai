@@ -239,7 +239,7 @@ pub struct NetworkSession {
     always_poll: BTreeSet<usize>,
     dirty_processes: BTreeSet<usize>,
     force_full_refresh: bool,
-    observed_wake_epoch: u64,
+    observed_global_wake_epoch: u64,
     terminal: Option<SessionState>,
     failure: Option<String>,
     publications: usize,
@@ -480,7 +480,7 @@ impl NetworkSession {
             always_poll,
             dirty_processes: BTreeSet::new(),
             force_full_refresh: true,
-            observed_wake_epoch: 0,
+            observed_global_wake_epoch: 0,
             terminal: None,
             failure: None,
             publications: 0,
@@ -630,6 +630,7 @@ impl NetworkSession {
         (!self.processes[index].done && self.terminal.is_none()).then(|| WakeHandle {
             slot: self.processes[index].wake.clone(),
             signal: self.signal.clone(),
+            process: index,
         })
     }
     pub fn wake_listener(&self) -> WakeListener {
@@ -868,18 +869,22 @@ impl NetworkSession {
         if self.terminal.is_some() {
             return;
         }
+        // Drain targeted wakes atomically before processing scheduler work.
+        // A subsequent wake remains queued for the next drive. Generic
+        // SessionNotifier notifications still force the legacy full scan.
+        let (global_epoch, targets) = self.signal.take_scheduler_wakes();
         if self.prefer_full_refresh() {
+            self.observed_global_wake_epoch = global_epoch;
             self.dirty_processes.clear();
             self.refresh_all_processes();
             return;
         }
-        // Read the wake epoch BEFORE inspecting nodes. A notifier racing with
-        // this scan will force a new full scan on the next refresh, not be
-        // acknowledged without its pending wake being seen.
-        let wake_epoch = self.signal.epoch();
-        let complete =
-            std::mem::take(&mut self.force_full_refresh) || wake_epoch != self.observed_wake_epoch;
-        self.observed_wake_epoch = wake_epoch;
+        for index in targets {
+            self.dirty_process(index);
+        }
+        let complete = std::mem::take(&mut self.force_full_refresh)
+            || global_epoch != self.observed_global_wake_epoch;
+        self.observed_global_wake_epoch = global_epoch;
         if complete {
             self.dirty_processes.clear();
             self.refresh_all_processes();
