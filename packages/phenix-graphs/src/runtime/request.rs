@@ -61,6 +61,14 @@ impl CaptureMetadata {
     }
 }
 
+/// One concrete current-state reason a sealed request's input is not closed.
+/// Always revalidated before reuse; never caches an inferred permanent result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClosureBlocker {
+    Process(usize),
+    Queue(usize),
+}
+
 pub(super) struct RequestScope {
     pub(super) sealed: bool,
     captures: usize,
@@ -68,6 +76,11 @@ pub(super) struct RequestScope {
     pub(super) invalid: bool,
     pub(super) reachable: BTreeSet<usize>,
     pub(super) observed_inputs: BTreeSet<(usize, usize)>,
+    // A scoped input may be checked many times against the same still-live
+    // ancestor. Store only concrete, revalidated negative proof witnesses.
+    // The key space is bounded by this compiled graph's input ports.
+    pub(super) closure_blockers:
+        std::cell::RefCell<BTreeMap<(usize, usize), ClosureBlocker>>,
     pub(super) terminal: Option<RequestStatus>,
     pub(super) failure: Option<String>,
     pub(super) disposal: RequestDisposal,
@@ -176,6 +189,7 @@ impl NetworkSession {
                 invalid: false,
                 reachable: BTreeSet::new(),
                 observed_inputs: BTreeSet::new(),
+                closure_blockers: std::cell::RefCell::new(BTreeMap::new()),
                 terminal: None,
                 failure: None,
                 disposal: RequestDisposal::default(),
