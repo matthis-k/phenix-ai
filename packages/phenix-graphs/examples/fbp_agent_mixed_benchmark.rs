@@ -134,8 +134,12 @@ impl ReadinessPolicy for Gate {
 fn wire(input: &[&str], output: &[&str]) -> Arc<Interface> {
     Arc::new(
         Interface::new(
-            input.iter().map(|name| PortDef::wire::<u64>(*name).unwrap()),
-            output.iter().map(|name| PortDef::wire::<u64>(*name).unwrap()),
+            input
+                .iter()
+                .map(|name| PortDef::wire::<u64>(*name).unwrap()),
+            output
+                .iter()
+                .map(|name| PortDef::wire::<u64>(*name).unwrap()),
         )
         .unwrap(),
     )
@@ -324,7 +328,10 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
         let mut steps = before.steps;
         if iteration % 2 == 0 {
             assert_eq!(before.steps, 6);
-            assert_eq!(session.request_status(request).unwrap(), RequestStatus::Pending);
+            assert_eq!(
+                session.request_status(request).unwrap(),
+                RequestStatus::Pending
+            );
             gate.store(true, Ordering::Release);
             assert!(notifier.notify());
             let after = session.run_until_idle(64);
