@@ -162,7 +162,7 @@ fn in_flight_worker_effect_survives_cancel_but_its_completion_cannot_cross_recov
                 let late = thread.join().unwrap();
                 assert!(listener.wait_timeout(Duration::ZERO));
                 let (error, returned) = session.complete_job(late).unwrap_err();
-                assert_eq!(error, HandoffError::StaleCompletion);
+                assert_eq!(error, HandoffError::ForeignCompletion);
                 drop(returned);
                 session.complete_job(fresh_job.run()).unwrap();
                 assert_eq!(session.run_until_idle(16).steps, 1);
@@ -188,7 +188,7 @@ fn in_flight_worker_effect_survives_cancel_but_its_completion_cannot_cross_recov
         let late = thread.join().unwrap();
         assert!(listener.wait_timeout(Duration::ZERO));
         let (error, returned) = session.complete_job(late).unwrap_err();
-        assert_eq!(error, HandoffError::StaleCompletion);
+        assert_eq!(error, HandoffError::ForeignCompletion);
         drop(returned);
         if round % 3 == 1 {
             assert_eq!(session.run_until_idle(16).steps, 2);
