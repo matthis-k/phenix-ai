@@ -1127,6 +1127,11 @@ impl NetworkSession {
                 }
             }
             Ok(Step::WaitInputs(policy)) => {
+                // Runtime-selected grouped readiness may be custom or depend
+                // on closure beyond packet changes. One-way fallback avoids
+                // an invalidation rule for arbitrary staged policies.
+                self.incremental_ready = false;
+                self.dirty_processes.clear();
                 self.processes[index].waiting_policy = Some(policy);
             }
             Ok(Step::WaitWake) => {}
