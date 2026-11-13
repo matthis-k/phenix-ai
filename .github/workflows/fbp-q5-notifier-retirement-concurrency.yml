@@ -38,6 +38,7 @@ jobs:
           } > artifacts/environment.txt
           sha256sum packages/phenix-graphs/src/runtime/wake.rs \
             packages/phenix-graphs/tests/fbp_notifier_retirement_interleavings.rs \
+            packages/phenix-graphs/tests/fbp_plugin_lock_order.rs \
             > artifacts/source-hashes.txt
           cat artifacts/environment.txt
           cat artifacts/source-hashes.txt

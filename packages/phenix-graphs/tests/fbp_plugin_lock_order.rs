@@ -10,9 +10,7 @@ use phenix_graph::{
     Value,
     interface::{Interface, PortDef},
     network::NetworkBuilder,
-    process::{
-        ActivationJob, DispatchResult, Process, ProcessContext, ProcessDispatcher, Step,
-    },
+    process::{ActivationJob, DispatchResult, Process, ProcessContext, ProcessDispatcher, Step},
     runtime::{
         Readiness, ReadinessPolicy, ReadinessSnapshot, RequestFailurePolicy, RequestStatus,
         SessionNotifier, SessionOptions, SessionState,
