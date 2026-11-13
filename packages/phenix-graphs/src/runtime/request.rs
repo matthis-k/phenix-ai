@@ -268,10 +268,14 @@ impl NetworkSession {
         // can gain an optional input closure with no physical packet. The
         // watcher is registered once even if close_request is repeated.
         let reachable: Vec<_> = self.requests[&id].reachable.iter().copied().collect();
-        if first_seal {
-            self.watch_scoped_optional(&reachable);
-        }
         for index in reachable {
+            // Registration and dirtying share the existing reachability pass:
+            // no second O(V) traversal on every request seal.
+            if first_seal
+                && matches!(&self.processes[index].policy, Readiness::Optional { .. })
+            {
+                *self.scoped_optional_poll.entry(index).or_default() += 1;
+            }
             self.dirty_process(index);
         }
         self.refresh();
