@@ -1,10 +1,16 @@
-use std::time::Duration;
+#[cfg(loom)]
+use loom::sync::{
+    Arc, Condvar, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::collections::BTreeSet;
+#[cfg(not(loom))]
 use std::{
-    collections::BTreeSet,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 #[derive(Default)]
@@ -130,10 +136,12 @@ impl ProcessNotifier {
 }
 /// Register before checking session state or a completion channel, then wait.
 /// The epoch latch makes a notification between that check and wait observable.
+#[cfg(not(loom))]
 pub struct WakeListener {
     signal: Arc<WakeSignal>,
     observed: u64,
 }
+#[cfg(not(loom))]
 impl WakeListener {
     pub(super) fn new(signal: Arc<WakeSignal>) -> Self {
         let observed = signal.state.lock().unwrap().epoch;
@@ -159,7 +167,7 @@ impl SessionNotifier {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use super::*;
     use std::{sync::Barrier, thread};
