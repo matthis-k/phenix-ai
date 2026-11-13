@@ -55,26 +55,19 @@ fn sealed_optional_watch_is_idempotent_and_isolated_across_requests() {
             Arc::new(|| RootDrop),
         )
         .unwrap();
-    let optional_iface = Arc::new(Interface::new([PortDef::wire::<u64>("opt").unwrap()], []).unwrap());
+    let optional_iface =
+        Arc::new(Interface::new([PortDef::wire::<u64>("opt").unwrap()], []).unwrap());
     let sink = builder
-        .node(
-            "optional",
-            optional_iface.clone(),
-            {
-                let observed = observed.clone();
-                Arc::new(move || ObserveAbsent(observed.clone()))
-            },
-        )
+        .node("optional", optional_iface.clone(), {
+            let observed = observed.clone();
+            Arc::new(move || ObserveAbsent(observed.clone()))
+        })
         .unwrap();
     let unrelated_node = builder
-        .node(
-            "unrelated",
-            optional_iface,
-            {
-                let unrelated = unrelated.clone();
-                Arc::new(move || ObserveAbsent(unrelated.clone()))
-            },
-        )
+        .node("unrelated", optional_iface, {
+            let unrelated = unrelated.clone();
+            Arc::new(move || ObserveAbsent(unrelated.clone()))
+        })
         .unwrap();
     builder
         .expose_input("trigger", root.wire_input::<u64>("in").unwrap(), one())
@@ -103,7 +96,12 @@ fn sealed_optional_watch_is_idempotent_and_isolated_across_requests() {
             },
         );
     }
-    let mut session = builder.build().unwrap().compile().unwrap().start_with_options(options);
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
 
     // Both sealed scopes reach only "optional". Repeated sealing of one
     // request must not register two watches and leak one after release.
