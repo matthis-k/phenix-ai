@@ -131,7 +131,12 @@ impl NetworkSession {
     pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
         let p = &self.processes[index];
         let count = p.inputs.len();
-        self.validate_policy(index, p.waiting_policy.as_ref().unwrap_or(&p.policy))?;
+        // Configured readiness is validated once during session preflight.
+        // WaitInputs can introduce a policy after startup and must still be
+        // checked on every staged selection.
+        if let Some(policy) = &p.waiting_policy {
+            self.validate_policy(index, policy)?;
+        }
         if let Some(waiting) = &p.waiting {
             let port = p
                 .inputs
