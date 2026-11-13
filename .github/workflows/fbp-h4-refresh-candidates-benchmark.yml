@@ -64,7 +64,7 @@ jobs:
               --example fbp_targeted_eos_benchmark \
               --example fbp_closure_benchmark)
           done
-      - name: Three interleaved CPU-pinned paired comparisons
+      - name: Seven interleaved CPU-pinned paired comparisons
         shell: bash
         run: |
           set -euo pipefail
@@ -72,7 +72,7 @@ jobs:
           cpu="$(printf '%s' "$allowed" | cut -d, -f1 | cut -d- -f1)"
           taskset -c "$cpu" true
           echo "cpu=$cpu" > artifacts/affinity.txt
-          for repetition in 1 2 3; do
+          for repetition in 1 2 3 4 5 6 7; do
             if (( repetition % 2 == 1 )); then
               order=(baseline candidate)
             else
