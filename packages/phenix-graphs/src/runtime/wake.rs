@@ -175,7 +175,7 @@ mod tests {
             let signal = WakeSignal::new();
             let old_slot = Arc::new(WakeSlot::default());
             let barrier = Arc::new(Barrier::new(3));
-            let wants_wake = round % 2 == 0;
+            let wants_wake = round.is_multiple_of(2);
             let notified = {
                 let signal = signal.clone();
                 let slot = old_slot.clone();
