@@ -38,7 +38,11 @@ fn compiled(chain: usize, unrelated: usize) -> phenix_graph::network::CompiledNe
     for index in 0..chain {
         nodes.push(
             builder
-                .node(format!("finish-{index}"), iface.clone(), Arc::new(|| FinishOnEos))
+                .node(
+                    format!("finish-{index}"),
+                    iface.clone(),
+                    Arc::new(|| FinishOnEos),
+                )
                 .unwrap(),
         );
     }
@@ -55,10 +59,7 @@ fn compiled(chain: usize, unrelated: usize) -> phenix_graph::network::CompiledNe
         .expose_input("seed", nodes[0].wire_input::<i64>("in").unwrap(), one())
         .unwrap();
     builder
-        .expose_output(
-            "tail",
-            nodes[chain - 1].wire_output::<i64>("out").unwrap(),
-        )
+        .expose_output("tail", nodes[chain - 1].wire_output::<i64>("out").unwrap())
         .unwrap();
 
     let sink = Arc::new(ComponentDef::sink(|value: &u64| {
@@ -107,7 +108,9 @@ fn main() {
     eprintln!(
         "scenario=global_writer_eos_through_finished_chain;          unrelated_writer_open_sinks; persistent_graph=true; new_session_per_sample=true;          startup_outside_timer=true; warmup=16"
     );
-    println!("mode,chain_nodes,unrelated_nodes,iterations,compile_ms,mean_ns_per_eos,p50_ns,p95_ns");
+    println!(
+        "mode,chain_nodes,unrelated_nodes,iterations,compile_ms,mean_ns_per_eos,p50_ns,p95_ns"
+    );
     for unrelated in [1, 16, 64, 256] {
         let chain = 1;
         let iterations = 800;
