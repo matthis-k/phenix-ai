@@ -248,7 +248,9 @@ mod tests {
         let mut session = network.start_with_options(opts);
         let first = session.begin_request(None).unwrap();
         let second = session.begin_request(None).unwrap();
-        session.inject_request(first, "trigger", Value::of(10_u64)).unwrap();
+        session
+            .inject_request(first, "trigger", Value::of(10_u64))
+            .unwrap();
         session
             .inject_request(second, "unrelated-0", Value::of(20_u64))
             .unwrap();
@@ -257,8 +259,14 @@ mod tests {
         let report = session.run_until_idle(32);
         assert!(!report.budget_exhausted);
         assert_eq!(report.steps, 4);
-        assert_eq!(session.request_status(first).unwrap(), RequestStatus::Settled { captures: 0 });
-        assert_eq!(session.request_status(second).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(
+            session.request_status(first).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
+        assert_eq!(
+            session.request_status(second).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
         assert_eq!(hits.load(Ordering::Relaxed), 2);
         session.release_request(first).unwrap();
         session.release_request(second).unwrap();
@@ -266,13 +274,18 @@ mod tests {
         // A third scope with both roots must not inherit either earlier
         // scope's absence proof or skip a newly owned producer.
         let third = session.begin_request(None).unwrap();
-        session.inject_request(third, "trigger", Value::of(30_u64)).unwrap();
+        session
+            .inject_request(third, "trigger", Value::of(30_u64))
+            .unwrap();
         session
             .inject_request(third, "unrelated-0", Value::of(40_u64))
             .unwrap();
         session.close_request(third).unwrap();
         assert_eq!(session.run_until_idle(32).steps, 3);
-        assert_eq!(session.request_status(third).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(
+            session.request_status(third).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
         assert_eq!(hits.load(Ordering::Relaxed), 3);
         session.release_request(third).unwrap();
     }
