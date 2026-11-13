@@ -482,8 +482,7 @@ impl NetworkSession {
             }
             if process.source
                 || process.inputs.is_empty()
-                || matches!(&process.policy, Readiness::Custom(_))
-                    && !process.notification_driven
+                || matches!(&process.policy, Readiness::Custom(_)) && !process.notification_driven
             {
                 always_poll.insert(index);
             }
