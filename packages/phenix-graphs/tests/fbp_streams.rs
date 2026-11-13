@@ -1620,14 +1620,18 @@ fn custom_initial_policy_and_staged_reservation_keep_request_activation() {
 struct AlwaysSelectMissing;
 impl ReadinessPolicy for AlwaysSelectMissing {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        assert!(snapshot
-            .heads
-            .iter()
-            .any(|head| head.port == "start" && head.available));
-        assert!(snapshot
-            .heads
-            .iter()
-            .any(|head| head.port == "missing" && !head.available && !head.closed));
+        assert!(
+            snapshot
+                .heads
+                .iter()
+                .any(|head| head.port == "start" && head.available)
+        );
+        assert!(
+            snapshot
+                .heads
+                .iter()
+                .any(|head| head.port == "missing" && !head.available && !head.closed)
+        );
         vec!["missing".into()]
     }
 }
@@ -1659,8 +1663,10 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
             .unwrap();
     }
     let mut opts = options();
-    opts.readiness
-        .insert("stage".into(), Readiness::Custom(Arc::new(AlwaysSelectMissing)));
+    opts.readiness.insert(
+        "stage".into(),
+        Readiness::Custom(Arc::new(AlwaysSelectMissing)),
+    );
     let mut session = builder
         .build()
         .unwrap()
@@ -1668,12 +1674,16 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
         .unwrap()
         .start_with_options(opts);
     let id = session.begin_request(None).unwrap();
-    session.inject_request(id, "start", Value::of(1_i64)).unwrap();
+    session
+        .inject_request(id, "start", Value::of(1_i64))
+        .unwrap();
     assert_eq!(session.state(), SessionState::Failed);
-    assert!(session
-        .failure()
-        .unwrap()
-        .contains("invalid readiness selection for missing"));
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .contains("invalid readiness selection for missing")
+    );
 }
 
 struct OptionalSink(Arc<AtomicUsize>);
