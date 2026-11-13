@@ -672,6 +672,17 @@ impl NetworkSession {
             && !p.queued
             && p.pending.is_none()
             && !p.inputs.is_empty()
+            // Preserve the original early no-request short circuit. A fully
+            // reachable scope also cannot benefit from the scoped prefilter,
+            // so avoid visiting every empty input queue only to reject it.
+            && (self.requests.is_empty()
+                || (!all_reachable
+                    && p.handoff.state() == HandoffState::Idle
+                    && p.request.is_none()
+                    && self
+                        .requests
+                        .values()
+                        .all(|scope| !scope.reachable.contains(&index))))
             && !matches!(&p.policy, Readiness::Custom(_))
             && !p
                 .waiting_policy
@@ -684,17 +695,6 @@ impl NetworkSession {
                         queue.is_empty() && !queue.writer_closed()
                     })
             })
-            // Keep the original no-scope path unchanged. With live scopes,
-            // only an entirely unowned, idle, request-unreachable process can
-            // skip selection: its queues are already proven empty and open.
-            && (self.requests.is_empty()
-                || (!all_reachable
-                    && p.handoff.state() == HandoffState::Idle
-                    && p.request.is_none()
-                    && self
-                        .requests
-                        .values()
-                        .all(|scope| !scope.reachable.contains(&index))))
     }
 
     fn refresh(&mut self) {
