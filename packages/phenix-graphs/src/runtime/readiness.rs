@@ -74,12 +74,16 @@ pub(super) fn validate_policy_ports<'a>(
     ports: impl Iterator<Item = &'a str>,
     policy: &Readiness,
 ) -> Result<(), String> {
-    let names: BTreeSet<&str> = ports.collect();
     match policy {
-        Readiness::AtLeast(n) if n.get() > names.len() => {
-            return Err("readiness threshold exceeds input port count".into());
+        Readiness::AtLeast(n) => {
+            if n.get() > ports.count() {
+                return Err("readiness threshold exceeds input port count".into());
+            }
         }
         Readiness::Optional { required, optional } => {
+            // Only Optional needs a name set; Any/All/Custom require no
+            // declaration inspection, and AtLeast only needs a port count.
+            let names: BTreeSet<&str> = ports.collect();
             let mut seen = BTreeSet::new();
             for name in required.iter().chain(optional) {
                 if !names.contains(name.as_str()) || !seen.insert(name) {
@@ -131,12 +135,10 @@ impl NetworkSession {
     pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
         let p = &self.processes[index];
         let count = p.inputs.len();
-        // Configured readiness is validated once during session preflight.
-        // WaitInputs can introduce a policy after startup and must still be
-        // checked on every staged selection.
-        if let Some(policy) = &p.waiting_policy {
-            self.validate_policy(index, policy)?;
-        }
+        // Static policies are preflight-checked; revalidation now has an
+        // allocation-free fast path for Any/All/Custom and AtLeast. Keep the
+        // exact same dynamic WaitInputs validation and failure boundary.
+        self.validate_policy(index, p.waiting_policy.as_ref().unwrap_or(&p.policy))?;
         if let Some(waiting) = &p.waiting {
             let port = p
                 .inputs
