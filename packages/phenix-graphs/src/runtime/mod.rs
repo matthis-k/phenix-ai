@@ -663,26 +663,32 @@ impl NetworkSession {
             debug_assert!(packets.is_empty());
         }
     }
-    // A process with only empty, open physical inputs cannot reserve a
-    // native packet or consume EOS. Keep custom policies and request-scoped
-    // closure on the full path: they can change without a physical packet.
-    fn idle_inputs_cannot_progress(&self, index: usize, all_reachable: bool) -> bool {
+    // An idle process with empty, writer-open inputs has no native packet or
+    // global EOS to reserve. An all-optional scoped closure is the remaining
+    // zero-packet readiness path, and must retain its full selection.
+    fn idle_inputs_cannot_progress(&self, index: usize) -> bool {
         let p = &self.processes[index];
         !p.source
             && !p.queued
             && p.pending.is_none()
             && !p.inputs.is_empty()
-            // Preserve the original early no-request short circuit. A fully
-            // reachable scope also cannot benefit from the scoped prefilter,
-            // so avoid visiting every empty input queue only to reject it.
             && (self.requests.is_empty()
-                || (!all_reachable
-                    && p.handoff.state() == HandoffState::Idle
+                || (p.handoff.state() == HandoffState::Idle
                     && p.request.is_none()
-                    && self
+                    && p.waiting.is_none()
+                    && p.waiting_policy.is_none()
+                    && !p.wake.pending.load(Ordering::Acquire)
+                    // Only unobserved all-optional request closures can
+                    // activate an idle process without physical packet data.
+                    // Other policies need a packet or global EOS; reachability
+                    // alone does not make them runnable.
+                    && (!matches!(
+                        &p.policy,
+                        Readiness::Optional { required, .. } if required.is_empty()
+                    ) || self
                         .requests
-                        .values()
-                        .all(|scope| !scope.reachable.contains(&index))))
+                        .keys()
+                        .all(|request| !self.closure_obligation(index, *request)))))
             && !matches!(&p.policy, Readiness::Custom(_))
             && !p
                 .waiting_policy
@@ -701,14 +707,6 @@ impl NetworkSession {
         if self.terminal.is_some() {
             return;
         }
-        // Root reachability can only change on explicit ingress/source starts,
-        // both before refresh. If any scope covers the entire process inventory,
-        // no additional scoped idle prefilter can succeed. Compute this once,
-        // not via a tree lookup for every node in a fully reachable chain.
-        let all_reachable = self
-            .requests
-            .values()
-            .any(|scope| scope.reachable.len() == self.processes.len());
         // Closure can propagate backwards in compiled index order. Repeat only
         // when a process terminates, so this remains bounded by topology size.
         loop {
@@ -728,7 +726,7 @@ impl NetworkSession {
                     state = HandoffState::Ready;
                 }
                 if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
-                    if self.idle_inputs_cannot_progress(index, all_reachable) {
+                    if self.idle_inputs_cannot_progress(index) {
                         continue;
                     }
                     let selected = match self.selection(index) {
