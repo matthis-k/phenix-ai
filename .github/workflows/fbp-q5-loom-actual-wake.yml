@@ -1,0 +1,72 @@
+name: "FBP Q5 Loom Actual Wake Interleavings"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/src/runtime/wake.rs"
+      - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "verification/fbp-wake-loom/**"
+      - "docs/fbp-q5-loom-wake-20261113.md"
+      - "docs/fbp-issue-progress-estimates-20261113.md"
+      - ".github/workflows/fbp-q5-loom-actual-wake.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-actual-wake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: "--cfg loom"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Capture candidate, source hashes and verifier toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            echo "RUSTFLAGS=$RUSTFLAGS"
+            date -u +%FT%TZ
+            uname -a
+            nix --version
+            nix develop --command rustc -vV
+          } | tee artifacts/environment.txt
+          sha256sum \
+            packages/phenix-graphs/src/runtime/wake.rs \
+            packages/phenix-graphs/src/runtime/mod.rs \
+            verification/fbp-wake-loom/Cargo.toml \
+            verification/fbp-wake-loom/src/lib.rs \
+            | tee artifacts/source-hashes.txt
+      - name: Generate initial verifier lock only when absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f verification/fbp-wake-loom/Cargo.lock ]; then
+            nix develop --command cargo generate-lockfile --manifest-path verification/fbp-wake-loom/Cargo.toml
+            echo "BOOTSTRAP_VERIFIER_LOCK_BEGIN"
+            cat verification/fbp-wake-loom/Cargo.lock
+            echo "BOOTSTRAP_VERIFIER_LOCK_END"
+          fi
+          sha256sum verification/fbp-wake-loom/Cargo.lock | tee artifacts/lock-sha256.txt
+      - name: Rustfmt standalone verifier and model check real wake implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo fmt --manifest-path verification/fbp-wake-loom/Cargo.toml -- --check
+          nix develop --command cargo test --manifest-path verification/fbp-wake-loom/Cargo.toml \
+            --locked -- --nocapture 2>&1 | tee artifacts/model.log
+      - name: Archive source and model exploration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-q5-loom-actual-wake-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
