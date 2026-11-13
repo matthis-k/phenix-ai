@@ -241,6 +241,8 @@ pub struct NetworkSession {
     always_poll: BTreeSet<usize>,
     scoped_readiness_poll: BTreeMap<usize, usize>,
     dirty_processes: BTreeSet<usize>,
+    // Reused only by the owning session driver; never carries pending work.
+    refresh_scratch: Vec<usize>,
     force_full_refresh: bool,
     observed_global_wake_epoch: u64,
     terminal: Option<SessionState>,
@@ -499,6 +501,7 @@ impl NetworkSession {
             always_poll,
             scoped_readiness_poll: BTreeMap::new(),
             dirty_processes: BTreeSet::new(),
+            refresh_scratch: Vec::new(),
             force_full_refresh: true,
             observed_global_wake_epoch: 0,
             terminal: None,
@@ -816,13 +819,13 @@ impl NetworkSession {
             >= self.processes.len().saturating_sub(1)
     }
 
-    // The dirty indices are already ordered, but repeatedly inserting the
-    // permanent and scoped poll sets into a fresh BTreeSet allocates a tree
-    // node per candidate on every drive. Materialize one contiguous batch,
-    // sort and deduplicate it to retain compiled-index scheduling order.
-    fn collect_refresh_candidates(&mut self) -> Vec<usize> {
+    // A contiguous sorted union avoids transient B-tree nodes per polled
+    // process. Reuse the caller's scratch buffer to avoid introducing a fresh
+    // allocation on tiny dirty-only, EOS and notified-custom refreshes.
+    fn collect_refresh_candidates(&mut self, candidates: &mut Vec<usize>) {
         let pending = std::mem::take(&mut self.dirty_processes);
-        let mut candidates = Vec::with_capacity(
+        candidates.clear();
+        candidates.reserve(
             pending.len() + self.always_poll.len() + self.scoped_readiness_poll.len(),
         );
         candidates.extend(pending);
@@ -830,7 +833,6 @@ impl NetworkSession {
         candidates.extend(self.scoped_readiness_poll.keys().copied());
         candidates.sort_unstable();
         candidates.dedup();
-        candidates
     }
 
     fn dirty_process(&mut self, index: usize) {
@@ -985,10 +987,11 @@ impl NetworkSession {
         }
         // Legacy Custom/source/staged nodes remain polled; scoped Optional
         // and notified Custom nodes participate for their sealed requests.
-        let mut dirty = self.collect_refresh_candidates();
+        let mut dirty = std::mem::take(&mut self.refresh_scratch);
+        self.collect_refresh_candidates(&mut dirty);
         loop {
             let mut finished = false;
-            for index in dirty {
+            for &index in &dirty {
                 let Some(did_finish) = self.refresh_process(index) else {
                     return;
                 };
@@ -1004,11 +1007,12 @@ impl NetworkSession {
             // Revisit only their producers/consumers and always-polled nodes
             // when EOS propagation requires another pass. A packet dequeue
             // without a finish stays pending for the next driver call.
-            dirty = self.collect_refresh_candidates();
+            self.collect_refresh_candidates(&mut dirty);
             if dirty.is_empty() {
                 break;
             }
         }
+        self.refresh_scratch = dirty;
     }
 
     /// Passive inspection of outstanding jobs whose configured age limit
