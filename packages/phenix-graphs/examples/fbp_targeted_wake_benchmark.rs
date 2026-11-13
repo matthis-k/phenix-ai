@@ -39,9 +39,7 @@ impl ReadinessPolicy for NeverReady {
 
 fn compiled(processes: usize) -> phenix_graph::network::CompiledNetwork {
     let mut builder = NetworkBuilder::new();
-    let iface = Arc::new(
-        Interface::new([PortDef::wire::<u64>("in").unwrap()], []).unwrap(),
-    );
+    let iface = Arc::new(Interface::new([PortDef::wire::<u64>("in").unwrap()], []).unwrap());
     for index in 0..processes {
         let path = format!("waiter-{index}");
         let node = builder
@@ -120,7 +118,9 @@ fn main() {
     println!("processes,events,compile_ms,start_ms,mean_ns_per_wake,p50_ns,p95_ns");
     for processes in processes {
         let (compile_ms, start_ms, mean, p50, p95) = measure(processes, iterations);
-        println!("{processes},{iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0},{p95:.0}");
+        println!(
+            "{processes},{iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0},{p95:.0}"
+        );
     }
 }
 
