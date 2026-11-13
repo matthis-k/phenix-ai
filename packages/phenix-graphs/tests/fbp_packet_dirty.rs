@@ -576,3 +576,35 @@ fn notification_contract_panic_fails_session_instead_of_escaping_start() {
             .contains("readiness notification contract panicked")
     );
 }
+
+#[test]
+fn process_notifier_is_invalid_after_finish_and_cannot_target_another_session() {
+    let mut builder = NetworkBuilder::new();
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let node = builder
+        .node(
+            "finish",
+            iface,
+            Arc::new(|| FinishOnEos(Arc::new(AtomicUsize::new(0)))),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let network = builder.build().unwrap().compile().unwrap();
+    let mut first = network.start();
+    let old = first.process_notifier("finish").unwrap();
+    first.close_input("input").unwrap();
+    assert_eq!(first.run_until_idle(16).steps, 1);
+    assert!(!old.notify());
+    assert!(first.process_notifier("finish").is_none());
+
+    let mut second = network.start();
+    let fresh = second.process_notifier("finish").unwrap();
+    assert!(!old.notify());
+    assert!(fresh.notify());
+    assert_eq!(second.run_until_idle(16).steps, 0);
+    second.close_input("input").unwrap();
+    assert_eq!(second.run_until_idle(16).steps, 1);
+    assert!(!fresh.notify());
+}
