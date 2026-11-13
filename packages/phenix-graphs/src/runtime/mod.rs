@@ -233,10 +233,10 @@ pub struct NetworkSession {
     captures: BTreeMap<String, usize>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
-    // Packet-driven sessions can refresh only process endpoints changed by
-    // queue/handoff events. Dynamic policies, sources and optional closures
-    // retain the original complete inventory scan.
-    incremental_ready: bool,
+    // Sources, custom/optional readiness and staged groups must still be
+    // polled for zero-packet progress. Ordinary packet-driven nodes use dirty
+    // endpoint invalidation, even in a mixed composition.
+    always_poll: BTreeSet<usize>,
     dirty_processes: BTreeSet<usize>,
     force_full_refresh: bool,
     observed_wake_epoch: u64,
@@ -458,11 +458,16 @@ impl NetworkSession {
         for edge in compiled.connections() {
             downstream[edge.from().0].push(edge.to().0);
         }
-        let incremental_ready = processes.iter().all(|p| {
-            !p.source
-                && !p.inputs.is_empty()
-                && !matches!(&p.policy, Readiness::Optional { .. } | Readiness::Custom(_))
-        });
+        let always_poll = processes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| {
+                (p.source
+                    || p.inputs.is_empty()
+                    || matches!(&p.policy, Readiness::Optional { .. } | Readiness::Custom(_)))
+                .then_some(index)
+            })
+            .collect();
         let mut session = Self {
             compiled,
             downstream,
@@ -472,7 +477,7 @@ impl NetworkSession {
             captures,
             endpoints,
             ready: VecDeque::new(),
-            incremental_ready,
+            always_poll,
             dirty_processes: BTreeSet::new(),
             force_full_refresh: true,
             observed_wake_epoch: 0,
@@ -729,13 +734,13 @@ impl NetworkSession {
     }
 
     fn dirty_process(&mut self, index: usize) {
-        if self.incremental_ready {
+        if self.always_poll.len() != self.processes.len() {
             self.dirty_processes.insert(index);
         }
     }
 
     fn dirty_queue(&mut self, queue: usize) {
-        if !self.incremental_ready {
+        if self.always_poll.len() == self.processes.len() {
             return;
         }
         let producer = match &self.endpoints[queue].0 {
@@ -856,7 +861,8 @@ impl NetworkSession {
         if self.terminal.is_some() {
             return;
         }
-        if !self.incremental_ready {
+        if self.always_poll.len() == self.processes.len() {
+            self.dirty_processes.clear();
             self.refresh_all_processes();
             return;
         }
@@ -872,7 +878,10 @@ impl NetworkSession {
             self.refresh_all_processes();
             return;
         }
-        let dirty = std::mem::take(&mut self.dirty_processes);
+        let mut dirty = std::mem::take(&mut self.dirty_processes);
+        // Preserve custom/source/optional/staged readiness on every drive;
+        // only ordinary packet-driven nodes can be skipped when unrelated.
+        dirty.extend(self.always_poll.iter().copied());
         let mut finished = false;
         for index in dirty {
             let Some(did_finish) = self.refresh_process(index) else {
@@ -1127,19 +1136,15 @@ impl NetworkSession {
                     self.fail_process(index, format!("unknown WaitInput port: {name}"));
                 } else {
                     // A staged input may later become request-locally closed
-                    // when an upstream activation ends, with no queue event.
-                    // Degrade to the complete scan before it starts waiting.
-                    self.incremental_ready = false;
-                    self.dirty_processes.clear();
+                    // when an upstream activation ends without a queue event.
+                    self.always_poll.insert(index);
                     self.processes[index].waiting = Some(name);
                 }
             }
             Ok(Step::WaitInputs(policy)) => {
-                // Runtime-selected grouped readiness may be custom or depend
-                // on closure beyond packet changes. One-way fallback avoids
-                // an invalidation rule for arbitrary staged policies.
-                self.incremental_ready = false;
-                self.dirty_processes.clear();
+                // Custom or group-closure readiness may progress without a
+                // physical packet; keep this process polled on every drive.
+                self.always_poll.insert(index);
                 self.processes[index].waiting_policy = Some(policy);
             }
             Ok(Step::WaitWake) => {}
