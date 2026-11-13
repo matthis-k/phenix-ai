@@ -138,10 +138,7 @@ fn targeted_wakes_preserve_process_identity_and_listener_notifications() {
     let mut builder = NetworkBuilder::new();
     let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
 
-    for (path, count) in [
-        ("left", left_count.clone()),
-        ("right", right_count.clone()),
-    ] {
+    for (path, count) in [("left", left_count.clone()), ("right", right_count.clone())] {
         let node = builder
             .node(
                 path,
