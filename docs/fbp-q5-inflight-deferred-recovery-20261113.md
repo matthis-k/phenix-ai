@@ -32,6 +32,9 @@ Target invariant: cancellation invalidates an old ticket and prevents any late e
 - Add `FBP Q5 In-Flight Worker Recovery` workflow that exercises this test 12 times, preserves exact commit, source hash, compiler and logs. 12 × 48 = 576 genuine in-flight cancel/recovery rounds.
 - Keep existing #1296 wake/retirement regression workflow plus six-job Flake CI, H4 targeted/notified agent benchmarks and H6 allocation benchmark; **no production code changes**.
 
-## Phase 4 — acceptance (pending checks)
+## Phase 4 — observed API identity distinction and pending gates
+
+The initial run [#43417358615](https://github.com/matthis-k/phenix-ai/actions/runs/43417358615) correctly reached a live in-flight cancellation and rejected the old completion as \`HandoffError::ForeignCompletion\`, rather than the test's originally asserted \`StaleCompletion\`. This follows the actual \`ProcessHandoff::replacement()\` contract: replacement mints a **new owner identity**, while \`complete_job()\` searches for a live matching owner before invoking handoff completion. The old ticket is valid inventory of a retired owner, not of the replacement. \`StaleCompletion\` is instead returned when the *same owner* recognizes a stale step sequence. The test now asserts \`ForeignCompletion\` after replacement; no production behavior was changed. Fresh output and side-effect checks remain acceptance requirements.
+
 
 Do not claim completion until the exact candidate-head 6-job Flake CI, dedicated repeated threaded workflow and existing regression workflows pass. On success, mark this scoped Q5/H3b *race* verified but keep **Q5 Open** (no systematic Loom model, external plugin lock-order proof, or non-revocable external effect policy); **H3b Partial**. Record one-decimal score changes in a separate traceable scorecard, not as objective measured percentage.
