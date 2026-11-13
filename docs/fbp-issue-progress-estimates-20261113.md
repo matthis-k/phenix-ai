@@ -72,21 +72,33 @@ coverage; it closes two separate destructor/cleanup gaps found on the exact head
   process/context/code lease state; request/session transitions retire all wakes
   and process ownership before disposing that state. Destructors are isolated one
   at a time, and public cancellation reports typed cleanup failures after cleanup.
+- Kernel session access now leases `NetworkSession` out of its mutex around
+  dispatcher/readiness/process callbacks. Same-thread recursion remains
+  `ReentrantSession`; cross-thread callers fail fast with busy/`WouldBlock` rather
+  than blocking while a callback may need their plugin mutex. A real process
+  callback regression exercises the cross-thread lock-order case.
 - Adversarial tests cover panicking payloads in a queued packet and a reserved
   process context, stale wake rejection, fresh-request progress, and direct handoff
   cancellation reporting. The five-property existing Loom verifier passes; no
   Loom model was added because these changes use mutex-owned detachment and leave
   production wake synchronization unchanged.
-- Exact committed head `346b349a7cfa091ba86cc3ab861a245ac3a274f6` passed six-job
+- The teardown-only sub-batch at `346b349a7cfa091ba86cc3ab861a245ac3a274f6` passed six-job
   [Flake CI #43494388909](https://github.com/matthis-k/phenix-ai/actions/runs/43494388909),
   [five-property Loom #43494387856](https://github.com/matthis-k/phenix-ai/actions/runs/43494387856),
   and [Q5 notifier-retirement native concurrency #43494387716](https://github.com/matthis-k/phenix-ai/actions/runs/43494387716).
   Paired H4/H5 and allocation checks also passed on this head. Local focused tests,
-  strict workspace Clippy, and formatting passed. The cleanup path does not affect
-  scheduler hot paths, so no H4/H5/H6 score increase is claimed.
+  strict workspace Clippy, and formatting passed. The subsequent session-lease
+  correction is pending exact-head checks; its new real-process callback test and
+  workspace Clippy pass locally.
 
-The measured performance issue H6 is unchanged; this cleanup runs only on teardown
-and cancellation paths. No throughput improvement is claimed. Remaining risks
+The same optimized, setup-excluded kernel harness on PR #1300 baseline `1a57f7a6`
+vs. the session-lease candidate measured medians of 678/757 ns for no-op
+`with_session` and 107/188 ns for empty `run_steps(0)` (baseline/candidate); three
+sequential candidate samples varied by roughly 100 ns. Added absolute cost was
+about 79-81 ns/call. This is a microbenchmark, not process throughput or allocation
+evidence. H6 stays 70.0% because no profiling/allocation conclusion changes. The
+session-lease change still needs exact-head acceptance before its evidence is
+accepted. Remaining risks
 include arbitrary plugin-vs-plugin and cross-mount lock cycles, panics from multiple
 nested destructors during one destructor's own unwinding, and unrevocable effects
 already started by delegated work.

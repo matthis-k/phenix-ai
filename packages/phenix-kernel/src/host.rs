@@ -479,7 +479,7 @@ mod tests {
                         )
                         .unwrap();
                     kernel.session =
-                        Mutex::new(builder.build().unwrap().compile().unwrap().start());
+                        Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
                 }
 
                 kernel.routes.insert(
@@ -607,7 +607,7 @@ mod tests {
                     std::num::NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(builder.build().unwrap().compile().unwrap().start());
+            kernel.session = Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
             kernel.producers.get_mut().unwrap().producers.push((
                 Key::new("test", "idle"),
                 Some(Box::new(Idle { registered, polled })),

@@ -16,13 +16,13 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     sync::{
-        Arc, Mutex, MutexGuard, TryLockError,
+        Arc, Mutex, TryLockError,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
-// Fail fast only on same-thread recursive access to an identical kernel mutex.
-// Cross-thread contention still follows std::sync::Mutex's blocking semantics.
+// Fail fast on same-thread recursive access to an identical kernel resource.
+// Call sites choose their own cross-thread contention policy.
 thread_local! {
     static ACTIVE_KERNEL_LOCKS: RefCell<BTreeSet<usize>> = const { RefCell::new(BTreeSet::new()) };
 }
@@ -46,6 +46,49 @@ impl Drop for KernelLockScope {
         ACTIVE_KERNEL_LOCKS.with(|active| {
             active.borrow_mut().remove(&self.0);
         });
+    }
+}
+
+struct SessionLease<'a> {
+    slot: &'a Mutex<Option<NetworkSession>>,
+    session: Option<NetworkSession>,
+    notify_on_drop: bool,
+}
+
+impl SessionLease<'_> {
+    fn notify_on_drop(&mut self) {
+        self.notify_on_drop = true;
+    }
+}
+
+impl std::ops::Deref for SessionLease<'_> {
+    type Target = NetworkSession;
+
+    fn deref(&self) -> &Self::Target {
+        self.session.as_ref().expect("session lease is active")
+    }
+}
+
+impl std::ops::DerefMut for SessionLease<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.session.as_mut().expect("session lease is active")
+    }
+}
+
+impl Drop for SessionLease<'_> {
+    fn drop(&mut self) {
+        let notifier = self.notify_on_drop.then(|| {
+            self.session
+                .as_ref()
+                .expect("session lease is active")
+                .notifier()
+        });
+        let mut slot = self.slot.lock().unwrap_or_else(|error| error.into_inner());
+        *slot = self.session.take();
+        drop(slot);
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
     }
 }
 
@@ -521,6 +564,7 @@ impl std::error::Error for ProducerError {
 pub enum DriverError {
     NotStarted,
     ReentrantSession,
+    SessionBusy,
     ReentrantDrain,
     AlreadyRunning,
     DrainInProgress,
@@ -545,6 +589,7 @@ impl std::fmt::Display for DriverError {
         match self {
             Self::NotStarted => f.write_str("kernel not started"),
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
+            Self::SessionBusy => f.write_str("kernel session busy"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
             Self::DrainInProgress => {
@@ -613,7 +658,9 @@ struct ProducerState {
 
 pub struct Kernel {
     // Drop clears producers first; leases outlive session and compiled declarations.
-    session: Mutex<NetworkSession>,
+    // Protect ownership transfer only. No kernel mutex is held across runtime
+    // callbacks; concurrent session calls fail fast while the session is leased.
+    session: Mutex<Option<NetworkSession>>,
     compiled: CompiledNetwork,
     producers: Mutex<ProducerState>,
     // Serialize one whole drain against generation retirement. Inventory
@@ -1064,7 +1111,7 @@ impl Kernel {
             return Err(ResolutionError::Invalid(failure.into()));
         }
         Ok(Self {
-            session: Mutex::new(session),
+            session: Mutex::new(Some(session)),
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
@@ -1118,24 +1165,27 @@ impl Kernel {
         self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
-    // Producer callbacks run under producer_drain to keep generation retirement
-    // atomic. Never block on session while holding that gate: another thread
-    // can hold session and wait on drain. Ordinary callers keep blocking locks.
-    fn lock_session(&self) -> Result<MutexGuard<'_, NetworkSession>, ()> {
-        if KernelLockScope::held(&self.producer_drain) {
-            match self.session.try_lock() {
-                Ok(guard) => Ok(guard),
-                Err(TryLockError::Poisoned(error)) => Ok(error.into_inner()),
-                Err(TryLockError::WouldBlock) => Err(()),
-            }
-        } else {
-            Ok(self
-                .session
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()))
-        }
+    // Session operations own the value without holding its mutex across runtime
+    // callbacks. Every caller is nonblocking; contention is explicit so a plugin
+    // holding an external mutex never waits behind code that might call it back.
+    fn try_session(&self) -> Option<SessionLease<'_>> {
+        let mut slot = match self.session.try_lock() {
+            Ok(slot) => slot,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        let session = slot.take()?;
+        drop(slot);
+        Some(SessionLease {
+            slot: &self.session,
+            session: Some(session),
+            notify_on_drop: false,
+        })
     }
 
+    /// Lease exclusive mutable access to the session. The kernel mutex is not
+    /// held while the closure runs. Same-thread recursion and concurrent access
+    /// fail fast; callers may retry after releasing their own locks.
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
@@ -1146,13 +1196,15 @@ impl Kernel {
         let _scope = KernelLockScope::enter(&self.session)
             .ok_or_else(|| "reentrant kernel session access".to_owned())?;
         let mut session = self
-            .lock_session()
-            .map_err(|_| "kernel session busy during producer callback".to_owned())?;
+            .try_session()
+            .ok_or_else(|| "kernel session busy".to_owned())?;
+        session.notify_on_drop();
         let result = use_session(&mut session);
-        session.notifier().notify();
         Ok(result)
     }
 
+    /// Inject one packet without waiting for a session callback on another thread.
+    /// Busy/reentrant errors return ownership of the original value.
     pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
         if !self.started {
             return Err(InjectionError {
@@ -1166,7 +1218,7 @@ impl Kernel {
                 value,
             });
         };
-        let Ok(mut session) = self.lock_session() else {
+        let Some(mut session) = self.try_session() else {
             return Err(InjectionError {
                 reason: phenix_graph::connection::ConnectionError::WouldBlock,
                 value,
@@ -1174,11 +1226,13 @@ impl Kernel {
         };
         let result = session.inject(input, value);
         if result.is_ok() {
-            session.notifier().notify();
+            session.notify_on_drop();
         }
         result
     }
 
+    /// Run a bounded session drive without the kernel session mutex held across
+    /// dispatcher/process callbacks. Concurrent session ownership fails fast.
     pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
         if !self.started {
             return Err("kernel not started".into());
@@ -1186,8 +1240,8 @@ impl Kernel {
         let _scope = KernelLockScope::enter(&self.session)
             .ok_or_else(|| "reentrant kernel session access".to_owned())?;
         let mut session = self
-            .lock_session()
-            .map_err(|_| "kernel session busy during producer callback".to_owned())?;
+            .try_session()
+            .ok_or_else(|| "kernel session busy".to_owned())?;
         Ok(session.run_until_idle(budget))
     }
 
@@ -1298,16 +1352,12 @@ impl Kernel {
                     } else {
                         // Session access stays nonblocking. On contention or
                         // Full, retain exactly one owned event, never repoll.
-                        let session = match self.session.try_lock() {
-                            Ok(session) => Some(session),
-                            Err(TryLockError::Poisoned(error)) => Some(error.into_inner()),
-                            Err(TryLockError::WouldBlock) => None,
-                        };
+                        let session = self.try_session();
                         if let Some(mut session) = session {
                             let input = event.input;
                             match session.inject(&input, event.value) {
                                 Ok(()) => {
-                                    session.notifier().notify();
+                                    session.notify_on_drop();
                                     Some(Ok(()))
                                 }
                                 Err(error)
@@ -1387,6 +1437,9 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
+        if KernelLockScope::held(&self.session) {
+            return Err(DriverError::ReentrantSession);
+        }
         let _driver = DriverScope::enter(&self.producer_ownership)?;
         let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
         let (mut listener, notifier, initial_state, cause) = self
@@ -1398,7 +1451,7 @@ impl Kernel {
                     session.failure().map(str::to_owned),
                 )
             })
-            .map_err(|_| DriverError::ReentrantSession)?;
+            .map_err(|_| DriverError::SessionBusy)?;
         if initial_state == SessionState::Completed {
             return Ok(());
         }
@@ -1414,9 +1467,8 @@ impl Kernel {
         if self.producers_retired() {
             return Err(DriverError::Retired);
         }
-        // Enter producer-drain scope only after the blocking session preflight.
-        // Callback session operations under this scope use try_lock and cannot
-        // form a cross-thread session->drain / drain->session wait cycle.
+        // Enter producer-drain scope only after the nonblocking session
+        // preflight. Callback session access uses the same exclusive lease.
         let registration_scope =
             KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
         *wake.0.notifier.lock().unwrap() = Some(notifier);
@@ -1525,7 +1577,8 @@ impl Kernel {
                     state: report.state,
                     cause: self
                         .with_session(|session| session.failure().map(str::to_owned))
-                        .unwrap(),
+                        .ok()
+                        .flatten(),
                 });
             }
             active |= report.steps > 0 || report.publications > 0;
@@ -1653,6 +1706,66 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_session_calls_fail_fast_without_kernel_lock_inversion() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let mut kernel =
+            Kernel::build("session-lease", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+        let external = Arc::new(Mutex::new(()));
+        let callback_kernel = kernel.clone();
+        let callback_external = external.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let contender_kernel = kernel.clone();
+        let contender_external = external.clone();
+        let contender = std::thread::spawn(move || {
+            entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            let _external_lock = contender_external.lock().unwrap();
+            let result = contender_kernel.with_session(|_| ());
+            attempted_tx.send(result).unwrap();
+        });
+
+        callback_kernel
+            .with_session(|_| {
+                assert!(callback_kernel.session.try_lock().is_ok());
+                entered_tx.send(()).unwrap();
+                assert_eq!(
+                    attempted_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+                    Err("kernel session busy".into())
+                );
+                // The contender has released its external lock after its
+                // nonblocking session attempt, so this acquisition is safe.
+                drop(callback_external.lock().unwrap());
+            })
+            .unwrap();
+        contender.join().unwrap();
+        assert!(callback_kernel.run_steps(0).is_ok());
+    }
+
+    #[test]
+    fn panicking_session_callback_restores_lease_and_reentrancy_scope() {
+        let mut kernel = Kernel::build(
+            "session-callback-panic",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel
+                .with_session(|_| panic!("session callback panic"))
+                .unwrap();
+        }));
+        assert!(panic.is_err());
+        assert!(kernel.session.try_lock().unwrap().as_ref().is_some());
+        assert!(kernel.with_session(|_| ()).is_ok());
+    }
+
+    #[test]
     fn recursive_drain_in_poll_is_typed_and_preserves_producer() {
         use std::sync::Weak;
 
@@ -1705,7 +1818,7 @@ mod tests {
         let mut kernel =
             Kernel::build("recursive-wake", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive-wake");
         kernel.producers.lock().unwrap().producers.push((
@@ -1745,7 +1858,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-reentry", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "driver-reentry"),
@@ -1775,7 +1888,7 @@ mod tests {
         let mut kernel =
             Kernel::build("event-panic", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let key = Key::new("test", "event-panic");
         kernel.producers.lock().unwrap().producers.push((
             key.clone(),
@@ -1864,7 +1977,7 @@ mod tests {
                     NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(
+            kernel.session = Mutex::new(Some(
                 builder
                     .build()
                     .unwrap()
@@ -1880,7 +1993,7 @@ mod tests {
                         )]),
                         ..Default::default()
                     }),
-            );
+            ));
             let key = Key::new("test", "one");
             kernel
                 .routes
@@ -1927,7 +2040,7 @@ mod tests {
         )
         .unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "waker"),
@@ -2165,7 +2278,7 @@ mod tests {
                 self.entered.send(()).unwrap();
                 self.proceed.recv_timeout(Duration::from_secs(2)).unwrap();
                 let kernel = self.kernel.upgrade().unwrap();
-                let busy = "kernel session busy during producer callback";
+                let busy = "kernel session busy";
                 assert_eq!(kernel.with_session(|_| ()).unwrap_err(), busy);
                 assert_eq!(kernel.run_steps(1).unwrap_err(), busy);
                 let rejected = kernel.inject("input", Value::local(13_i64)).unwrap_err();
@@ -2182,7 +2295,7 @@ mod tests {
         let mut kernel =
             Kernel::build("cross-thread-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2202,8 +2315,8 @@ mod tests {
         let driver_kernel = kernel.clone();
         let driver = std::thread::spawn(move || driver_kernel.run_until(&wake, |_| {}));
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        // A owns session while B invokes callback session APIs. The callback
-        // must complete its nonblocking checks before A releases the mutex.
+        // A owns the exclusive session lease while B invokes session APIs. Those
+        // calls must fail before A releases the lease, not wait behind a mutex.
         // Driver-vs-manual drain ownership is proved in separate tests.
         kernel
             .with_session(|_| {
@@ -2240,7 +2353,7 @@ mod tests {
         let mut kernel =
             Kernel::build("uncontended-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "inspect"),
@@ -2279,7 +2392,7 @@ mod tests {
         let mut kernel =
             Kernel::build("exclusive-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2343,7 +2456,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-vs-direct", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         kernel.producers.get_mut().unwrap().producers.push((
             Key::new("test", "idle"),
             Some(Box::new(Idle {
@@ -2397,7 +2510,7 @@ mod tests {
         let mut kernel =
             Kernel::build("direct-vs-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(live_ingress_session());
+        kernel.session = Mutex::new(Some(live_ingress_session()));
         let (entered, entered_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
         kernel.producers.get_mut().unwrap().producers.push((
@@ -2437,7 +2550,7 @@ mod tests {
         let mut kernel =
             Kernel::build("drain-to-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(session);
+        kernel.session = Mutex::new(Some(session));
         assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),

@@ -301,6 +301,81 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
 }
 
 #[test]
+fn process_callback_does_not_hold_kernel_session_mutex() {
+    use std::time::Duration;
+
+    struct Probe(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Option<Result<(), String>>>>,
+    );
+    impl Process for Probe {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+            let worker = kernel.clone();
+            let (result_tx, result_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                result_tx.send(worker.with_session(|_| ())).unwrap();
+            });
+            let result = match result_rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(result) => result,
+                Err(_) => Err("session access blocked behind process callback".into()),
+            };
+            *self.1.lock().unwrap() = Some(result);
+            Ok(Step::Finished)
+        }
+    }
+
+    struct Plugin(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Option<Result<(), String>>>>,
+    );
+    impl PluginInstance for Plugin {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            let kernel = self.0.clone();
+            let result = self.1.clone();
+            let source = Arc::new(ComponentDef::primitive(
+                Arc::new(Interface::new([], []).unwrap()),
+                Arc::new(move || Probe(kernel.clone(), result.clone())),
+            ));
+            into.add(support::contribution(
+                "probe",
+                NetworkPatch::new([
+                    Edit::Add {
+                        path: "probe".into(),
+                        definition: source,
+                    },
+                    Edit::AddSource("probe".into()),
+                ]),
+            ))
+        }
+    }
+
+    let kernel_ref = Arc::new(Mutex::new(None));
+    let result = Arc::new(Mutex::new(None));
+    let snapshot = support::snapshot(
+        "session-lock-probe",
+        Plugin(kernel_ref.clone(), result.clone()),
+    );
+    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut kernel = Kernel::build_with_options(
+        "session-lock-probe",
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    let kernel = Arc::new(kernel);
+    *kernel_ref.lock().unwrap() = Some(Arc::downgrade(&kernel));
+
+    assert_eq!(kernel.run_steps(1).unwrap().steps, 1);
+    assert_eq!(
+        *result.lock().unwrap(),
+        Some(Err("kernel session busy".into()))
+    );
+}
+
+#[test]
 fn request_scopes_are_bounded_authenticated_and_reusable_after_release() {
     use phenix_graph::runtime::{RequestError, RequestStatus};
     let snapshot = support::snapshot(
