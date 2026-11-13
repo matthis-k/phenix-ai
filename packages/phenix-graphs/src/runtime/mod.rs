@@ -233,6 +233,13 @@ pub struct NetworkSession {
     captures: BTreeMap<String, usize>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
+    // Packet-driven sessions can refresh only process endpoints changed by
+    // queue/handoff events. Dynamic policies, sources and optional closures
+    // retain the original complete inventory scan.
+    incremental_ready: bool,
+    dirty_processes: BTreeSet<usize>,
+    force_full_refresh: bool,
+    observed_wake_epoch: u64,
     terminal: Option<SessionState>,
     failure: Option<String>,
     publications: usize,
@@ -451,6 +458,11 @@ impl NetworkSession {
         for edge in compiled.connections() {
             downstream[edge.from().0].push(edge.to().0);
         }
+        let incremental_ready = processes.iter().all(|p| {
+            !p.source
+                && !p.inputs.is_empty()
+                && !matches!(&p.policy, Readiness::Optional { .. } | Readiness::Custom(_))
+        });
         let mut session = Self {
             compiled,
             downstream,
@@ -460,6 +472,10 @@ impl NetworkSession {
             captures,
             endpoints,
             ready: VecDeque::new(),
+            incremental_ready,
+            dirty_processes: BTreeSet::new(),
+            force_full_refresh: true,
+            observed_wake_epoch: 0,
             terminal: None,
             failure: None,
             publications: 0,
@@ -703,97 +719,163 @@ impl NetworkSession {
             })
     }
 
-    fn refresh(&mut self) {
-        if self.terminal.is_some() {
+    fn dirty_process(&mut self, index: usize) {
+        if self.incremental_ready {
+            self.dirty_processes.insert(index);
+        }
+    }
+
+    fn dirty_queue(&mut self, queue: usize) {
+        if !self.incremental_ready {
             return;
         }
-        // Closure can propagate backwards in compiled index order. Repeat only
-        // when a process terminates, so this remains bounded by topology size.
+        let producer = match &self.endpoints[queue].0 {
+            QueueEndpoint::Process { index, .. } => Some(*index),
+            _ => None,
+        };
+        let consumer = match &self.endpoints[queue].1 {
+            QueueEndpoint::Process { index, .. } => Some(*index),
+            _ => None,
+        };
+        if let Some(index) = producer {
+            self.dirty_process(index);
+        }
+        if let Some(index) = consumer {
+            self.dirty_process(index);
+        }
+    }
+
+    fn refresh_process(&mut self, index: usize) -> bool {
+        if self.processes[index].done {
+            return false;
+        }
+        let mut state = self.processes[index].handoff.state();
+        if state == HandoffState::WaitingWake
+            && self.processes[index]
+                .wake
+                .pending
+                .swap(false, Ordering::AcqRel)
+        {
+            self.processes[index].handoff.resume_wake().unwrap();
+            state = HandoffState::Ready;
+        }
+        if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
+            if self.idle_inputs_cannot_progress(index) {
+                return false;
+            }
+            let selected = match self.selection(index) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    self.fail_process(index, format!("process {index}: {error}"));
+                    return false;
+                }
+            };
+            let wake = state == HandoffState::Idle
+                && self.processes[index].source
+                && self.processes[index]
+                    .wake
+                    .pending
+                    .swap(false, Ordering::AcqRel);
+            if !selected.ports.is_empty() || wake {
+                let context = self.reserve(index, selected);
+                let result = if state == HandoffState::Idle {
+                    self.processes[index].handoff.admit(context)
+                } else {
+                    self.processes[index].handoff.resume_input(context)
+                };
+                if let Err((error, _)) = result {
+                    self.fail_process(
+                        index,
+                        format!("process {index} reservation: {error}"),
+                    );
+                    return false;
+                }
+                self.processes[index].waiting = None;
+                self.processes[index].waiting_policy = None;
+            } else if state == HandoffState::Idle
+                && !self.processes[index].source
+                && self.processes[index].inputs.iter().all(|p| p.eos_delivered)
+            {
+                self.finish(index);
+                if self.terminal.is_some() {
+                    return false;
+                }
+                return true;
+            } else if self.stranded_at_eos(index) {
+                self.fail_input(
+                    index,
+                    "stranded input: all writers closed and no legal reservation",
+                );
+                return false;
+            }
+        }
+        let p = &self.processes[index];
+        let runnable = p.handoff.state() == HandoffState::Ready
+            || (p.pending.is_some()
+                && (p.pending_targets.iter().any(|q| {
+                    self.transport.queues()[*q].reader_closed()
+                        || self.transport.queues()[*q].writer_closed()
+                }) || p
+                    .pending_targets
+                    .iter()
+                    .all(|q| !self.transport.queues()[*q].is_full())));
+        if runnable && !p.queued {
+            self.processes[index].queued = true;
+            self.ready.push_back(index);
+        }
+        false
+    }
+
+    // The original scan ordering and repeat-on-finish behavior remains the
+    // correctness fallback for all non-packet-driven session semantics.
+    fn refresh_all_processes(&mut self) {
         loop {
             let mut finished = false;
             for index in 0..self.processes.len() {
-                if self.processes[index].done {
-                    continue;
-                }
-                let mut state = self.processes[index].handoff.state();
-                if state == HandoffState::WaitingWake
-                    && self.processes[index]
-                        .wake
-                        .pending
-                        .swap(false, Ordering::AcqRel)
-                {
-                    self.processes[index].handoff.resume_wake().unwrap();
-                    state = HandoffState::Ready;
-                }
-                if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
-                    if self.idle_inputs_cannot_progress(index) {
-                        continue;
-                    }
-                    let selected = match self.selection(index) {
-                        Ok(selected) => selected,
-                        Err(error) => {
-                            self.fail_process(index, format!("process {index}: {error}"));
-                            return;
-                        }
-                    };
-                    let wake = state == HandoffState::Idle
-                        && self.processes[index].source
-                        && self.processes[index]
-                            .wake
-                            .pending
-                            .swap(false, Ordering::AcqRel);
-                    if !selected.ports.is_empty() || wake {
-                        let context = self.reserve(index, selected);
-                        let result = if state == HandoffState::Idle {
-                            self.processes[index].handoff.admit(context)
-                        } else {
-                            self.processes[index].handoff.resume_input(context)
-                        };
-                        if let Err((error, _)) = result {
-                            self.fail_process(
-                                index,
-                                format!("process {index} reservation: {error}"),
-                            );
-                            return;
-                        }
-                        self.processes[index].waiting = None;
-                        self.processes[index].waiting_policy = None;
-                    } else if state == HandoffState::Idle
-                        && !self.processes[index].source
-                        && self.processes[index].inputs.iter().all(|p| p.eos_delivered)
-                    {
-                        self.finish(index);
-                        if self.terminal.is_some() {
-                            return;
-                        }
-                        finished = true;
-                        continue;
-                    } else if self.stranded_at_eos(index) {
-                        self.fail_input(
-                            index,
-                            "stranded input: all writers closed and no legal reservation",
-                        );
-                        return;
-                    }
-                }
-                let p = &self.processes[index];
-                let runnable = p.handoff.state() == HandoffState::Ready
-                    || (p.pending.is_some()
-                        && (p.pending_targets.iter().any(|q| {
-                            self.transport.queues()[*q].reader_closed()
-                                || self.transport.queues()[*q].writer_closed()
-                        }) || p
-                            .pending_targets
-                            .iter()
-                            .all(|q| !self.transport.queues()[*q].is_full())));
-                if runnable && !p.queued {
-                    self.processes[index].queued = true;
-                    self.ready.push_back(index);
+                finished |= self.refresh_process(index);
+                if self.terminal.is_some() {
+                    return;
                 }
             }
             if !finished {
                 break;
             }
+        }
+    }
+
+    fn refresh(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        if !self.incremental_ready {
+            self.refresh_all_processes();
+            return;
+        }
+        // Read the wake epoch BEFORE inspecting nodes. A notifier racing with
+        // this scan will force a new full scan on the next refresh, not be
+        // acknowledged without its pending wake being seen.
+        let wake_epoch = self.signal.epoch();
+        let complete = std::mem::take(&mut self.force_full_refresh)
+            || wake_epoch != self.observed_wake_epoch;
+        self.observed_wake_epoch = wake_epoch;
+        if complete {
+            self.dirty_processes.clear();
+            self.refresh_all_processes();
+            return;
+        }
+        let dirty = std::mem::take(&mut self.dirty_processes);
+        let mut finished = false;
+        for index in dirty {
+            finished |= self.refresh_process(index);
+            if self.terminal.is_some() {
+                return;
+            }
+        }
+        if finished {
+            // EOS propagation can make an earlier process eligible. Keep the
+            // existing repeat-to-fixed-point full scan when any node finishes.
+            self.dirty_processes.clear();
+            self.refresh_all_processes();
         }
     }
 
