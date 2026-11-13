@@ -158,3 +158,106 @@ impl SessionNotifier {
         self.0.notify()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::Barrier, thread};
+
+    #[test]
+    fn targeted_notification_and_retirement_linearize_at_reused_process_index() {
+        // Both operations take the *same* signal mutex. Across real concurrent
+        // starts, either notification wins and is purged by retirement, or
+        // retirement wins and the old registration refuses the notification.
+        // Reusing the compiled index must not reuse the old WakeSlot.
+        const PROCESS: usize = 3;
+        for round in 0..128 {
+            let signal = WakeSignal::new();
+            let old_slot = Arc::new(WakeSlot::default());
+            let barrier = Arc::new(Barrier::new(3));
+            let wants_wake = round % 2 == 0;
+            let notified = {
+                let signal = signal.clone();
+                let slot = old_slot.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    signal.notify_target(&slot, PROCESS, wants_wake)
+                })
+            };
+            let retired = {
+                let signal = signal.clone();
+                let slot = old_slot.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    signal.retire_target(PROCESS, &slot);
+                })
+            };
+            barrier.wait();
+            let succeeded = notified.join().unwrap();
+            retired.join().unwrap();
+            assert!(!old_slot.active.load(Ordering::Acquire));
+            assert!(!old_slot.pending.load(Ordering::Acquire));
+            assert!(!signal.notify_target(&old_slot, PROCESS, true));
+            let (epoch, pending) = signal.take_scheduler_wakes();
+            assert_eq!(epoch, 0);
+            assert!(pending.is_empty(), "round {round} retained an old target");
+            assert_eq!(
+                signal.state.lock().unwrap().epoch,
+                u64::from(succeeded),
+                "every successful target notification advances the listener epoch"
+            );
+
+            // A newly installed slot at the same compiled index has distinct
+            // lifetime authority, regardless of which old operation won.
+            let fresh = WakeSlot::default();
+            assert!(signal.notify_target(&fresh, PROCESS, false));
+            assert!(!signal.notify_target(&old_slot, PROCESS, true));
+            let (_, targets) = signal.take_scheduler_wakes();
+            assert_eq!(targets.into_iter().collect::<Vec<_>>(), vec![PROCESS]);
+            assert!(!fresh.pending.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
+    fn listener_observes_notification_across_registration_to_wait_race() {
+        // The barrier starts a waiter and notifier together. Notification
+        // before the wait is caught by the epoch latch, while notification
+        // during the condvar wait is caught by the condition variable.
+        // A terminal invalidate wakes the listener without incrementing epoch.
+        for mode in 0..4 {
+            for _ in 0..24 {
+                let signal = WakeSignal::new();
+                let slot = Arc::new(WakeSlot::default());
+                let mut listener = WakeListener::new(signal.clone());
+                let barrier = Arc::new(Barrier::new(2));
+                let sender = {
+                    let signal = signal.clone();
+                    let slot = slot.clone();
+                    let barrier = barrier.clone();
+                    thread::spawn(move || {
+                        barrier.wait();
+                        match mode {
+                            0 => assert!(signal.notify_target(&slot, 1, false)),
+                            1 => assert!(signal.notify_target(&slot, 1, true)),
+                            2 => assert!(signal.notify()),
+                            _ => signal.invalidate(),
+                        }
+                    })
+                };
+                barrier.wait();
+                assert!(
+                    listener.wait_timeout(Duration::from_secs(2)),
+                    "listener missed mode {mode}"
+                );
+                sender.join().unwrap();
+                if mode != 3 {
+                    assert!(!listener.wait_timeout(Duration::ZERO));
+                } else {
+                    assert!(!signal.notify());
+                }
+            }
+        }
+    }
+}
