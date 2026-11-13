@@ -36,7 +36,10 @@ impl Process for RunningSum {
         self.value += value.get::<i64>()?;
         self.effects.fetch_add(1, Ordering::SeqCst);
         self.just_emitted = true;
-        Ok(Step::Emit(ProcessEmission::new("out", Value::of(self.value))))
+        Ok(Step::Emit(ProcessEmission::new(
+            "out",
+            Value::of(self.value),
+        )))
     }
 }
 
@@ -129,9 +132,7 @@ impl Process for WaitOnWake {
 fn external_wake_epoch_resumes_waiting_packet_driven_process() {
     let resumed = Arc::new(AtomicUsize::new(0));
     let mut builder = NetworkBuilder::new();
-    let iface = Arc::new(
-        Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap(),
-    );
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
     let node = builder
         .node(
             "waker",
