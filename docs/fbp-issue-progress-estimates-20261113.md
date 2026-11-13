@@ -1,14 +1,12 @@
-# FBP issue progress — one-decimal tracked estimates
+# FBP 33-issue one-decimal progress — November 13, 2026
 
-**Scope and comparison:** exactly the previous **verified** estimates on [PR #1297](https://github.com/matthis-k/phenix-ai/pull/1297) at `2064a1a3a713d635dfec33dac72f669cfe026473` (six-job [Flake CI #43418004760](https://github.com/matthis-k/phenix-ai/actions/runs/43418004760) and 12-repeat worker [#43418004098](https://github.com/matthis-k/phenix-ai/actions/runs/43418004098) both green) to **the present test-only Q5 operation-order candidate**. These numbers are *subjective engineering completion estimates*, not measured safety probabilities or production/project-completion KPIs. The branch and all ancestors remain draft/unmerged.
+**Baseline:** the last exact-head-verified [PR #1298](https://github.com/matthis-k/phenix-ai/pull/1298), commit `54494be22d87d227111484b5bb7903face721682`, [Flake CI #43420534000](https://github.com/matthis-k/phenix-ai/actions/runs/43420534000) and [eight-repeat concurrency #43420533621](https://github.com/matthis-k/phenix-ai/actions/runs/43420533621) successful. Current candidate: [PR #1299](https://github.com/matthis-k/phenix-ai/pull/1299), isolated **Loom recompile of the original WakeSignal method bodies** and a standalone pinned dependency graph. The numbers are subjective completion estimates, **not** measured reliability probabilities, and the new Q5 increment remains conditional on this exact head passing CI.
 
-**33-issue unweighted mean:** **54.9% → 55.0%** (visually **+0.1 pp**, unrounded **+0.045 pp**). Scores use rounded one-decimal issue values; the mean is *not* M7 or M8 completion. Issue statuses remain **10 scoped verified / 7 partial / 16 open**; Q5's limited new model evidence does not close it.
+**Unweighted 33-issue mean:** **55.0% → 55.1%** (displayed change **+0.1 pp**, unrounded +0.091 pp). This average **is not overall M7/project completion**, because issue costs, risk and overlap vary. Formal issue status stays **10 scoped verified / 7 partial / 16 open**: the bounded Loom slice does not close Q5.
 
-**Acceptance pending at authorship:** exact-head six-job CI and the already configured eight-repeat Q5 `wake.rs` workflow must pass. A candidate score increase is not final until those checks pass; accepted evidence should be recorded in the PR's Phase 4 comment.
+## Every issue — immediately previous → new candidate → change
 
-## All 33 issue estimates — previous → candidate → change
-
-| Issue | Focus | Previous | Candidate | Δ (pp) |
+| Issue | Focus | Previous | Current candidate | Δ (pp) |
 | --- | --- | ---: | ---: | ---: |
 | H1 | Shared-session FIFO correlation | 60.0% | 60.0% | 0.0 |
 | H2 | Callback panic containment | 100.0% | 100.0% | 0.0 |
@@ -39,20 +37,20 @@
 | Q2 | Incremental compilation | 10.0% | 10.0% | 0.0 |
 | Q3 | Dependency scaling | 14.0% | 14.0% | 0.0 |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | 0.0 |
-| Q5 | Concurrency verification | 65.5% | 67.0% | +1.5 |
+| Q5 | Concurrency verification | 67.0% | 70.0% | +3.0 |
 | Q6 | Diagnostic quality | 22.0% | 22.0% | 0.0 |
 | Q7 | Typed error consistency | 26.0% | 26.0% | 0.0 |
 | Q8 | Report reconciliation | 100.0% | 100.0% | 0.0 |
 
-## What changed in this iteration
+## Evidence for this iteration
 
-- **Q5 65.5% → 67.0% (+1.5 pp, conditional on CI):** the previous #1296/#1297 checks exercised *real concurrent* notify/retire and workers executing during cancellation. The new `runtime/wake.rs` test checks **all 13,440 valid linearized orders of eight wake/retirement/terminal/drain events** against the *actual* `WakeSignal` after **every** operation and a separate expected-state model, excluding impossible fresh-owner-before-retirement histories. This is **not Loom**, instruction-level schedule exploration, external-plugin lock proof, or deadlock freedom.
-- **H3b 74.0% → 74.0% (0.0 pp):** no new delegated worker/reentrant callback coverage in this iteration; avoid double counting the prior in-flight job proof.
-- **Other 31 issues: 0.0 pp** additional verified progress. Earlier H4/H5 optimizations and H6 allocation profiling are already included in the immediately prior scores; rejected #1295 hot-path optimization must never be counted as accepted progress.
+- **Q5 67.0% → 70.0% (+3.0 pp, conditional on exact-head CI):** previous tests cover 13,440 exhaustive lock-linearized orders (repeated 8×), 2-thread notifier/retirement races and true in-flight delegated worker cancellation. The new verification-only crate `verification/fbp-wake-loom` **includes the original `runtime/wake.rs` implementation** and substitutes Loom Mutex/Arc/Condvar/AtomicBool, not a hand-maintained reimplementation. Three distinct two-thread properties verify terminal invalidation, old-slot retirement and same-index fresh-slot authority under **bounded instrumented instruction interleavings**. The initial source compiled and passed all three models: 42 + 71 + 32 explored schedules. The first workflow failed *after* those tests because rustdoc did not preserve the custom cfg; the workflow now runs library tests only. The verifier has its own `Cargo.lock`, pinned `loom = "=0.7.2"`, outside the production Cargo workspace.
+- **H3b 74.0% → 74.0% (0.0 pp)**: no new general plugin lock-order, callback reentrancy or delegated-worker coverage in this slice. Existing Q5 worker tests remain in the stacked branch.
+- **Other 31 issues: 0.0 pp**. No performance score increase: production wake operations have unchanged method bodies, and the rejected #1295 optimization remains excluded.
 
-## Scoring and acceptance rules
+## Accepted limitations and next acceptance steps
 
-1. Each subsequent comparison uses the last **verified posted current score**, not a historic ledger baseline. Every issue retains previous, current and signed one-decimal Δ, even when 0.0.
-2. A passed bounded test adds only the assurance for the specifically tested boundary. Q5 remains Open until an accepted systematic thread/interleaving model and external/plugin locking contract; H3b remains Partial.
-3. Persist candidate SHA, exact-head CI, branch/PR status, source-test evidence and any rejection. Do not describe a green draft as merged, and do not claim M7 complete from a 33-issue mean.
-4. Keep decisions and rejected experiments in the record. A failed check results in **no accepted increase** until corrected and exact-head retested.
+1. The Loom models cover the **actual wake mutex/atomic methods**, but not `WakeListener::wait_timeout_while`: Loom 0.7.2's Condvar lacks that method, so the verifier excludes this method; existing native listener tests cover it. Model exploration is limited to max 3 threads, **two preemptions**, 20,000 permutations/property and only the three specified scenarios. More than one completed schedule must be observed for each.
+2. No assertion of exhaustive Loom state space beyond these bounds, all plugin/external lock orders, general deadlock freedom, cancellation of external tool effects, or M7 completion. Q5 remains Open and H3b Partial.
+3. Any CI failure blocks acceptance. The exact final-head Flake CI (six jobs), native Q5 threaded tests, H4/H5/H6 benchmarks and dedicated Loom workflow must pass before upgrading candidate scores to verified.
+4. In the next iteration, compare each issue with the immediately prior **verified** value, preserve one decimal on all 33, and record exact PR/commit/CI evidence. PRs are draft and unmerged unless explicitly merged.
