@@ -16,9 +16,7 @@ fn compiled(processes: usize) -> phenix_graph::network::CompiledNetwork {
         black_box(*value);
     }));
     for index in 0..processes {
-        let node = builder
-            .add(format!("sink-{index}"), sink.clone())
-            .unwrap();
+        let node = builder.add(format!("sink-{index}"), sink.clone()).unwrap();
         builder
             .expose_input(
                 format!("input-{index}"),
