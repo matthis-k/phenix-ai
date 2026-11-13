@@ -86,9 +86,9 @@ fn bounded_capture_release_retries_publisher_with_unrelated_idle_process() {
             ..Default::default()
         });
 
-    session.inject_local("active_in", 1_i64).unwrap();
+    session.inject("active_in", Value::of(1_i64)).unwrap();
     assert_eq!(session.run_until_idle(32).steps, 2);
-    session.inject_local("active_in", 2_i64).unwrap();
+    session.inject("active_in", Value::of(2_i64)).unwrap();
     assert_eq!(session.run_until_idle(32).steps, 1);
     assert_eq!(session.state(), SessionState::Waiting);
     let first = session.take_output("capture").unwrap().unwrap();
@@ -150,7 +150,7 @@ fn external_wake_epoch_resumes_waiting_packet_driven_process() {
         .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
         .unwrap();
     let mut session = builder.build().unwrap().compile().unwrap().start();
-    session.inject_local("input", 42_i64).unwrap();
+    session.inject("input", Value::of(42_i64)).unwrap();
     assert_eq!(session.run_until_idle(32).steps, 1);
     assert_eq!(resumed.load(Ordering::SeqCst), 0);
     assert_eq!(session.state(), SessionState::Waiting);
