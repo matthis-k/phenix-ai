@@ -1123,6 +1123,11 @@ impl NetworkSession {
                 if !self.processes[index].inputs.iter().any(|p| p.name == name) {
                     self.fail_process(index, format!("unknown WaitInput port: {name}"));
                 } else {
+                    // A staged input may later become request-locally closed
+                    // when an upstream activation ends, with no queue event.
+                    // Degrade to the complete scan before it starts waiting.
+                    self.incremental_ready = false;
+                    self.dirty_processes.clear();
                     self.processes[index].waiting = Some(name);
                 }
             }
