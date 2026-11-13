@@ -754,7 +754,6 @@ impl NetworkSession {
         }
     }
 
-    #[inline(always)]
     fn refresh_process(&mut self, index: usize) -> bool {
         if self.processes[index].done {
             return false;
@@ -794,10 +793,7 @@ impl NetworkSession {
                     self.processes[index].handoff.resume_input(context)
                 };
                 if let Err((error, _)) = result {
-                    self.fail_process(
-                        index,
-                        format!("process {index} reservation: {error}"),
-                    );
+                    self.fail_process(index, format!("process {index} reservation: {error}"));
                     return false;
                 }
                 self.processes[index].waiting = None;
@@ -865,8 +861,8 @@ impl NetworkSession {
         // this scan will force a new full scan on the next refresh, not be
         // acknowledged without its pending wake being seen.
         let wake_epoch = self.signal.epoch();
-        let complete = std::mem::take(&mut self.force_full_refresh)
-            || wake_epoch != self.observed_wake_epoch;
+        let complete =
+            std::mem::take(&mut self.force_full_refresh) || wake_epoch != self.observed_wake_epoch;
         self.observed_wake_epoch = wake_epoch;
         if complete {
             self.dirty_processes.clear();
@@ -1146,7 +1142,7 @@ impl NetworkSession {
                 // predecessors/successors. Preserve the full fixed-point scan.
                 self.force_full_refresh = true;
                 self.finish(index);
-            },
+            }
             Ok(Step::Complete) => {
                 self.processes[index].request = None;
             }
