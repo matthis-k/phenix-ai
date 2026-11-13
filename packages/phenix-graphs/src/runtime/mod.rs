@@ -733,14 +733,20 @@ impl NetworkSession {
             })
     }
 
+    // Building a sorted dirty/poll union cannot amortize its cost when at
+    // most one ordinary process could be skipped. Prefer the original scan.
+    fn prefer_full_refresh(&self) -> bool {
+        self.always_poll.len() >= self.processes.len().saturating_sub(1)
+    }
+
     fn dirty_process(&mut self, index: usize) {
-        if self.always_poll.len() != self.processes.len() {
+        if !self.prefer_full_refresh() {
             self.dirty_processes.insert(index);
         }
     }
 
     fn dirty_queue(&mut self, queue: usize) {
-        if self.always_poll.len() == self.processes.len() {
+        if self.prefer_full_refresh() {
             return;
         }
         let producer = match &self.endpoints[queue].0 {
@@ -861,7 +867,7 @@ impl NetworkSession {
         if self.terminal.is_some() {
             return;
         }
-        if self.always_poll.len() == self.processes.len() {
+        if self.prefer_full_refresh() {
             self.dirty_processes.clear();
             self.refresh_all_processes();
             return;
