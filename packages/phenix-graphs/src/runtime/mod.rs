@@ -816,6 +816,23 @@ impl NetworkSession {
             >= self.processes.len().saturating_sub(1)
     }
 
+    // The dirty indices are already ordered, but repeatedly inserting the
+    // permanent and scoped poll sets into a fresh BTreeSet allocates a tree
+    // node per candidate on every drive. Materialize one contiguous batch,
+    // sort and deduplicate it to retain compiled-index scheduling order.
+    fn collect_refresh_candidates(&mut self) -> Vec<usize> {
+        let pending = std::mem::take(&mut self.dirty_processes);
+        let mut candidates = Vec::with_capacity(
+            pending.len() + self.always_poll.len() + self.scoped_readiness_poll.len(),
+        );
+        candidates.extend(pending);
+        candidates.extend(self.always_poll.iter().copied());
+        candidates.extend(self.scoped_readiness_poll.keys().copied());
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+
     fn dirty_process(&mut self, index: usize) {
         if !self.prefer_full_refresh() {
             self.dirty_processes.insert(index);
@@ -966,12 +983,9 @@ impl NetworkSession {
             self.refresh_all_processes();
             return;
         }
-        let mut dirty = std::mem::take(&mut self.dirty_processes);
-        // Legacy Custom/source/staged nodes stay permanently polled.
-        // Optional and notified Custom nodes additionally poll for
-        // registered sealed scopes reaching them.
-        dirty.extend(self.always_poll.iter().copied());
-        dirty.extend(self.scoped_readiness_poll.keys().copied());
+        // Legacy Custom/source/staged nodes remain polled; scoped Optional
+        // and notified Custom nodes participate for their sealed requests.
+        let mut dirty = self.collect_refresh_candidates();
         loop {
             let mut finished = false;
             for index in dirty {
@@ -990,9 +1004,7 @@ impl NetworkSession {
             // Revisit only their producers/consumers and always-polled nodes
             // when EOS propagation requires another pass. A packet dequeue
             // without a finish stays pending for the next driver call.
-            dirty = std::mem::take(&mut self.dirty_processes);
-            dirty.extend(self.always_poll.iter().copied());
-            dirty.extend(self.scoped_readiness_poll.keys().copied());
+            dirty = self.collect_refresh_candidates();
             if dirty.is_empty() {
                 break;
             }
