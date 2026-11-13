@@ -361,11 +361,15 @@ impl NetworkSession {
             // Data already resolves this optional input for the scope; it must
             // not replay later as an EOS-only missing branch.
             if let Some(request) = selected.request {
-                self.requests
-                    .get_mut(&request)
-                    .unwrap()
-                    .observed_inputs
-                    .insert((index, port));
+                let scope = self.requests.get_mut(&request).unwrap();
+                scope.observed_inputs.insert((index, port));
+                // Only record absence that the sealed-request closure proof
+                // actually delivered. Packet observations are not closure
+                // certificates, even for all-optional inputs.
+                if queue.is_none() && !global_eos {
+                    debug_assert!(scope.sealed);
+                    scope.delivered_closures.insert((index, port));
+                }
             }
             self.processes[index].cursor = (port + 1) % self.processes[index].inputs.len();
         }
