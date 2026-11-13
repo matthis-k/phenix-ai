@@ -145,7 +145,7 @@ fn wire(input: &[&str], output: &[&str]) -> Arc<Interface> {
     )
 }
 
-fn compiled(
+pub(crate) fn compiled(
     idle: usize,
     notified: bool,
     persisted: Arc<AtomicUsize>,
