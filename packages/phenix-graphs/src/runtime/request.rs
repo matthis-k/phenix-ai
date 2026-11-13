@@ -271,9 +271,7 @@ impl NetworkSession {
         for index in reachable {
             // Registration and dirtying share the existing reachability pass:
             // no second O(V) traversal on every request seal.
-            if first_seal
-                && matches!(&self.processes[index].policy, Readiness::Optional { .. })
-            {
+            if first_seal && matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
                 *self.scoped_optional_poll.entry(index).or_default() += 1;
             }
             self.dirty_process(index);
