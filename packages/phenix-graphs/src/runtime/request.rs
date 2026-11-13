@@ -263,6 +263,9 @@ impl NetworkSession {
             return Err(RequestError::Stale);
         }
         self.requests.get_mut(&id).unwrap().sealed = true;
+        // Sealing can complete request-local optional obligations; use the
+        // full scan even when the packet-driven fast path is eligible.
+        self.force_full_refresh = true;
         self.refresh();
         Ok(())
     }
@@ -384,6 +387,7 @@ impl NetworkSession {
         self.validate_capture(id, name, packet)?;
         let packet = self.transport.pop_at(queue, offset).unwrap();
         self.observe_capture(name, &packet);
+        self.dirty_queue(queue);
         self.refresh();
         Ok(Some(packet))
     }
