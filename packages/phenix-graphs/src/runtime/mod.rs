@@ -754,6 +754,7 @@ impl NetworkSession {
         }
     }
 
+    #[inline(always)]
     fn refresh_process(&mut self, index: usize) -> bool {
         if self.processes[index].done {
             return false;
