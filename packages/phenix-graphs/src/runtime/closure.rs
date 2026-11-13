@@ -1,4 +1,5 @@
 use super::*;
+use super::request::ClosureBlocker;
 
 impl NetworkSession {
     pub(super) fn stranded_at_eos(&self, index: usize) -> bool {
@@ -95,6 +96,21 @@ impl NetworkSession {
         if !scope.sealed {
             return false;
         }
+        let key = (index, port);
+        // This is not a cached verdict: reread the actual owning process or
+        // committed queue count before trusting a previously found blocker.
+        let cached = { scope.closure_blockers.borrow().get(&key).copied() };
+        if cached.is_some_and(|witness| match witness {
+            ClosureBlocker::Process(producer) => {
+                self.processes[producer].request == Some(request)
+                    || self.closure_obligation(producer, request)
+            }
+            ClosureBlocker::Queue(queue) => {
+                self.transport.queues()[queue].request_count(request) != 0
+            }
+        }) {
+            return false;
+        }
         // Request roots register their entire downstream reachability. An
         // upstream process outside this scope cannot own or publish packets
         // bearing this request ID. Host ingress queues remain checked.
@@ -109,11 +125,14 @@ impl NetworkSession {
                 }
         };
         let queues = &self.processes[index].inputs[port].queues;
-        if queues
-            .iter()
-            .any(|q| relevant(*q) && self.transport.queues()[*q].request_count(request) != 0)
-        {
-            return false;
+        for queue in queues {
+            if relevant(*queue) && self.transport.queues()[*queue].request_count(request) != 0 {
+                scope
+                    .closure_blockers
+                    .borrow_mut()
+                    .insert(key, ClosureBlocker::Queue(*queue));
+                return false;
+            }
         }
         let mut visited = BTreeSet::new();
         let mut stack = vec![];
@@ -130,6 +149,10 @@ impl NetworkSession {
             }
             let p = &self.processes[producer];
             if p.request == Some(request) || self.closure_obligation(producer, request) {
+                scope
+                    .closure_blockers
+                    .borrow_mut()
+                    .insert(key, ClosureBlocker::Process(producer));
                 return false;
             }
             for queue in p.inputs.iter().flat_map(|port| &port.queues) {
@@ -137,12 +160,21 @@ impl NetworkSession {
                     continue;
                 }
                 if self.transport.queues()[*queue].request_count(request) != 0 {
+                    scope
+                        .closure_blockers
+                        .borrow_mut()
+                        .insert(key, ClosureBlocker::Queue(*queue));
                     return false;
                 }
                 if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
                     stack.push(*index);
                 }
             }
+        }
+        // No positive result is cached. If a previous concrete blocker
+        // disappeared, only the complete graph proof can establish closure.
+        if cached.is_some() {
+            scope.closure_blockers.borrow_mut().remove(&key);
         }
         true
     }
