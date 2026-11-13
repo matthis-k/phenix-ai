@@ -263,9 +263,13 @@ impl NetworkSession {
             return Err(RequestError::Stale);
         }
         self.requests.get_mut(&id).unwrap().sealed = true;
-        // Sealing can complete request-local optional obligations; use the
-        // full scan even when the packet-driven fast path is eligible.
-        self.force_full_refresh = true;
+        // Only authenticated downstream reachability of the sealed scope
+        // can gain a request-local closure obligation. Mixed custom/optional
+        // nodes are always polled; unrelated ordinary sinks stay untouched.
+        let reachable: Vec<_> = self.requests[&id].reachable.iter().copied().collect();
+        for index in reachable {
+            self.dirty_process(index);
+        }
         self.refresh();
         Ok(())
     }
