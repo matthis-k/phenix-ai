@@ -825,9 +825,8 @@ impl NetworkSession {
     fn collect_refresh_candidates(&mut self, candidates: &mut Vec<usize>) {
         let pending = std::mem::take(&mut self.dirty_processes);
         candidates.clear();
-        candidates.reserve(
-            pending.len() + self.always_poll.len() + self.scoped_readiness_poll.len(),
-        );
+        candidates
+            .reserve(pending.len() + self.always_poll.len() + self.scoped_readiness_poll.len());
         candidates.extend(pending);
         candidates.extend(self.always_poll.iter().copied());
         candidates.extend(self.scoped_readiness_poll.keys().copied());
