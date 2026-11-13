@@ -1,0 +1,112 @@
+name: "FBP H6 Agent Allocation Events"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/examples/fbp_agent_allocation_benchmark.rs"
+      - "packages/phenix-graphs/examples/fbp_agent_mixed_benchmark.rs"
+      - "packages/phenix-graphs/src/runtime/**"
+      - ".github/workflows/fbp-h6-agent-allocation-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-allocation-counts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record provenance, CPU and source hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            taskset -pc $$
+            cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            nix --version
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          sha256sum packages/phenix-graphs/examples/fbp_agent_allocation_benchmark.rs \
+            packages/phenix-graphs/examples/fbp_agent_mixed_benchmark.rs \
+            > artifacts/source-hashes.txt
+          cat artifacts/environment.txt
+          cat artifacts/source-hashes.txt
+      - name: Test and build allocation workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo test --locked -q -p phenix-graph \
+            --example fbp_agent_allocation_benchmark
+          nix develop --command cargo build --locked --release -q \
+            -p phenix-graph --example fbp_agent_allocation_benchmark
+      - name: Three independent CPU-pinned allocator-count samples
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed="$(taskset -pc $$ | sed -E 's/.*: //')"
+          cpu="$(printf '%s' "$allowed" | cut -d, -f1 | cut -d- -f1)"
+          taskset -c "$cpu" true
+          echo "cpu=$cpu" > artifacts/affinity.txt
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order=(polled notified)
+            else
+              order=(notified polled)
+            fi
+            for mode in "${order[@]}"; do
+              taskset -c "$cpu" /usr/bin/time \
+                -f 'elapsed_s=%e user_s=%U sys_s=%S maxrss_kb=%M' \
+                -o "artifacts/$mode-$repetition.resources" \
+                target/release/examples/fbp_agent_allocation_benchmark "$mode" 200 \
+                > "artifacts/$mode-$repetition.csv"
+              echo "mode=$mode repetition=$repetition"
+              grep -E ',(local_total|remote_total),' "artifacts/$mode-$repetition.csv"
+            done
+          done
+      - name: Check per-stage accounting integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import glob
+          files = glob.glob("artifacts/*.csv")
+          assert len(files) == 6, files
+          keys = ("alloc_calls", "realloc_calls", "requested_bytes")
+          for path in files:
+              with open(path, newline="") as f:
+                  rows = list(csv.DictReader(f))
+              assert len(rows) == 48, (path, len(rows))
+              by_case = {(r["idle_nodes"], r["phase"]): r for r in rows}
+              for idle in ("0", "16", "64", "128"):
+                  assert (idle, "graph_compile") in by_case
+                  assert (idle, "session_start") in by_case
+                  for route in ("local", "remote"):
+                      total = by_case[(idle, route + "_total")]
+                      assert int(total["samples"]) == 100
+                      for key in keys:
+                          actual = sum(
+                              int(by_case[(idle, route + "_" + phase)][key])
+                              for phase in ("admission", "first_drain", "tool_resume", "release")
+                          )
+                          assert actual == int(total[key]), (path, idle, route, key)
+          print("All 6 allocation traces satisfy local/remote phase totals.")
+          PY
+      - name: Upload raw counts, environment and source provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-h6-agent-alloc-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
