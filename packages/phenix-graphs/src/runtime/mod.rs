@@ -754,9 +754,9 @@ impl NetworkSession {
         }
     }
 
-    fn refresh_process(&mut self, index: usize) -> bool {
+    fn refresh_process(&mut self, index: usize) -> Option<bool> {
         if self.processes[index].done {
-            return false;
+            return Some(false);
         }
         let mut state = self.processes[index].handoff.state();
         if state == HandoffState::WaitingWake
@@ -770,13 +770,13 @@ impl NetworkSession {
         }
         if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
             if self.idle_inputs_cannot_progress(index) {
-                return false;
+                return Some(false);
             }
             let selected = match self.selection(index) {
                 Ok(selected) => selected,
                 Err(error) => {
                     self.fail_process(index, format!("process {index}: {error}"));
-                    return false;
+                    return None;
                 }
             };
             let wake = state == HandoffState::Idle
@@ -794,7 +794,7 @@ impl NetworkSession {
                 };
                 if let Err((error, _)) = result {
                     self.fail_process(index, format!("process {index} reservation: {error}"));
-                    return false;
+                    return None;
                 }
                 self.processes[index].waiting = None;
                 self.processes[index].waiting_policy = None;
@@ -804,15 +804,15 @@ impl NetworkSession {
             {
                 self.finish(index);
                 if self.terminal.is_some() {
-                    return false;
+                    return None;
                 }
-                return true;
+                return Some(true);
             } else if self.stranded_at_eos(index) {
                 self.fail_input(
                     index,
                     "stranded input: all writers closed and no legal reservation",
                 );
-                return false;
+                return None;
             }
         }
         let p = &self.processes[index];
@@ -829,7 +829,7 @@ impl NetworkSession {
             self.processes[index].queued = true;
             self.ready.push_back(index);
         }
-        false
+        Some(false)
     }
 
     // The original scan ordering and repeat-on-finish behavior remains the
@@ -838,7 +838,10 @@ impl NetworkSession {
         loop {
             let mut finished = false;
             for index in 0..self.processes.len() {
-                finished |= self.refresh_process(index);
+                let Some(did_finish) = self.refresh_process(index) else {
+                    return;
+                };
+                finished |= did_finish;
                 if self.terminal.is_some() {
                     return;
                 }
@@ -872,7 +875,10 @@ impl NetworkSession {
         let dirty = std::mem::take(&mut self.dirty_processes);
         let mut finished = false;
         for index in dirty {
-            finished |= self.refresh_process(index);
+            let Some(did_finish) = self.refresh_process(index) else {
+                return;
+            };
+            finished |= did_finish;
             if self.terminal.is_some() {
                 return;
             }
