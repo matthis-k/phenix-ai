@@ -1,0 +1,107 @@
+name: "FBP H6 CPU-Affinity and Peak-RSS Paired Benchmark"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fbp-h6-affinity-rss-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-h6-resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact verified H5 baseline (#1279)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 3dbf8e540400cb678f6ca8fe7ee16b94139baeca
+          path: baseline
+      - name: Checkout exact verified H4 candidate (#1281)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 64d3f9306633f57f098f4a8ce13485c3ab5bc5d8
+          path: candidate
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record provenance, process affinity and identical benchmark sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          for example in fbp_scoped_sparse_benchmark fbp_benchmark fbp_closure_benchmark; do
+            cp "candidate/packages/phenix-graphs/examples/$example.rs" \
+              "baseline/packages/phenix-graphs/examples/$example.rs"
+            sha256sum "baseline/packages/phenix-graphs/examples/$example.rs" \
+              "candidate/packages/phenix-graphs/examples/$example.rs" \
+              >> artifacts/benchmark-source-hashes.txt
+          done
+          {
+            echo "baseline_sha=$(git -C baseline rev-parse HEAD)"
+            echo "candidate_sha=$(git -C candidate rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            taskset -pc $$
+            cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            nix --version
+            (cd baseline && nix develop --command rustc -vV)
+            (cd candidate && nix develop --command rustc -vV)
+          } > artifacts/environment.txt
+          cat artifacts/benchmark-source-hashes.txt
+          cat artifacts/environment.txt
+      - name: Compile both versions in release mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in baseline candidate; do
+            (cd "$variant" && nix develop --command cargo build --locked --release -q -p phenix-graph \
+              --example fbp_scoped_sparse_benchmark \
+              --example fbp_benchmark \
+              --example fbp_closure_benchmark)
+          done
+      - name: Three interleaved pinned-affinity latency and peak-RSS repetitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v taskset
+          test -x /usr/bin/time
+          allowed="$(taskset -pc $$ | sed -E 's/.*: //')"
+          cpu="$(printf '%s' "$allowed" | cut -d, -f1 | cut -d- -f1)"
+          test -n "$cpu"
+          taskset -c "$cpu" true
+          echo "affinity_selected_cpu=$cpu" | tee artifacts/selected-cpu.txt
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order=(baseline candidate)
+            else
+              order=(candidate baseline)
+            fi
+            for variant in "${order[@]}"; do
+              for mode in scoped unscoped closure; do
+                case "$mode" in
+                  scoped) binary=fbp_scoped_sparse_benchmark; args=(5000 1 16 64 256) ;;
+                  unscoped) binary=fbp_benchmark; args=(3000 1 16 64 256) ;;
+                  closure) binary=fbp_closure_benchmark; args=(80 16 64 128) ;;
+                esac
+                # CPU-affinity is fixed, but this shared runner is NOT isolated.
+                # /usr/bin/time reports peak process RSS, not Rust allocations.
+                taskset -c "$cpu" /usr/bin/time \
+                  -f 'elapsed_s=%e user_s=%U sys_s=%S maxrss_kb=%M' \
+                  -o "artifacts/$variant-$mode-$repetition.resources" \
+                  "$variant/target/release/examples/$binary" "${args[@]}" \
+                  > "artifacts/$variant-$mode-$repetition.csv"
+                echo "variant=$variant repetition=$repetition mode=$mode"
+                cat "artifacts/$variant-$mode-$repetition.resources"
+                cat "artifacts/$variant-$mode-$repetition.csv"
+              done
+            done
+          done
+      - name: Preserve all paired raw CSVs, peak-RSS, CPU and source evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-h6-affinity-rss-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
