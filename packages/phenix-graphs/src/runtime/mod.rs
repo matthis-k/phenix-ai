@@ -748,18 +748,8 @@ impl NetworkSession {
             })
     }
 
-    // Sealed request-local optional closure can become provable without a
-    // queue event when an upstream request owner completes without output.
-    // Keep every reachable Optional policy polled until that scope releases
-    // or terminates; packet/EOS events cover optional nodes outside scopes.
-    fn watch_scoped_optional(&mut self, reachable: &[usize]) {
-        for &index in reachable {
-            if matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
-                *self.scoped_optional_poll.entry(index).or_default() += 1;
-            }
-        }
-    }
-
+    // Each sealed scope registers the optional paths it can reach.
+    // Packet/EOS events cover optional nodes outside sealed scopes.
     fn unwatch_scoped_optional(&mut self, reachable: &[usize]) {
         for &index in reachable {
             if matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
