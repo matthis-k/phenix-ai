@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -5,7 +6,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use std::time::Duration;
 
 #[derive(Default)]
 struct WakeState {
