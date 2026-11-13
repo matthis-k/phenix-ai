@@ -189,7 +189,11 @@ fn required_packet_waits_for_optional_request_closure_without_any_new_queue_even
         .unwrap(),
     );
     let required = builder
-        .node("required_source", root_interface.clone(), Arc::new(|| EmitRequired(false)))
+        .node(
+            "required_source",
+            root_interface.clone(),
+            Arc::new(|| EmitRequired(false)),
+        )
         .unwrap();
     let silent = builder
         .node("silent_source", root_interface, Arc::new(|| RootDrop))
@@ -214,7 +218,11 @@ fn required_packet_waits_for_optional_request_closure_without_any_new_queue_even
         )
         .unwrap();
     builder
-        .expose_input("required_in", required.wire_input::<u64>("in").unwrap(), one())
+        .expose_input(
+            "required_in",
+            required.wire_input::<u64>("in").unwrap(),
+            one(),
+        )
         .unwrap();
     builder
         .expose_input("silent_in", silent.wire_input::<u64>("in").unwrap(), one())
