@@ -6,7 +6,10 @@ use phenix_graph::{
     interface::{Interface, PortDef},
     network::NetworkBuilder,
     process::{Process, ProcessContext, ProcessEmission, Step},
-    runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState},
+    runtime::{
+        Readiness, ReadinessPolicy, ReadinessSnapshot, RequestFailurePolicy, RequestStatus,
+        SessionOptions, SessionState,
+    },
 };
 use std::{
     num::NonZeroUsize,
@@ -607,4 +610,69 @@ fn process_notifier_is_invalid_after_finish_and_cannot_target_another_session() 
     second.close_input("input").unwrap();
     assert_eq!(second.run_until_idle(16).steps, 1);
     assert!(!fresh.notify());
+}
+
+#[test]
+fn notifier_retirement_isolated_from_restarted_request_process() {
+    let resumed = Arc::new(AtomicUsize::new(0));
+    let mut builder = NetworkBuilder::new();
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let node = builder
+        .node(
+            "worker",
+            iface,
+            Arc::new({
+                let resumed = resumed.clone();
+                move || WaitOnWake {
+                    stage: 0,
+                    resumed: resumed.clone(),
+                }
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut options = SessionOptions::default();
+    options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+
+    let first = session.begin_request(None).unwrap();
+    session
+        .inject_request(first, "input", Value::of(1_i64))
+        .unwrap();
+    session.close_request(first).unwrap();
+    let old = session.process_notifier("worker").unwrap();
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert_eq!(session.request_status(first).unwrap(), RequestStatus::Pending);
+
+    session.cancel_request(first).unwrap();
+    assert_eq!(session.request_status(first).unwrap(), RequestStatus::Cancelled);
+    assert!(!old.notify(), "old registration cannot target replacement");
+    let fresh = session.process_notifier("worker").unwrap();
+    assert!(fresh.notify());
+
+    let second = session.begin_request(None).unwrap();
+    session
+        .inject_request(second, "input", Value::of(2_i64))
+        .unwrap();
+    session.close_request(second).unwrap();
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    // Readiness-only invalidation cannot resume a continuation in WaitWake.
+    assert!(fresh.notify());
+    assert_eq!(session.run_until_idle(16).steps, 0);
+    assert_eq!(resumed.load(Ordering::SeqCst), 0);
+    assert!(session.wake_handle("worker").unwrap().wake());
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert_eq!(resumed.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        session.request_status(second).unwrap(),
+        RequestStatus::Settled { captures: 0 }
+    );
+    assert!(!old.notify(), "retired handle stays retired after reuse");
 }
