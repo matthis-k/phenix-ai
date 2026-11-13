@@ -27,7 +27,9 @@ struct WaitThenComplete {
 impl Process for WaitThenComplete {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
         if !self.waiting {
-            cx.take("in").ok_or("missing input for wait")?.get::<u64>()?;
+            cx.take("in")
+                .ok_or("missing input for wait")?
+                .get::<u64>()?;
             self.waiting = true;
             Ok(Step::WaitWake)
         } else {
