@@ -666,7 +666,7 @@ impl NetworkSession {
     // A process with only empty, open physical inputs cannot reserve a
     // native packet or consume EOS. Keep custom policies and request-scoped
     // closure on the full path: they can change without a physical packet.
-    fn idle_inputs_cannot_progress(&self, index: usize) -> bool {
+    fn idle_inputs_cannot_progress(&self, index: usize, all_reachable: bool) -> bool {
         let p = &self.processes[index];
         !p.source
             && !p.queued
@@ -688,7 +688,8 @@ impl NetworkSession {
             // only an entirely unowned, idle, request-unreachable process can
             // skip selection: its queues are already proven empty and open.
             && (self.requests.is_empty()
-                || (p.handoff.state() == HandoffState::Idle
+                || (!all_reachable
+                    && p.handoff.state() == HandoffState::Idle
                     && p.request.is_none()
                     && self
                         .requests
@@ -700,6 +701,14 @@ impl NetworkSession {
         if self.terminal.is_some() {
             return;
         }
+        // Root reachability can only change on explicit ingress/source starts,
+        // both before refresh. If any scope covers the entire process inventory,
+        // no additional scoped idle prefilter can succeed. Compute this once,
+        // not via a tree lookup for every node in a fully reachable chain.
+        let all_reachable = self
+            .requests
+            .values()
+            .any(|scope| scope.reachable.len() == self.processes.len());
         // Closure can propagate backwards in compiled index order. Repeat only
         // when a process terminates, so this remains bounded by topology size.
         loop {
@@ -719,7 +728,7 @@ impl NetworkSession {
                     state = HandoffState::Ready;
                 }
                 if matches!(state, HandoffState::Idle | HandoffState::WaitingInput) {
-                    if self.idle_inputs_cannot_progress(index) {
+                    if self.idle_inputs_cannot_progress(index, all_reachable) {
                         continue;
                     }
                     let selected = match self.selection(index) {
