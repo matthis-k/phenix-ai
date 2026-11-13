@@ -418,10 +418,18 @@ fn notified_custom_reevaluates_only_on_targeted_or_generic_notification() {
     let targeted = builder.add("targeted", sink.clone()).unwrap();
     let ordinary = builder.add("ordinary", sink).unwrap();
     builder
-        .expose_input("targeted_in", targeted.input::<u64>("input").unwrap(), one())
+        .expose_input(
+            "targeted_in",
+            targeted.input::<u64>("input").unwrap(),
+            one(),
+        )
         .unwrap();
     builder
-        .expose_input("ordinary_in", ordinary.input::<u64>("input").unwrap(), one())
+        .expose_input(
+            "ordinary_in",
+            ordinary.input::<u64>("input").unwrap(),
+            one(),
+        )
         .unwrap();
     let mut options = SessionOptions::default();
     options.readiness.insert(
@@ -431,7 +439,12 @@ fn notified_custom_reevaluates_only_on_targeted_or_generic_notification() {
             allowed: allowed.clone(),
         })),
     );
-    let mut session = builder.build().unwrap().compile().unwrap().start_with_options(options);
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
     let notifier = session.process_notifier("targeted").unwrap();
     let mut listener = session.wake_listener();
     session.inject_local("targeted_in", 1_u64).unwrap();
@@ -461,13 +474,17 @@ fn process_notifier_does_not_resume_waitwake_but_wake_handle_does() {
     let mut builder = NetworkBuilder::new();
     let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
     let node = builder
-        .node("waiter", iface, Arc::new({
-            let resumed = resumed.clone();
-            move || WaitOnWake {
-                stage: 0,
-                resumed: resumed.clone(),
-            }
-        }))
+        .node(
+            "waiter",
+            iface,
+            Arc::new({
+                let resumed = resumed.clone();
+                move || WaitOnWake {
+                    stage: 0,
+                    resumed: resumed.clone(),
+                }
+            }),
+        )
         .unwrap();
     builder
         .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
@@ -508,7 +525,12 @@ fn generic_notifier_still_drives_opted_in_custom_policy() {
             allowed: allowed.clone(),
         })),
     );
-    let mut session = builder.build().unwrap().compile().unwrap().start_with_options(options);
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
     session.inject_local("input", 1_u64).unwrap();
     assert_eq!(session.run_until_idle(16).steps, 0);
     allowed.store(true, Ordering::SeqCst);
@@ -540,7 +562,12 @@ fn notification_contract_panic_fails_session_instead_of_escaping_start() {
         "custom".into(),
         Readiness::Custom(Arc::new(PanicNotificationContract)),
     );
-    let session = builder.build().unwrap().compile().unwrap().start_with_options(options);
+    let session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
     assert_eq!(session.state(), SessionState::Failed);
     assert!(
         session
