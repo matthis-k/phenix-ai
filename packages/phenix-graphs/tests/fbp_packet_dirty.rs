@@ -193,7 +193,11 @@ fn mixed_custom_node_is_polled_without_disabling_unrelated_packet_nodes() {
         .expose_input("special_in", custom.input::<u64>("input").unwrap(), one())
         .unwrap();
     builder
-        .expose_input("ordinary_in", ordinary.input::<u64>("input").unwrap(), one())
+        .expose_input(
+            "ordinary_in",
+            ordinary.input::<u64>("input").unwrap(),
+            one(),
+        )
         .unwrap();
 
     let mut options = SessionOptions::default();
