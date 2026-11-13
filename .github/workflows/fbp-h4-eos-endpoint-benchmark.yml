@@ -1,0 +1,94 @@
+name: "FBP H4 EOS Endpoint Paired Benchmark"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/tests/fbp_packet_dirty.rs"
+      - "packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs"
+      - ".github/workflows/fbp-h4-eos-endpoint-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-h4-eos-endpoints:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact EOS candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+      - name: Checkout exact targeted wake parent (#1287)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 5b6c06aecede2272015f2ae087269c5ee5eccdc9
+          path: baseline
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Preserve source, CPU affinity and exact commit identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp candidate/packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs \
+            baseline/packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs
+          sha256sum candidate/packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs \
+            baseline/packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs \
+            > artifacts/source-hashes.txt
+          {
+            echo "baseline=$(git -C baseline rev-parse HEAD)"
+            echo "candidate=$(git -C candidate rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            taskset -pc $$
+            cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            nix --version
+            (cd baseline && nix develop --command rustc -vV)
+            (cd candidate && nix develop --command rustc -vV)
+          } > artifacts/environment.txt
+          cat artifacts/source-hashes.txt
+          cat artifacts/environment.txt
+      - name: Compile same release benchmark under both implementations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in baseline candidate; do
+            (cd "$variant" && nix develop --command cargo build --locked --release -q \
+              -p phenix-graph --example fbp_targeted_eos_benchmark)
+          done
+      - name: Three interleaved pinned-affinity EOS repetitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed="$(taskset -pc $$ | sed -E 's/.*: //')"
+          cpu="$(printf '%s' "$allowed" | cut -d, -f1 | cut -d- -f1)"
+          taskset -c "$cpu" true
+          echo "cpu=$cpu" > artifacts/affinity.txt
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order=(baseline candidate)
+            else
+              order=(candidate baseline)
+            fi
+            for variant in "${order[@]}"; do
+              taskset -c "$cpu" /usr/bin/time \
+                -f 'elapsed_s=%e user_s=%U sys_s=%S maxrss_kb=%M' \
+                -o "artifacts/$variant-$repetition.resources" \
+                "$variant/target/release/examples/fbp_targeted_eos_benchmark" \
+                > "artifacts/$variant-$repetition.csv"
+              echo "variant=$variant repetition=$repetition"
+              cat "artifacts/$variant-$repetition.csv"
+              cat "artifacts/$variant-$repetition.resources"
+            done
+          done
+      - name: Upload all EOS paired evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-h4-eos-endpoint-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
