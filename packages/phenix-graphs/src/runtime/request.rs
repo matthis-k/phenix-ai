@@ -79,8 +79,7 @@ pub(super) struct RequestScope {
     // A scoped input may be checked many times against the same still-live
     // ancestor. Store only concrete, revalidated negative proof witnesses.
     // The key space is bounded by this compiled graph's input ports.
-    pub(super) closure_blockers:
-        std::cell::RefCell<BTreeMap<(usize, usize), ClosureBlocker>>,
+    pub(super) closure_blockers: std::cell::RefCell<BTreeMap<(usize, usize), ClosureBlocker>>,
     pub(super) terminal: Option<RequestStatus>,
     pub(super) failure: Option<String>,
     pub(super) disposal: RequestDisposal,
