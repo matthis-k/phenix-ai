@@ -715,22 +715,25 @@ impl NetworkSession {
             self.fail_input(index, "abandoned accepted input on Finished");
             return;
         }
-        let (writers, readers) = {
+        let (writers, readers, retired_wake) = {
             let p = &mut self.processes[index];
             if p.handoff.state() == HandoffState::Idle {
                 p.handoff.finish_idle().unwrap();
             }
             p.done = true;
             p.request = None;
-            p.wake.active.store(false, Ordering::Release);
             (
                 p.outputs.values().flatten().copied().collect::<Vec<_>>(),
                 p.inputs
                     .iter()
                     .flat_map(|port| port.queues.iter().copied())
                     .collect::<Vec<_>>(),
+                p.wake.clone(),
             )
         };
+        // Retire before transport closure can dispatch unrelated successors.
+        // The notifier check and target removal share the WakeSignal lock.
+        self.signal.retire_target(index, &retired_wake);
         // The queue itself remains authoritative for EOS and retained
         // packets. Both endpoints change scheduling conditions on writer
         // closure or reader disposal, including upstream pending fanout.
