@@ -463,10 +463,8 @@ impl NetworkSession {
             .iter()
             .enumerate()
             .filter_map(|(index, p)| {
-                (p.source
-                    || p.inputs.is_empty()
-                    || matches!(&p.policy, Readiness::Custom(_)))
-                .then_some(index)
+                (p.source || p.inputs.is_empty() || matches!(&p.policy, Readiness::Custom(_)))
+                    .then_some(index)
             })
             .collect();
         let mut session = Self {
