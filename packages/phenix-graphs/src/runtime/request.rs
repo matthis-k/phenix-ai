@@ -265,14 +265,17 @@ impl NetworkSession {
         let first_seal = !self.requests[&id].sealed;
         self.requests.get_mut(&id).unwrap().sealed = true;
         // Only authenticated downstream reachability of this sealed scope
-        // can gain an optional input closure with no physical packet. The
+        // can gain an request-local input closure with no physical packet. The
         // watcher is registered once even if close_request is repeated.
         let reachable: Vec<_> = self.requests[&id].reachable.iter().copied().collect();
         for index in reachable {
             // Registration and dirtying share the existing reachability pass:
             // no second O(V) traversal on every request seal.
-            if first_seal && matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
-                *self.scoped_optional_poll.entry(index).or_default() += 1;
+            if first_seal
+                && (matches!(&self.processes[index].policy, Readiness::Optional { .. })
+                    || self.processes[index].notification_driven)
+            {
+                *self.scoped_readiness_poll.entry(index).or_default() += 1;
             }
             self.dirty_process(index);
         }
@@ -320,7 +323,7 @@ impl NetworkSession {
         let scope = &self.requests[&id];
         if scope.sealed && scope.terminal.is_none() {
             let reachable: Vec<_> = scope.reachable.iter().copied().collect();
-            self.unwatch_scoped_optional(&reachable);
+            self.unwatch_scoped_readiness(&reachable);
         }
         self.requests.remove(&id);
         Ok(())

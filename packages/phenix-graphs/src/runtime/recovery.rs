@@ -62,7 +62,7 @@ impl NetworkSession {
         // that were registered by an earlier close_request before clearing it.
         if scope.sealed {
             let reachable: Vec<_> = scope.reachable.iter().copied().collect();
-            self.unwatch_scoped_optional(&reachable);
+            self.unwatch_scoped_readiness(&reachable);
         }
         let scope = self.requests.get_mut(&id).unwrap();
         scope.sealed = true;

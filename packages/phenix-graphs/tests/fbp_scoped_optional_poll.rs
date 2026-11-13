@@ -4,7 +4,9 @@ use phenix_graph::{
     interface::{Interface, PortDef},
     network::NetworkBuilder,
     process::{Process, ProcessContext, Step},
-    runtime::{Readiness, RequestStatus, SessionOptions, SessionState},
+    runtime::{
+        Readiness, ReadinessPolicy, ReadinessSnapshot, RequestStatus, SessionOptions, SessionState,
+    },
 };
 use std::{
     num::NonZeroUsize,
@@ -177,8 +179,24 @@ impl Process for RequiredAndAbsent {
     }
 }
 
-#[test]
-fn required_packet_waits_for_optional_request_closure_without_any_new_queue_event() {
+struct NotifiedJoin;
+impl ReadinessPolicy for NotifiedJoin {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        let required = snapshot.heads.iter().find(|head| head.port == "req");
+        let optional = snapshot.heads.iter().find(|head| head.port == "opt");
+        if required.is_some_and(|head| head.available) && optional.is_some_and(|head| head.closed) {
+            vec!["req".into(), "opt".into()]
+        } else {
+            vec![]
+        }
+    }
+
+    fn notification_driven(&self) -> bool {
+        true
+    }
+}
+
+fn assert_required_packet_waits_for_closure(notified: bool) {
     let hits = Arc::new(AtomicUsize::new(0));
     let mut builder = NetworkBuilder::new();
     let root_interface = Arc::new(
@@ -244,9 +262,13 @@ fn required_packet_waits_for_optional_request_closure_without_any_new_queue_even
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "join".into(),
-        Readiness::Optional {
-            required: vec!["req".into()],
-            optional: vec!["opt".into()],
+        if notified {
+            Readiness::Custom(Arc::new(NotifiedJoin))
+        } else {
+            Readiness::Optional {
+                required: vec!["req".into()],
+                optional: vec!["opt".into()],
+            }
         },
     );
     let mut session = builder
@@ -275,4 +297,11 @@ fn required_packet_waits_for_optional_request_closure_without_any_new_queue_even
     }
     assert_eq!(hits.load(Ordering::SeqCst), 3);
     assert_eq!(session.state(), SessionState::Quiescent);
+}
+
+#[test]
+fn required_packet_waits_for_optional_or_notified_custom_closure_without_new_queue_event() {
+    for notified in [false, true] {
+        assert_required_packet_waits_for_closure(notified);
+    }
 }
