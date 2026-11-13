@@ -77,16 +77,19 @@ fn concurrent_process_notifiers_coalesce_and_preserve_every_target() {
                 one(),
             )
             .unwrap();
-        options
-            .readiness
-            .insert(path, Readiness::Custom(Arc::new(ExternalGate(gates[i].clone()))));
+        options.readiness.insert(
+            path,
+            Readiness::Custom(Arc::new(ExternalGate(gates[i].clone()))),
+        );
     }
     let network = builder.build().unwrap().compile().unwrap();
     let mut session = network.start_with_options(options);
     let mut notifiers = Vec::with_capacity(PROCESSES);
     for i in 0..PROCESSES {
         notifiers.push(session.process_notifier(&format!("custom-{i}")).unwrap());
-        session.inject(&format!("in-{i}"), Value::of(i as u64)).unwrap();
+        session
+            .inject(&format!("in-{i}"), Value::of(i as u64))
+            .unwrap();
     }
     assert_eq!(session.run_until_idle(PROCESSES * 2).steps, 0);
 
@@ -121,7 +124,11 @@ fn concurrent_process_notifiers_coalesce_and_preserve_every_target() {
     }
     session.run_until_idle(PROCESSES * 2);
     for (i, count) in hits.iter().enumerate() {
-        assert_eq!(count.load(Ordering::SeqCst), 1, "process {i} missed or duplicated work");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "process {i} missed or duplicated work"
+        );
     }
     assert_eq!(session.run_until_idle(PROCESSES * 2).steps, 0);
 
