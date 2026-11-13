@@ -82,14 +82,15 @@ coverage; it closes two separate destructor/cleanup gaps found on the exact head
   cancellation reporting. The five-property existing Loom verifier passes; no
   Loom model was added because these changes use mutex-owned detachment and leave
   production wake synchronization unchanged.
-- The teardown-only sub-batch at `346b349a7cfa091ba86cc3ab861a245ac3a274f6` passed six-job
-  [Flake CI #43494388909](https://github.com/matthis-k/phenix-ai/actions/runs/43494388909),
-  [five-property Loom #43494387856](https://github.com/matthis-k/phenix-ai/actions/runs/43494387856),
-  and [Q5 notifier-retirement native concurrency #43494387716](https://github.com/matthis-k/phenix-ai/actions/runs/43494387716).
-  Paired H4/H5 and allocation checks also passed on this head. Local focused tests,
-  strict workspace Clippy, and formatting passed. The subsequent session-lease
-  correction is pending exact-head checks; its new real-process callback test and
-  workspace Clippy pass locally.
+- Exact implementation commit `2a8091dd2067bb14cda93b91cc99e9347e5eda37` passed
+  six-job [Flake CI #43530164488](https://github.com/matthis-k/phenix-ai/actions/runs/43530164488),
+  [five-property Loom #43530657205](https://github.com/matthis-k/phenix-ai/actions/runs/43530657205),
+  [8-repeat notifier-retirement Q5 #43530657598](https://github.com/matthis-k/phenix-ai/actions/runs/43530657598),
+  and [12-repeat in-flight recovery #43530657552](https://github.com/matthis-k/phenix-ai/actions/runs/43530657552).
+  H4/H5/H6 checks passed on the same head: H4 runs #43530163657, #43530163860,
+  #43530163909, #43530163762; H5 runs #43530163697 and #43530163719; H6 runs
+  #43530163988 and native runtime benchmark #43530163694. Strict workspace Clippy,
+  format, and focused storage/graph/kernel tests passed locally.
 
 The same optimized, setup-excluded kernel harness on PR #1300 baseline `1a57f7a6`
 vs. the session-lease candidate measured medians of 678/757 ns for no-op
@@ -97,8 +98,7 @@ vs. the session-lease candidate measured medians of 678/757 ns for no-op
 sequential candidate samples varied by roughly 100 ns. Added absolute cost was
 about 79-81 ns/call. This is a microbenchmark, not process throughput or allocation
 evidence. H6 stays 70.0% because no profiling/allocation conclusion changes. The
-session-lease change still needs exact-head acceptance before its evidence is
-accepted. Remaining risks
+session-lease improvement is scoped-verified but does not close H3b. Remaining risks
 include arbitrary plugin-vs-plugin and cross-mount lock cycles, panics from multiple
 nested destructors during one destructor's own unwinding, and unrevocable effects
 already started by delegated work.
