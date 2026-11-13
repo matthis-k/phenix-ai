@@ -3591,6 +3591,55 @@ fn required_b_optional_c() -> Readiness {
 }
 
 #[test]
+fn staged_readiness_declarations_remain_validated_after_startup() {
+    use phenix_graph::runtime::RequestStatus;
+
+    // Configured policies were validated during NetworkSession::new, but
+    // WaitInputs can introduce an invalid policy after its first activation.
+    for (policy, diagnostic) in [
+        (
+            Readiness::AtLeast(NonZeroUsize::new(4).unwrap()),
+            "readiness threshold exceeds input port count",
+        ),
+        (
+            Readiness::Optional {
+                required: vec!["missing".into()],
+                optional: vec![],
+            },
+            "invalid optional readiness port",
+        ),
+        (
+            Readiness::Optional {
+                required: vec!["b".into(), "b".into()],
+                optional: vec![],
+            },
+            "invalid optional readiness port",
+        ),
+    ] {
+        let resumed = Arc::new(AtomicUsize::new(0));
+        let mut session = required_stage_session(policy, false, true, resumed.clone());
+        let request = session.begin_request(None).unwrap();
+        session
+            .inject_request(request, "a", Value::of(1_i64))
+            .unwrap();
+        session.close_request(request).unwrap();
+        session.run_until_idle(20);
+        assert_eq!(resumed.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            session.request_status(request).unwrap(),
+            RequestStatus::Failed
+        );
+        assert!(
+            session
+                .request_failure(request)
+                .unwrap()
+                .unwrap()
+                .contains(diagnostic)
+        );
+    }
+}
+
+#[test]
 fn staged_optional_and_custom_groups_wait_for_live_required_producer_not_optional_closure() {
     use phenix_graph::runtime::RequestStatus;
     for policy in [
