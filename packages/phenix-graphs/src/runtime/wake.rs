@@ -315,11 +315,7 @@ mod tests {
         assert!(!old.active.load(Ordering::Acquire));
     }
 
-    fn enumerate_wake_histories(
-        events: &mut [WakeEvent; 8],
-        position: usize,
-        checked: &mut usize,
-    ) {
+    fn enumerate_wake_histories(events: &mut [WakeEvent; 8], position: usize, checked: &mut usize) {
         if position == events.len() {
             let retire = events
                 .iter()
