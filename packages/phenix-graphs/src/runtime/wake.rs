@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
 #[cfg(loom)]
 use loom::sync::{
     Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::collections::BTreeSet;
 #[cfg(not(loom))]
 use std::{
     sync::{
