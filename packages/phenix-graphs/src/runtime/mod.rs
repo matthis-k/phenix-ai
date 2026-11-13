@@ -819,19 +819,32 @@ impl NetworkSession {
             >= self.processes.len().saturating_sub(1)
     }
 
-    // A contiguous sorted union avoids transient B-tree nodes per polled
-    // process. Reuse the caller's scratch buffer to avoid introducing a fresh
-    // allocation on tiny dirty-only, EOS and notified-custom refreshes.
-    fn collect_refresh_candidates(&mut self, candidates: &mut Vec<usize>) {
-        let pending = std::mem::take(&mut self.dirty_processes);
-        candidates.clear();
-        candidates
-            .reserve(pending.len() + self.always_poll.len() + self.scoped_readiness_poll.len());
-        candidates.extend(pending);
-        candidates.extend(self.always_poll.iter().copied());
-        candidates.extend(self.scoped_readiness_poll.keys().copied());
-        candidates.sort_unstable();
-        candidates.dedup();
+    // BTreeSet is cheaper for sparse mandatory polling (EOS, notified
+    // Custom, closure fan-in). Only materialize a contiguous sorted union
+    // when there are enough permanent/scoped readers to amortize its cost.
+    // These two outputs are mutually exclusive and always ascending.
+    fn collect_refresh_candidates(
+        &mut self,
+        sparse: &mut BTreeSet<usize>,
+        dense: &mut Vec<usize>,
+    ) {
+        *sparse = std::mem::take(&mut self.dirty_processes);
+        dense.clear();
+        let polled = self
+            .always_poll
+            .len()
+            .saturating_add(self.scoped_readiness_poll.len());
+        if polled >= 8 {
+            dense.reserve(sparse.len() + polled);
+            dense.extend(std::mem::take(sparse));
+            dense.extend(self.always_poll.iter().copied());
+            dense.extend(self.scoped_readiness_poll.keys().copied());
+            dense.sort_unstable();
+            dense.dedup();
+        } else {
+            sparse.extend(self.always_poll.iter().copied());
+            sparse.extend(self.scoped_readiness_poll.keys().copied());
+        }
     }
 
     fn dirty_process(&mut self, index: usize) {
@@ -986,11 +999,12 @@ impl NetworkSession {
         }
         // Legacy Custom/source/staged nodes remain polled; scoped Optional
         // and notified Custom nodes participate for their sealed requests.
-        let mut dirty = std::mem::take(&mut self.refresh_scratch);
-        self.collect_refresh_candidates(&mut dirty);
+        let mut sparse = BTreeSet::new();
+        let mut dense = std::mem::take(&mut self.refresh_scratch);
+        self.collect_refresh_candidates(&mut sparse, &mut dense);
         loop {
             let mut finished = false;
-            for &index in &dirty {
+            for index in sparse.iter().copied().chain(dense.iter().copied()) {
                 let Some(did_finish) = self.refresh_process(index) else {
                     return;
                 };
@@ -1002,16 +1016,15 @@ impl NetworkSession {
             if !finished {
                 break;
             }
-            // Finishing closes exactly its input readers and output writers.
-            // Revisit only their producers/consumers and always-polled nodes
-            // when EOS propagation requires another pass. A packet dequeue
-            // without a finish stays pending for the next driver call.
-            self.collect_refresh_candidates(&mut dirty);
-            if dirty.is_empty() {
+            // A finish invalidates only affected endpoints and must revisit
+            // the current special poll set. The adaptive representation can
+            // change between batches without changing the scheduled indices.
+            self.collect_refresh_candidates(&mut sparse, &mut dense);
+            if sparse.is_empty() && dense.is_empty() {
                 break;
             }
         }
-        self.refresh_scratch = dirty;
+        self.refresh_scratch = dense;
     }
 
     /// Passive inspection of outstanding jobs whose configured age limit
