@@ -119,7 +119,7 @@ impl NetworkSession {
         // avoids per-ancestor tree-node allocation and logarithmic lookups.
         // Kept local to this proof: queue and process state may change between
         // reservations, so an across-refresh closure cache would be unsound.
-        let mut visited = vec![false; self.processes.len()];
+        let mut visited = vec![0_u8; self.processes.len()];
         let mut stack = vec![];
         for queue in queues {
             if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0
@@ -129,10 +129,10 @@ impl NetworkSession {
             }
         }
         while let Some(producer) = stack.pop() {
-            if visited[producer] {
+            if visited[producer] != 0 {
                 continue;
             }
-            visited[producer] = true;
+            visited[producer] = 1;
             let p = &self.processes[producer];
             if p.request == Some(request) || self.closure_obligation(producer, request) {
                 return false;
