@@ -14,3 +14,11 @@ Date: 2026-11-13. Review of `fbp-h4-scoped-idle-prefilter-design-20261113.md`.
 10. **No new abstraction:** One predicate branch within the existing `idle_inputs_cannot_progress` function; no second source of scheduling truth, no watcher, no stateful dirty bit, no compatibility shim. A future event-driven redesign requires a separate formal protocol.
 
 Disposition: proceed only with the conservative extra rule. Phase 4 must verify exact diff, all relevant request/EOS/staged/custom regressions and paired source-verified CI. Leave H4 and M7 incomplete.
+
+## Phase 2 re-review of full-scope short circuit
+
+1. **Proof of coverage:** Each reachable set contains only compiled process IDs. `scope.reachable.len() == self.processes.len()` implies all compiled process IDs are present; the predicate is not a heuristic.
+2. **Correct timing:** Compute at `refresh` entry. Roots cannot be added mid-refresh; public ingress/source-start operations record roots before invoking refresh. Finishing or reserving a process changes work but not the registered set.
+3. **Multiple scopes:** If one scope alone covers all nodes, no process is unreachable by all scopes; bypassing scoped prefilter is safe. If their union (but no single scope) covers all nodes, extra membership checks may remain but the result is still safe. No global union cache is justified.
+4. **Unscoped path:** `self.requests.is_empty()` retains its existing short circuit independent of the new boolean; no impact on the no-request prefilter or custom/EOS safeguards.
+5. **Performance acceptance:** Initial 128-chain regression is a defect for this improvement's primary use cases, not an accepted tradeoff. Verify final-head paired chain/fan-in/sparse/unscoped evidence; if the regression persists, reconsider or reject. Do not claim faster entire graph scanning.
