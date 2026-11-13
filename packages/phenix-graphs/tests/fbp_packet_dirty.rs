@@ -633,8 +633,10 @@ fn notifier_retirement_isolated_from_restarted_request_process() {
     builder
         .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
         .unwrap();
-    let mut options = SessionOptions::default();
-    options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
+    let options = SessionOptions {
+        request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
+        ..SessionOptions::default()
+    };
     let mut session = builder
         .build()
         .unwrap()
@@ -649,10 +651,16 @@ fn notifier_retirement_isolated_from_restarted_request_process() {
     session.close_request(first).unwrap();
     let old = session.process_notifier("worker").unwrap();
     assert_eq!(session.run_until_idle(16).steps, 1);
-    assert_eq!(session.request_status(first).unwrap(), RequestStatus::Pending);
+    assert_eq!(
+        session.request_status(first).unwrap(),
+        RequestStatus::Pending
+    );
 
     session.cancel_request(first).unwrap();
-    assert_eq!(session.request_status(first).unwrap(), RequestStatus::Cancelled);
+    assert_eq!(
+        session.request_status(first).unwrap(),
+        RequestStatus::Cancelled
+    );
     assert!(!old.notify(), "old registration cannot target replacement");
     let fresh = session.process_notifier("worker").unwrap();
     assert!(fresh.notify());
