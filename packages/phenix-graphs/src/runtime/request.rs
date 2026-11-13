@@ -68,6 +68,9 @@ pub(super) struct RequestScope {
     pub(super) invalid: bool,
     pub(super) reachable: BTreeSet<usize>,
     pub(super) observed_inputs: BTreeSet<(usize, usize)>,
+    // A request-specific input already reserved as authentically closed.
+    // Unlike observed_inputs, this never records a delivered data packet.
+    pub(super) delivered_closures: BTreeSet<(usize, usize)>,
     pub(super) terminal: Option<RequestStatus>,
     pub(super) failure: Option<String>,
     pub(super) disposal: RequestDisposal,
@@ -176,6 +179,7 @@ impl NetworkSession {
                 invalid: false,
                 reachable: BTreeSet::new(),
                 observed_inputs: BTreeSet::new(),
+                delivered_closures: BTreeSet::new(),
                 terminal: None,
                 failure: None,
                 disposal: RequestDisposal::default(),
