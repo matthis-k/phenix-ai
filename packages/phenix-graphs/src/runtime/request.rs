@@ -262,11 +262,15 @@ impl NetworkSession {
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
         }
+        let first_seal = !self.requests[&id].sealed;
         self.requests.get_mut(&id).unwrap().sealed = true;
-        // Only authenticated downstream reachability of the sealed scope
-        // can gain a request-local closure obligation. Mixed custom/optional
-        // nodes are always polled; unrelated ordinary sinks stay untouched.
+        // Only authenticated downstream reachability of this sealed scope
+        // can gain an optional input closure with no physical packet. The
+        // watcher is registered once even if close_request is repeated.
         let reachable: Vec<_> = self.requests[&id].reachable.iter().copied().collect();
+        if first_seal {
+            self.watch_scoped_optional(&reachable);
+        }
         for index in reachable {
             self.dirty_process(index);
         }
@@ -307,6 +311,14 @@ impl NetworkSession {
         self.check_request(id)?;
         if self.terminal.is_none() && (self.request_live(id) || !self.requests[&id].sealed) {
             return Err(RequestError::NotSettled);
+        }
+        // Terminal cancellation already cleared reachability and detached
+        // this scope's optional watch. A normal settled sealed request still
+        // owns exactly one registration until this release.
+        let scope = &self.requests[&id];
+        if scope.sealed && scope.terminal.is_none() {
+            let reachable: Vec<_> = scope.reachable.iter().copied().collect();
+            self.unwatch_scoped_optional(&reachable);
         }
         self.requests.remove(&id);
         Ok(())
