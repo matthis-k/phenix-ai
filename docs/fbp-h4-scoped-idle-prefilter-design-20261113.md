@@ -41,3 +41,11 @@ No new mutable caches; no process is finished or marked runnable by this predica
 ## Accepted limitations
 
 Extra per-node reachability membership checks can regress a fully reachable graph, and scanning multiple simultaneous requests has O(R log V) cost per empty process. Avoid arbitrary heuristic thresholds; use the simplest existing-set query and measure on sparse scoped versus fully reachable/multi-scope controls. If regressions outweigh benefits, reject rather than adding a global scheduler cache.
+
+## Phase 1 revision after initial paired benchmark
+
+The first exact-source paired benchmark [#43338046090](https://github.com/matthis-k/phenix-ai/actions/runs/43338046090) on an AMD EPYC 9V45 measured the desired sparse scoped gain (~3.64× at 256 processes; ~2.48× at 128 unrelated fan-in) **but also a 15% regression** at 128 fully reachable optional-chain nodes. That regression directly follows from adding a redundant `BTreeSet::contains(index)` probe to every idle process even though none can ever be pruned.
+
+Smallest correction: at the start of `refresh()`, compute once whether **any live request scope's reachable set equals the compiled process count**. This set is a subset of the compiled graph; equal cardinality therefore means it covers all processes. Reachability grows only via successful external `inject_request` and `start_request_source`, both before refresh; reserve/finish/wake operations inside refresh do **not** mutate the set. If a scope covers the graph, bypass the new reachability membership probes for this entire refresh. The original no-scopes path is unchanged.
+
+Rejected alternatives: a global union bitmap (allocation/state), a magic size threshold, or a per-process repeated full-scope cardinality lookup. Measure final paired chain and scoped sparse workloads again to determine acceptance. This is a local boolean computed once per refresh, not cached across driver calls.
