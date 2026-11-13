@@ -4,6 +4,7 @@ on:
     paths:
       - "packages/phenix-graphs/examples/fbp_closure_benchmark.rs"
       - "packages/phenix-graphs/src/runtime/closure.rs"
+      - "packages/phenix-graphs/src/runtime/readiness.rs"
       - "packages/phenix-graphs/src/runtime/request.rs"
       - "packages/phenix-graphs/src/runtime/mod.rs"
       - ".github/workflows/fbp-h5-closure-benchmark.yml"
@@ -22,10 +23,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
-      - name: Checkout exact pre-pruning baseline
+      - name: Checkout exact closure-proof baseline (#1278)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 629a1400dbee5f47f9c7707898ec5a1302470087
+          ref: 4eb584473818d86014f92f04806a3e22ed78863e
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Machine and exact source provenance
