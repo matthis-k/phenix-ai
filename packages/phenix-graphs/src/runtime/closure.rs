@@ -132,15 +132,24 @@ impl NetworkSession {
             if p.request == Some(request) || self.closure_obligation(producer, request) {
                 return false;
             }
-            for queue in p.inputs.iter().flat_map(|port| &port.queues) {
-                if !relevant(*queue) {
+            // A previously delivered request-local absence is a monotonic
+            // proof for that specific input: sealing excludes new request
+            // ingress/roots, and its full upstream was checked before
+            // delivery. Do not skip ports merely observed with data.
+            for (input_index, port) in p.inputs.iter().enumerate() {
+                if scope.delivered_closures.contains(&(producer, input_index)) {
                     continue;
                 }
-                if self.transport.queues()[*queue].request_count(request) != 0 {
-                    return false;
-                }
-                if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
-                    stack.push(*index);
+                for queue in &port.queues {
+                    if !relevant(*queue) {
+                        continue;
+                    }
+                    if self.transport.queues()[*queue].request_count(request) != 0 {
+                        return false;
+                    }
+                    if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
+                        stack.push(*index);
+                    }
                 }
             }
         }
