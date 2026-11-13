@@ -5,6 +5,7 @@ on:
       - "packages/phenix-graphs/examples/fbp_agent_allocation_benchmark.rs"
       - "packages/phenix-graphs/examples/fbp_agent_mixed_benchmark.rs"
       - "packages/phenix-graphs/src/runtime/**"
+      - "docs/fbp-h6-agent-allocation-measurement-20261113.md"
       - ".github/workflows/fbp-h6-agent-allocation-benchmark.yml"
   workflow_dispatch:
 
