@@ -180,7 +180,7 @@ fn drive_turn(
     let (before, first_drain) = measured(|| session.run_until_idle(64));
     assert!(!before.budget_exhausted);
     let mut steps = before.steps;
-    let resume = if iteration % 2 == 0 {
+    let resume = if iteration.is_multiple_of(2) {
         assert_eq!(before.steps, 6);
         assert_eq!(
             session.request_status(request).unwrap(),
@@ -241,13 +241,7 @@ fn emit_route(mode: &str, idle: usize, route: &str, phases: &Phases) {
         ("tool_resume", phases.resume),
         ("release", phases.release),
     ] {
-        emit(
-            mode,
-            idle,
-            &format!("{route}_{name}"),
-            phases.turns,
-            counts,
-        );
+        emit(mode, idle, &format!("{route}_{name}"), phases.turns, counts);
     }
 }
 
@@ -259,16 +253,15 @@ fn run(mode: &str, idle: usize, iterations: usize) {
     };
     let persisted = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new(AtomicBool::new(false));
-    let ((graph, options), graph_cost) = measured(|| {
-        workload::compiled(idle, notified, persisted.clone(), gate.clone())
-    });
+    let ((graph, options), graph_cost) =
+        measured(|| workload::compiled(idle, notified, persisted.clone(), gate.clone()));
     let ((mut session, notifier), startup_cost) = measured(|| {
         let session = graph.start_with_options(options);
         let notifier = session.process_notifier("tools.local").unwrap();
         (session, notifier)
     });
     assert_eq!(session.state(), SessionState::Quiescent);
-    // Match the original benchmark's warmup without counting its allocations.
+    // Match the original benchmark's warmup, excluding it from reported samples.
     for iteration in 0..12 {
         let turn = drive_turn(&mut session, &notifier, &gate, iteration);
         black_box(turn);
@@ -277,7 +270,7 @@ fn run(mode: &str, idle: usize, iterations: usize) {
     let mut remote = Phases::default();
     for iteration in 12..(12 + iterations) {
         let turn = drive_turn(&mut session, &notifier, &gate, iteration);
-        if iteration % 2 == 0 {
+        if iteration.is_multiple_of(2) {
             local.push(turn);
         } else {
             remote.push(turn);
