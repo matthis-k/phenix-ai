@@ -12,11 +12,7 @@ fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
 
-fn measure(
-    optional_nodes: usize,
-    iterations: usize,
-    scoped: bool,
-) -> (f64, f64, f64, f64, f64) {
+fn measure(optional_nodes: usize, iterations: usize, scoped: bool) -> (f64, f64, f64, f64, f64) {
     let mut builder = NetworkBuilder::new();
     let sink = Arc::new(ComponentDef::sink(|value: &u64| {
         black_box(*value);
@@ -98,14 +94,16 @@ fn main() {
     eprintln!(
         "scenario=one_active_sink_with_unrelated_writer_open_optional_sinks;          warmup=32; all_optional_inputs_open_and_empty; iterations={iterations}"
     );
-    println!(
-        "mode,optional_nodes,iterations,compile_ms,start_ms,mean_ns_per_event,p50_ns,p95_ns"
-    );
+    println!("mode,optional_nodes,iterations,compile_ms,start_ms,mean_ns_per_event,p50_ns,p95_ns");
     for scoped in [false, true] {
         for optional_nodes in [0, 16, 64, 256] {
             let (compile_ms, start_ms, mean, p50, p95) =
                 measure(optional_nodes, iterations, scoped);
-            let mode = if scoped { "scoped-unrelated" } else { "unscoped" };
+            let mode = if scoped {
+                "scoped-unrelated"
+            } else {
+                "unscoped"
+            };
             println!(
                 "{mode},{optional_nodes},{iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0},{p95:.0}"
             );
