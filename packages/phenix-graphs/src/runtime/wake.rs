@@ -171,7 +171,7 @@ mod tests {
         // retirement wins and the old registration refuses the notification.
         // Reusing the compiled index must not reuse the old WakeSlot.
         const PROCESS: usize = 3;
-        for round in 0..128 {
+        for round in 0_usize..128 {
             let signal = WakeSignal::new();
             let old_slot = Arc::new(WakeSlot::default());
             let barrier = Arc::new(Barrier::new(3));
