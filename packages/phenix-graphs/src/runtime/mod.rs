@@ -823,11 +823,7 @@ impl NetworkSession {
     // Custom, closure fan-in). Only materialize a contiguous sorted union
     // when there are enough permanent/scoped readers to amortize its cost.
     // These two outputs are mutually exclusive and always ascending.
-    fn collect_refresh_candidates(
-        &mut self,
-        sparse: &mut BTreeSet<usize>,
-        dense: &mut Vec<usize>,
-    ) {
+    fn collect_refresh_candidates(&mut self, sparse: &mut BTreeSet<usize>, dense: &mut Vec<usize>) {
         *sparse = std::mem::take(&mut self.dirty_processes);
         dense.clear();
         let polled = self
@@ -845,6 +841,21 @@ impl NetworkSession {
             sparse.extend(self.always_poll.iter().copied());
             sparse.extend(self.scoped_readiness_poll.keys().copied());
         }
+    }
+
+    // Keep the per-index loop monomorphic for either representation. A
+    // chained BTreeSet/Vec iterator adds overhead on sparse EOS hot paths.
+    #[inline]
+    fn refresh_candidate_batch(&mut self, indices: impl Iterator<Item = usize>) -> Option<bool> {
+        let mut finished = false;
+        for index in indices {
+            let did_finish = self.refresh_process(index)?;
+            finished |= did_finish;
+            if self.terminal.is_some() {
+                return None;
+            }
+        }
+        Some(finished)
     }
 
     fn dirty_process(&mut self, index: usize) {
@@ -1003,16 +1014,14 @@ impl NetworkSession {
         let mut dense = std::mem::take(&mut self.refresh_scratch);
         self.collect_refresh_candidates(&mut sparse, &mut dense);
         loop {
-            let mut finished = false;
-            for index in sparse.iter().copied().chain(dense.iter().copied()) {
-                let Some(did_finish) = self.refresh_process(index) else {
-                    return;
-                };
-                finished |= did_finish;
-                if self.terminal.is_some() {
-                    return;
-                }
-            }
+            let finished = if dense.is_empty() {
+                self.refresh_candidate_batch(sparse.iter().copied())
+            } else {
+                self.refresh_candidate_batch(dense.iter().copied())
+            };
+            let Some(finished) = finished else {
+                return;
+            };
             if !finished {
                 break;
             }
