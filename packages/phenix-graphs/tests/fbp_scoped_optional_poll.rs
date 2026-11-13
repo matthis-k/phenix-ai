@@ -184,9 +184,7 @@ impl ReadinessPolicy for NotifiedJoin {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
         let required = snapshot.heads.iter().find(|head| head.port == "req");
         let optional = snapshot.heads.iter().find(|head| head.port == "opt");
-        if required.is_some_and(|head| head.available)
-            && optional.is_some_and(|head| head.closed)
-        {
+        if required.is_some_and(|head| head.available) && optional.is_some_and(|head| head.closed) {
             vec!["req".into(), "opt".into()]
         } else {
             vec![]
