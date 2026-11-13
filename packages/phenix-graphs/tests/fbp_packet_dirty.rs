@@ -2,16 +2,17 @@
 //! EOS propagation and externally delivered wakeups.
 use phenix_graph::{
     Value,
+    component::ComponentDef,
     interface::{Interface, PortDef},
     network::NetworkBuilder,
     process::{Process, ProcessContext, ProcessEmission, Step},
-    runtime::{SessionOptions, SessionState},
+    runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState},
 };
 use std::{
     num::NonZeroUsize,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -157,4 +158,67 @@ fn external_wake_epoch_resumes_waiting_packet_driven_process() {
     assert!(session.wake_handle("waker").unwrap().wake());
     assert_eq!(session.run_until_idle(32).steps, 1);
     assert_eq!(resumed.load(Ordering::SeqCst), 1);
+}
+
+struct GatedPolicy {
+    calls: Arc<AtomicUsize>,
+    allowed: Arc<AtomicBool>,
+}
+impl ReadinessPolicy for GatedPolicy {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if !self.allowed.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        snapshot
+            .heads
+            .iter()
+            .filter(|head| head.available)
+            .map(|head| head.port.clone())
+            .collect()
+    }
+}
+
+#[test]
+fn mixed_custom_node_is_polled_without_disabling_unrelated_packet_nodes() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let allowed = Arc::new(AtomicBool::new(false));
+    let sink = Arc::new(ComponentDef::sink(|value: &u64| {
+        std::hint::black_box(*value);
+    }));
+    let mut builder = NetworkBuilder::new();
+    let custom = builder.add("special", sink.clone()).unwrap();
+    let ordinary = builder.add("ordinary", sink).unwrap();
+    builder
+        .expose_input("special_in", custom.input::<u64>("input").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("ordinary_in", ordinary.input::<u64>("input").unwrap(), one())
+        .unwrap();
+
+    let mut options = SessionOptions::default();
+    options.readiness.insert(
+        "special".into(),
+        Readiness::Custom(Arc::new(GatedPolicy {
+            calls: calls.clone(),
+            allowed: allowed.clone(),
+        })),
+    );
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+    session.inject_local("special_in", 7_u64).unwrap();
+    let before = calls.load(Ordering::SeqCst);
+    assert!(before > 0);
+    session.inject_local("ordinary_in", 42_u64).unwrap();
+    assert!(calls.load(Ordering::SeqCst) > before);
+    // The custom policy must still be observed on every drive, even though
+    // its own physical queue did not change when the ordinary sink ran.
+    assert_eq!(session.run_until_idle(32).steps, 1);
+    allowed.store(true, Ordering::SeqCst);
+    assert_eq!(session.run_until_idle(32).steps, 1);
+    assert_eq!(session.state(), SessionState::Quiescent);
 }
