@@ -233,6 +233,56 @@ mod tests {
     }
 
     #[test]
+    fn delivered_absence_does_not_leak_between_overlapping_request_ids() {
+        use phenix_graph::runtime::{Readiness, SessionOptions};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let network = super::compiled("fan-in", 1, hits.clone());
+        let mut opts = SessionOptions::default();
+        opts.readiness.insert(
+            "sink".into(),
+            Readiness::Optional {
+                required: vec![],
+                optional: vec!["opt".into()],
+            },
+        );
+        let mut session = network.start_with_options(opts);
+        let first = session.begin_request(None).unwrap();
+        let second = session.begin_request(None).unwrap();
+        session.inject_request(first, "trigger", Value::of(10_u64)).unwrap();
+        session
+            .inject_request(second, "unrelated-0", Value::of(20_u64))
+            .unwrap();
+        session.close_request(first).unwrap();
+        session.close_request(second).unwrap();
+        let report = session.run_until_idle(32);
+        assert!(!report.budget_exhausted);
+        assert_eq!(report.steps, 4);
+        assert_eq!(session.request_status(first).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(session.request_status(second).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(hits.load(Ordering::Relaxed), 2);
+        session.release_request(first).unwrap();
+        session.release_request(second).unwrap();
+
+        // A third scope with both roots must not inherit either earlier
+        // scope's absence proof or skip a newly owned producer.
+        let third = session.begin_request(None).unwrap();
+        session.inject_request(third, "trigger", Value::of(30_u64)).unwrap();
+        session
+            .inject_request(third, "unrelated-0", Value::of(40_u64))
+            .unwrap();
+        session.close_request(third).unwrap();
+        assert_eq!(session.run_until_idle(32).steps, 3);
+        assert_eq!(session.request_status(third).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(hits.load(Ordering::Relaxed), 3);
+        session.release_request(third).unwrap();
+    }
+
+    #[test]
+    fn long_chain_reuses_delivered_closure_evidence_across_requests() {
+        super::measure("chain", 64, 8);
+    }
+
+    #[test]
     fn two_roots_owned_by_same_request_must_both_finish_before_optional_closure() {
         use phenix_graph::runtime::{Readiness, SessionOptions};
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
