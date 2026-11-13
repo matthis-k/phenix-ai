@@ -1,5 +1,5 @@
-use super::*;
 use super::request::ClosureBlocker;
+use super::*;
 
 impl NetworkSession {
     pub(super) fn stranded_at_eos(&self, index: usize) -> bool {
