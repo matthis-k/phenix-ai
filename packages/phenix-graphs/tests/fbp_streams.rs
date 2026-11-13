@@ -2101,6 +2101,13 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
         assert_eq!(log.lock().unwrap().len(), iteration);
         assert_eq!(s.request_work(id).unwrap().waiting_wake, 1);
         assert_eq!(s.request_status(id).unwrap(), RequestStatus::Pending);
+        // Recheck the same blocked closure while the upstream request-owned
+        // wake wait is unchanged. Its witness must not permit early closure.
+        for _ in 0..4 {
+            assert_eq!(s.run_until_idle(30).steps, 0);
+            assert_eq!(s.request_status(id).unwrap(), RequestStatus::Pending);
+            assert_eq!(log.lock().unwrap().len(), iteration);
+        }
         wake.wake();
         let (index, job) = s.next_job().unwrap();
         s.complete(index, job.run()).unwrap();
@@ -2404,6 +2411,13 @@ fn optional_scope_cannot_settle_behind_another_requests_handed_job() {
     assert_eq!(work.queued, 0);
     assert_eq!(work.closure_pending, 1);
     assert_eq!(s.request_status(b).unwrap(), RequestStatus::Pending);
+    // Request B's optional closure is blocked by a concrete upstream
+    // obligation while request A owns a handed job. Repeated driver passes
+    // must not cache a permanent false result once that job completes.
+    for _ in 0..4 {
+        assert_eq!(s.run_until_idle(20).steps, 0);
+        assert_eq!(s.request_status(b).unwrap(), RequestStatus::Pending);
+    }
     s.complete_job(held.run()).unwrap();
     s.run_until_idle(20);
     for id in [a, b] {
