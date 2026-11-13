@@ -41,6 +41,23 @@ impl WakeSignal {
         (state.global_epoch, std::mem::take(&mut state.targets))
     }
 
+    // A targeted notification is a scheduler invalidation, not a process
+    // activation. Only WakeHandle sets WakeSlot.pending; ProcessNotifier
+    // reevaluates readiness without resuming a WaitingWake handoff.
+    fn notify_target(&self, slot: &WakeSlot, process: usize, wake: bool) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if !state.active || !slot.active.load(Ordering::Acquire) {
+            return false;
+        }
+        if wake {
+            slot.pending.store(true, Ordering::Release);
+        }
+        state.targets.insert(process);
+        state.epoch = state.epoch.wrapping_add(1);
+        self.changed.notify_all();
+        true
+    }
+
     // SessionNotifier has no process identity: retain full-scan semantics.
     fn notify(&self) -> bool {
         let mut state = self.state.lock().unwrap();
@@ -80,17 +97,24 @@ pub struct WakeHandle {
 impl WakeHandle {
     /// False means the registration was invalidated by finish/cancellation/drop.
     pub fn wake(&self) -> bool {
-        let mut state = self.signal.state.lock().unwrap();
-        if !state.active || !self.slot.active.load(Ordering::Acquire) {
-            return false;
-        }
-        // The pending flag and target index are published atomically with
-        // respect to scheduler draining under this same signal lock.
-        self.slot.pending.store(true, Ordering::Release);
-        state.targets.insert(self.process);
-        state.epoch = state.epoch.wrapping_add(1);
-        self.signal.changed.notify_all();
-        true
+        self.signal.notify_target(&self.slot, self.process, true)
+    }
+}
+
+/// Invalidate one process's readiness without resuming its WaitWake handoff.
+/// Obtain from NetworkSession::process_notifier for a physical process path.
+/// Old handles are invalid after finish, request recovery or session terminal.
+#[derive(Clone)]
+pub struct ProcessNotifier {
+    pub(super) slot: Arc<WakeSlot>,
+    pub(super) signal: Arc<WakeSignal>,
+    pub(super) process: usize,
+}
+impl ProcessNotifier {
+    /// Returns false only if this process registration is no longer active.
+    /// A true return does not claim that a process activation was scheduled.
+    pub fn notify(&self) -> bool {
+        self.signal.notify_target(&self.slot, self.process, false)
     }
 }
 /// Register before checking session state or a completion channel, then wait.
