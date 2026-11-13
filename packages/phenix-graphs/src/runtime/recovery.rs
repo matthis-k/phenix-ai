@@ -137,6 +137,9 @@ impl NetworkSession {
             }
         }
         let tickets = self.requests[&id].cancelled_jobs.clone();
+        // Queue disposal and process replacement can affect arbitrary
+        // predecessors, so never rely on the packet-only dirty set here.
+        self.force_full_refresh = true;
         self.refresh();
         self.notifier().notify();
         Ok(tickets)
