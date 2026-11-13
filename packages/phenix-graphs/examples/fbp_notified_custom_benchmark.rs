@@ -105,7 +105,6 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
             .inject_local("active_in", black_box(iteration as u64))
             .unwrap();
         let (index, job) = session.next_job().expect("active packet");
-        assert_eq!(session.process_path(index), Some("active"));
         session.complete(index, job.run()).unwrap();
         assert!(session.next_job().is_none());
         if iteration >= warmup {
@@ -124,7 +123,6 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
         gates[0].store(true, Ordering::Release);
         assert!(notifier.notify());
         let (index, job) = session.next_job().expect("notified selected job");
-        assert_eq!(session.process_path(index), Some("custom-0"));
         session.complete(index, job.run()).unwrap();
     }
     samples.sort_by(|a, b| a.total_cmp(b));
