@@ -679,19 +679,33 @@ impl NetworkSession {
             self.fail_input(index, "abandoned accepted input on Finished");
             return;
         }
-        let p = &mut self.processes[index];
-        if p.handoff.state() == HandoffState::Idle {
-            p.handoff.finish_idle().unwrap();
+        let (writers, readers) = {
+            let p = &mut self.processes[index];
+            if p.handoff.state() == HandoffState::Idle {
+                p.handoff.finish_idle().unwrap();
+            }
+            p.done = true;
+            p.request = None;
+            p.wake.active.store(false, Ordering::Release);
+            (
+                p.outputs.values().flatten().copied().collect::<Vec<_>>(),
+                p.inputs
+                    .iter()
+                    .flat_map(|port| port.queues.iter().copied())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // The queue itself remains authoritative for EOS and retained
+        // packets. Both endpoints change scheduling conditions on writer
+        // closure or reader disposal, including upstream pending fanout.
+        for queue in writers {
+            self.transport.close_writer(queue).unwrap();
+            self.dirty_queue(queue);
         }
-        p.done = true;
-        p.request = None;
-        p.wake.active.store(false, Ordering::Release);
-        for queue in p.outputs.values().flatten() {
-            self.transport.close_writer(*queue).unwrap();
-        }
-        for queue in p.inputs.iter().flat_map(|p| &p.queues) {
-            let packets = self.transport.close_reader(*queue).unwrap();
+        for queue in readers {
+            let packets = self.transport.close_reader(queue).unwrap();
             debug_assert!(packets.is_empty());
+            self.dirty_queue(queue);
         }
     }
     // An idle process with empty, writer-open inputs has no native packet or
@@ -894,21 +908,29 @@ impl NetworkSession {
         // Preserve custom/source/optional/staged readiness on every drive;
         // only ordinary packet-driven nodes can be skipped when unrelated.
         dirty.extend(self.always_poll.iter().copied());
-        let mut finished = false;
-        for index in dirty {
-            let Some(did_finish) = self.refresh_process(index) else {
-                return;
-            };
-            finished |= did_finish;
-            if self.terminal.is_some() {
-                return;
+        loop {
+            let mut finished = false;
+            for index in dirty {
+                let Some(did_finish) = self.refresh_process(index) else {
+                    return;
+                };
+                finished |= did_finish;
+                if self.terminal.is_some() {
+                    return;
+                }
             }
-        }
-        if finished {
-            // EOS propagation can make an earlier process eligible. Keep the
-            // existing repeat-to-fixed-point full scan when any node finishes.
-            self.dirty_processes.clear();
-            self.refresh_all_processes();
+            if !finished {
+                break;
+            }
+            // Finishing closes exactly its input readers and output writers.
+            // Revisit only their producers/consumers and always-polled nodes
+            // when EOS propagation requires another pass. A packet dequeue
+            // without a finish stays pending for the next driver call.
+            dirty = std::mem::take(&mut self.dirty_processes);
+            dirty.extend(self.always_poll.iter().copied());
+            if dirty.is_empty() {
+                break;
+            }
         }
     }
 
@@ -1160,12 +1182,7 @@ impl NetworkSession {
                 self.processes[index].waiting_policy = Some(policy);
             }
             Ok(Step::WaitWake) => {}
-            Ok(Step::Finished) => {
-                // Writer EOS and input reader closure may affect many
-                // predecessors/successors. Preserve the full fixed-point scan.
-                self.force_full_refresh = true;
-                self.finish(index);
-            }
+            Ok(Step::Finished) => self.finish(index),
             Ok(Step::Complete) => {
                 self.processes[index].request = None;
             }
