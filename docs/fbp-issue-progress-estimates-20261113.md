@@ -77,9 +77,13 @@ coverage; it closes two separate destructor/cleanup gaps found on the exact head
   cancellation reporting. The five-property existing Loom verifier passes; no
   Loom model was added because these changes use mutex-owned detachment and leave
   production wake synchronization unchanged.
-- Candidate-local full Flake, strict Clippy/format, focused graph/kernel/storage
-  suites pass. Exact-head GitHub runs are still required before treating this batch
-  as accepted.
+- Exact committed head `346b349a7cfa091ba86cc3ab861a245ac3a274f6` passed six-job
+  [Flake CI #43494388909](https://github.com/matthis-k/phenix-ai/actions/runs/43494388909),
+  [five-property Loom #43494387856](https://github.com/matthis-k/phenix-ai/actions/runs/43494387856),
+  and [Q5 notifier-retirement native concurrency #43494387716](https://github.com/matthis-k/phenix-ai/actions/runs/43494387716).
+  Paired H4/H5 and allocation checks also passed on this head. Local focused tests,
+  strict workspace Clippy, and formatting passed. The cleanup path does not affect
+  scheduler hot paths, so no H4/H5/H6 score increase is claimed.
 
 The measured performance issue H6 is unchanged; this cleanup runs only on teardown
 and cancellation paths. No throughput improvement is claimed. Remaining risks
