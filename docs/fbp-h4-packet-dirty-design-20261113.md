@@ -20,9 +20,9 @@ Choose the last as an experiment, NOT a general event-indexed scheduler replacem
 Use incremental scheduling for a session only if every compiled process:
 - is a non-source with at least one declared input;
 - uses packet-driven built-in readiness (Any, All, AtLeast or CorrelatedAll), not Custom or Optional;
-- has not switched to staged `WaitInputs` dynamically.
+- has not switched to staged `WaitInput` or `WaitInputs` dynamically.
 
-Any `WaitInputs` disables incremental mode permanently for that session, before its next refresh. `WaitInput` is handled through its concrete physical port and explicit local dirtying. Optional closure and custom policies retain the unchanged full-scan path. A wake notification changes the global WakeSignal epoch and forces a full scan (no invented per-process wake tracking).
+Any `WaitInput` or `WaitInputs` disables incremental mode permanently before its next refresh: even a single staged input may become request-locally closed when an upstream producer completes without writing a packet. Optional closure and custom policies retain the unchanged full-scan path. A wake notification changes the global WakeSignal epoch and forces a full scan (no invented per-process wake tracking).
 
 ## Dirty transition inventory
 
