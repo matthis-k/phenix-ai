@@ -570,6 +570,12 @@ impl NetworkSession {
                 if let Some(request) = request {
                     self.note_request_ingress(request, name);
                 }
+                // Accepted packet fanout is an input event for every physical
+                // target, including aliases of the exported ingress.
+                let touched = self.ingress[name].clone();
+                for queue in touched {
+                    self.dirty_queue(queue);
+                }
                 self.refresh();
                 Ok(())
             }
@@ -577,12 +583,14 @@ impl NetworkSession {
         }
     }
     pub fn close_input(&mut self, name: &str) -> Result<(), ConnectionError> {
-        for index in self
+        let queues = self
             .ingress
             .get(name)
             .ok_or(ConnectionError::InvalidDestination)?
-        {
-            self.transport.close_writer(*index)?;
+            .clone();
+        for queue in queues {
+            self.transport.close_writer(queue)?;
+            self.dirty_queue(queue);
         }
         self.refresh();
         Ok(())
@@ -595,6 +603,7 @@ impl NetworkSession {
         let packet = self.transport.pop(index);
         if let Some(packet) = &packet {
             self.observe_capture(name, packet);
+            self.dirty_queue(index);
         }
         self.refresh();
         Ok(packet)
@@ -1121,13 +1130,19 @@ impl NetworkSession {
                 self.processes[index].waiting_policy = Some(policy);
             }
             Ok(Step::WaitWake) => {}
-            Ok(Step::Finished) => self.finish(index),
+            Ok(Step::Finished) => {
+                // Writer EOS and input reader closure may affect many
+                // predecessors/successors. Preserve the full fixed-point scan.
+                self.force_full_refresh = true;
+                self.finish(index);
+            },
             Ok(Step::Complete) => {
                 self.processes[index].request = None;
             }
             Ok(Step::Yield) => {}
             Err(error) => self.fail_process(index, format!("process {index}: {error}")),
         }
+        self.dirty_process(index);
         self.refresh();
         Ok(())
     }
@@ -1141,6 +1156,7 @@ impl NetworkSession {
         };
         p.handoff.reject(job)?;
         self.dispatched_at.remove(&index);
+        self.dirty_process(index);
         self.refresh();
         Ok(())
     }
@@ -1161,6 +1177,13 @@ impl NetworkSession {
         let transaction = self.processes[index].pending.as_mut().unwrap();
         match self.transport.commit(transaction) {
             Ok(()) => {
+                // The atomic commit can make consumers runnable and can
+                // resume this publisher's continuation.
+                let touched = self.processes[index].pending_targets.clone();
+                for queue in touched {
+                    self.dirty_queue(queue);
+                }
+                self.dirty_process(index);
                 if self.processes[index].pending_targets.is_empty() {
                     self.discarded_emissions = self.discarded_emissions.saturating_add(1);
                 }
