@@ -1,19 +1,19 @@
-# FBP issue-level progress estimate — November 13, 2026
+# FBP issue progress — one-decimal tracked estimates
 
-**Comparison baseline:** the previous 33-issue, one-decimal estimates reported in chat on November 13 (Q5 **61.5**, H3b **72.0**). This is a *subjective engineering completion estimate*, **not** a percentage automatically measured by passing tests or a probability that code is correct.
+**Scope and comparison:** exactly the previous **verified** estimates on [PR #1297](https://github.com/matthis-k/phenix-ai/pull/1297) at `2064a1a3a713d635dfec33dac72f669cfe026473` (six-job [Flake CI #43418004760](https://github.com/matthis-k/phenix-ai/actions/runs/43418004760) and 12-repeat worker [#43418004098](https://github.com/matthis-k/phenix-ai/actions/runs/43418004098) both green) to **the present test-only Q5 operation-order candidate**. These numbers are *subjective engineering completion estimates*, not measured safety probabilities or production/project-completion KPIs. The branch and all ancestors remain draft/unmerged.
 
-**Current scope:** verified, still-unmerged stack through [Q5 in-flight recovery PR #1297](https://github.com/matthis-k/phenix-ai/pull/1297). Base [Q5 notifier retirement PR #1296](https://github.com/matthis-k/phenix-ai/pull/1296) passed [six-job exact-head CI #43413378069](https://github.com/matthis-k/phenix-ai/actions/runs/43413378069). [PR #1297 dedicated repeated worker tests](https://github.com/matthis-k/phenix-ai/actions/runs/43417638306) passed 12 × 48 real in-flight cancellation/recovery cases; exact final-head [Flake CI #43417638586](https://github.com/matthis-k/phenix-ai/actions/runs/43417638586) must also pass before full Phase 4 acceptance. No production-code change; these estimates reflect improved assurance, *not* a new capability.
+**33-issue unweighted mean:** **54.9% → 55.0%** (visually **+0.1 pp**, unrounded **+0.045 pp**). Scores use rounded one-decimal issue values; the mean is *not* M7 or M8 completion. Issue statuses remain **10 scoped verified / 7 partial / 16 open**; Q5's limited new model evidence does not close it.
 
-**Unweighted issue mean:** **54.7% → 54.9% (displayed Δ 0.2 percentage points)**. Raw unrounded delta 0.182 pp; rounding affects the displayed before/after delta. This mean is **not** overall FBP milestone completion: issues overlap, differ drastically in impact, and include policy decisions and intentionally unsolved limits. The formal 33-issue classification remains **10 scoped-verified / 7 partial / 16 open**.
+**Acceptance pending at authorship:** exact-head six-job CI and the already configured eight-repeat Q5 `wake.rs` workflow must pass. A candidate score increase is not final until those checks pass; accepted evidence should be recorded in the PR's Phase 4 comment.
 
-## Tracked estimates
+## All 33 issue estimates — previous → candidate → change
 
-| Issue | Focus | Previous | Current | Δ (pp) |
+| Issue | Focus | Previous | Candidate | Δ (pp) |
 | --- | --- | ---: | ---: | ---: |
 | H1 | Shared-session FIFO correlation | 60.0% | 60.0% | 0.0 |
 | H2 | Callback panic containment | 100.0% | 100.0% | 0.0 |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | 0.0 |
-| H3b | Session/drain & delegated-worker interleavings | 72.0% | 74.0% | +2.0 |
+| H3b | Session/drain & delegated-worker interleavings | 74.0% | 74.0% | 0.0 |
 | H4 | Scheduling scans | 76.0% | 76.0% | 0.0 |
 | H5 | Closure analysis | 71.0% | 71.0% | 0.0 |
 | H6 | Performance profiling | 70.0% | 70.0% | 0.0 |
@@ -39,21 +39,20 @@
 | Q2 | Incremental compilation | 10.0% | 10.0% | 0.0 |
 | Q3 | Dependency scaling | 14.0% | 14.0% | 0.0 |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | 0.0 |
-| Q5 | Concurrency verification | 61.5% | 65.5% | +4.0 |
+| Q5 | Concurrency verification | 65.5% | 67.0% | +1.5 |
 | Q6 | Diagnostic quality | 22.0% | 22.0% | 0.0 |
 | Q7 | Typed error consistency | 26.0% | 26.0% | 0.0 |
 | Q8 | Report reconciliation | 100.0% | 100.0% | 0.0 |
 
-## Why these two estimates changed
+## What changed in this iteration
 
-- **Q5 61.5% → 65.5% (+4.0 pp)**: previously only 128× notifier/retirement, 96× wake-listener and 96× process-index recovery schedules per repeat were covered. [#1297](https://github.com/matthis-k/phenix-ai/pull/1297) adds an actual worker executing **inside** `Process::step` when cancellation replaces the owner, with 3 separate publication/return orders and 48 rounds repeated 12 times. Old completion is rejected as `ForeignCompletion` after owner replacement; this distinction is grounded in `ProcessHandoff::replacement` mints a new owner and `complete_job` requires matching ownership. The test asserts correct surviving request output, one non-revocable old external effect, no old capture and no new-step contamination.
-- **H3b 72.0% → 74.0% (+2.0 pp)**: additional worker-side reentrancy/lifetime boundary is tested through the actual process handoff and session cancellation while the worker still owns application code. External plugin/user-lock cycles, arbitrary driver callbacks and exhaustive interleavings remain unresolved.
-- Other issues have **0.0 pp** additional verified change in this iteration. The accepted H6 profiler (#1294) and rejected H6 optimizer (#1295) are already represented in the prior baseline and must not be counted again.
+- **Q5 65.5% → 67.0% (+1.5 pp, conditional on CI):** the previous #1296/#1297 checks exercised *real concurrent* notify/retire and workers executing during cancellation. The new `runtime/wake.rs` test checks **all 13,440 valid linearized orders of eight wake/retirement/terminal/drain events** against the *actual* `WakeSignal` after **every** operation and a separate expected-state model, excluding impossible fresh-owner-before-retirement histories. This is **not Loom**, instruction-level schedule exploration, external-plugin lock proof, or deadlock freedom.
+- **H3b 74.0% → 74.0% (0.0 pp):** no new delegated worker/reentrant callback coverage in this iteration; avoid double counting the prior in-flight job proof.
+- **Other 31 issues: 0.0 pp** additional verified progress. Earlier H4/H5 optimizations and H6 allocation profiling are already included in the immediately prior scores; rejected #1295 hot-path optimization must never be counted as accepted progress.
 
-## Scoring/acceptance contract for future iterations
+## Scoring and acceptance rules
 
-1. Every report includes **issue code, previous %, current %, signed Δ in pp**, even when Δ = 0.0; top summary can show only changed rows but retains full report in a persistent scorecard.
-2. Compare to the **immediately previous posted estimate**, not the November 12 original ledger. Change only issues whose acceptance evidence substantively improved; avoid counting a synthetic stress repeat as if it closed all concurrency concerns.
-3. A score of **100.0%** means the *stated scoped issue* is accepted with exact-head tests/evidence, not absolute security, safety or production guarantees.
-4. Include branch, commit and exact-head CI; distinguish draft from merged code. If a test fails or is rejected, do not credit it with an accepted score increase.
-5. Full M7/M8 completion and cross-issue architectural quality are **not** the average issue score. The formal status distribution is updated separately when an entire issue's acceptance criteria close.
+1. Each subsequent comparison uses the last **verified posted current score**, not a historic ledger baseline. Every issue retains previous, current and signed one-decimal Δ, even when 0.0.
+2. A passed bounded test adds only the assurance for the specifically tested boundary. Q5 remains Open until an accepted systematic thread/interleaving model and external/plugin locking contract; H3b remains Partial.
+3. Persist candidate SHA, exact-head CI, branch/PR status, source-test evidence and any rejection. Do not describe a green draft as merged, and do not claim M7 complete from a 33-issue mean.
+4. Keep decisions and rejected experiments in the record. A failed check results in **no accepted increase** until corrected and exact-head retested.
