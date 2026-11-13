@@ -43,7 +43,7 @@ impl Process for MapStep {
             return Ok(Step::Complete);
         }
         let value = cx.take("in").ok_or("missing input")?;
-        let n = *value.get::<u64>()?;
+        let n = value.get::<u64>()?;
         self.stage = true;
         Ok(Step::Emit(ProcessEmission::new(
             "out",
@@ -60,7 +60,7 @@ impl Process for RouteStep {
             return Ok(Step::Complete);
         }
         let value = cx.take("in").ok_or("missing route input")?;
-        let n = *value.get::<u64>()?;
+        let n = value.get::<u64>()?;
         self.0 = true;
         let route = if n % 2 == 0 { "local" } else { "remote" };
         Ok(Step::Emit(ProcessEmission::new(route, value)))
@@ -89,7 +89,7 @@ impl Process for JoinStep {
             return Err("request-local absence misreported as global EOS".into());
         }
         let value = local.or(remote).unwrap();
-        let answer = (*context.get::<u64>()?).wrapping_add(*value.get::<u64>()?);
+        let answer = context.get::<u64>()?.wrapping_add(value.get::<u64>()?);
         self.0 = true;
         Ok(Step::Emit(ProcessEmission::new(
             "out",
@@ -102,7 +102,7 @@ struct Persist(Arc<AtomicUsize>);
 impl Process for Persist {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
         let result = cx.take("in").ok_or("missing persisted result")?;
-        black_box(*result.get::<u64>()?);
+        black_box(result.get::<u64>()?);
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(Step::Complete)
     }
