@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           nix develop --command cargo fmt --manifest-path verification/fbp-wake-loom/Cargo.toml -- --check
           nix develop --command cargo test --manifest-path verification/fbp-wake-loom/Cargo.toml \
-            --locked -- --nocapture 2>&1 | tee artifacts/model.log
+            --lib --locked -- --nocapture 2>&1 | tee artifacts/model.log
       - name: Archive source and model exploration evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
