@@ -119,7 +119,7 @@
       checkConfig = import ./ci/flake-check-config.nix;
     in
     {
-      lib.flakeCiWorkflow = phenix-flake-ci.lib.mkFlakeCiWorkflow {
+      lib.flakeCiWorkflows = phenix-flake-ci.lib.mkFlakeCiWorkflows {
         ci = checkConfig.ci;
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
@@ -137,7 +137,8 @@
       };
       checks.${system} = {
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
-          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
+          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
+          diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
           touch $out
         '';
         kernel-smoke = self.packages.${system}.kernel-smoke;
