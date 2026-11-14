@@ -9,10 +9,11 @@ passed. This tracker uses subjective engineering issue-completion estimates, not
 safety probabilities or overall project completion. All stacked PRs remain draft
 and unmerged.
 
-The baseline unweighted mean is **55.2%**. Issue classifications remain **10
-scoped verified / 7 partial / 16 open**. Scores stay unchanged in this batch: the
-two fixed teardown paths are meaningful evidence, but do not close their broader
-issues. Q5 remains open; H3b remains partial.
+The unweighted mean moves from **55.2% to 55.3%** (+0.1 percentage points
+displayed; +0.091 pp unrounded). Formal classifications remain **10 scoped
+verified / 7 partial / 16 open**. Q5 remains open and H3b remains partial; the
+score increases reflect verified callback-lock and cleanup coverage, not closure
+of either issue.
 
 ## All 33 Issues
 
@@ -21,7 +22,7 @@ issues. Q5 remains open; H3b remains partial.
 | H1 | Shared-session FIFO correlation | Partial | 60.0% | 60.0% | +0.0 |
 | H2 | Callback panic containment | Scoped verified | 100.0% | 100.0% | +0.0 |
 | H3a | Inventory lock inversion | Scoped verified | 100.0% | 100.0% | +0.0 |
-| H3b | Session/drain and delegated-worker interleavings | Partial | 76.0% | 76.0% | +0.0 |
+| H3b | Session/drain and delegated-worker interleavings | Partial | 76.0% | 78.0% | +2.0 |
 | H4 | Scheduling scans | Partial | 76.0% | 76.0% | +0.0 |
 | H5 | Closure analysis | Partial | 71.0% | 71.0% | +0.0 |
 | H6 | Performance profiling | Partial | 70.0% | 70.0% | +0.0 |
@@ -47,7 +48,7 @@ issues. Q5 remains open; H3b remains partial.
 | Q2 | Incremental compilation | Open | 10.0% | 10.0% | +0.0 |
 | Q3 | Dependency scaling | Open | 14.0% | 14.0% | +0.0 |
 | Q4 | Static liveness guarantees | Open | 10.0% | 10.0% | +0.0 |
-| Q5 | Concurrency verification | Open | 73.0% | 73.0% | +0.0 |
+| Q5 | Concurrency verification | Open | 73.0% | 74.0% | +1.0 |
 | Q6 | Diagnostic quality | Open | 22.0% | 22.0% | +0.0 |
 | Q7 | Typed error consistency | Open | 26.0% | 26.0% | +0.0 |
 | Q8 | Report reconciliation | Scoped verified | 100.0% | 100.0% | +0.0 |
@@ -63,6 +64,19 @@ coverage; it closes two separate destructor/cleanup gaps found on the exact head
 
 ## Current Batch Evidence
 
+- **H3b 76.0% → 78.0% (+2.0 pp, Partial):** the session mutex now guards only
+  ownership transfer. Runtime/plugin callbacks execute with exclusive session
+  ownership outside the mutex; concurrent callers fail fast instead of waiting
+  while holding plugin locks. Request/session teardown now detaches process state
+  before user destructors and retires old wakes before replacement. This does not
+  prove arbitrary plugin/resource lock-order freedom.
+- **Q5 73.0% → 74.0% (+1.0 pp, Open):** add a deterministic cross-thread process
+  callback/plugin-mutex inversion challenge and panic-safe teardown interleavings.
+  The session lease uses standard Mutex ownership transfer; the existing five Loom
+  properties still exercise actual `wake.rs` methods, with no fabricated model of
+  the new lease protocol.
+- **All other 31 issues: +0.0 pp.** In particular C3/C5 remain open/partial and H7
+  fairness and arbitrary-skew guarantees are not closed by this teardown batch.
 - `Subscription::drop` takes the stored Waker while the Watch mutex is held, then
   sends its destruction through the existing deferred/panic-isolated Waker path.
   A custom destructor regression verifies success, transaction error, and unwind
