@@ -17,6 +17,9 @@ by auditing callback/destructor boundaries at that exact head.
 - Request termination publishes its terminal identity, detaches request packets,
   invalidates old process wakes, cancels owned activations, and installs replacement
   process state before arbitrary packet/process/context destructors run.
+- Successful completion and EOS finish are terminal cleanup boundaries too:
+  process/context destructor panics must become ordinary session failures after the
+  handoff has transitioned, not unwind past wake/queue retirement.
 - Queue request counts and FIFO contents are updated atomically before a detached
   payload is destroyed. A destructor panic must not strand unvisited cleanup work.
 - Native work already executing on a delegated runner remains unrevocable. Its
@@ -30,6 +33,7 @@ by auditing callback/destructor boundaries at that exact head.
 | Kernel session operations | Move the `NetworkSession` out of `Mutex<Option<_>>` into a private RAII lease; callback executes without the mutex and all public callers fail fast if a lease is active | Keep a blocking mutex across dispatcher/process callbacks or add another scheduler/drive protocol |
 | Request queue disposal | Move request packets out while preserving remaining FIFO and updating counts; return packet ownership to the lifecycle caller | Catch panic inside `VecDeque::retain`, which can leave request counts inconsistent or skip later cleanup |
 | Process cancellation | Invalidate handoff and detach context/process/code lease into one private `CancelledProcess`; drop fields individually after the outer request/session transition | Drop fields inline from `ProcessHandoff::cancel` before sibling wakes/queues are retired |
+| Completion and EOS finish | Detach/drop process context, state, and terminal code lease under per-value panic containment; make the session terminal if cleanup fails | Assign `None` inline and let a user destructor unwind through scheduler readiness/finish |
 | Destructor panic | Catch per packet/value/resource/process/lease, continue cleanup, then return a typed cleanup error or record a terminal diagnostic | Let one plugin `Drop` unwind through scheduler cleanup, or silently retry/rollback committed effects |
 
 No new scheduler, lock manager, compatibility API, or runtime mode is introduced.
@@ -42,7 +46,7 @@ must survive until cancellation is visible.
 Public API changes are limited to ownership/error accuracy: `ConnectionSet::detach_request`
 and `ConnectionSet::cancel` return detached `Vec<Packet>` ownership instead of a
 count; `ProcessHandoff::cancel` returns `Result<Option<StepTicket>,
-HandoffCancelError>`; `RequestError` adds process/packet destructor-panic variants.
+HandoffCancelError>`; `HandoffError` and `RequestError` add destructor-panic outcomes.
 `Kernel::with_session`/`run_steps` return a busy error when another thread owns the
 session lease, `run_until` returns `DriverError::SessionBusy`, and `inject` returns
 `ConnectionError::WouldBlock` with its value. `NetworkSession::cancel` keeps its
@@ -57,6 +61,8 @@ signature and records cleanup-panic diagnostics in session failure state.
   panic-once payload destructor. Cancellation must still invalidate the old wake,
   clear queued/request ownership, finish process cancellation/recovery, and allow
   a new request to settle. The API reports which cleanup destructor panicked.
+- A destructor panic on ordinary `Step::Complete` followed by input EOS must become
+  a session failure only after `finish_idle` retires process state and wakes.
 - The cancellation test must separately exercise a payload held in a queued packet
   and one held in a reserved `ProcessContext`; otherwise a queue-only fix could
   still leave `ProcessHandoff::cancel` as an unwind escape.
@@ -85,7 +91,8 @@ Regressions cover storage transaction success/error/unwind and request cancellat
 with both a queued packet and a reserved process input whose destructors panic once.
 The kernel process callback also probes a concurrent session API attempt while
 holding a test plugin mutex; it receives busy promptly rather than blocking on the
-session mutex.
+session mutex. Handoff tests also cover destructor panic during direct cancel,
+completion context disposal, and idle EOS process teardown.
 
 ## Acceptance And Limits
 

@@ -735,10 +735,11 @@ impl NetworkSession {
             self.fail_input(index, "abandoned accepted input on Finished");
             return;
         }
+        let mut destructor_panicked = false;
         let (writers, readers, retired_wake) = {
             let p = &mut self.processes[index];
             if p.handoff.state() == HandoffState::Idle {
-                p.handoff.finish_idle().unwrap();
+                destructor_panicked = p.handoff.finish_idle().is_err();
             }
             p.done = true;
             p.request = None;
@@ -765,6 +766,12 @@ impl NetworkSession {
             let packets = self.transport.close_reader(queue).unwrap();
             debug_assert!(packets.is_empty());
             self.dirty_queue(queue);
+        }
+        if destructor_panicked {
+            self.fail(format!(
+                "owned destructor panicked while finishing {}",
+                self.compiled.processes()[index].path()
+            ));
         }
     }
     // An idle process with empty, writer-open inputs has no native packet or

@@ -2959,6 +2959,54 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
 }
 
 #[test]
+fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
+    struct DropOnFinish(Arc<std::sync::atomic::AtomicBool>);
+    impl Process for DropOnFinish {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if context.is_eos("in") {
+                return Ok(Step::Complete);
+            }
+            context.take("in");
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for DropOnFinish {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("idle process destructor panic");
+            }
+        }
+    }
+
+    let drops = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut builder = NetworkBuilder::new();
+    let drops_for_factory = drops.clone();
+    let node = builder
+        .node(
+            "finish",
+            Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap()),
+            Arc::new(move || DropOnFinish(drops_for_factory.clone())),
+        )
+        .unwrap();
+    builder
+        .expose_input("in", node.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session = builder.build().unwrap().compile().unwrap().start();
+    session.inject_local("in", 1_i64).unwrap();
+    session.close_input("in").unwrap();
+
+    let report = session.run_until_idle(20);
+    assert_eq!(report.state, SessionState::Failed);
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .contains("owned destructor panicked while finishing")
+    );
+    assert!(drops.load(Ordering::SeqCst));
+}
+
+#[test]
 fn cancelling_committed_capture_is_explicit_disposal_not_state_or_publication_rollback() {
     use phenix_graph::runtime::RequestStatus;
     let spawns = Arc::new(AtomicUsize::new(0));

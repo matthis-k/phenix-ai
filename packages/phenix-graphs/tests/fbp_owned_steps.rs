@@ -5,7 +5,7 @@ use phenix_graph::process::*;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct Counter {
     value: Cell<i64>,
@@ -223,6 +223,96 @@ fn handoff_cancel_reports_panicking_destructor_after_revoking_ownership() {
     );
     assert_eq!(handoff.state(), HandoffState::Cancelled);
     assert_eq!(handoff.cancel(), Ok(None));
+}
+
+#[test]
+fn completion_and_idle_finish_contain_panicking_destructors() {
+    struct PanicValue(Arc<AtomicBool>);
+    impl Drop for PanicValue {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("completed context destructor panic");
+            }
+        }
+    }
+    struct Completes;
+    impl Process for Completes {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    struct PanicProcessDrop(Arc<AtomicBool>);
+    impl Process for PanicProcessDrop {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for PanicProcessDrop {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("idle process destructor panic");
+            }
+        }
+    }
+
+    let context_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(Completes));
+    handoff
+        .admit(ProcessContext::new(
+            BTreeMap::from([(
+                "value".into(),
+                Value::local(PanicValue(context_drops.clone())),
+            )]),
+            vec![],
+        ))
+        .unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert_eq!(
+        handoff.complete(completion).unwrap().unwrap_err(),
+        "owned destructor panicked during completion"
+    );
+    assert_eq!(handoff.state(), HandoffState::Failed);
+    assert!(context_drops.load(Ordering::SeqCst));
+
+    let process_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(PanicProcessDrop(process_drops.clone())));
+    handoff.admit(ProcessContext::default()).unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert!(matches!(
+        handoff.complete(completion).unwrap(),
+        Ok(Step::Complete)
+    ));
+    assert_eq!(handoff.state(), HandoffState::Idle);
+    assert_eq!(handoff.finish_idle(), Err(HandoffError::DestructorPanicked));
+    assert_eq!(handoff.state(), HandoffState::Finished);
+    assert!(process_drops.load(Ordering::SeqCst));
+
+    struct Finishes;
+    impl Process for Finishes {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Finished)
+        }
+    }
+    struct PanicLeaseDrop(Arc<AtomicBool>);
+    impl Drop for PanicLeaseDrop {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("finished process lease destructor panic");
+            }
+        }
+    }
+
+    let lease_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(Finishes))
+        .with_lease(Arc::new(PanicLeaseDrop(lease_drops.clone())));
+    handoff.admit(ProcessContext::default()).unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert_eq!(
+        handoff.complete(completion).unwrap().unwrap_err(),
+        "owned destructor panicked during completion"
+    );
+    assert_eq!(handoff.state(), HandoffState::Failed);
+    assert!(lease_drops.load(Ordering::SeqCst));
 }
 
 #[test]
