@@ -1,12 +1,14 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
+mod exclusive;
 pub mod host;
 
+use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
     Value,
     compose::{Composer, Footprint, NetworkPatch, Registration},
     contract::Contract,
     network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
-    process::ProcessDispatcher,
+    process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{InjectionError, NetworkSession, RunReport, SessionOptions, SessionState},
 };
 pub use phenix_plugin::CallbackError;
@@ -15,11 +17,23 @@ use std::{
     any::Any,
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    ops::{Deref, DerefMut},
     sync::{
-        Arc, Mutex, TryLockError,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+thread_local! {
+    static ACTIVE_SESSION_KERNELS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+static NEXT_KERNEL_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn next_kernel_session_id() -> usize {
+    NEXT_KERNEL_SESSION_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("kernel session identity exhausted")
+}
 
 // Fail fast on same-thread recursive access to an identical kernel resource.
 // Call sites choose their own cross-thread contention policy.
@@ -46,49 +60,6 @@ impl Drop for KernelLockScope {
         ACTIVE_KERNEL_LOCKS.with(|active| {
             active.borrow_mut().remove(&self.0);
         });
-    }
-}
-
-struct SessionLease<'a> {
-    slot: &'a Mutex<Option<NetworkSession>>,
-    session: Option<NetworkSession>,
-    notify_on_drop: bool,
-}
-
-impl SessionLease<'_> {
-    fn notify_on_drop(&mut self) {
-        self.notify_on_drop = true;
-    }
-}
-
-impl std::ops::Deref for SessionLease<'_> {
-    type Target = NetworkSession;
-
-    fn deref(&self) -> &Self::Target {
-        self.session.as_ref().expect("session lease is active")
-    }
-}
-
-impl std::ops::DerefMut for SessionLease<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.session.as_mut().expect("session lease is active")
-    }
-}
-
-impl Drop for SessionLease<'_> {
-    fn drop(&mut self) {
-        let notifier = self.notify_on_drop.then(|| {
-            self.session
-                .as_ref()
-                .expect("session lease is active")
-                .notifier()
-        });
-        let mut slot = self.slot.lock().unwrap_or_else(|error| error.into_inner());
-        *slot = self.session.take();
-        drop(slot);
-        if let Some(notifier) = notifier {
-            notifier.notify();
-        }
     }
 }
 
@@ -172,8 +143,10 @@ pub struct InputEvent {
     pub value: Value,
 }
 
-/// A producer must not wait for an event. Drop must stop and release its resources.
-/// Factories must clean up partially acquired resources if activation fails.
+/// A producer must not wait for an event. Poll/wake callbacks run without the
+/// kernel producer inventory mutex; recursive drain returns a typed error.
+/// Concurrent manual drains serialize; a blocking driver owns polling exclusively.
+/// Drop must stop and release resources. Factories clean partial activation.
 pub trait Producer: Send {
     /// An error is terminal: the kernel reports it once and drops this producer.
     /// Transient unavailability must return Ok(None) and wake when ready to retry.
@@ -656,11 +629,144 @@ struct ProducerState {
     retired: bool,
 }
 
+struct SessionLease<'a> {
+    lease: ExclusiveLease<'a, NetworkSession>,
+    notify_on_drop: bool,
+}
+
+impl SessionLease<'_> {
+    fn notify_on_drop(&mut self) {
+        self.notify_on_drop = true;
+    }
+}
+
+impl Deref for SessionLease<'_> {
+    type Target = NetworkSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lease
+    }
+}
+
+impl DerefMut for SessionLease<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lease
+    }
+}
+
+impl Drop for SessionLease<'_> {
+    fn drop(&mut self) {
+        let notifier = self.notify_on_drop.then(|| self.lease.notifier());
+        self.lease.release();
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
+    }
+}
+
+struct ActiveSessionCall {
+    identity: usize,
+    registered: bool,
+}
+
+impl ActiveSessionCall {
+    fn held(identity: usize) -> bool {
+        ACTIVE_SESSION_KERNELS.with(|active| active.borrow().contains(&identity))
+    }
+
+    fn enter(identity: usize) -> Result<Self, ()> {
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(&identity) {
+                Err(())
+            } else {
+                active.push(identity);
+                Ok(Self {
+                    identity,
+                    registered: true,
+                })
+            }
+        })
+    }
+
+    fn inherit(identity: usize) -> Self {
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(&identity) {
+                Self {
+                    identity,
+                    registered: false,
+                }
+            } else {
+                active.push(identity);
+                Self {
+                    identity,
+                    registered: true,
+                }
+            }
+        })
+    }
+}
+
+impl Drop for ActiveSessionCall {
+    fn drop(&mut self) {
+        if !self.registered {
+            return;
+        }
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            let index = active
+                .iter()
+                .rposition(|identity| *identity == self.identity)
+                .expect("active session call is registered");
+            active.remove(index);
+        });
+    }
+}
+
+struct KernelExecutionGuard {
+    identity: usize,
+}
+
+impl ProcessExecutionGuard for KernelExecutionGuard {
+    fn enter(&self) -> Result<Box<dyn Any>, String> {
+        Ok(Box::new(ActiveSessionCall::inherit(self.identity)))
+    }
+}
+
+fn discard_panic_payload(payload: Box<dyn Any + Send>) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload))) {
+        // A hostile panic payload can itself panic from Drop. Never let that bypass
+        // producer reconciliation or trigger a double panic while containing it.
+        std::mem::forget(payload);
+    }
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_owned()
+    } else {
+        "non-string panic payload".into()
+    }
+}
+
+fn contained_panic_message(context: &str, payload: Box<dyn Any + Send>) -> String {
+    let message = format!("{context}: {}", panic_message(payload.as_ref()));
+    discard_panic_payload(payload);
+    message
+}
+
+fn poll_panic_error(payload: Box<dyn Any + Send>) -> CallbackError {
+    contained_panic_message("producer poll panicked", payload).into()
+}
+
 pub struct Kernel {
-    // Drop clears producers first; leases outlive session and compiled declarations.
-    // Protect ownership transfer only. No kernel mutex is held across runtime
-    // callbacks; concurrent session calls fail fast while the session is leased.
-    session: Mutex<Option<NetworkSession>>,
+    // The session and producer mutexes protect ownership transfer only. Plugin
+    // callbacks run with the corresponding state leased out of the mutex.
+    session: ExclusiveSlot<NetworkSession>,
+    session_identity: usize,
     compiled: CompiledNetwork,
     producers: Mutex<ProducerState>,
     // Serialize one whole drain against generation retirement. Inventory
@@ -1001,7 +1107,9 @@ impl Kernel {
                         can_inspect_network: options.inspect_network.contains(key),
                     })
                 }))
-                .unwrap_or_else(|_| Err("plugin preparation panicked".into()))
+                .unwrap_or_else(|payload| {
+                    Err(contained_panic_message("plugin preparation panicked", payload).into())
+                })
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
                     cause: lease_callback_error(cause, preparation_lease.clone()),
@@ -1106,12 +1214,20 @@ impl Kernel {
         // Do not let a caller-provided lease displace the plugin revision leases.
         options.execution.lease = Some(code_lease.clone());
         options.execution.dispatcher = dispatcher;
+        let session_identity = next_kernel_session_id();
+        options.execution.execution_guards.insert(
+            0,
+            Arc::new(KernelExecutionGuard {
+                identity: session_identity,
+            }),
+        );
         let session = compiled.start_with_options(options.execution);
         if let Some(failure) = session.failure() {
             return Err(ResolutionError::Invalid(failure.into()));
         }
         Ok(Self {
-            session: Mutex::new(Some(session)),
+            session: ExclusiveSlot::new(session),
+            session_identity,
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
@@ -1137,12 +1253,24 @@ impl Kernel {
         let mut producers = Vec::new();
         for key in &self.keys {
             if let Some(activate) = &self.artifacts[key].activate {
-                let producer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(activate))
-                    .unwrap_or_else(|_| Err("producer activation panicked".into()))
-                    .map_err(|cause| StartError::Activation {
-                        contribution: key.clone(),
-                        cause: lease_callback_error(cause, self.code_lease.clone()),
-                    })?;
+                let producer =
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(activate)) {
+                        Ok(Ok(producer)) => producer,
+                        Ok(Err(cause)) => {
+                            return Err(StartError::Activation {
+                                contribution: key.clone(),
+                                cause: lease_callback_error(cause, self.code_lease.clone()),
+                            });
+                        }
+                        Err(payload) => {
+                            let cause =
+                                contained_panic_message("producer activation panicked", payload);
+                            return Err(StartError::Activation {
+                                contribution: key.clone(),
+                                cause: lease_callback_error(cause.into(), self.code_lease.clone()),
+                            });
+                        }
+                    };
                 producers.push((key.clone(), Some(producer), None));
             }
         }
@@ -1165,27 +1293,21 @@ impl Kernel {
         self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
-    // Session operations own the value without holding its mutex across runtime
-    // callbacks. Every caller is nonblocking; contention is explicit so a plugin
-    // holding an external mutex never waits behind code that might call it back.
-    fn try_session(&self) -> Option<SessionLease<'_>> {
-        let mut slot = match self.session.try_lock() {
-            Ok(slot) => slot,
-            Err(TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(TryLockError::WouldBlock) => return None,
-        };
-        let session = slot.take()?;
-        drop(slot);
-        Some(SessionLease {
-            slot: &self.session,
-            session: Some(session),
+    fn lease_session(&self) -> Option<SessionLease<'_>> {
+        self.try_lease_session()
+    }
+
+    fn try_lease_session(&self) -> Option<SessionLease<'_>> {
+        self.session.try_take().map(|lease| SessionLease {
+            lease,
             notify_on_drop: false,
         })
     }
 
-    /// Lease exclusive mutable access to the session. The kernel mutex is not
-    /// held while the closure runs. Same-thread recursion and concurrent access
-    /// fail fast; callers may retry after releasing their own locks.
+    /// Run an exclusive session operation without holding the kernel mutex.
+    /// Same-thread re-entry through this Kernel returns an error instead of waiting
+    /// on its own session lease. All concurrent callers also fail fast, so a
+    /// plugin holding another mutex cannot wait behind a callback needing it.
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
@@ -1193,18 +1315,18 @@ impl Kernel {
         if !self.started {
             return Err("kernel not started".into());
         }
-        let _scope = KernelLockScope::enter(&self.session)
-            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
+        let _active = ActiveSessionCall::enter(self.session_identity)
+            .map_err(|()| "reentrant access to the same kernel session".to_owned())?;
         let mut session = self
-            .try_session()
+            .lease_session()
             .ok_or_else(|| "kernel session busy".to_owned())?;
         session.notify_on_drop();
         let result = use_session(&mut session);
         Ok(result)
     }
 
-    /// Inject one packet without waiting for a session callback on another thread.
-    /// Busy/reentrant errors return ownership of the original value.
+    /// Inject one value. Reentrant same-thread session access returns the value
+    /// with `ConnectionError::Reentrant`.
     pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
         if !self.started {
             return Err(InjectionError {
@@ -1212,13 +1334,16 @@ impl Kernel {
                 value,
             });
         }
-        let Some(_scope) = KernelLockScope::enter(&self.session) else {
-            return Err(InjectionError {
-                reason: phenix_graph::connection::ConnectionError::Reentrant,
-                value,
-            });
+        let _active = match ActiveSessionCall::enter(self.session_identity) {
+            Ok(active) => active,
+            Err(()) => {
+                return Err(InjectionError {
+                    reason: phenix_graph::connection::ConnectionError::Reentrant,
+                    value,
+                });
+            }
         };
-        let Some(mut session) = self.try_session() else {
+        let Some(mut session) = self.lease_session() else {
             return Err(InjectionError {
                 reason: phenix_graph::connection::ConnectionError::WouldBlock,
                 value,
@@ -1231,16 +1356,16 @@ impl Kernel {
         result
     }
 
-    /// Run a bounded session drive without the kernel session mutex held across
-    /// dispatcher/process callbacks. Concurrent session ownership fails fast.
+    /// Drive a session budget with no kernel mutex held across dispatcher/process
+    /// callbacks. Same-thread re-entry through this Kernel fails fast.
     pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
         if !self.started {
             return Err("kernel not started".into());
         }
-        let _scope = KernelLockScope::enter(&self.session)
-            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
+        let _active = ActiveSessionCall::enter(self.session_identity)
+            .map_err(|()| "reentrant access to the same kernel session".to_owned())?;
         let mut session = self
-            .try_session()
+            .lease_session()
             .ok_or_else(|| "kernel session busy".to_owned())?;
         Ok(session.run_until_idle(budget))
     }
@@ -1333,7 +1458,7 @@ impl Kernel {
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| producer.poll()))
                     {
                         Ok(result) => result,
-                        Err(_) => Err("producer poll panicked".into()),
+                        Err(payload) => Err(poll_panic_error(payload)),
                     }
                 }
             };
@@ -1341,10 +1466,13 @@ impl Kernel {
             let mut terminal_poll = false;
             let outcome = match polled {
                 Ok(None) => None,
-                Ok(Some(event)) => {
+                Ok(Some(mut event)) => {
+                    event.value = event.value.with_lease(self.code_lease.clone());
                     // A producer may retire its own host while polled. Even
                     // the event returned by that in-flight callback must not
                     // enter the retired generation's native session.
+                    // Passing this check permits admission to finish even if
+                    // an eager session callback subsequently retires the host.
                     if self.producers_retired() {
                         None
                     } else if !self.routes[&key].contains(&event.input) {
@@ -1352,8 +1480,9 @@ impl Kernel {
                     } else {
                         // Session access stays nonblocking. On contention or
                         // Full, retain exactly one owned event, never repoll.
-                        let session = self.try_session();
-                        if let Some(mut session) = session {
+                        let active = ActiveSessionCall::enter(self.session_identity);
+                        if let (Ok(_active), Some(mut session)) = (active, self.try_lease_session())
+                        {
                             let input = event.input;
                             match session.inject(&input, event.value) {
                                 Ok(()) => {
@@ -1423,6 +1552,9 @@ impl Kernel {
     /// sessions return `SessionStopped`, including if terminal on entry.
     /// Live producers must support wake registration. Shutdown is checked between
     /// bounded driver iterations; it cannot preempt a running step or callback.
+    /// Wake registration runs without the producer mutex and contains panics.
+    /// A driver rejects an admitted manual drain with `DrainInProgress`; manual
+    /// drains reject an active driver with `AlreadyRunning`.
     pub fn run_until(
         &self,
         wake: &WakeHandle,
@@ -1437,21 +1569,22 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
-        if KernelLockScope::held(&self.session) {
+        if ActiveSessionCall::held(self.session_identity) {
             return Err(DriverError::ReentrantSession);
         }
         let _driver = DriverScope::enter(&self.producer_ownership)?;
         let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
-        let (mut listener, notifier, initial_state, cause) = self
-            .with_session(|session| {
-                (
-                    session.wake_listener(),
-                    session.notifier(),
-                    session.state(),
-                    session.failure().map(str::to_owned),
-                )
-            })
-            .map_err(|_| DriverError::SessionBusy)?;
+        let (mut listener, notifier, initial_state, cause) = {
+            let _active = ActiveSessionCall::enter(self.session_identity)
+                .map_err(|()| DriverError::ReentrantSession)?;
+            let session = self.try_lease_session().ok_or(DriverError::SessionBusy)?;
+            (
+                session.wake_listener(),
+                session.notifier(),
+                session.state(),
+                session.failure().map(str::to_owned),
+            )
+        };
         if initial_state == SessionState::Completed {
             return Ok(());
         }
@@ -1518,7 +1651,8 @@ impl Kernel {
                     registration_error = Some(DriverError::UnsupportedWake { producer: key });
                     break;
                 }
-                Err(_) => {
+                Err(payload) => {
+                    discard_panic_payload(payload);
                     registration_error =
                         Some(DriverError::WakeRegistrationPanicked { producer: key });
                     break;
@@ -1545,12 +1679,13 @@ impl Kernel {
                 return Err(DriverError::Retired);
             }
             let mut active = false;
-            let count = self
-                .producers
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .producers
-                .len();
+            let count = {
+                let state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                state.producers.len()
+            };
             for _ in 0..count {
                 if *wake.0.shutdown.lock().unwrap() {
                     return Ok(());
@@ -1561,34 +1696,42 @@ impl Kernel {
                 for event in self.drain_owned(1) {
                     active = true;
                     let producer = event.producer.clone();
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
-                        .is_err()
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
                     {
+                        discard_panic_payload(payload);
                         return Err(DriverError::EventCallbackPanicked { producer });
                     }
                 }
             }
-            let report = self.run_steps(64).unwrap();
+            let (report, cause) = {
+                let _active = ActiveSessionCall::enter(self.session_identity)
+                    .map_err(|()| DriverError::ReentrantSession)?;
+                let mut session = self.try_lease_session().ok_or(DriverError::SessionBusy)?;
+                let report = session.run_until_idle(64);
+                (report, session.failure().map(str::to_owned))
+            };
             if report.state == SessionState::Completed {
                 return Ok(());
             }
             if matches!(report.state, SessionState::Failed | SessionState::Cancelled) {
                 return Err(DriverError::SessionStopped {
                     state: report.state,
-                    cause: self
-                        .with_session(|session| session.failure().map(str::to_owned))
-                        .ok()
-                        .flatten(),
+                    cause,
                 });
             }
-            active |= report.steps > 0 || report.publications > 0;
+            active |= report.steps > 0
+                || report.publications > 0
+                || report.state == SessionState::Runnable;
             if self.producers_retired() {
                 return Err(DriverError::Retired);
             }
             if !active {
-                // Retirement notifications share the native epoch-latched
-                // listener, including the race between this check and wait.
-                listener.wait_timeout(std::time::Duration::from_secs(60));
+                let timeout = report
+                    .next_deferred_timeout
+                    .unwrap_or(std::time::Duration::from_secs(60))
+                    .min(std::time::Duration::from_secs(60));
+                listener.wait_timeout(timeout);
             }
         }
     }
@@ -1673,11 +1816,11 @@ mod tests {
             .with_session(|_| {
                 assert_eq!(
                     kernel.with_session(|_| ()).unwrap_err(),
-                    "reentrant kernel session access"
+                    "reentrant access to the same kernel session"
                 );
                 assert_eq!(
                     kernel.run_steps(1).unwrap_err(),
-                    "reentrant kernel session access"
+                    "reentrant access to the same kernel session"
                 );
                 assert_eq!(
                     kernel
@@ -1730,7 +1873,7 @@ mod tests {
 
         callback_kernel
             .with_session(|_| {
-                assert!(callback_kernel.session.try_lock().is_ok());
+                assert!(callback_kernel.session.lock_is_available());
                 entered_tx.send(()).unwrap();
                 assert_eq!(
                     attempted_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
@@ -1761,7 +1904,7 @@ mod tests {
                 .unwrap();
         }));
         assert!(panic.is_err());
-        assert!(kernel.session.try_lock().unwrap().as_ref().is_some());
+        assert!(kernel.session.try_take().is_some());
         assert!(kernel.with_session(|_| ()).is_ok());
     }
 
@@ -1818,7 +1961,7 @@ mod tests {
         let mut kernel =
             Kernel::build("recursive-wake", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive-wake");
         kernel.producers.lock().unwrap().producers.push((
@@ -1858,7 +2001,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-reentry", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "driver-reentry"),
@@ -1888,7 +2031,7 @@ mod tests {
         let mut kernel =
             Kernel::build("event-panic", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let key = Key::new("test", "event-panic");
         kernel.producers.lock().unwrap().producers.push((
             key.clone(),
@@ -1977,7 +2120,7 @@ mod tests {
                     NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(Some(
+            kernel.session = ExclusiveSlot::new(
                 builder
                     .build()
                     .unwrap()
@@ -1993,7 +2136,7 @@ mod tests {
                         )]),
                         ..Default::default()
                     }),
-            ));
+            );
             let key = Key::new("test", "one");
             kernel
                 .routes
@@ -2040,7 +2183,7 @@ mod tests {
         )
         .unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "waker"),
@@ -2211,32 +2354,248 @@ mod tests {
                 }
             }
         }
-        let log = Arc::new(Mutex::new(Vec::new()));
+        for order in [["a", "b", "broken"], ["a", "broken", "b"]] {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let mut kernel = Kernel::build(
+                "fair",
+                [],
+                Arc::new(phenix_graph::process::LocalProcessDispatcher),
+            )
+            .unwrap();
+            kernel.start().unwrap();
+            kernel.producers.get_mut().unwrap().producers = order
+                .into_iter()
+                .map(|name| {
+                    (
+                        Key::new("test", name),
+                        Some(Box::new(Source(name, log.clone())) as Box<dyn Producer>),
+                        None,
+                    )
+                })
+                .collect();
+            assert!(kernel.drain(0).unwrap().is_empty());
+            assert!(log.lock().unwrap().is_empty());
+            for _ in order.iter().take_while(|name| **name != "broken") {
+                assert!(kernel.drain(1).unwrap().is_empty());
+            }
+            let events = kernel.drain(1).unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].producer, Key::new("test", "broken"));
+            assert!(kernel.drain(3).unwrap().is_empty());
+            let expected: &[&str] = if order[1] == "broken" {
+                &["a", "broken", "b", "a", "b"]
+            } else {
+                &["a", "b", "broken", "a", "b", "a"]
+            };
+            assert_eq!(*log.lock().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn producer_callbacks_run_without_the_producer_mutex_and_reentry_is_bounded() {
+        use std::sync::{
+            Weak,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct Source(Weak<Kernel>, Arc<AtomicUsize>);
+        impl Producer for Source {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                let kernel = self.0.upgrade().unwrap();
+                assert!(kernel.producers.try_lock().is_ok());
+                assert!(kernel.session.try_take().is_some());
+                assert_eq!(kernel.drain(1).unwrap_err(), DriverError::ReentrantDrain);
+                self.1.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, wake: WakeHandle) -> bool {
+                let kernel = self.0.upgrade().unwrap();
+                assert!(kernel.producers.try_lock().is_ok());
+                assert!(kernel.session.try_take().is_some());
+                assert_eq!(kernel.drain(1).unwrap_err(), DriverError::ReentrantDrain);
+                wake.shutdown();
+                true
+            }
+        }
+
         let mut kernel = Kernel::build(
-            "fair",
+            "callback-lock",
             [],
             Arc::new(phenix_graph::process::LocalProcessDispatcher),
         )
         .unwrap();
         kernel.start().unwrap();
-        kernel.producers.get_mut().unwrap().producers = ["a", "broken", "b"]
-            .into_iter()
-            .map(|name| {
-                (
-                    Key::new("test", name),
-                    Some(Box::new(Source(name, log.clone())) as Box<dyn Producer>),
-                    None,
-                )
-            })
-            .collect();
-        assert!(kernel.drain(0).unwrap().is_empty());
-        assert!(log.lock().unwrap().is_empty());
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        let kernel = Arc::new(kernel);
+        let polls = Arc::new(AtomicUsize::new(0));
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "source"),
+            Some(Box::new(Source(Arc::downgrade(&kernel), polls.clone()))),
+            None,
+        ));
+
         assert!(kernel.drain(1).unwrap().is_empty());
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        kernel.run_until(&WakeHandle::default(), |_| {}).unwrap();
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn producer_panics_are_contained_without_poisoning_kernel_state() {
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                panic!("poll panic")
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "callback-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
         let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].producer, Key::new("test", "broken"));
-        assert!(kernel.drain(3).unwrap().is_empty());
-        assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
+        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn panicking_panic_payload_destructors_do_not_bypass_producer_reconciliation() {
+        struct PanickingPayload;
+        impl Drop for PanickingPayload {
+            fn drop(&mut self) {
+                panic!("panic payload destructor panic");
+            }
+        }
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                std::panic::panic_any(PanickingPayload)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "panic-payload-drop",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic-payload"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
+        let events = kernel.drain(1).unwrap();
+        assert!(matches!(
+            events.as_slice()[0].result,
+            Err(ProducerError::Poll(_))
+        ));
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn wake_registration_panics_are_reported_without_poisoning_kernel_state() {
+        struct PanickingPayload;
+        impl Drop for PanickingPayload {
+            fn drop(&mut self) {
+                panic!("wake panic payload destructor panic");
+            }
+        }
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                std::panic::panic_any(PanickingPayload)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "wake-callback-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
+        assert!(matches!(
+            kernel.run_until(&WakeHandle::default(), |_| {}),
+            Err(DriverError::WakeRegistrationPanicked { .. })
+        ));
+        assert!(!kernel.producers.is_poisoned());
+        assert!(kernel.drain(1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn same_thread_session_reentry_fails_fast_and_preserves_rejected_input() {
+        let mut kernel = Kernel::build(
+            "session-reentry",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+
+        let nested = kernel
+            .with_session(|_| {
+                assert!(kernel.session.lock_is_available());
+                kernel.run_steps(1)
+            })
+            .unwrap()
+            .unwrap_err();
+        assert!(nested.contains("reentrant access"));
+        let error = kernel
+            .with_session(|_| kernel.inject("input", Value::local(41_i64)))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error.reason,
+            phenix_graph::connection::ConnectionError::Reentrant
+        );
+        assert_eq!(error.value.borrow::<i64>(), Some(&41));
+    }
+
+    #[test]
+    fn panicking_session_callback_restores_exclusive_ownership() {
+        let mut kernel = Kernel::build(
+            "session-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel
+                .with_session(|_| panic!("session callback panic"))
+                .unwrap();
+        }));
+        assert!(panic.is_err());
+        assert!(kernel.session.try_take().is_some());
+        assert!(kernel.run_steps(0).is_ok());
     }
 
     #[test]
@@ -2295,7 +2654,7 @@ mod tests {
         let mut kernel =
             Kernel::build("cross-thread-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2353,7 +2712,7 @@ mod tests {
         let mut kernel =
             Kernel::build("uncontended-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "inspect"),
@@ -2392,7 +2751,7 @@ mod tests {
         let mut kernel =
             Kernel::build("exclusive-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2456,7 +2815,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-vs-direct", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         kernel.producers.get_mut().unwrap().producers.push((
             Key::new("test", "idle"),
             Some(Box::new(Idle {
@@ -2510,7 +2869,7 @@ mod tests {
         let mut kernel =
             Kernel::build("direct-vs-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let (entered, entered_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
         kernel.producers.get_mut().unwrap().producers.push((
@@ -2550,7 +2909,7 @@ mod tests {
         let mut kernel =
             Kernel::build("drain-to-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(session));
+        kernel.session = ExclusiveSlot::new(session);
         assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),

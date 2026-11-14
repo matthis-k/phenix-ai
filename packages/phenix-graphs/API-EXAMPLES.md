@@ -81,6 +81,55 @@ claim. Values carrying plugin/resource leases reject bare owned extraction;
 
 ## Executable Examples
 
+### Independent Request Queues
+
+Shared FIFO is the default. Opt-in bounded lanes keep FIFO within each request and
+separate ingress, internal edges and captures, without duplicating process state.
+Use request-specific capture reads in this mode; `take_output` reads unscoped traffic.
+A process holding a staged continuation or blocked publication still serializes
+other requests. Queue capacities bound packet counts, not arbitrary payload bytes.
+
+```rust
+use phenix_graph::{ComponentDef, NetworkBuilder, SessionOptions, Value};
+use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+let mut network = NetworkBuilder::new();
+let map = network.add("map", Arc::new(ComponentDef::map(|n: i64| n + 1)))?;
+network.expose_input("input", map.input::<i64>("input")?, NonZeroUsize::new(1).unwrap())?;
+network.expose_output("output", map.output::<i64>("output")?)?;
+let mut session = network.build()?.compile()?.start_with_options(SessionOptions {
+    max_requests: NonZeroUsize::new(2).unwrap(),
+    capture_capacity: NonZeroUsize::new(1).unwrap(),
+    request_queue_policy: RequestQueuePolicy::BoundedLanes,
+    deferred_timeout: Some(Duration::from_secs(30)),
+    ..Default::default()
+});
+let slow = session.begin_request(Some("output"))?;
+let fast = session.begin_request(Some("output"))?;
+session.inject_request(slow, "input", Value::local(1_i64))?;
+session.inject_request(fast, "input", Value::local(2_i64))?;
+session.close_request(slow)?;
+session.close_request(fast)?;
+session.run_until_idle(16);
+let packet = session.take_request_output(fast, "output")?.unwrap();
+assert_eq!(packet.value().borrow::<i64>(), Some(&3));
+assert_eq!(session.request_status(fast)?, RequestStatus::Settled { captures: 1 });
+session.release_request(fast)?;
+assert!(session.take_request_output(slow, "output")?.is_some());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Deferred timeouts are cooperative ticket invalidation, not worker preemption.
+The built-in driver times only jobs whose dispatcher returns `Deferred`; manual
+`next_job` handoff starts its timer immediately. Status queries are snapshots until
+the session is supervised/driven via `supervise_deferred(Instant::now())` or a driver
+operation. `overdue_jobs(now)` is passive; `RunReport::next_deferred_timeout` bounds
+the driver's next wait. Execution guards are an ordered
+`SessionOptions::execution_guards` list; `ActivationJob::with_guard` appends rather
+than replacing installed guards, and guard teardown happens in reverse order.
+
+### Programs
+
 - `cargo run -p phenix-graph --example basic_fbp --locked`: source, map, sink.
 - `cargo run -p phenix-graph --example streaming_fbp --locked`: capacity-one
   split, stateful join, finite feedback, repeated injection and shutdown.

@@ -6,6 +6,7 @@ impl NetworkSession {
     /// Returned tickets remain runner inventory: cancellation cannot undo effects
     /// or preempt a handed job. Invalidated jobs retain their own code leases.
     pub fn cancel_request(&mut self, id: RequestId) -> Result<Vec<StepTicket>, RequestError> {
+        // Explicit cancellation wins if it is serialized before timeout supervision.
         self.terminate_request(id, RequestStatus::Cancelled, None)
     }
     /// Explicit host failure uses the same disposal/recovery policy as step
@@ -15,7 +16,16 @@ impl NetworkSession {
         id: RequestId,
         diagnostic: impl Into<String>,
     ) -> Result<Vec<StepTicket>, RequestError> {
-        self.terminate_request(id, RequestStatus::Failed, Some(diagnostic.into()))
+        self.supervise_configured_deferred();
+        self.fail_request_inner(id, diagnostic.into())
+    }
+
+    fn fail_request_inner(
+        &mut self,
+        id: RequestId,
+        diagnostic: String,
+    ) -> Result<Vec<StepTicket>, RequestError> {
+        self.terminate_request(id, RequestStatus::Failed, Some(diagnostic))
     }
 
     pub fn request_failure(&self, id: RequestId) -> Result<Option<&str>, RequestError> {
@@ -42,7 +52,7 @@ impl NetworkSession {
     pub(super) fn fail_process(&mut self, index: usize, error: String) {
         if let Some(request) = self.processes[index].request {
             // Recovery failure has already made the whole session terminal.
-            let _ = self.fail_request(request, error);
+            let _ = self.fail_request_inner(request, error);
         } else {
             self.fail(error);
         }
@@ -87,6 +97,7 @@ impl NetworkSession {
         let mut cancelled_processes = Vec::with_capacity(affected.len());
         let mut pending_disposals = Vec::new();
         for index in &affected {
+            self.dispatched_at.remove(index);
             let retired_wake = {
                 let p = &mut self.processes[*index];
                 let scope = self.requests.get_mut(&id).unwrap();
@@ -135,11 +146,14 @@ impl NetworkSession {
                     let process = match spawned {
                         Ok(process) => process,
                         Err(payload) => {
-                            process_destructor_panicked |=
+                            if let Err(payload) =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                     drop(payload)
                                 }))
-                                .is_err();
+                            {
+                                process_destructor_panicked = true;
+                                crate::discard_panic_payload(payload);
+                            }
                             let diagnostic = format!(
                                 "process factory panicked during request recovery: {}",
                                 self.compiled.processes()[index].path()
@@ -159,6 +173,7 @@ impl NetworkSession {
                     p.wake = Arc::new(WakeSlot::default());
                     p.done = false;
                     p.cursor = 0;
+                    p.request_cursor = 0;
                     for port in &mut p.inputs {
                         port.cursor = 0;
                         port.eos_delivered = false;

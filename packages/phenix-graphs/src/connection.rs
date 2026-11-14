@@ -186,6 +186,16 @@ impl ConnectionQueue {
         self.request_counts.clear();
         std::mem::take(&mut self.packets)
     }
+    pub(crate) fn empty_like(&self) -> Self {
+        Self {
+            capacity: self.capacity,
+            identity: self.identity.clone(),
+            packets: VecDeque::new(),
+            request_counts: BTreeMap::new(),
+            writer_closed: self.writer_closed,
+            reader_closed: self.reader_closed,
+        }
+    }
     fn check(&self, packet: &Packet) -> Result<(), ConnectionError> {
         if self.reader_closed {
             Err(ConnectionError::ReaderClosed)
@@ -288,6 +298,11 @@ impl ConnectionSet {
     pub fn queues(&self) -> &[ConnectionQueue] {
         &self.queues
     }
+    pub(crate) fn add_queue(&mut self, queue: ConnectionQueue) -> usize {
+        let index = self.queues.len();
+        self.queues.push(queue);
+        index
+    }
     pub fn pop(&mut self, index: usize) -> Option<Packet> {
         self.queues.get_mut(index)?.pop()
     }
@@ -365,7 +380,8 @@ impl ConnectionSet {
                     }));
                     match result {
                         Ok(result) => result.map_err(PrepareError::Adapter)?,
-                        Err(_) => {
+                        Err(payload) => {
+                            crate::discard_panic_payload(payload);
                             return Err(PrepareError::Adapter(
                                 "packet preparation panicked".into(),
                             ));

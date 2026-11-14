@@ -16,12 +16,11 @@ impl Drop for DispatchGuard {
         DISPATCHING.set(self.0);
     }
 }
-pub(super) struct HostOnlyGuard(pub Option<Arc<dyn ProcessExecutionGuard>>);
+pub(super) struct HostOnlyGuard;
 impl ProcessExecutionGuard for HostOnlyGuard {
     fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
         let guard = DispatchGuard(DISPATCHING.replace(true));
-        let application = self.0.as_ref().map(|g| g.enter()).transpose()?;
-        Ok(Box::new((application, guard)))
+        Ok(Box::new(guard))
     }
 }
 
@@ -64,7 +63,7 @@ impl DerivedRuntime {
         })
     }
     pub(super) fn guard_options(options: &mut SessionOptions) {
-        options.execution_guard = Some(Arc::new(HostOnlyGuard(options.execution_guard.take())));
+        options.execution_guards.insert(0, Arc::new(HostOnlyGuard));
         options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     }
     pub fn kernel(&self) -> &Kernel {

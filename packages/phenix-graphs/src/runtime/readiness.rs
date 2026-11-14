@@ -46,9 +46,15 @@ pub struct InputHead {
 #[derive(Clone, Debug)]
 pub struct ReadinessSnapshot {
     pub request: Option<RequestId>,
+    pub correlation_lane: Option<usize>,
     pub heads: Vec<InputHead>,
 }
 pub trait ReadinessPolicy: Send + Sync {
+    /// Request-local closure obligations in this process's input namespace. Called
+    /// once before a request scope is admitted; a panic rejects that admission.
+    fn closure_ports(&self, _lane: usize) -> Vec<String> {
+        vec![]
+    }
     /// Return distinct port names whose heads should be atomically reserved.
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
@@ -110,8 +116,20 @@ impl NetworkSession {
         correlated: bool,
     ) -> Option<(usize, usize)> {
         let input = &self.processes[index].inputs[port];
-        for offset in 0..input.queues.len() {
-            let queue = input.queues[(input.cursor + offset) % input.queues.len()];
+        let queues = match (self.request_queue_policy, request) {
+            (RequestQueuePolicy::BoundedLanes, Some(request)) => {
+                let lane = self.requests[&request].lane;
+                input
+                    .lane_queues
+                    .get(&lane)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+            }
+            (RequestQueuePolicy::BoundedLanes, None) => &input.shared_queues,
+            (RequestQueuePolicy::SharedFifo, _) => &input.queues,
+        };
+        for offset in 0..queues.len() {
+            let queue = queues[(input.cursor + offset) % queues.len()];
             let packets = &self.transport.queues()[queue];
             let position = if correlated && request.is_some() {
                 packets
@@ -189,9 +207,22 @@ impl NetworkSession {
                 }
             }
         }
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            candidates.sort_by_key(|request| {
+                request.map_or(self.max_requests, |id| self.requests[&id].lane)
+            });
+            let next = candidates.partition_point(|request| {
+                request.map_or(self.max_requests, |id| self.requests[&id].lane) < p.request_cursor
+            });
+            let candidate_count = candidates.len();
+            if candidate_count != 0 {
+                candidates.rotate_left(next % candidate_count);
+            }
+        }
         for request in candidates {
             let snapshot = ReadinessSnapshot {
                 request,
+                correlation_lane: request.map(|id| self.requests[&id].lane),
                 heads: order
                     .iter()
                     .map(|port| InputHead {
@@ -278,7 +309,10 @@ impl NetworkSession {
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         policy.select(&snapshot)
                     }))
-                    .map_err(|_| "readiness policy panicked".to_owned())?
+                    .map_err(|payload| {
+                        crate::discard_panic_payload(payload);
+                        "readiness policy panicked".to_owned()
+                    })?
                 }
                 _ => vec![],
             };
@@ -348,7 +382,12 @@ impl NetworkSession {
         if self.processes[index].handoff.state() == HandoffState::Idle {
             self.processes[index].closed_in_activation.clear();
         }
-        self.processes[index].request = selected.request;
+        let request = selected.request;
+        self.processes[index].request = request;
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            self.processes[index].request_cursor =
+                request.map_or(0, |id| self.requests[&id].lane + 1);
+        }
         let mut inputs = BTreeMap::new();
         let mut closed = vec![];
         let mut request_closed = vec![];
@@ -384,7 +423,15 @@ impl NetworkSession {
             self.processes[index].cursor = (port + 1) % self.processes[index].inputs.len();
         }
         ProcessContext::new(inputs, closed)
+            .with_correlation_lane(request.map(|id| self.requests[&id].lane))
             .with_request_closed(request_closed)
             .with_resources(self.processes[index].resources.clone())
     }
+}
+
+pub(crate) fn validate_policy<'a>(
+    policy: &Readiness,
+    input_names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    validate_policy_ports(input_names.into_iter(), policy)
 }

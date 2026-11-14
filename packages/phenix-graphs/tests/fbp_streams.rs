@@ -1,8 +1,12 @@
 use phenix_graph::{
     Value,
+    correlation::{CorrelationBounds, bounded as bounded_correlation},
     interface::{Interface, PortDef},
     network::{CompiledNetwork, NetworkBuilder},
-    process::{Process, ProcessContext, ProcessEmission, Step},
+    process::{
+        ActivationJob, DispatchResult, Process, ProcessContext, ProcessDispatcher, ProcessEmission,
+        Step,
+    },
     runtime::{
         NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState,
     },
@@ -10,9 +14,10 @@ use phenix_graph::{
 use std::{
     num::NonZeroUsize,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 fn one() -> NonZeroUsize {
@@ -1498,7 +1503,8 @@ fn dispatcher_and_execution_guard_run_on_actual_worker_and_return_same_handoff()
     b.start(&p).unwrap();
     let mut opts = options();
     opts.dispatcher = Arc::new(Delayed(pending.clone()));
-    opts.execution_guard = Some(Arc::new(WorkerGuard(enters.clone())));
+    opts.execution_guards
+        .push(Arc::new(WorkerGuard(enters.clone())));
     let mut s = b
         .build()
         .unwrap()
@@ -1525,6 +1531,149 @@ fn dispatcher_and_execution_guard_run_on_actual_worker_and_return_same_handoff()
     assert!(!IN_NATIVE_GUARD.get());
     s.complete_job(completion).unwrap();
     assert_eq!(s.state(), SessionState::Completed);
+}
+
+#[test]
+fn deferred_timeout_invalidates_late_completion_and_preserves_runner_ownership() {
+    struct Hold(Arc<Mutex<Option<ActivationJob>>>);
+    impl ProcessDispatcher for Hold {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            *self.0.lock().unwrap() = Some(job);
+            DispatchResult::Deferred
+        }
+    }
+
+    assert!(SessionOptions::default().deferred_timeout.is_none());
+    let held = Arc::new(Mutex::new(None));
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "worker",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session_options = options();
+    session_options.deferred_timeout = Some(Duration::ZERO);
+    session_options.dispatcher = Arc::new(Hold(held.clone()));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let request = session.begin_request(None).unwrap();
+    session
+        .inject_request(request, "input", Value::of(7_i64))
+        .unwrap();
+    session.close_request(request).unwrap();
+
+    assert_eq!(session.run_until_idle(1).state, SessionState::Failed);
+    assert_eq!(
+        session.request_status(request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Failed
+    );
+    assert!(
+        session
+            .request_failure(request)
+            .unwrap()
+            .unwrap()
+            .contains("deferred job timeout")
+    );
+    let job = held.lock().unwrap().take().unwrap();
+    let ticket = job.ticket();
+    assert!(
+        session
+            .request_cancelled_jobs(request)
+            .unwrap()
+            .contains(&ticket)
+    );
+
+    let completion = job.run();
+    let Err((error, completion)) = session.complete_job(completion) else {
+        panic!("a timed-out job regained completion authority");
+    };
+    assert_eq!(error, phenix_graph::process::HandoffError::StaleCompletion);
+    drop(completion);
+}
+
+#[test]
+fn deferred_timeout_restarts_only_the_failed_request_and_rejects_its_late_worker() {
+    struct HoldSlow(Arc<Mutex<Option<ActivationJob>>>);
+    impl ProcessDispatcher for HoldSlow {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            if job.metadata().unwrap().path == "slow" {
+                *self.0.lock().unwrap() = Some(job);
+                DispatchResult::Deferred
+            } else {
+                DispatchResult::Completed(job.run())
+            }
+        }
+    }
+
+    let held = Arc::new(Mutex::new(None));
+    let interface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let mut builder = NetworkBuilder::new();
+    let slow = builder
+        .node("slow", interface.clone(), Arc::new(|| Omit))
+        .unwrap();
+    let fast = builder.node("fast", interface, Arc::new(|| Omit)).unwrap();
+    builder
+        .expose_input("slow-input", slow.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("fast-input", fast.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session_options = options();
+    session_options.deferred_timeout = Some(Duration::ZERO);
+    session_options.request_failure_policy =
+        phenix_graph::runtime::RequestFailurePolicy::RestartAffectedProcess;
+    session_options.dispatcher = Arc::new(HoldSlow(held.clone()));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let slow_request = session.begin_request(None).unwrap();
+    let fast_request = session.begin_request(None).unwrap();
+    session
+        .inject_request(slow_request, "slow-input", Value::of(1_i64))
+        .unwrap();
+    session
+        .inject_request(fast_request, "fast-input", Value::of(2_i64))
+        .unwrap();
+    session.close_request(slow_request).unwrap();
+    session.close_request(fast_request).unwrap();
+
+    let report = session.run_until_idle(8);
+    assert_ne!(report.state, SessionState::Failed);
+    assert_eq!(
+        session.request_status(slow_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Failed
+    );
+    assert_eq!(
+        session.request_status(fast_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Settled { captures: 0 }
+    );
+
+    let job = held.lock().unwrap().take().unwrap();
+    let completion = job.run();
+    let Err((error, completion)) = session.complete_job(completion) else {
+        panic!("restarted request accepted the retired worker's completion");
+    };
+    assert_eq!(
+        error,
+        phenix_graph::process::HandoffError::ForeignCompletion
+    );
+    drop(completion);
+    assert_eq!(
+        session.request_status(fast_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Settled { captures: 0 }
+    );
 }
 
 struct Staged {
@@ -2015,6 +2164,33 @@ impl Process for ScopedOptional {
         Ok(Step::Complete)
     }
 }
+struct ScopedOptionalPolicy(Arc<AtomicUsize>);
+impl phenix_graph::runtime::ReadinessPolicy for ScopedOptionalPolicy {
+    fn closure_ports(&self, _: usize) -> Vec<String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        vec!["optional".into()]
+    }
+
+    fn select(&self, snapshot: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+        let available_or_closed = |name: &str| {
+            snapshot
+                .heads
+                .iter()
+                .find(|head| head.port == name)
+                .is_some_and(|head| head.available || head.closed)
+        };
+        if snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "required" && head.available)
+            && available_or_closed("optional")
+        {
+            vec!["required".into(), "optional".into()]
+        } else {
+            vec![]
+        }
+    }
+}
 #[test]
 fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests() {
     use phenix_graph::runtime::RequestStatus;
@@ -2079,12 +2255,10 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
     )
     .unwrap();
     let mut opts = options();
+    let closure_calls = Arc::new(AtomicUsize::new(0));
     opts.readiness.insert(
         "z_join".into(),
-        Readiness::Optional {
-            required: vec!["required".into()],
-            optional: vec!["optional".into()],
-        },
+        Readiness::Custom(Arc::new(ScopedOptionalPolicy(closure_calls.clone()))),
     );
     let mut s = b
         .build()
@@ -2117,6 +2291,829 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
         assert_eq!(s.state(), SessionState::Quiescent);
     }
     assert_eq!(*log.lock().unwrap(), vec![(0, None), (5, Some(5))]);
+    assert_eq!(closure_calls.load(Ordering::SeqCst), 2);
+}
+
+struct CorrelatedPair {
+    seen: Arc<std::sync::Mutex<Vec<(i64, i64)>>>,
+    emitted: bool,
+}
+impl Process for CorrelatedPair {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        if self.emitted {
+            self.emitted = false;
+            return Ok(Step::Complete);
+        }
+        let a = *context
+            .take("a")
+            .unwrap()
+            .borrow::<i64>()
+            .ok_or("wrong correlated a input type")?;
+        let b = match context.take("b") {
+            Some(value) => *value
+                .borrow::<i64>()
+                .ok_or("wrong correlated b input type")?,
+            None => {
+                assert!(context.is_request_closed("b"));
+                0
+            }
+        };
+        self.seen.lock().unwrap().push((a, b));
+        self.emitted = true;
+        Ok(Step::Emit(ProcessEmission::new("out", Value::local(a + b))))
+    }
+}
+
+struct CorrelatedOptionalReadiness;
+impl phenix_graph::runtime::ReadinessPolicy for CorrelatedOptionalReadiness {
+    fn closure_ports(&self, _: usize) -> Vec<String> {
+        vec!["b".into()]
+    }
+
+    fn select(&self, snapshot: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+        let a = snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "a" && head.available);
+        let b = snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "b" && (head.available || head.closed));
+        if a && b {
+            vec!["a".into(), "b".into()]
+        } else {
+            vec![]
+        }
+    }
+}
+
+#[test]
+fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let definition = Arc::new(
+        bounded_correlation(
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            CorrelationBounds {
+                max_live: NonZeroUsize::new(2).unwrap(),
+                distinct_scope_skew: one(),
+                ingress_capacity: NonZeroUsize::new(2).unwrap(),
+                lane_capacity: one(),
+            },
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder.add("join", definition).unwrap();
+    builder
+        .expose_input("a", join.input::<i64>("a").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("b", join.input::<i64>("b").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    let mut session = compiled.start_with_options(session_options);
+    let waiting = session.begin_request(Some("out")).unwrap();
+    let runnable = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(waiting, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(runnable).unwrap();
+
+    let mut runnable_output = None;
+    for _ in 0..32 {
+        let report = session.run_until_idle(1);
+        assert_ne!(
+            report.state,
+            SessionState::Failed,
+            "correlated request failed: {:?}",
+            session.failure()
+        );
+        if runnable_output.is_none() {
+            runnable_output = session.take_request_output(runnable, "out").unwrap();
+        }
+        if session.request_status(runnable).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = runnable_output.expect("runnable lane made bounded progress");
+    assert_eq!(packet.metadata().unwrap().request(), Some(runnable));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    session.release_request(runnable).unwrap();
+
+    session
+        .inject_request(waiting, "b", Value::local(1_i64))
+        .unwrap();
+    session.close_request(waiting).unwrap();
+    let mut waiting_output = None;
+    for _ in 0..32 {
+        let report = session.run_until_idle(1);
+        assert_ne!(
+            report.state,
+            SessionState::Failed,
+            "correlated request failed: {:?}",
+            session.failure()
+        );
+        if waiting_output.is_none() {
+            waiting_output = session.take_request_output(waiting, "out").unwrap();
+        }
+        if session.request_status(waiting).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = waiting_output.expect("completed lane made bounded progress");
+    assert_eq!(packet.metadata().unwrap().request(), Some(waiting));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&11));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1)]);
+    session.release_request(waiting).unwrap();
+
+    let optional = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(optional, "a", Value::local(5_i64))
+        .unwrap();
+    session.close_request(optional).unwrap();
+    let mut optional_output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if optional_output.is_none() {
+            optional_output = session.take_request_output(optional, "out").unwrap();
+        }
+        if session.request_status(optional).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = optional_output.expect("custom closure was preserved through the lane wrapper");
+    assert_eq!(packet.metadata().unwrap().request(), Some(optional));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&5));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1), (5, 0)]);
+
+    let mut overcommitted = options();
+    overcommitted.max_requests = NonZeroUsize::new(3).unwrap();
+    let failed = compiled.start_with_options(overcommitted);
+    assert_eq!(failed.state(), SessionState::Failed);
+    assert!(
+        failed
+            .failure()
+            .unwrap()
+            .contains("insufficient correlation bound")
+    );
+}
+
+#[test]
+fn bounded_request_lanes_demultiplex_crossed_join_arrivals_and_reuse_credits() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder
+        .node(
+            "join",
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input("a", join.input::<i64>("a").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("b", join.input::<i64>("b").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    session_options
+        .readiness
+        .insert("join".into(), Readiness::All);
+    let mut session = compiled.start_with_options(session_options);
+
+    let waiting = session.begin_request(Some("out")).unwrap();
+    let runnable = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(waiting, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(runnable).unwrap();
+
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(runnable, "out").unwrap();
+        }
+        if session.request_status(runnable).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("request lane bypassed the incomplete request's FIFO head");
+    assert_eq!(packet.metadata().unwrap().request(), Some(runnable));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    session.release_request(runnable).unwrap();
+
+    session
+        .inject_request(waiting, "b", Value::local(1_i64))
+        .unwrap();
+    session.close_request(waiting).unwrap();
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(waiting, "out").unwrap();
+        }
+        if session.request_status(waiting).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("the earlier request completed without losing its FIFO order");
+    assert_eq!(packet.metadata().unwrap().request(), Some(waiting));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&11));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1)]);
+    session.release_request(waiting).unwrap();
+
+    let reused = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(reused, "a", Value::local(6_i64))
+        .unwrap();
+    session
+        .inject_request(reused, "b", Value::local(3_i64))
+        .unwrap();
+    session.close_request(reused).unwrap();
+    session.run_until_idle(32);
+    let packet = session
+        .take_request_output(reused, "out")
+        .unwrap()
+        .expect("reused bounded lane retained no prior request packets");
+    assert_eq!(packet.metadata().unwrap().request(), Some(reused));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&9));
+    session.release_request(reused).unwrap();
+
+    let cancelled = session.begin_request(None).unwrap();
+    session
+        .inject_request(cancelled, "a", Value::local(99_i64))
+        .unwrap();
+    session.cancel_request(cancelled).unwrap();
+    session.release_request(cancelled).unwrap();
+
+    let after_cancel = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(after_cancel, "a", Value::local(4_i64))
+        .unwrap();
+    session
+        .inject_request(after_cancel, "b", Value::local(5_i64))
+        .unwrap();
+    session.close_request(after_cancel).unwrap();
+    session.run_until_idle(32);
+    let packet = session
+        .take_request_output(after_cancel, "out")
+        .unwrap()
+        .expect("cancelled lane contents did not leak into its replacement");
+    assert_eq!(packet.metadata().unwrap().request(), Some(after_cancel));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&9));
+}
+
+#[test]
+fn bounded_request_lanes_isolate_repeated_input_backlog_from_later_ready_request() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder
+        .node(
+            "join",
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "a",
+            join.input::<i64>("a").unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "b",
+            join.input::<i64>("b").unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    session_options
+        .readiness
+        .insert("join".into(), Readiness::All);
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let blocked = session.begin_request(None).unwrap();
+    let later = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(11_i64))
+        .unwrap();
+    session
+        .inject_request(later, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(later, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(later).unwrap();
+
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(later, "out").unwrap();
+        }
+        if session.request_status(later).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("repeated packets in one request did not block another lane");
+    assert_eq!(packet.metadata().unwrap().request(), Some(later));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    assert_eq!(
+        session.request_status(blocked).unwrap(),
+        RequestStatus::Open
+    );
+}
+
+#[test]
+fn bounded_request_lanes_round_robin_ready_requests_at_a_shared_process() {
+    use phenix_graph::runtime::RequestQueuePolicy;
+
+    struct Record(Arc<std::sync::Mutex<Vec<(usize, i64)>>>);
+    impl Process for Record {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.0.lock().unwrap().push((
+                context.correlation_lane().unwrap(),
+                *value.borrow::<i64>().ok_or("wrong input")?,
+            ));
+            Ok(Step::Complete)
+        }
+    }
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "record",
+            Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap()),
+            Arc::new(move || Record(factory_seen.clone())),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "input",
+            node.input::<i64>("in").unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        )
+        .unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let first = session.begin_request(None).unwrap();
+    let second = session.begin_request(None).unwrap();
+    for (request, values) in [(first, [10_i64, 11, 12]), (second, [20_i64, 21, 22])] {
+        for value in values {
+            session
+                .inject_request(request, "input", Value::local(value))
+                .unwrap();
+        }
+        session.close_request(request).unwrap();
+    }
+
+    session.run_until_idle(6);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(0, 10), (1, 20), (0, 11), (1, 21), (0, 12), (1, 22)]
+    );
+}
+
+#[test]
+fn bounded_request_capture_lanes_isolate_different_consumer_speeds() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    struct Echo(bool);
+    impl Process for Echo {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if self.0 {
+                self.0 = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.0 = true;
+            Ok(Step::Emit(ProcessEmission::new("out", value)))
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "echo",
+            Arc::new(
+                Interface::new(
+                    [PortDef::local::<i64>("in")],
+                    [PortDef::local::<i64>("out")],
+                )
+                .unwrap(),
+            ),
+            Arc::new(|| Echo(false)),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("output", node.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.capture_capacity = one();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let slow_reader = session.begin_request(Some("output")).unwrap();
+    let fast_reader = session.begin_request(Some("output")).unwrap();
+    session
+        .inject_request(slow_reader, "input", Value::local(1_i64))
+        .unwrap();
+    session
+        .inject_request(fast_reader, "input", Value::local(2_i64))
+        .unwrap();
+    session.close_request(slow_reader).unwrap();
+    session.close_request(fast_reader).unwrap();
+    session.run_until_idle(32);
+
+    let fast = session
+        .take_request_output(fast_reader, "output")
+        .unwrap()
+        .expect("slow reader's lane did not occupy the fast reader's capture");
+    assert_eq!(fast.metadata().unwrap().request(), Some(fast_reader));
+    assert_eq!(fast.value().borrow::<i64>(), Some(&2));
+    assert_eq!(
+        session.request_status(fast_reader).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert_eq!(
+        session.request_status(slow_reader).unwrap(),
+        RequestStatus::Pending
+    );
+    let slow = session
+        .take_request_output(slow_reader, "output")
+        .unwrap()
+        .expect("slow reader retained its own bounded capture");
+    assert_eq!(slow.metadata().unwrap().request(), Some(slow_reader));
+    assert_eq!(slow.value().borrow::<i64>(), Some(&1));
+}
+
+#[test]
+fn bounded_request_lanes_route_internal_edges_without_crossing_payloads() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    struct Add {
+        amount: i64,
+        emitted: bool,
+    }
+    impl Process for Add {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::local(*value.borrow::<i64>().ok_or("wrong input")? + self.amount),
+            )))
+        }
+    }
+
+    let interface = || {
+        Arc::new(
+            Interface::new(
+                [PortDef::local::<i64>("in")],
+                [PortDef::local::<i64>("out")],
+            )
+            .unwrap(),
+        )
+    };
+    let mut builder = NetworkBuilder::new();
+    let first = builder
+        .node(
+            "first",
+            interface(),
+            Arc::new(|| Add {
+                amount: 1,
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    let second = builder
+        .node(
+            "second",
+            interface(),
+            Arc::new(|| Add {
+                amount: 10,
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .connect(
+            first.output::<i64>("out").unwrap(),
+            second.input::<i64>("in").unwrap(),
+            one(),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", first.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("output", second.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.capture_capacity = one();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let first_request = session.begin_request(Some("output")).unwrap();
+    let second_request = session.begin_request(Some("output")).unwrap();
+    session
+        .inject_request(first_request, "input", Value::local(1_i64))
+        .unwrap();
+    session
+        .inject_request(second_request, "input", Value::local(2_i64))
+        .unwrap();
+    session.close_request(first_request).unwrap();
+    session.close_request(second_request).unwrap();
+
+    let mut outputs = Vec::new();
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        for request in [first_request, second_request] {
+            if let Some(packet) = session.take_request_output(request, "output").unwrap() {
+                outputs.push((request, *packet.value().borrow::<i64>().unwrap()));
+            }
+        }
+        if session.request_status(first_request).unwrap()
+            == (RequestStatus::Settled { captures: 1 })
+            && session.request_status(second_request).unwrap()
+                == (RequestStatus::Settled { captures: 1 })
+        {
+            break;
+        }
+    }
+    outputs.sort_by_key(|(request, _)| *request);
+    assert_eq!(outputs, [(first_request, 12), (second_request, 13)]);
+}
+
+#[test]
+fn bounded_request_lanes_reject_packet_capacity_overflow_before_start() {
+    use phenix_graph::runtime::RequestQueuePolicy;
+
+    let compiled = counter(Arc::new(AtomicUsize::new(0)));
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(usize::MAX).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let session = compiled.start_with_options(session_options);
+    assert_eq!(session.state(), SessionState::Failed);
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .contains("request lane packet capacity overflows")
+    );
+}
+
+#[test]
+fn bounded_correlation_preserves_fifo_when_repeated_scope_packets_exceed_lane_credit() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let definition = Arc::new(
+        bounded_correlation(
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            CorrelationBounds {
+                max_live: NonZeroUsize::new(2).unwrap(),
+                distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
+                ingress_capacity: NonZeroUsize::new(4).unwrap(),
+                lane_capacity: one(),
+            },
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder.add("join", definition).unwrap();
+    builder
+        .expose_input(
+            "a",
+            join.input::<i64>("a").unwrap(),
+            NonZeroUsize::new(4).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "b",
+            join.input::<i64>("b").unwrap(),
+            NonZeroUsize::new(4).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    let mut session = compiled.start_with_options(session_options);
+    let blocked = session.begin_request(Some("out")).unwrap();
+    let later = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(11_i64))
+        .unwrap();
+    session
+        .inject_request(later, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(later, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(later).unwrap();
+
+    assert_eq!(session.run_until_idle(64).state, SessionState::Waiting);
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(
+        session.request_status(blocked).unwrap(),
+        RequestStatus::Open
+    );
+    assert_eq!(
+        session.request_status(later).unwrap(),
+        RequestStatus::Pending
+    );
+    assert!(session.take_request_output(later, "out").unwrap().is_none());
+}
+
+#[test]
+fn bounded_correlation_rejects_skew_beyond_declared_ingress_credit() {
+    let interface = Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap());
+    let result = bounded_correlation(
+        interface,
+        Arc::new(|| Omit),
+        Readiness::All,
+        CorrelationBounds {
+            max_live: NonZeroUsize::new(2).unwrap(),
+            distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
+            ingress_capacity: one(),
+            lane_capacity: one(),
+        },
+    );
+    let Err(error) = result else {
+        panic!("overcommitted correlation bound was accepted");
+    };
+    assert!(matches!(
+        error,
+        phenix_graph::network::NetworkError::InvalidProjection(message)
+            if message.contains("distinct-scope skew")
+    ));
+}
+
+#[test]
+fn bounded_correlation_validates_builtin_readiness_before_wrapping_it() {
+    let interface = Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap());
+    for policy in [
+        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::Optional {
+            required: vec!["missing".into()],
+            optional: vec![],
+        },
+        Readiness::Optional {
+            required: vec![],
+            optional: vec![],
+        },
+    ] {
+        let result = bounded_correlation(
+            interface.clone(),
+            Arc::new(|| Omit),
+            policy,
+            CorrelationBounds {
+                max_live: one(),
+                distinct_scope_skew: one(),
+                ingress_capacity: one(),
+                lane_capacity: one(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(phenix_graph::network::NetworkError::InvalidProjection(_))
+        ));
+    }
 }
 
 struct Omit;
@@ -2126,6 +3123,88 @@ impl Process for Omit {
         Ok(Step::Complete)
     }
 }
+#[test]
+fn panicking_request_closure_policy_rejects_admission_without_partial_scope() {
+    struct PanickingClosure;
+    impl phenix_graph::runtime::ReadinessPolicy for PanickingClosure {
+        fn closure_ports(&self, _: usize) -> Vec<String> {
+            panic!("closure policy panic")
+        }
+
+        fn select(&self, _: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "node",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut options = options();
+    options
+        .readiness
+        .insert("node".into(), Readiness::Custom(Arc::new(PanickingClosure)));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+
+    assert_eq!(
+        session.begin_request(None),
+        Err(phenix_graph::runtime::RequestError::ReadinessPolicyPanicked)
+    );
+}
+
+#[test]
+fn invalid_request_closure_ports_are_rejected_before_scope_admission() {
+    struct UnknownClosure;
+    impl phenix_graph::runtime::ReadinessPolicy for UnknownClosure {
+        fn closure_ports(&self, _: usize) -> Vec<String> {
+            vec!["missing".into()]
+        }
+
+        fn select(&self, _: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    builder
+        .node(
+            "node",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    let mut options = options();
+    options
+        .readiness
+        .insert("node".into(), Readiness::Custom(Arc::new(UnknownClosure)));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+
+    let Err(phenix_graph::runtime::RequestError::InvalidClosurePorts(details)) =
+        session.begin_request(None)
+    else {
+        panic!("unknown closure port was admitted");
+    };
+    assert_eq!(details.process, "node");
+    assert_eq!(details.ports, ["missing"]);
+}
+
 struct ClosureRelay {
     name: &'static str,
     log: Arc<std::sync::Mutex<Vec<&'static str>>>,
@@ -2956,6 +4035,49 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
             .contains("factory panicked during request recovery")
     );
     s.release_request(id).unwrap();
+}
+
+#[test]
+fn factory_readiness_and_correlation_panics_fail_initialization_cleanly() {
+    struct Empty;
+    impl Process for Empty {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Finished)
+        }
+    }
+    struct Factory(bool, bool);
+    impl phenix_graph::process::ProcessFactory for Factory {
+        fn spawn(&self) -> Box<dyn Process> {
+            Box::new(Empty)
+        }
+
+        fn readiness(&self) -> Readiness {
+            assert!(!self.0, "readiness factory panic");
+            Readiness::default()
+        }
+
+        fn correlation_lanes(&self) -> Option<NonZeroUsize> {
+            assert!(!self.1, "correlation factory panic");
+            None
+        }
+    }
+
+    for (readiness, correlation, expected) in [
+        (true, false, "readiness panicked"),
+        (false, true, "correlation bound panicked"),
+    ] {
+        let mut builder = NetworkBuilder::new();
+        builder
+            .node(
+                "factory",
+                Arc::new(Interface::new([], []).unwrap()),
+                Arc::new(Factory(readiness, correlation)),
+            )
+            .unwrap();
+        let session = builder.build().unwrap().compile().unwrap().start();
+        assert_eq!(session.state(), SessionState::Failed);
+        assert!(session.failure().unwrap().contains(expected));
+    }
 }
 
 #[test]

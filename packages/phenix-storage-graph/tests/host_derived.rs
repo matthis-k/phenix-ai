@@ -5,6 +5,7 @@ use phenix_graph::{
         ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher,
         ProcessExecutionGuard,
     },
+    runtime::RequestQueuePolicy,
 };
 use phenix_kernel::{CandidateArtifacts, Key, host::LifecycleError};
 use phenix_plugin::PluginCatalog;
@@ -154,7 +155,12 @@ impl ProcessExecutionGuard for ApplicationGuard {
 
 #[test]
 fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_application_guard() {
-    for offload in [false, true] {
+    for (request_queue_policy, offload) in [
+        (RequestQueuePolicy::SharedFifo, false),
+        (RequestQueuePolicy::SharedFifo, true),
+        (RequestQueuePolicy::BoundedLanes, false),
+        (RequestQueuePolicy::BoundedLanes, true),
+    ] {
         let f = Fixture::new(true);
         f.put(&f.a, 3);
         f.put(&f.b, 5);
@@ -179,9 +185,13 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         );
         let mut options = options(&plugin);
         let entered = Arc::new(AtomicUsize::new(0));
-        options.execution.execution_guard = Some(Arc::new(ApplicationGuard(entered.clone())));
+        options
+            .execution
+            .execution_guards
+            .push(Arc::new(ApplicationGuard(entered.clone())));
         options.execution.capture_capacity = capacity();
         options.execution.max_requests = capacity();
+        options.execution.request_queue_policy = request_queue_policy;
         let mut catalog = PluginCatalog::new();
         let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
         let mut host = DerivedHost::new(catalog.instance());
@@ -214,9 +224,13 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         assert_eq!(*generation.query(&spec).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(entered.load(Ordering::SeqCst) >= 6);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         generation.drain(1).unwrap();
         generation.run_steps(128).unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
         assert_eq!(
             *target
                 .bind_query(&nested_spec_for(&target))
@@ -333,45 +347,69 @@ fn prepare_rejects_redirected_terminal_and_missing_source_captures_before_activa
 
 #[test]
 fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let effects = Arc::new(AtomicUsize::new(0));
-    let committed = effects.clone();
-    let plugin = reader(
-        &f,
-        Arc::default(),
-        Some(Arc::new(move || {
-            assert_ne!(
-                committed.fetch_add(1, Ordering::SeqCst),
-                0,
-                "first demand fails"
-            );
-        })),
-    );
-    let config = options(&plugin);
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
-    let mut host = DerivedHost::new(catalog.instance());
-    let candidate = host
-        .prepare(
-            vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-            config,
-            Arc::new(LocalProcessDispatcher),
-            "recoverable",
-            |_| Ok(()),
-        )
-        .unwrap();
-    let generation = host.publish(candidate).unwrap();
-    let spec = generation.with_kernel(|k| {
-        k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
-            .unwrap()
-            .clone()
-    });
-    assert!(
-        matches!(generation.query(&spec), Err(Error::Wave(e)) if e.join(" ").contains("panicked"))
-    );
-    assert_eq!(effects.load(Ordering::SeqCst), 1);
-    assert_eq!(*generation.query(&spec).unwrap(), 8);
-    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    for request_queue_policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let f = Fixture::new(true);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let effects = Arc::new(AtomicUsize::new(0));
+        let committed = effects.clone();
+        let plugin = reader(
+            &f,
+            Arc::default(),
+            Some(Arc::new(move || {
+                assert_ne!(
+                    committed.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "first demand fails"
+                );
+            })),
+        );
+        let mut config = options(&plugin);
+        config.execution.capture_capacity = capacity();
+        config.execution.max_requests = capacity();
+        config.execution.request_queue_policy = request_queue_policy;
+        let lease = Arc::new(());
+        let weak = Arc::downgrade(&lease);
+        config.execution.lease = Some(lease);
+        let mut catalog = PluginCatalog::new();
+        let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+        let mut host = DerivedHost::new(catalog.instance());
+        let candidate = host
+            .prepare(
+                vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+                config,
+                Arc::new(LocalProcessDispatcher),
+                "recoverable",
+                |_| Ok(()),
+            )
+            .unwrap();
+        let generation = host.publish(candidate).unwrap();
+        let spec = generation.with_kernel(|k| {
+            k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+                .unwrap()
+                .clone()
+        });
+        assert!(
+            matches!(generation.query(&spec), Err(Error::Wave(e)) if e.join(" ").contains("panicked"))
+        );
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let value = generation.query(&spec).unwrap();
+        assert_eq!(*value, 8);
+        assert_eq!(effects.load(Ordering::SeqCst), 2);
+        generation.drain(1).unwrap();
+        generation.run_steps(128).unwrap();
+        assert_eq!(effects.load(Ordering::SeqCst), 3);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(effects.load(Ordering::SeqCst), 4);
+        drop(host);
+        drop(generation);
+        drop(spec);
+        assert!(weak.upgrade().is_some());
+        assert_eq!(*value, 8);
+        drop(value);
+        assert!(weak.upgrade().is_none());
+    }
 }

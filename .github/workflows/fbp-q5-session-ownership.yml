@@ -1,0 +1,63 @@
+name: "FBP Q5 Session Ownership Interleavings"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-kernel/src/exclusive.rs"
+      - "packages/phenix-kernel/src/lib.rs"
+      - "verification/fbp-session-loom/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "docs/fbp-hardening-campaign-20261114.md"
+      - ".github/workflows/fbp-q5-session-ownership.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  session-ownership:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTFLAGS: "--cfg loom"
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Capture candidate and verifier toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "RUSTFLAGS=$RUSTFLAGS"
+            date -u +%FT%TZ
+            uname -a
+            nix --version
+            nix develop --command rustc -vV
+          } | tee artifacts/environment.txt
+          sha256sum \
+            packages/phenix-kernel/src/exclusive.rs \
+            verification/fbp-session-loom/Cargo.toml \
+            verification/fbp-session-loom/src/lib.rs \
+            verification/fbp-session-loom/Cargo.lock \
+            | tee artifacts/source-hashes.txt
+      - name: Format and model-check the production ownership primitive
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo fmt \
+            --manifest-path verification/fbp-session-loom/Cargo.toml -- --check
+          nix develop --command cargo test \
+            --manifest-path verification/fbp-session-loom/Cargo.toml \
+            --lib --locked -- --nocapture 2>&1 | tee artifacts/model.log
+      - name: Archive interleaving evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-q5-session-ownership-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn

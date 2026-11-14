@@ -1,13 +1,107 @@
 # Native FBP — implementation, acceptance and remaining gaps
 
-**Reconciled 2026-11-12** against **stacked candidate PR #1274** at
+## Current Campaign
+
+The sections below are the historical native-engine cutover report, not acceptance
+evidence for the 2026-11-14 lifecycle/request-lane merged head. The campaign
+incorrectly relied on stale local remote-tracking
+`origin/impl/graph-consolidation-20261110` at `16e77f6c6`, with inherited
+uncommitted work. Its first commit `0d145f3` is on
+`fix/fbp-lifecycle-request-lanes-20261114`, PR #1302 based on the impl graph
+branch. The actual remote impl head `89e00d0` already includes later foundations.
+After fetching, the campaign is now merging exact verified PR #1300 head
+`516e0883875d5ec483e3595d50b77b3d5e8979c4` to preserve the whole stack and
+all scoped gates, not replace them with the stale starting tree.
+
+Current implementation, policy decisions and verification gaps are recorded in
+[the campaign record](fbp-hardening-campaign-20261114.md). The complete one-decimal
+[33-issue tracker](fbp-issue-progress-estimates-20261113.md) remains authoritative.
+No entire issue, M7 or M8 closure is inferred from local passing suites. Production
+P1/P2 agent integration, OS plugin isolation, strict retired-generation revocation,
+full static liveness, and representative paired performance/memory acceptance are
+not delivered by this batch.
+
+The canonical timeout is only `SessionOptions.deferred_timeout`, with existing
+`overdue_jobs(now)` inspection and `supervise_deferred(now)` mutation. C9
+`state(&self)` remains passive. Execution guards are an ordered Vec;
+`ActivationJob::with_guard` appends, and reverse teardown keeps Kernel identity
+active through application-token and panic-payload cleanup. `BoundedLanes` is
+optional connection/ingress/capture queue isolation, not independent process state
+or unconditional progress.
+
+Kernel retains the verified whole-drain retirement gate and exclusive blocking-
+driver ownership. External publication waits for an admitted whole producer drain;
+it does not wait for explicit session work. Same-drain publication is rejected;
+host self-destruction marks retirement so a late poll result is discarded. All
+Kernel session calls fail fast on cross-thread contention with busy/`WouldBlock`;
+same-kernel callback/worker re-entry also fails fast. This preserves the verified
+lock-inversion contract, with retry after release, not ordinary session waiting.
+Initial waiter and no-wait-publication claims are historical and superseded.
+`ExclusiveSlot` now uses only `Mutex<Option<T>>` with `try_take`/release, no Condvar
+or waiters. The three-property session Loom verifier covers competing exclusive
+ownership, busy/no-theft with successful retry, and idempotent early release/state
+publication; revised merged-head acceptance remains pending.
+The initial no-wait/empty-return competing-drain policy is also discarded:
+manual drains serialize, recursion rejects, and a live blocking driver excludes
+manual polling, including `drain(0)`.
+
+Local workspace, no-default-feature, Clippy, Loom and Nix checks passed for the
+initial `0d145f3` candidate, not the new merged head. PR #1302 remote workflows
+initially conflicted. Manual [Flake #43588157944](https://github.com/matthis-k/phenix-ai/actions/runs/43588157944)
+is an initial `0d145f3` run, not final acceptance. **Full acceptance for the new
+merge remains pending.** Scores stay at the verified `516e088` baseline: H3b
+78.0%, Q5 74.0%, mean 55.3%, statuses 10 scoped verified / 7 partial / 16 open.
+M7 and M8 remain incomplete; no missing production adapter is claimed finished.
+The new merge head's performance is unmeasured; neither historical microbenchmarks
+nor verified-stack benchmark runs establish its timing, allocation or RSS.
+
+## Historical Report
+
+## Historical Cutover Evidence
+
+The first-side worktree report recorded native-engine cutover from clean baseline
+`32bbe60e6cd2ebd34a705486b4ef96e85245ee42`, six commits ahead of the rechecked
+PR #1260 head `671956269a2655084ae90eb0b1e09e506177d71c`. Baseline
+[CI #42773370525](https://github.com/matthis-k/phenix-ai/actions/runs/42773370525)
+accepted that baseline only. Cutover implementation was then uncommitted, with no
+new remote CI requested; this is historical provenance, not PR #1302's status.
+
+That report recorded these local cutover results, separately from both later
+verified-stack CI and initial `0d145f3` checks:
+
+| Historical command or suite | Recorded result |
+| --- | --- |
+| `cargo test --workspace --locked --quiet` | Passed |
+| `cargo test --workspace --no-default-features --locked --quiet` | Passed |
+| `cargo test -p phenix-graph --no-default-features --locked --quiet` | Passed, including Rustdoc |
+| `nix develop --command cargo fmt --all --check` | Passed |
+| `nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| Native `basic_fbp`, `streaming_fbp`, `plugin_composition`, `owned_dispatch` | Executed successfully |
+| Kernel `basic`, `storage`, `scoped_storage`; StorageGraph `derived` | Executed successfully |
+
+Historical `nix flake check --keep-going` passed against filtered immutable source
+`/nix/store/bp2c3y025jvmk2vsxsjcwdyfbz9mfjg4-phenix-fbp-verification-source`:
+eight changed derivations were built, with unchanged checks reused. The snapshot
+used `builtins.path`, including untracked sources and excluding `.git`, `target`
+and result links, without index mutation. Only documentation outside the packaged
+Rust sources changed after that recorded check. No part of this snapshot's result
+is acceptance for the new merge head. The [migration ledger](fbp-migration.md)
+preserves intermediate verification and the [measurement record](fbp-measurements.md)
+preserves physical/lexical counts, exclusions and reproduction limits.
+
+## Identity And Status
+
+**Historical reconciliation, 2026-11-12**, against **stacked candidate PR #1274** at
 `f81b49336dfce942f57dad1edc65add258be35fd`,
 [exact-head six-job CI #43279922626](https://github.com/matthis-k/phenix-ai/actions/runs/43279922626),
-**all checks successful**. See the [33-issue evidence ledger](fbp-issue-ledger-20261111.md)
-for per-finding details. This report update itself is a distinct
-documentation-only change requiring independent exact-head CI.
+**all checks successful**. See the [historical 33-issue evidence ledger](fbp-issue-ledger-20261111.md)
+for per-finding details; the [current tracker](fbp-issue-progress-estimates-20261113.md)
+is the sole current score authority. The report update at that time was a distinct
+documentation-only change requiring independent exact-head CI. The following
+snapshot, measurements and priorities retain their historical scope; later verified
+stack work is not erased or treated as absent from the current merge target.
 
-## Snapshot and branch provenance
+## Historical Snapshot And Provenance
 
 - Native prototype baseline: `impl/graph-consolidation-20261110`
   at `89e00d06498979a2f231dfc8ca780eba44140d27`.
@@ -27,11 +121,11 @@ documentation-only change requiring independent exact-head CI.
   exclusive blocking-driver vs direct-drain ownership, and
   [#1274](https://github.com/matthis-k/phenix-ai/pull/1274)
   capacity-one capture backpressure inspection/recovery tests.
-- These are **unmerged candidate PRs** on a stacked lineage, not changes
-  present on every older branch or the default branch. Independent
+- At that historical snapshot these were **unmerged candidate PRs** on a stacked
+  lineage, not changes present on every older branch or the default branch. Independent
   exact-head checks verify specific candidate commits, not a release.
 
-## Implemented native graph and composition model
+## Historical Native Model
 
 The native FBP engine uses one `ComponentDef` primitive/composite model,
 typed input/output interfaces, flattened compile-time composites and
@@ -47,7 +141,7 @@ and compatibility shims are not retained. An editable iterative-agent
 composition demonstrates ordinary extension points; it does **not**
 constitute a production model/tool/memory/streaming agent product.
 
-## Correctness progress with exact evidence
+## Historical Correctness Evidence
 
 | Area | Verified scoped change | Remaining |
 | --- | --- | --- |
@@ -64,7 +158,7 @@ captures without freeing capacity or **explicitly budgeting more storage**.
 The implementation never automatically discards another request's packet.
 H7 remains **Partial**, not proven fair in every shared-session schedule.
 
-## Size and measured performance
+## Historical Performance Evidence
 
 [fbp-measurements.md](fbp-measurements.md) previously reported a historical
 **15,688 → 7,645 non-test graph/derive physical LOC** between an older graph
@@ -96,7 +190,7 @@ indexed runtime commits. This validates one bounded request-inspection
 workload, **not** upstream closure traversal, scheduler scaling,
 allocator/RSS or production-agent throughput. H5 remains Partial.
 
-## Milestone and issue status
+## Historical Milestone Status
 
 | Milestone | Assessment |
 | --- | --- |
@@ -104,14 +198,14 @@ allocator/RSS or production-agent throughput. H5 remains Partial.
 | M4 | Persistent runtime and cancellation implemented; global fairness/scale acceptance incomplete |
 | M5–M6 | Kernel/StorageGraph integration, legacy-engine removal and agent-loop composition demonstrated |
 | M7 | **INCOMPLETE** — performance, liveness, concurrency evidence and policy decisions outstanding |
-| M8 | Agent-loop composition proof, **not a production agent product** |
+| M8 | **INCOMPLETE**: agent-loop composition proof, **not a production agent product** |
 
 **33-finding status: 10 verified, 7 partial, 16 open**.
 These categories are not a weighted completion percentage. In
 particular H3b and H7 are still partial despite substantial verified
 subproblem closures.
 
-## Next priority decisions
+## Historical Priority Decisions
 
 1. H7: Specify whether an optional per-request capture reserve is required.
    If so, define an explicit total memory budget, order among global and
@@ -130,7 +224,7 @@ subproblem closures.
 5. A1–A6, Q1–Q7: Apply design, adversarial critique and exact-diff review
    with concrete agent-loop use cases.
 
-**Disposition:** scoped native graph/kernel reliability is materially
+**Historical disposition:** scoped native graph/kernel reliability is materially
 stronger and CI-verified on the complete stack. No universal deadlock
 freedom, static liveness, all-request fairness, zero-cost scaling,
 automatic live-state migration, in-process plugin sandbox or production

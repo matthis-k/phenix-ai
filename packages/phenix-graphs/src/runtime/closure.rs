@@ -77,10 +77,24 @@ impl NetworkSession {
         match &p.policy {
             Readiness::Optional { required, optional } if required.is_empty() => {
                 optional.iter().any(|name| {
-                    let port = p.inputs.iter().position(|port| &port.name == name).unwrap();
+                    let port = p
+                        .inputs
+                        .iter()
+                        .position(|port| &port.name == name)
+                        .expect("validated optional readiness port");
                     !scope.observed_inputs.contains(&(index, port))
                 })
             }
+            Readiness::Custom(_) => scope.closure_ports.get(&index).is_some_and(|names| {
+                names.iter().any(|name| {
+                    let port = p
+                        .inputs
+                        .iter()
+                        .position(|port| &port.name == name)
+                        .expect("validated custom closure port");
+                    !scope.observed_inputs.contains(&(index, port))
+                })
+            }),
             _ => false,
         }
     }

@@ -358,10 +358,15 @@ fn guarded_compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
 ) -> Result<Composition, ComposeError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         compose(base, registrations)
-    }))
-    .unwrap_or(Err(ComposeError::Panicked))
+    })) {
+        Ok(result) => result,
+        Err(payload) => {
+            crate::discard_panic_payload(payload);
+            Err(ComposeError::Panicked)
+        }
+    }
 }
 
 fn compose(

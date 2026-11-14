@@ -37,4 +37,7 @@ fn main() {
     measure("run_steps_zero", || {
         black_box(kernel.run_steps(0).unwrap());
     });
+    measure("drain_zero", || {
+        black_box(kernel.drain(0).unwrap());
+    });
 }

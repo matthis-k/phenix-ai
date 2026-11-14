@@ -8,7 +8,7 @@ use phenix_graph::{
         ProcessDispatcher, ProcessExecutionGuard, Step,
     },
 };
-use phenix_kernel::{CandidateArtifacts, Contribution, InputEvent, Kernel, Producer};
+use phenix_kernel::{CandidateArtifacts, Contribution, InputEvent, Kernel, Producer, WakeHandle};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{
     Arc, Mutex,
@@ -127,6 +127,87 @@ fn full_retains_exactly_one_event_and_does_not_repoll_or_execute() {
     kernel.run_steps(100).unwrap();
     assert_eq!(*calls.lock().unwrap(), [1, 2, 3]);
 }
+
+#[test]
+fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_fails_fast() {
+    struct ReentrantReadiness {
+        kernel: Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        failures: Arc<Mutex<Vec<String>>>,
+    }
+    impl phenix_graph::runtime::ReadinessPolicy for ReentrantReadiness {
+        fn select(&self, snapshot: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+            let kernel = self
+                .kernel
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .upgrade()
+                .unwrap();
+            assert_eq!(
+                kernel.drain(0).unwrap_err(),
+                phenix_kernel::DriverError::ReentrantDrain
+            );
+            self.failures
+                .lock()
+                .unwrap()
+                .push(kernel.run_steps(0).unwrap_err());
+            snapshot
+                .heads
+                .iter()
+                .find(|head| head.port == "run" && head.available)
+                .map(|head| vec![head.port.clone()])
+                .unwrap_or_default()
+        }
+    }
+
+    let polls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::new(Mutex::new(vec![]));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let snapshot = support::snapshot(
+        "fixture",
+        Fixture {
+            polls,
+            calls,
+            drops,
+            capture: false,
+        },
+    );
+    let kernel_ref = Arc::new(Mutex::new(None));
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let mut options = support::options(std::slice::from_ref(&snapshot));
+    options.execution.readiness.insert(
+        "worker".into(),
+        phenix_graph::runtime::Readiness::Custom(Arc::new(ReentrantReadiness {
+            kernel: kernel_ref.clone(),
+            failures: failures.clone(),
+        })),
+    );
+    let mut built = Kernel::build_with_options(
+        "admission-callback",
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
+    built.start().unwrap();
+    let kernel = Arc::new(built);
+    *kernel_ref.lock().unwrap() = Some(Arc::downgrade(&kernel));
+
+    let driver = kernel.clone();
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(driver.drain(1)).unwrap());
+    let events = received
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("readiness callback deadlocked on kernel ownership")
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        *failures.lock().unwrap(),
+        ["reentrant access to the same kernel session"]
+    );
+}
+
 #[test]
 fn owned_jobs_and_captured_packets_retain_snapshot_code_after_kernel_drop() {
     let (mut kernel, _, _, drops) = fixture(false);
@@ -185,6 +266,41 @@ fn explicit_session_ownership_defers_producer_admission_without_blocking_retirem
     assert_eq!(kernel.drain(1).unwrap().len(), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn concurrent_session_calls_fail_fast_and_can_retry_after_lease_release() {
+    let (mut kernel, _, _, _) = fixture(false);
+    kernel.start().unwrap();
+    let kernel = Arc::new(kernel);
+    let owner = kernel.clone();
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        owner
+            .with_session(|_| {
+                entered.send(()).unwrap();
+                released.recv().unwrap();
+            })
+            .unwrap()
+    });
+    ready.recv().unwrap();
+
+    let reader = kernel.clone();
+    let (completed, completion) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || {
+        completed.send(reader.run_steps(0)).unwrap();
+    });
+    let result = completion.recv_timeout(std::time::Duration::from_secs(2));
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    assert_eq!(
+        result.expect("contending caller blocked").unwrap_err(),
+        "kernel session busy"
+    );
+    waiter.join().unwrap();
+    assert!(kernel.run_steps(0).is_ok());
+}
+
 #[test]
 fn host_grants_are_required_and_cannot_be_supplied_by_the_patch() {
     let snapshot = support::snapshot(
@@ -278,7 +394,10 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
         },
     );
     let mut options = support::options(std::slice::from_ref(&snapshot));
-    options.execution.execution_guard = Some(Arc::new(Guard(entered.clone())));
+    options
+        .execution
+        .execution_guards
+        .push(Arc::new(Guard(entered.clone())));
     let mut kernel = Kernel::build_with_options(
         "worker",
         [snapshot],
@@ -301,9 +420,86 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
 }
 
 #[test]
-fn process_callback_does_not_hold_kernel_session_mutex() {
-    use std::time::Duration;
+fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
+    struct WorkerDispatcher;
+    impl ProcessDispatcher for WorkerDispatcher {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            let (send, receive) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = send.send(job.run());
+            });
+            DispatchResult::Completed(
+                receive
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("kernel re-entry guard was not propagated to the worker"),
+            )
+        }
+    }
 
+    struct ReentrantProcess(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Vec<String>>>,
+    );
+    impl Process for ReentrantProcess {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+            self.1
+                .lock()
+                .unwrap()
+                .push(kernel.with_session(|_| ()).unwrap_err());
+            Ok(Step::Finished)
+        }
+    }
+
+    struct Plugin(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Vec<String>>>,
+    );
+    impl PluginInstance for Plugin {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            let access = self.0.clone();
+            let failures = self.1.clone();
+            let source = Arc::new(ComponentDef::primitive(
+                Arc::new(Interface::new([], []).unwrap()),
+                Arc::new(move || ReentrantProcess(access.clone(), failures.clone())),
+            ));
+            into.add(support::contribution(
+                "source",
+                NetworkPatch::new([
+                    Edit::Add {
+                        path: "source".into(),
+                        definition: source,
+                    },
+                    Edit::AddSource("source".into()),
+                ]),
+            ))
+        }
+    }
+
+    let access = Arc::new(Mutex::new(None));
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let snapshot = support::snapshot("reentrant", Plugin(access.clone(), failures.clone()));
+    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut kernel = Kernel::build_with_options(
+        "reentrant-process",
+        [snapshot],
+        Arc::new(WorkerDispatcher),
+        options,
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    let kernel = Arc::new(kernel);
+    *access.lock().unwrap() = Some(Arc::downgrade(&kernel));
+
+    assert_eq!(kernel.run_steps(1).unwrap().steps, 1);
+    assert_eq!(
+        *failures.lock().unwrap(),
+        ["reentrant access to the same kernel session"]
+    );
+}
+
+#[test]
+fn process_callback_does_not_hold_kernel_session_mutex() {
     struct Probe(
         Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
         Arc<Mutex<Option<Result<(), String>>>>,
@@ -311,15 +507,7 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
     impl Process for Probe {
         fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
             let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
-            let worker = kernel.clone();
-            let (result_tx, result_rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                result_tx.send(worker.with_session(|_| ())).unwrap();
-            });
-            let result = match result_rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(result) => result,
-                Err(_) => Err("session access blocked behind process callback".into()),
-            };
+            let result = kernel.with_session(|_| ());
             *self.1.lock().unwrap() = Some(result);
             Ok(Step::Finished)
         }
@@ -371,7 +559,7 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
     assert_eq!(kernel.run_steps(1).unwrap().steps, 1);
     assert_eq!(
         *result.lock().unwrap(),
-        Some(Err("kernel session busy".into()))
+        Some(Err("reentrant access to the same kernel session".into()))
     );
 }
 
@@ -493,6 +681,94 @@ fn blocking_driver_observes_native_process_wakes_and_external_shutdown() {
     driver.join().unwrap().unwrap();
     result.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification() {
+    struct EventSource(bool);
+    impl Producer for EventSource {
+        fn poll(&mut self) -> Result<Option<InputEvent>, phenix_kernel::CallbackError> {
+            if std::mem::replace(&mut self.0, true) {
+                Ok(None)
+            } else {
+                Ok(Some(InputEvent {
+                    input: "input".into(),
+                    value: Value::local(1_i64),
+                }))
+            }
+        }
+
+        fn set_waker(&mut self, _: WakeHandle) -> bool {
+            true
+        }
+    }
+    struct HoldJob(Arc<Mutex<Option<ActivationJob>>>);
+    impl ProcessDispatcher for HoldJob {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            *self.0.lock().unwrap() = Some(job);
+            DispatchResult::Deferred
+        }
+    }
+    struct Plugin;
+    impl PluginInstance for Plugin {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            into.add(Contribution {
+                id: "main".into(),
+                requires: vec![],
+                routes: vec!["input".into()],
+                patch: NetworkPatch::new([
+                    Edit::Add {
+                        path: "worker".into(),
+                        definition: support::sink(|_| {}),
+                    },
+                    Edit::ExposeInput {
+                        name: "input".into(),
+                        targets: vec![support::path("worker", "run")],
+                        capacity: support::capacity(),
+                    },
+                ]),
+                prepare: Some(Box::new(move |_| {
+                    let mut artifacts = CandidateArtifacts::default();
+                    artifacts.activate(|| Ok(Box::new(EventSource(false))))?;
+                    Ok(artifacts)
+                })),
+            })
+        }
+    }
+
+    let held = Arc::new(Mutex::new(None));
+    let snapshot = support::snapshot("timeout", Plugin);
+    let mut options = support::options(std::slice::from_ref(&snapshot));
+    options.execution.deferred_timeout = Some(std::time::Duration::from_millis(20));
+    let mut kernel = Kernel::build_with_options(
+        "deferred-timeout",
+        [snapshot],
+        Arc::new(HoldJob(held.clone())),
+        options,
+    )
+    .unwrap();
+    kernel.start().unwrap();
+
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        send.send(kernel.run_until(&WakeHandle::default(), |_| {}))
+            .unwrap();
+    });
+    let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+    assert!(
+        result.is_ok(),
+        "driver slept past the deferred-job deadline; job held={}",
+        held.lock().unwrap().is_some()
+    );
+    let error = result.unwrap().unwrap_err();
+    assert!(matches!(
+        error,
+        phenix_kernel::DriverError::SessionStopped {
+            state: phenix_graph::runtime::SessionState::Failed,
+            cause: Some(cause),
+        } if cause.contains("deferred job timeout")
+    ));
+    assert!(held.lock().unwrap().is_some());
 }
 
 #[test]

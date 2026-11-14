@@ -1,8 +1,9 @@
 mod support;
 use phenix_graph::{
-    Value,
+    Interface, PortDef, Value,
+    component::ComponentDef,
     compose::{Edit, Footprint, NetworkPatch},
-    process::LocalProcessDispatcher,
+    process::{LocalProcessDispatcher, Process, ProcessContext, Step},
 };
 use phenix_kernel::host::{Candidate, Generation, KernelHost, LifecycleError};
 use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, InputEvent, Key, Producer};
@@ -18,6 +19,33 @@ impl Drop for Artifact {
     }
 }
 
+struct StatefulSink {
+    name: String,
+    revision: usize,
+    log: Log,
+    _artifact: Arc<Artifact>,
+    gate: Option<Arc<(Barrier, Barrier)>>,
+    processed: usize,
+}
+
+impl Process for StatefulSink {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        if context.take("run").is_none() {
+            return Ok(Step::Finished);
+        }
+        self.processed += 1;
+        if let Some(gate) = &self.gate {
+            gate.0.wait();
+            gate.1.wait();
+        }
+        self.log.lock().unwrap().push(format!(
+            "fire:{}:{}:{}",
+            self.name, self.revision, self.processed
+        ));
+        Ok(Step::Complete)
+    }
+}
+
 #[derive(Clone)]
 struct Plugin {
     name: String,
@@ -27,6 +55,7 @@ struct Plugin {
     compile_fail: bool,
     compose_fail: bool,
     start_fail: bool,
+    start_panic: bool,
     gate: Option<Arc<(Barrier, Barrier)>>,
 }
 
@@ -40,6 +69,7 @@ impl Plugin {
             compile_fail: false,
             compose_fail: false,
             start_fail: false,
+            start_panic: false,
             gate: None,
         }
     }
@@ -78,6 +108,7 @@ impl PluginInstance for Plugin {
         let compile_fail = self.compile_fail;
         let compose_fail = self.compose_fail;
         let start_fail = self.start_fail;
+        let start_panic = self.start_panic;
         let start_log = log.clone();
         let start_name = name.clone();
         let gate = self.gate.clone();
@@ -92,22 +123,25 @@ impl PluginInstance for Plugin {
                     .unwrap()
                     .push(format!("compose:{name}:{revision}"));
                 context.export(Artifact(format!("export:{name}:{revision}"), log.clone()))?;
-                let action_guard = Artifact(format!("action:{name}:{revision}"), log.clone());
+                let action_guard =
+                    Arc::new(Artifact(format!("action:{name}:{revision}"), log.clone()));
                 let factory_guard = Artifact(format!("factory:{name}:{revision}"), log.clone());
-                let action_log = log.clone();
-                let action_name = name.clone();
-                let action_gate = gate.clone();
-                let node = support::sink(move |_: i64| {
-                    let _ = &action_guard;
-                    if let Some(gate) = &action_gate {
-                        gate.0.wait();
-                        gate.1.wait();
-                    }
-                    action_log
-                        .lock()
-                        .unwrap()
-                        .push(format!("fire:{action_name}:{revision}"));
-                });
+                let node = Arc::new(ComponentDef::primitive(
+                    Arc::new(Interface::new([PortDef::local::<i64>("run")], []).unwrap()),
+                    Arc::new({
+                        let name = name.clone();
+                        let log = log.clone();
+                        let gate = gate.clone();
+                        move || StatefulSink {
+                            name: name.clone(),
+                            revision,
+                            log: log.clone(),
+                            _artifact: action_guard.clone(),
+                            gate: gate.clone(),
+                            processed: 0,
+                        }
+                    }),
+                ));
                 context.patch = Some(NetworkPatch::new([
                     Edit::Add {
                         path: name.clone(),
@@ -130,6 +164,9 @@ impl PluginInstance for Plugin {
                         .lock()
                         .unwrap()
                         .push(format!("start:{start_name}:{revision}"));
+                    if start_panic {
+                        panic!("activation panic");
+                    }
                     if start_fail {
                         return Err("activation failed".into());
                     }
@@ -227,12 +264,18 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
         assert!(previous.drain(100).unwrap().is_empty());
         assert_eq!(current.drain(1).unwrap().len(), 1);
         fire(&current, "alpha");
+        assert!(
+            log.lock()
+                .unwrap()
+                .contains(&format!("fire:alpha:{revision}:1"))
+        );
         assert_eq!(
             host.plugins().snapshot(&a).unwrap().revision(),
             revision as u64
         );
     }
     fire(&old, "alpha");
+    assert!(log.lock().unwrap().contains(&"fire:alpha:1:2".into()));
     assert!(!log.lock().unwrap().contains(&"plugin:alpha:1".into()));
     let latest = host.active().unwrap();
     let candidate = prepare(
@@ -273,7 +316,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
     )
     .unwrap();
     let old = host.publish(initial).unwrap();
-    for mode in 0..5 {
+    for mode in 0..6 {
         log.lock().unwrap().clear();
         let mut replacement = Plugin::new("alpha", 2, &log);
         replacement.requires = if mode == 0 {
@@ -286,6 +329,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
         let first = host.plugins().prepare_reload(&a, replacement).unwrap();
         let mut second = Plugin::new("beta", 2, &log);
         second.start_fail = mode == 3;
+        second.start_panic = mode == 5;
         let stages = vec![first, host.plugins().prepare_load(&b, second).unwrap()];
         let result = if mode == 2 {
             host.prepare(
@@ -300,7 +344,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
         };
         match (mode, result) {
             (0 | 1 | 4, Err(LifecycleError::Build(_))) | (2, Err(LifecycleError::Binding(_))) => {}
-            (3, Err(error @ LifecycleError::Start(_))) => {
+            (3 | 5, Err(error @ LifecycleError::Start(_))) => {
                 let start = std::error::Error::source(&error)
                     .unwrap()
                     .downcast_ref::<phenix_kernel::StartError>()
@@ -308,6 +352,9 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
                 assert!(
                     matches!(start, phenix_kernel::StartError::Activation { contribution, .. } if *contribution == Key::new("beta", "main"))
                 );
+                if mode == 5 {
+                    assert!(error.to_string().contains("activation panicked"));
+                }
                 assert!(std::error::Error::source(start).is_some());
             }
             _ => panic!("unexpected preparation outcome for {mode}"),
@@ -336,7 +383,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
                 .iter()
                 .any(|event| event.starts_with("poll:") || event.starts_with("fire:"))
         );
-        if mode == 3 {
+        if matches!(mode, 3 | 5) {
             assert!(events.contains(&"start:alpha:2".into()));
             assert!(events.contains(&"start:beta:2".into()));
             assert!(events.contains(&"stop:alpha".into()));

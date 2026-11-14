@@ -58,7 +58,9 @@ impl std::error::Error for LifecycleError {
 
 /// An immutable generation identity with serialized producer access. No mutable
 /// kernel or producer access escapes. Explicit session calls remain valid after
-/// replacement, but retired producers can never admit another event.
+/// replacement. Publication waits for an admitted whole drain; self-retirement
+/// inside a callback rejects its late event. An admission that won the retirement
+/// boundary may finish, including its eager session callbacks.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -213,7 +215,9 @@ impl KernelHost {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             bind(&Binding { kernel: &kernel })
         }))
-        .unwrap_or_else(|_| Err("generation binding panicked".into()))
+        .unwrap_or_else(|payload| {
+            Err(crate::contained_panic_message("generation binding panicked", payload).into())
+        })
         .map_err(|cause| {
             LifecycleError::Binding(phenix_plugin::lease_callback_error(
                 cause,
@@ -230,8 +234,9 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement waits only for producer drains, never explicit session work or queries.
-    /// Producer destructors run after the transition.
+    /// Retirement waits for an admitted whole producer drain, but never for
+    /// explicit session work. No new drain can poll a retired generation.
+    /// Producer destructors run after the transition and outside the state lock.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
@@ -368,7 +373,7 @@ mod tests {
     #[test]
     fn host_drop_during_producer_callbacks_defers_retirement_and_destructors() {
         use std::cell::RefCell;
-        use std::sync::{Mutex, Weak};
+        use std::sync::Weak;
 
         thread_local! {
             static OWNER: RefCell<Option<KernelHost>> = const { RefCell::new(None) };
@@ -478,8 +483,9 @@ mod tests {
                             std::num::NonZeroUsize::new(1).unwrap(),
                         )
                         .unwrap();
-                    kernel.session =
-                        Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
+                    kernel.session = crate::ExclusiveSlot::new(
+                        builder.build().unwrap().compile().unwrap().start(),
+                    );
                 }
 
                 kernel.routes.insert(
@@ -566,7 +572,7 @@ mod tests {
 
     #[test]
     fn externally_retired_live_driver_exits_without_shutdown_and_preserves_session() {
-        use std::sync::{Mutex, mpsc};
+        use std::sync::mpsc;
         use std::time::Duration;
 
         struct Idle {
@@ -607,7 +613,8 @@ mod tests {
                     std::num::NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
+            kernel.session =
+                crate::ExclusiveSlot::new(builder.build().unwrap().compile().unwrap().start());
             kernel.producers.get_mut().unwrap().producers.push((
                 Key::new("test", "idle"),
                 Some(Box::new(Idle { registered, polled })),
