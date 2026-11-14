@@ -2959,6 +2959,54 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
 }
 
 #[test]
+fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
+    struct DropOnFinish(Arc<std::sync::atomic::AtomicBool>);
+    impl Process for DropOnFinish {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if context.is_eos("in") {
+                return Ok(Step::Complete);
+            }
+            context.take("in");
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for DropOnFinish {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("idle process destructor panic");
+            }
+        }
+    }
+
+    let drops = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut builder = NetworkBuilder::new();
+    let drops_for_factory = drops.clone();
+    let node = builder
+        .node(
+            "finish",
+            Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap()),
+            Arc::new(move || DropOnFinish(drops_for_factory.clone())),
+        )
+        .unwrap();
+    builder
+        .expose_input("in", node.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session = builder.build().unwrap().compile().unwrap().start();
+    session.inject_local("in", 1_i64).unwrap();
+    session.close_input("in").unwrap();
+
+    let report = session.run_until_idle(20);
+    assert_eq!(report.state, SessionState::Failed);
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .contains("owned destructor panicked while finishing")
+    );
+    assert!(drops.load(Ordering::SeqCst));
+}
+
+#[test]
 fn cancelling_committed_capture_is_explicit_disposal_not_state_or_publication_rollback() {
     use phenix_graph::runtime::RequestStatus;
     let spawns = Arc::new(AtomicUsize::new(0));
@@ -3216,6 +3264,167 @@ fn request_cancellation_restarts_input_continuation_without_reusing_staged_state
     assert_eq!(
         s.request_status(next).unwrap(),
         RequestStatus::Settled { captures: 0 }
+    );
+}
+
+#[test]
+fn panicking_disposed_payloads_cannot_skip_request_wake_and_process_retirement() {
+    use phenix_graph::runtime::{RequestError, RequestStatus};
+
+    struct PanicPayload {
+        panic: bool,
+        once: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl Drop for PanicPayload {
+        fn drop(&mut self) {
+            if self.panic && !self.once.swap(true, Ordering::SeqCst) {
+                panic!("queued request payload drop panic");
+            }
+        }
+    }
+    struct CancelWaiter(bool);
+    impl Process for CancelWaiter {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            if context.take("trigger").is_some() {
+                self.0 = true;
+                return Ok(Step::WaitWake);
+            }
+            if self.0 {
+                self.0 = false;
+                return Ok(Step::Complete);
+            }
+            Ok(Step::Finished)
+        }
+    }
+    struct PayloadSink;
+    impl Process for PayloadSink {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+            context.take("payload");
+            Ok(Step::Complete)
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let waiter = builder
+        .node(
+            "waiter",
+            Arc::new(Interface::new([PortDef::local::<i64>("trigger")], []).unwrap()),
+            Arc::new(|| CancelWaiter(false)),
+        )
+        .unwrap();
+    let payload_sink = builder
+        .node(
+            "payload_sink",
+            Arc::new(Interface::new([PortDef::local::<PanicPayload>("payload")], []).unwrap()),
+            Arc::new(|| PayloadSink),
+        )
+        .unwrap();
+    builder
+        .expose_input("trigger", waiter.input::<i64>("trigger").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input(
+            "payload",
+            payload_sink.input::<PanicPayload>("payload").unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(restarting_options());
+    let request = session.begin_request(None).unwrap();
+    session
+        .inject_request(request, "trigger", Value::local(1_i64))
+        .unwrap();
+    assert_eq!(session.run_until_idle(1).steps, 1);
+    let old_wake = session.wake_handle("waiter").unwrap();
+    let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    session
+        .inject_request(
+            request,
+            "payload",
+            Value::local(PanicPayload {
+                panic: false,
+                once: panic_once.clone(),
+            }),
+        )
+        .unwrap();
+    session
+        .inject_request(
+            request,
+            "payload",
+            Value::local(PanicPayload {
+                panic: true,
+                once: panic_once.clone(),
+            }),
+        )
+        .unwrap();
+    let cancellation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.cancel_request(request)
+    }));
+    assert!(
+        matches!(
+            cancellation,
+            Ok(Err(RequestError::PacketDestructorPanicked))
+        ),
+        "unexpected cancellation result: {cancellation:?}"
+    );
+    assert!(!old_wake.wake());
+    assert_eq!(
+        session.request_status(request),
+        Ok(RequestStatus::Cancelled)
+    );
+    assert_eq!(session.request_work(request).unwrap().queued, 0);
+    assert_eq!(session.request_work(request).unwrap().waiting_wake, 0);
+    let disposal = session.request_disposal(request).unwrap();
+    assert_eq!(disposal.queued_packets, 1);
+    assert_eq!(disposal.prepared_packets, 0);
+
+    let fresh = session.begin_request(None).unwrap();
+    session
+        .inject_request(fresh, "trigger", Value::local(2_i64))
+        .unwrap();
+    session.close_request(fresh).unwrap();
+    assert_eq!(session.run_until_idle(1).steps, 1);
+    let fresh_wake = session.wake_handle("waiter").unwrap();
+    assert!(fresh_wake.wake());
+    session.run_until_idle(10);
+    assert_eq!(
+        session.request_status(fresh),
+        Ok(RequestStatus::Settled { captures: 0 })
+    );
+    session.release_request(fresh).unwrap();
+
+    let context_request = session.begin_request(None).unwrap();
+    session
+        .inject_request(context_request, "trigger", Value::local(3_i64))
+        .unwrap();
+    assert_eq!(session.run_until_idle(1).steps, 1);
+    let context_wake = session.wake_handle("waiter").unwrap();
+    session
+        .inject_request(
+            context_request,
+            "payload",
+            Value::local(PanicPayload {
+                panic: true,
+                once: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }),
+        )
+        .unwrap();
+    let cancellation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.cancel_request(context_request)
+    }));
+    assert!(matches!(
+        cancellation,
+        Ok(Err(RequestError::ProcessDestructorPanicked))
+    ));
+    assert!(!context_wake.wake());
+    assert_eq!(
+        session.request_status(context_request),
+        Ok(RequestStatus::Cancelled)
     );
 }
 

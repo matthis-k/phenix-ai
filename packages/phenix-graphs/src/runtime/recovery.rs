@@ -78,23 +78,29 @@ impl NetworkSession {
             .filter(|(_, p)| p.request == Some(id))
             .map(|(index, _)| index)
             .collect();
-        let disposed = self.transport.discard_request(id);
+        let disposed_packets = self.transport.detach_request(id);
+        let disposed = disposed_packets.len();
         self.disposed_packets = self.disposed_packets.saturating_add(disposed);
         let scope = self.requests.get_mut(&id).unwrap();
         scope.disposal.queued_packets = scope.disposal.queued_packets.saturating_add(disposed);
         self.ready.retain(|index| !affected.contains(index));
+        let mut cancelled_processes = Vec::with_capacity(affected.len());
+        let mut pending_disposals = Vec::new();
         for index in &affected {
             let retired_wake = {
                 let p = &mut self.processes[*index];
                 let scope = self.requests.get_mut(&id).unwrap();
                 scope.disposal.activations += 1;
-                if let Some(pending) = p.pending.take() {
-                    scope.disposal.prepared_packets += pending.retained_packets();
+                if let Some(prepared) = p.pending.take() {
+                    scope.disposal.prepared_packets += prepared.retained_packets();
+                    pending_disposals.push(prepared);
                 }
-                if let Some(ticket) = p.handoff.cancel() {
+                let cancelled = p.handoff.cancel_detach();
+                if let Some(ticket) = cancelled.ticket() {
                     scope.cancelled_jobs.push(ticket);
                     scope.disposal.handed_jobs += 1;
                 }
+                cancelled_processes.push(cancelled);
                 p.pending_targets.clear();
                 p.request = None;
                 p.waiting = None;
@@ -108,6 +114,13 @@ impl NetworkSession {
             // a replacement slot can be installed for this compiled index.
             self.signal.retire_target(*index, &retired_wake);
         }
+        let mut process_destructor_panicked = false;
+        for cancelled in cancelled_processes {
+            process_destructor_panicked |= cancelled.dispose().is_err();
+        }
+        let pending_destructor_panicked = drop_prepared_catching(pending_disposals);
+        let packet_destructor_panicked = drop_packets_catching(disposed_packets);
+        let mut recovery_failed = false;
         if !affected.is_empty() && self.terminal.is_none() {
             if self.request_failure_policy == RequestFailurePolicy::FailSession {
                 let diagnostic = self.requests[&id].failure.clone().unwrap_or_else(|| {
@@ -121,14 +134,20 @@ impl NetworkSession {
                     }));
                     let process = match spawned {
                         Ok(process) => process,
-                        Err(_) => {
+                        Err(payload) => {
+                            process_destructor_panicked |=
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    drop(payload)
+                                }))
+                                .is_err();
                             let diagnostic = format!(
                                 "process factory panicked during request recovery: {}",
                                 self.compiled.processes()[index].path()
                             );
                             self.requests.get_mut(&id).unwrap().failure = Some(diagnostic.clone());
                             self.fail(diagnostic);
-                            return Err(RequestError::RecoveryFailed);
+                            recovery_failed = true;
+                            break;
                         }
                     };
                     let mut handoff = self.processes[index].handoff.replacement(process);
@@ -153,6 +172,25 @@ impl NetworkSession {
         self.force_full_refresh = true;
         self.refresh();
         self.notifier().notify();
+        if (process_destructor_panicked
+            || pending_destructor_panicked
+            || packet_destructor_panicked)
+            && let Some(failure) = self
+                .requests
+                .get_mut(&id)
+                .and_then(|scope| scope.failure.as_mut())
+        {
+            failure.push_str("; destructor panicked during request cleanup");
+        }
+        if recovery_failed {
+            return Err(RequestError::RecoveryFailed);
+        }
+        if process_destructor_panicked {
+            return Err(RequestError::ProcessDestructorPanicked);
+        }
+        if pending_destructor_panicked || packet_destructor_panicked {
+            return Err(RequestError::PacketDestructorPanicked);
+        }
         Ok(tickets)
     }
 }

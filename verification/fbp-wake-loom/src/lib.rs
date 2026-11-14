@@ -111,6 +111,82 @@ mod wake {
         }
 
         #[test]
+        fn targeted_notifications_and_concurrent_scheduler_drains_preserve_a_wake() {
+            check("targeted notifications vs scheduler drains", || {
+                const PROCESS: usize = 13;
+                let signal = WakeSignal::new();
+                let slot = Arc::new(WakeSlot::default());
+                let notifier = {
+                    let signal = signal.clone();
+                    let slot = slot.clone();
+                    thread::spawn(move || {
+                        assert!(signal.notify_target(&slot, PROCESS, false));
+                        assert!(signal.notify_target(&slot, PROCESS, true));
+                    })
+                };
+                let drainer = {
+                    let signal = signal.clone();
+                    thread::spawn(move || {
+                        let (_, first) = signal.take_scheduler_wakes();
+                        let (_, second) = signal.take_scheduler_wakes();
+                        first.contains(&PROCESS) || second.contains(&PROCESS)
+                    })
+                };
+                notifier.join().unwrap();
+                let observed = drainer.join().unwrap();
+                let (_, final_targets) = signal.take_scheduler_wakes();
+                assert!(
+                    observed || final_targets.contains(&PROCESS),
+                    "both targeted notifications were lost across scheduler drains"
+                );
+                assert_eq!(signal.state.lock().unwrap().epoch, 2);
+                assert!(slot.pending.load(Ordering::Acquire));
+                assert!(signal.take_scheduler_wakes().1.is_empty());
+            });
+        }
+
+        #[test]
+        fn external_plugin_mutex_with_wake_notifier_does_not_block_scheduler_drain() {
+            check("external plugin mutex vs wake notifier and drain", || {
+                const PROCESS: usize = 17;
+                let signal = WakeSignal::new();
+                let slot = Arc::new(WakeSlot::default());
+                let plugin_lock = Arc::new(Mutex::new(()));
+                let plugin_notifier = {
+                    let signal = signal.clone();
+                    let slot = slot.clone();
+                    let plugin_lock = plugin_lock.clone();
+                    thread::spawn(move || {
+                        let _plugin_guard = plugin_lock.lock().unwrap();
+                        assert!(signal.notify_target(&slot, PROCESS, true));
+                    })
+                };
+                let driver = {
+                    let signal = signal.clone();
+                    let plugin_lock = plugin_lock.clone();
+                    thread::spawn(move || {
+                        // A scheduler wake drain must release its own mutex
+                        // before the host invokes a plugin-defined callback.
+                        let (_, first) = signal.take_scheduler_wakes();
+                        let _plugin_guard = plugin_lock.lock().unwrap();
+                        assert!(signal.notify());
+                        first.contains(&PROCESS)
+                    })
+                };
+                plugin_notifier.join().unwrap();
+                let saw_target = driver.join().unwrap();
+                let (global_epoch, final_targets) = signal.take_scheduler_wakes();
+                assert_eq!(global_epoch, 1);
+                assert!(
+                    saw_target || final_targets.contains(&PROCESS),
+                    "plugin-targeted notification was lost"
+                );
+                assert_eq!(signal.state.lock().unwrap().epoch, 2);
+                assert!(slot.pending.load(Ordering::Acquire));
+            });
+        }
+
+        #[test]
         fn terminal_invalidation_rejects_late_targeted_and_global_wakes() {
             check("notifications vs invalidation", || {
                 const PROCESS: usize = 11;

@@ -586,12 +586,14 @@ fn cancellation_and_blocked_transaction_disposal_drop_payload_once() {
     let mut second = set.prepare(&original, &targets).unwrap();
     assert_eq!(set.commit(&mut second), Err(ConnectionError::Full));
     drop(original);
-    assert_eq!(set.cancel(), 1);
+    let disposed = set.cancel();
+    assert_eq!(disposed.len(), 1);
     assert_eq!(drops.load(Ordering::SeqCst), 0);
     assert_eq!(set.commit(&mut second), Err(ConnectionError::Cancelled));
+    drop(disposed);
     drop(second);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert_eq!(set.cancel(), 0);
+    assert!(set.cancel().is_empty());
 }
 
 #[test]
@@ -620,7 +622,7 @@ fn pure_preparation_can_convert_wire_to_local_without_an_extra_codec() {
 fn cancellation_invalidates_empty_publication_and_future_preparation() {
     let mut set = ConnectionSet::new(vec![]);
     let mut pending = set.prepare(&packet(1), &[]).unwrap();
-    assert_eq!(set.cancel(), 0);
+    assert!(set.cancel().is_empty());
     assert_eq!(set.commit(&mut pending), Err(ConnectionError::Cancelled));
     assert!(!pending.is_committed());
     assert_eq!(
