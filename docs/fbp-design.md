@@ -1,9 +1,10 @@
 # Phenix Native FBP Design
 
-Status: implemented in the current uncommitted worktree, 2026-11-11. The old graph
-engine has been removed; Kernel, Plugin and StorageGraph use native networks.
-Implementation and review/local verification are not a final commit or CI result.
-Local verification and immutable Nix snapshot checks are recorded in the final report. See
+Status: the native engine replaced the old graph engine at `16e77f6c6`; Kernel,
+Plugin and StorageGraph use native networks. The current lifecycle/request-lane
+candidate is on `fix/fbp-lifecycle-request-lanes-20261114`; see its
+[design/evidence record](fbp-hardening-campaign-20261114.md). The historical cutover
+verification and immutable Nix snapshot checks are recorded in the report. See
 [migration](fbp-migration.md), [review](fbp-critique.md), and the executable
 [API examples](../packages/phenix-graphs/API-EXAMPLES.md).
 
@@ -72,6 +73,11 @@ reentry. `take_dispatch_return` recovers a refused foreign completion/rejected j
 after a dispatcher protocol violation; the session stays failed. Shutdown of
 abandoned external jobs remains the runner's responsibility. Execution guards
 cover delegated work, including StorageGraph worker-thread query execution.
+Kernel's session lease is transferred without holding its mutex through a process
+callback. The Kernel's stable session identity is propagated through the existing
+execution-guard boundary so a synchronously joined dispatcher worker cannot wait
+on its own session lease. This does not make arbitrary plugin-created threads,
+resource-lock cycles, or non-yielding callbacks deadlock-free.
 
 Each connection is a nonzero-capacity FIFO. Publication validates the entire
 selected fanout and prepares it once before committing to all destinations.
@@ -127,7 +133,26 @@ Request-local optional absence and staged closure are tested against conservativ
 reachable upstream-work accounting. A live required producer must not be replaced
 by optional EOS; exhausted required groups fail. General cycle absence/progress
 proofs and a production arbitrary-skew demultiplexing guarantee remain pending.
-The historical fixed-lane probes establish limits, not a shipped adapter promise.
+The candidate contains an opt-in fixed-lane composite adapter.
+Its explicit scope-skew bound covers distinct request identities, not repeated
+packets from one request. Its demonstrated independent progress is restricted to
+finite joins with at most one packet per request/input before an incomplete join
+becomes runnable. More repeated packets can fill a lane and intentionally retain
+head-of-line blocking; strict FIFO is preserved and no arbitrary-stream fairness
+claim is made. This remains a bounded adapter, not a general demultiplexer.
+
+`SessionOptions::request_queue_policy` defaults to `SharedFifo`, preserving shared
+connection and capture ordering. Opt-in `BoundedLanes` lazily allocates one bounded
+FIFO per active request for each compiled connection, public ingress edge, and
+capture alias. A lane is reused only after request settlement/cancellation and
+release; stale ticket validation prevents an old worker from publishing into a
+reused lane. The total packet-slot envelope is checked as
+`max_requests * (sum(connection capacities) + sum(ingress capacities per target) +
+capture_capacity * exported_capture_count)`. This bounds packet counts, not payload
+bytes. It does not create request-local process state: a staged continuation or
+blocked atomic publication still owns the one physical process handoff, and a
+nonconsuming reader can fill its own capture lane. The guarantee is queue-level
+cross-request isolation, not unconditional request progress or fairness.
 
 `RequestFailurePolicy::FailSession` is the default. Opt-in
 `RestartAffectedProcess` respawns affected active process state on request failure

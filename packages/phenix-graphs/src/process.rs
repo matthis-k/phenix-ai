@@ -23,6 +23,13 @@ pub trait Process: Send + 'static {
 /// captures to prove that a factory constructs isolated application state.
 pub trait ProcessFactory: Send + Sync + 'static {
     fn spawn(&self) -> Box<dyn Process>;
+    fn readiness(&self) -> crate::runtime::Readiness {
+        crate::runtime::Readiness::default()
+    }
+    /// Fixed correlation lane bound, checked before any source starts.
+    fn correlation_lanes(&self) -> Option<std::num::NonZeroUsize> {
+        None
+    }
 }
 impl<F, P> ProcessFactory for F
 where
@@ -40,11 +47,37 @@ pub(crate) struct LeasedFactory {
     pub(crate) lease: Arc<dyn Send + Sync>,
 }
 impl ProcessFactory for LeasedFactory {
+    fn readiness(&self) -> crate::runtime::Readiness {
+        match self.inner.readiness() {
+            crate::runtime::Readiness::Custom(inner) => {
+                crate::runtime::Readiness::Custom(Arc::new(LeasedReadiness {
+                    inner,
+                    _lease: self.lease.clone(),
+                }))
+            }
+            policy => policy,
+        }
+    }
+    fn correlation_lanes(&self) -> Option<std::num::NonZeroUsize> {
+        self.inner.correlation_lanes()
+    }
     fn spawn(&self) -> Box<dyn Process> {
         Box::new(LeasedProcess {
             inner: self.inner.spawn(),
             lease: self.lease.clone(),
         })
+    }
+}
+struct LeasedReadiness {
+    inner: Arc<dyn crate::runtime::ReadinessPolicy>,
+    _lease: Arc<dyn Send + Sync>,
+}
+impl crate::runtime::ReadinessPolicy for LeasedReadiness {
+    fn select(&self, snapshot: &crate::runtime::ReadinessSnapshot) -> Vec<String> {
+        self.inner.select(snapshot)
+    }
+    fn closure_ports(&self, lane: usize) -> Vec<String> {
+        self.inner.closure_ports(lane)
     }
 }
 struct LeasedProcess {
@@ -155,6 +188,7 @@ pub struct ProcessContext {
     closed: Vec<String>,
     request_closed: Vec<String>,
     grants: Vec<ResourceGrant>,
+    correlation_lane: Option<usize>,
 }
 impl ProcessContext {
     pub fn new(inputs: BTreeMap<String, Value>, closed: Vec<String>) -> Self {
@@ -163,6 +197,23 @@ impl ProcessContext {
             closed,
             request_closed: vec![],
             grants: vec![],
+            correlation_lane: None,
+        }
+    }
+    pub fn correlation_lane(&self) -> Option<usize> {
+        self.correlation_lane
+    }
+    pub(crate) fn with_correlation_lane(mut self, lane: Option<usize>) -> Self {
+        self.correlation_lane = lane;
+        self
+    }
+    pub(crate) fn rename_inputs(&mut self, mut rename: impl FnMut(&str) -> String) {
+        self.inputs = std::mem::take(&mut self.inputs)
+            .into_iter()
+            .map(|(name, value)| (rename(&name), value))
+            .collect();
+        for name in self.closed.iter_mut().chain(&mut self.request_closed) {
+            *name = rename(name);
         }
     }
     pub fn with_resources(mut self, grants: Vec<ResourceGrant>) -> Self {
@@ -268,7 +319,7 @@ struct JobExecution {
     process: Box<dyn Process>,
     context: ProcessContext,
     metadata: Option<crate::runtime::ActivationMetadata>,
-    guard: Option<Arc<dyn ProcessExecutionGuard>>,
+    guards: Vec<Arc<dyn ProcessExecutionGuard>>,
 }
 impl ActivationJob {
     pub fn metadata(&self) -> Option<&crate::runtime::ActivationMetadata> {
@@ -279,27 +330,38 @@ impl ActivationJob {
         self
     }
     /// The guard is entered by `run`, on the actual executing worker thread.
+    /// Additional guards compose; they cannot replace previously installed guards.
     pub fn with_guard(mut self, guard: Arc<dyn ProcessExecutionGuard>) -> Self {
-        self.execution.guard = Some(guard);
+        self.execution.guards.push(guard);
         self
     }
     pub fn ticket(&self) -> StepTicket {
         self.ticket
     }
     pub fn run(mut self) -> CompletedStep {
+        let mut entered = Vec::with_capacity(self.execution.guards.len());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let execution = &mut self.execution;
-            let _guard = execution
-                .guard
-                .as_ref()
-                .map(|guard| guard.enter())
-                .transpose()?;
+            for guard in &execution.guards {
+                entered.push(guard.enter()?);
+            }
             execution.process.step(&mut execution.context)
         }));
-        let result = match result {
+        let mut result = match result {
             Ok(result) => result,
-            Err(_) => Err("process step panicked".into()),
+            Err(payload) => {
+                crate::discard_panic_payload(payload);
+                Err("process step panicked".into())
+            }
         };
+        while let Some(guard) = entered.pop() {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(guard)))
+            {
+                crate::discard_panic_payload(payload);
+                result = Err("process execution guard teardown panicked".into());
+            }
+        }
         CompletedStep { job: self, result }
     }
 }
@@ -476,7 +538,7 @@ impl ProcessHandoff {
                 process: self.process.take().expect("ready process"),
                 context: self.context.take().expect("ready context"),
                 metadata: None,
-                guard: None,
+                guards: Vec::new(),
             }),
             lease: self.lease.clone(),
         })
@@ -623,13 +685,13 @@ impl ProcessHandoff {
             process,
             context,
             metadata: _,
-            guard,
+            guards,
         } = *job.execution;
         self.outstanding = None;
         self.process = Some(process);
         self.context = Some(context);
         // The job's lease survives until after process/context transfer.
-        drop(guard);
+        drop(guards);
         drop(job.lease);
     }
 }

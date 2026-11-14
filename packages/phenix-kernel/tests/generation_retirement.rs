@@ -143,7 +143,7 @@ fn assert_live(generation: &Generation) {
 }
 
 #[test]
-fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
+fn publication_retires_a_blocked_poll_and_rejects_its_late_event() {
     let log = Log::default();
     let polls = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new((Barrier::new(2), Barrier::new(2)));
@@ -173,26 +173,31 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     let publishing = Arc::new(Barrier::new(2));
     let publisher_gate = publishing.clone();
+    let (published, publication_complete) = std::sync::mpsc::channel();
+    let polls_during_publish = polls.clone();
     let publisher = std::thread::spawn(move || {
         publisher_gate.wait();
         let current = host.publish(candidate).unwrap();
-        // Publication cannot cut the old drain short, even between polls.
-        assert_eq!(polls.load(Ordering::SeqCst), 3);
-        (host, current, polls)
+        assert_eq!(polls_during_publish.load(Ordering::SeqCst), 1);
+        published.send(()).unwrap();
+        (host, current, polls_during_publish)
     });
     publishing.wait();
+    publication_complete
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("publication waited for plugin poll");
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
     gate.1.wait();
     let events = drain.join().unwrap();
-    assert_eq!(events.len(), 3);
-    assert!(events.iter().all(|event| event.result.is_ok()));
+    assert!(events.is_empty());
     let (host, current, polls) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert_eq!(current.epoch(), 2);
     for _ in 0..3 {
         assert!(old.drain(10).is_empty());
     }
-    assert_eq!(polls.load(Ordering::SeqCst), 3);
-    // Retirement stops owned producers, not already admitted work or explicit queries.
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    // Retirement rejects the in-flight result but does not preempt the callback.
     old.run_steps(100).unwrap();
     assert_eq!(
         log.lock()
@@ -201,7 +206,7 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
             .filter(|event| event.starts_with("tick:"))
             .cloned()
             .collect::<Vec<_>>(),
-        ["tick:1:1", "tick:1:2", "tick:1:3"]
+        Vec::<String>::new()
     );
     assert_eq!(
         log.lock()

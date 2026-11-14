@@ -40,9 +40,15 @@ pub struct InputHead {
 #[derive(Clone, Debug)]
 pub struct ReadinessSnapshot {
     pub request: Option<RequestId>,
+    pub correlation_lane: Option<usize>,
     pub heads: Vec<InputHead>,
 }
 pub trait ReadinessPolicy: Send + Sync {
+    /// Request-local closure obligations in this process's input namespace. Called
+    /// once before a request scope is admitted; a panic rejects that admission.
+    fn closure_ports(&self, _lane: usize) -> Vec<String> {
+        vec![]
+    }
     /// Return distinct port names whose heads should be atomically reserved.
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
@@ -55,29 +61,20 @@ pub(super) struct Reservation {
 impl NetworkSession {
     pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), String> {
         let inputs = &self.processes[index].inputs;
-        match policy {
-            Readiness::AtLeast(n) if n.get() > inputs.len() => {
-                return Err("readiness threshold exceeds input port count".into());
-            }
-            Readiness::Optional { required, optional } => {
-                let mut seen = std::collections::BTreeSet::new();
-                for name in required.iter().chain(optional) {
-                    if !inputs.iter().any(|p| &p.name == name) || !seen.insert(name) {
-                        return Err(format!("invalid optional readiness port {name}"));
-                    }
-                }
-                if seen.is_empty() {
-                    return Err("empty optional readiness policy".into());
-                }
-            }
-            _ => {}
-        }
-        Ok(())
+        validate_policy(policy, inputs.iter().map(|port| port.name.as_str()))
     }
     fn head_for(&self, index: usize, port: usize, request: Option<RequestId>) -> Option<usize> {
         let p = &self.processes[index].inputs[port];
-        (0..p.queues.len())
-            .map(|offset| p.queues[(p.cursor + offset) % p.queues.len()])
+        let queues = match (self.request_queue_policy, request) {
+            (RequestQueuePolicy::BoundedLanes, Some(request)) => {
+                let lane = self.requests[&request].lane;
+                p.lane_queues.get(&lane).map(Vec::as_slice).unwrap_or(&[])
+            }
+            (RequestQueuePolicy::BoundedLanes, None) => &p.shared_queues,
+            (RequestQueuePolicy::SharedFifo, _) => &p.queues,
+        };
+        (0..queues.len())
+            .map(|offset| queues[(p.cursor + offset) % queues.len()])
             .find(|q| {
                 self.transport.queues()[*q]
                     .head()
@@ -114,16 +111,27 @@ impl NetworkSession {
             .map(|offset| (p.cursor + offset) % count)
             .collect();
         let mut candidates = vec![];
+        let mut consider_queue = |queue: usize| {
+            if let Some(head) = self.transport.queues()[queue].head() {
+                let request = head.metadata().and_then(|metadata| metadata.request());
+                if !candidates.contains(&request) {
+                    candidates.push(request);
+                }
+            }
+        };
         for port in &order {
             let input = &p.inputs[*port];
-            for offset in 0..input.queues.len() {
-                if let Some(head) = self.transport.queues()
-                    [input.queues[(input.cursor + offset) % input.queues.len()]]
-                .head()
-                {
-                    let request = head.metadata().and_then(|m| m.request());
-                    if !candidates.contains(&request) {
-                        candidates.push(request);
+            for offset in 0..input.shared_queues.len() {
+                consider_queue(
+                    input.shared_queues[(input.cursor + offset) % input.shared_queues.len()],
+                );
+            }
+            if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+                for scope in self.requests.values() {
+                    if let Some(lane_queues) = input.lane_queues.get(&scope.lane) {
+                        for queue in lane_queues {
+                            consider_queue(*queue);
+                        }
                     }
                 }
             }
@@ -140,9 +148,22 @@ impl NetworkSession {
                 }
             }
         }
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            candidates.sort_by_key(|request| {
+                request.map_or(self.max_requests, |id| self.requests[&id].lane)
+            });
+            let next = candidates.partition_point(|request| {
+                request.map_or(self.max_requests, |id| self.requests[&id].lane) < p.request_cursor
+            });
+            let candidate_count = candidates.len();
+            if candidate_count != 0 {
+                candidates.rotate_left(next % candidate_count);
+            }
+        }
         for request in candidates {
             let snapshot = ReadinessSnapshot {
                 request,
+                correlation_lane: request.map(|id| self.requests[&id].lane),
                 heads: order
                     .iter()
                     .map(|port| InputHead {
@@ -229,7 +250,10 @@ impl NetworkSession {
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         policy.select(&snapshot)
                     }))
-                    .map_err(|_| "readiness policy panicked".to_owned())?
+                    .map_err(|payload| {
+                        crate::discard_panic_payload(payload);
+                        "readiness policy panicked".to_owned()
+                    })?
                 }
                 _ => vec![],
             };
@@ -291,7 +315,12 @@ impl NetworkSession {
         if self.processes[index].handoff.state() == HandoffState::Idle {
             self.processes[index].closed_in_activation.clear();
         }
-        self.processes[index].request = selected.request;
+        let request = selected.request;
+        self.processes[index].request = request;
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            self.processes[index].request_cursor =
+                request.map_or(0, |id| self.requests[&id].lane + 1);
+        }
         let mut inputs = BTreeMap::new();
         let mut closed = vec![];
         let mut request_closed = vec![];
@@ -324,7 +353,36 @@ impl NetworkSession {
             self.processes[index].cursor = (port + 1) % self.processes[index].inputs.len();
         }
         ProcessContext::new(inputs, closed)
+            .with_correlation_lane(request.map(|id| self.requests[&id].lane))
             .with_request_closed(request_closed)
             .with_resources(self.processes[index].resources.clone())
+    }
+}
+
+pub(crate) fn validate_policy<'a>(
+    policy: &Readiness,
+    input_names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    match policy {
+        Readiness::AtLeast(n) => {
+            if n.get() > input_names.into_iter().count() {
+                return Err("readiness threshold exceeds input port count".into());
+            }
+            Ok(())
+        }
+        Readiness::Optional { required, optional } => {
+            let inputs: BTreeSet<_> = input_names.into_iter().collect();
+            let mut seen = BTreeSet::new();
+            for name in required.iter().chain(optional) {
+                if !inputs.contains(name.as_str()) || !seen.insert(name) {
+                    return Err(format!("invalid optional readiness port {name}"));
+                }
+            }
+            if seen.is_empty() {
+                return Err("empty optional readiness policy".into());
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }

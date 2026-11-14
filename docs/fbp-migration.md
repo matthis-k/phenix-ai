@@ -1,6 +1,9 @@
 # Phenix FBP Migration Ledger
 
-Status: implemented native FBP migration in the uncommitted worktree. The initial
+Historical status: native FBP migration was implemented in an uncommitted worktree.
+The current campaign is tracked in [the campaign record](fbp-hardening-campaign-20261114.md)
+and [33-issue tracker](fbp-issue-progress-estimates-20261113.md); the old commands and
+"no commit requested" statements below describe that earlier execution only. The initial
 baseline and intermediate measurements below are historical evidence, not current
 milestone status. The final outcome section and [report](fbp-report.md) supersede
 their pending labels. See [design](fbp-design.md), [critique](fbp-critique.md),

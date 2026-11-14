@@ -1,5 +1,23 @@
 # Native FBP Worktree Report
 
+## Current Campaign
+
+The sections below are the historical native-engine cutover report, not acceptance
+evidence for the 2026-11-14 lifecycle/request-lane candidate. That campaign started
+at `16e77f6c6` with uncommitted work and now uses branch
+`fix/fbp-lifecycle-request-lanes-20261114`. It is separate from the still-open draft
+PR #1300 stack at `516e0883875d5ec483e3595d50b77b3d5e8979c4`.
+
+Current implementation, policy decisions and verification gaps are recorded in
+[the campaign record](fbp-hardening-campaign-20261114.md). The complete one-decimal
+[33-issue tracker](fbp-issue-progress-estimates-20261113.md) remains authoritative.
+No entire issue, M7 or M8 closure is inferred from local passing suites. Production
+P1/P2 agent integration, OS plugin isolation, strict retired-generation revocation,
+full static liveness, and representative paired performance/memory acceptance are
+not delivered by this batch.
+
+## Historical Report
+
 ## Identity And Status
 
 - Exact baseline/head: `32bbe60e6cd2ebd34a705486b4ef96e85245ee42`.

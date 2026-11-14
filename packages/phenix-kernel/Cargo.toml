@@ -12,3 +12,7 @@ phenix-storage = { path = "../phenix-storage" }
 phenix-storage-plugin = { path = "../phenix-storage-plugin" }
 phenix-storage-graph = { path = "../phenix-storage-graph" }
 tempfile = "3"
+
+[[bench]]
+name = "callback_lease"
+harness = false

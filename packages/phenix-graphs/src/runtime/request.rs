@@ -62,18 +62,21 @@ impl CaptureMetadata {
 }
 
 pub(super) struct RequestScope {
+    pub(super) lane: usize,
     pub(super) sealed: bool,
     captures: usize,
     expected: Option<String>,
     pub(super) invalid: bool,
     pub(super) reachable: BTreeSet<usize>,
     pub(super) observed_inputs: BTreeSet<(usize, usize)>,
+    pub(super) closure_ports: BTreeMap<usize, Vec<String>>,
     pub(super) terminal: Option<RequestStatus>,
     pub(super) failure: Option<String>,
+    pub(super) timed_out: bool,
     pub(super) disposal: RequestDisposal,
     pub(super) cancelled_jobs: Vec<StepTicket>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RequestError {
     Full,
     Foreign,
@@ -83,11 +86,19 @@ pub enum RequestError {
     UnknownOutput,
     InvalidSource,
     Busy,
+    ReadinessPolicyPanicked,
+    InvalidClosurePorts(Box<InvalidClosurePortNames>),
     InvalidCapture,
     CaptureCount(usize),
     NotSettled,
     RecoveryFailed,
     Transport(ConnectionError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidClosurePortNames {
+    pub process: String,
+    pub ports: Vec<String>,
 }
 #[derive(Debug)]
 pub struct RequestInjectionError {
@@ -145,6 +156,7 @@ impl NetworkSession {
     /// Reserve one bounded scope. `Some(output)` requires exactly one capture
     /// in the scope, from that compiled projection, before successful settlement.
     pub fn begin_request(&mut self, exact_output: Option<&str>) -> Result<RequestId, RequestError> {
+        self.supervise_deferred_jobs();
         if self.terminal.is_some() || self.state() == SessionState::Completed {
             return Err(RequestError::Stale);
         }
@@ -154,6 +166,43 @@ impl NetworkSession {
         if self.requests.len() == self.max_requests {
             return Err(RequestError::Full);
         }
+        let lane = (0..self.max_requests)
+            .find(|lane| self.requests.values().all(|scope| scope.lane != *lane))
+            .expect("request credit reserves a free lane");
+        let mut closure_ports = BTreeMap::new();
+        for (index, process) in self.processes.iter().enumerate() {
+            let Readiness::Custom(policy) = &process.policy else {
+                continue;
+            };
+            let ports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                policy.closure_ports(lane)
+            }))
+            .map_err(|payload| {
+                crate::discard_panic_payload(payload);
+                RequestError::ReadinessPolicyPanicked
+            })?;
+            let input_names = &process.inputs;
+            let mut seen = BTreeSet::new();
+            let invalid: Vec<_> = ports
+                .iter()
+                .filter(|name| {
+                    !input_names.iter().any(|input| &input.name == *name) || !seen.insert(*name)
+                })
+                .cloned()
+                .collect();
+            if !invalid.is_empty() {
+                return Err(RequestError::InvalidClosurePorts(Box::new(
+                    InvalidClosurePortNames {
+                        process: self.compiled.processes()[index].path().to_owned(),
+                        ports: invalid,
+                    },
+                )));
+            }
+            if !ports.is_empty() {
+                closure_ports.insert(index, ports);
+            }
+        }
+        self.prepare_request_lane(lane)?;
         self.next_request = self
             .next_request
             .checked_add(1)
@@ -166,14 +215,17 @@ impl NetworkSession {
         self.requests.insert(
             id,
             RequestScope {
+                lane,
                 sealed: false,
                 captures: 0,
                 expected: exact_output.map(str::to_owned),
                 invalid: false,
                 reachable: BTreeSet::new(),
                 observed_inputs: BTreeSet::new(),
+                closure_ports,
                 terminal: None,
                 failure: None,
+                timed_out: false,
                 disposal: RequestDisposal::default(),
                 cancelled_jobs: vec![],
             },
@@ -195,6 +247,7 @@ impl NetworkSession {
         name: &str,
         value: Value,
     ) -> Result<(), RequestInjectionError> {
+        self.supervise_deferred_jobs();
         let validation = self.check_request(id).and_then(|r| {
             if self.terminal.is_some() || r.terminal.is_some() {
                 Err(RequestError::Stale)
@@ -224,6 +277,7 @@ impl NetworkSession {
     /// Start only an explicitly compiled zero-input source, using the same
     /// persistent process and handoff. No root guessing or process respawning.
     pub fn start_request_source(&mut self, id: RequestId, path: &str) -> Result<(), RequestError> {
+        self.supervise_deferred_jobs();
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
@@ -231,6 +285,7 @@ impl NetworkSession {
         if scope.sealed {
             return Err(RequestError::Sealed);
         }
+        let lane = scope.lane;
         let index = self
             .compiled
             .processes()
@@ -245,7 +300,11 @@ impl NetworkSession {
             return Err(RequestError::Busy);
         }
         p.handoff
-            .admit(ProcessContext::default().with_resources(p.resources.clone()))
+            .admit(
+                ProcessContext::default()
+                    .with_resources(p.resources.clone())
+                    .with_correlation_lane(Some(lane)),
+            )
             .map_err(|_| RequestError::Exhausted)?;
         p.request = Some(id);
         self.note_request_root(id, index);
@@ -254,6 +313,7 @@ impl NetworkSession {
     }
     /// Seals request ingress, not the persistent network's public input writers.
     pub fn close_request(&mut self, id: RequestId) -> Result<(), RequestError> {
+        self.supervise_deferred_jobs();
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
@@ -262,6 +322,8 @@ impl NetworkSession {
         self.refresh();
         Ok(())
     }
+    /// Snapshot only. A deadline is applied by a subsequent session supervision
+    /// operation, not by this shared-reference query.
     pub fn request_status(&self, id: RequestId) -> Result<RequestStatus, RequestError> {
         let request = self.check_request(id)?;
         if let Some(status) = request.terminal {
@@ -293,8 +355,17 @@ impl NetworkSession {
         })
     }
     pub fn release_request(&mut self, id: RequestId) -> Result<(), RequestError> {
+        self.supervise_deferred_jobs();
         self.check_request(id)?;
         if self.terminal.is_none() && (self.request_live(id) || !self.requests[&id].sealed) {
+            return Err(RequestError::NotSettled);
+        }
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes
+            && self.request_lanes[&self.requests[&id].lane]
+                .queues
+                .iter()
+                .any(|queue| !self.transport.queues()[*queue].is_empty())
+        {
             return Err(RequestError::NotSettled);
         }
         self.requests.remove(&id);
@@ -310,6 +381,7 @@ impl NetworkSession {
                     .any(|p| p.metadata().and_then(|m| m.request()) == Some(id))
             })
     }
+    /// Snapshot only; overdue jobs are applied by a supervision operation.
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
         let mut work = RequestWork {
@@ -345,11 +417,24 @@ impl NetworkSession {
         id: RequestId,
         name: &str,
     ) -> Result<Option<Packet>, RequestError> {
+        self.supervise_deferred_jobs();
         let scope = self.check_request(id)?;
-        if self.terminal.is_some() || scope.terminal.is_some() {
+        let lane = scope.lane;
+        let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
+            && self.terminal == Some(SessionState::Failed)
+            && scope.terminal != Some(RequestStatus::Cancelled);
+        if !failure_drain && (self.terminal.is_some() || scope.terminal.is_some()) {
             return Err(RequestError::Stale);
         }
-        let queue = *self.captures.get(name).ok_or(RequestError::UnknownOutput)?;
+        let queue = if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            self.request_lanes
+                .get(&lane)
+                .and_then(|lane| lane.captures.get(name))
+                .copied()
+        } else {
+            self.captures.get(name).copied()
+        }
+        .ok_or(RequestError::UnknownOutput)?;
         if self.transport.queues()[queue]
             .head()
             .is_none_or(|p| p.metadata().and_then(|m| m.request()) != Some(id))
@@ -357,7 +442,8 @@ impl NetworkSession {
             return Ok(None);
         }
         self.validate_capture(id, name, self.transport.queues()[queue].head().unwrap())?;
-        self.take_output(name).map_err(RequestError::Transport)
+        self.take_capture(name, queue)
+            .map_err(RequestError::Transport)
     }
     pub fn validate_capture(
         &self,
@@ -366,7 +452,10 @@ impl NetworkSession {
         packet: &Packet,
     ) -> Result<(), RequestError> {
         let request = self.check_request(id)?;
-        if self.terminal.is_some() || request.terminal.is_some() {
+        let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
+            && self.terminal == Some(SessionState::Failed)
+            && request.terminal != Some(RequestStatus::Cancelled);
+        if !failure_drain && (self.terminal.is_some() || request.terminal.is_some()) {
             return Err(RequestError::Stale);
         }
         let (process, output) = self

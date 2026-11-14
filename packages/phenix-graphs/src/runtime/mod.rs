@@ -18,6 +18,7 @@ use crate::{GraphOrigin, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::Ordering};
+use std::time::{Duration, Instant};
 mod closure;
 mod diagnostics;
 mod readiness;
@@ -25,10 +26,11 @@ mod recovery;
 mod request;
 mod wake;
 pub use diagnostics::BlockedCycle;
+pub(crate) use readiness::validate_policy;
 pub use readiness::{InputHead, Readiness, ReadinessPolicy, ReadinessSnapshot};
 pub use request::{
-    CaptureMetadata, RequestDisposal, RequestError, RequestId, RequestInjectionError,
-    RequestStatus, RequestWork,
+    CaptureMetadata, InvalidClosurePortNames, RequestDisposal, RequestError, RequestId,
+    RequestInjectionError, RequestStatus, RequestWork,
 };
 pub use wake::{SessionNotifier, WakeHandle, WakeListener};
 use wake::{WakeSignal, WakeSlot};
@@ -40,6 +42,16 @@ pub enum RequestFailurePolicy {
     /// Spawn fresh state only for processes active in the terminated request.
     /// Shared resources and already performed external effects are not reset.
     RestartAffectedProcess,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestQueuePolicy {
+    /// Preserve shared connection and capture FIFO ordering across requests.
+    #[default]
+    SharedFifo,
+    /// Give each active request bounded FIFO queues on every compiled edge.
+    /// Process state remains shared and single-flight.
+    BoundedLanes,
 }
 
 struct UnavailableProcess;
@@ -61,10 +73,16 @@ pub struct SessionOptions {
     pub resources: BTreeMap<String, Vec<ResourceGrant>>,
     pub max_requests: NonZeroUsize,
     pub request_failure_policy: RequestFailurePolicy,
+    /// Queue-level isolation for request traffic; does not isolate process state.
+    pub request_queue_policy: RequestQueuePolicy,
+    /// Opt-in timeout for one externally owned activation handoff. It invalidates
+    /// completion authority; it cannot stop worker code or external effects.
+    pub deferred_job_timeout: Option<Duration>,
     /// Disable for request-driven source starts; only compiled sources are eligible.
     pub auto_start_sources: bool,
     pub dispatcher: Arc<dyn ProcessDispatcher>,
-    pub execution_guard: Option<Arc<dyn ProcessExecutionGuard>>,
+    /// Entered in order on the actual worker, torn down in reverse order.
+    pub execution_guards: Vec<Arc<dyn ProcessExecutionGuard>>,
     /// Keeps native code/resources alive through jobs and queued/captured packets.
     pub lease: Option<Arc<dyn Send + Sync>>,
 }
@@ -77,6 +95,8 @@ impl std::fmt::Debug for SessionOptions {
             .field("resources", &self.resources)
             .field("max_requests", &self.max_requests)
             .field("request_failure_policy", &self.request_failure_policy)
+            .field("request_queue_policy", &self.request_queue_policy)
+            .field("deferred_job_timeout", &self.deferred_job_timeout)
             .finish_non_exhaustive()
     }
 }
@@ -89,9 +109,11 @@ impl Default for SessionOptions {
             resources: BTreeMap::new(),
             max_requests: NonZeroUsize::new(64).unwrap(),
             request_failure_policy: RequestFailurePolicy::FailSession,
+            request_queue_policy: RequestQueuePolicy::SharedFifo,
+            deferred_job_timeout: None,
             auto_start_sources: true,
             dispatcher: Arc::new(LocalProcessDispatcher),
-            execution_guard: None,
+            execution_guards: Vec::new(),
             lease: None,
         }
     }
@@ -139,6 +161,8 @@ pub struct RunReport {
     /// Lifetime total of emissions committed to explicitly permitted discard.
     pub discarded_emissions: usize,
     pub budget_exhausted: bool,
+    /// Time until the earliest supervised job deadline, if one is active.
+    pub next_deferred_timeout: Option<Duration>,
 }
 
 /// One dispatcher protocol violation, retaining the refused object unchanged.
@@ -186,6 +210,8 @@ pub struct ActivationMetadata {
 struct InputPort {
     name: String,
     queues: Vec<usize>,
+    shared_queues: Vec<usize>,
+    lane_queues: BTreeMap<usize, Vec<usize>>,
     cursor: usize,
     eos_delivered: bool,
 }
@@ -199,6 +225,7 @@ struct RuntimeProcess {
     waiting_policy: Option<Readiness>,
     policy: Readiness,
     cursor: usize,
+    request_cursor: usize,
     queued: bool,
     done: bool,
     source: bool,
@@ -206,6 +233,14 @@ struct RuntimeProcess {
     request: Option<RequestId>,
     resources: Vec<ResourceGrant>,
     closed_in_activation: BTreeSet<usize>,
+    deferred_ticket: Option<(StepTicket, Instant)>,
+}
+
+struct RequestLane {
+    inputs: BTreeMap<String, Vec<usize>>,
+    outputs: BTreeMap<(usize, String), Vec<usize>>,
+    captures: BTreeMap<String, usize>,
+    queues: Vec<usize>,
 }
 
 pub struct NetworkSession {
@@ -214,6 +249,8 @@ pub struct NetworkSession {
     processes: Vec<RuntimeProcess>,
     ingress: BTreeMap<String, Vec<usize>>,
     captures: BTreeMap<String, usize>,
+    request_lanes: BTreeMap<usize, RequestLane>,
+    queue_lanes: Vec<Option<usize>>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
     terminal: Option<SessionState>,
@@ -229,14 +266,46 @@ pub struct NetworkSession {
     next_request: u64,
     max_requests: usize,
     request_failure_policy: RequestFailurePolicy,
+    deferred_job_timeout: Option<Duration>,
+    request_queue_policy: RequestQueuePolicy,
     requests: BTreeMap<RequestId, request::RequestScope>,
     signal: Arc<WakeSignal>,
     dispatcher: Arc<dyn ProcessDispatcher>,
     dispatch_return: Option<DispatchReturn>,
-    execution_guard: Option<Arc<dyn ProcessExecutionGuard>>,
+    execution_guards: Vec<Arc<dyn ProcessExecutionGuard>>,
     // Last field: compiled factories, process state, transports, dispatchers,
     // grants and policy trait objects must be destroyed before the code lease.
     lease: Option<Arc<dyn Send + Sync>>,
+}
+
+fn request_lane_packet_bound(
+    compiled: &CompiledNetwork,
+    options: &SessionOptions,
+) -> Result<usize, String> {
+    let connections = compiled
+        .connections()
+        .iter()
+        .try_fold(0usize, |total, edge| {
+            total.checked_add(edge.capacity().get())
+        });
+    let ingress = compiled
+        .inputs()
+        .iter()
+        .try_fold(0usize, |total, (name, targets)| {
+            compiled.ingress_capacities()[name]
+                .get()
+                .checked_mul(targets.len())
+                .and_then(|capacity| total.checked_add(capacity))
+        });
+    let captures = options
+        .capture_capacity
+        .get()
+        .checked_mul(compiled.outputs().len());
+    connections
+        .and_then(|connections| ingress.and_then(|ingress| connections.checked_add(ingress)))
+        .and_then(|capacity| captures.and_then(|captures| capacity.checked_add(captures)))
+        .and_then(|capacity| capacity.checked_mul(options.max_requests.get()))
+        .ok_or_else(|| "bounded request lane packet capacity overflows usize".into())
 }
 
 impl CompiledNetwork {
@@ -264,13 +333,45 @@ impl NetworkSession {
                     .any(|p| p.path() == path.as_str())
             })
             .cloned();
-        let mut initial_failure = None;
+        let mut initial_failure =
+            if options.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+                request_lane_packet_bound(&compiled, &options).err()
+            } else {
+                None
+            };
+        for process in compiled.processes() {
+            if initial_failure.is_some() {
+                break;
+            }
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                process.factory().correlation_lanes()
+            })) {
+                Ok(Some(lanes)) if options.max_requests > lanes => {
+                    initial_failure = Some(format!(
+                        "insufficient correlation bound: {} has {} lanes for {} inflight requests; head blocking is not supported beyond this bound",
+                        process.path(),
+                        lanes,
+                        options.max_requests
+                    ));
+                    break;
+                }
+                Err(payload) => {
+                    crate::discard_panic_payload(payload);
+                    initial_failure = Some(format!(
+                        "process factory correlation bound panicked: {}",
+                        process.path()
+                    ));
+                    break;
+                }
+                _ => {}
+            }
+        }
         let mut processes: Vec<_> = compiled
             .processes()
             .iter()
             .enumerate()
-            .map(|(index, p)| RuntimeProcess {
-                handoff: {
+            .map(|(index, p)| {
+                let handoff = {
                     let process = if initial_failure.is_some() {
                         Box::new(UnavailableProcess) as Box<dyn crate::process::Process>
                     } else {
@@ -278,7 +379,8 @@ impl NetworkSession {
                             p.factory().spawn()
                         })) {
                             Ok(process) => process,
-                            Err(_) => {
+                            Err(payload) => {
+                                crate::discard_panic_payload(payload);
                                 initial_failure =
                                     Some(format!("process factory panicked: {}", p.path()));
                                 Box::new(UnavailableProcess)
@@ -290,37 +392,60 @@ impl NetworkSession {
                         Some(lease) => handoff.with_lease(lease.clone()),
                         None => handoff,
                     }
-                },
-                inputs: p
-                    .interface()
-                    .inputs()
-                    .keys()
-                    .map(|name| InputPort {
-                        name: name.clone(),
-                        queues: vec![],
-                        cursor: 0,
-                        eos_delivered: false,
-                    })
-                    .collect(),
-                outputs: p
-                    .interface()
-                    .outputs()
-                    .keys()
-                    .map(|name| (name.clone(), vec![]))
-                    .collect(),
-                pending: None,
-                pending_targets: vec![],
-                waiting: None,
-                waiting_policy: None,
-                policy: options.readiness.get(p.path()).cloned().unwrap_or_default(),
-                cursor: 0,
-                queued: false,
-                done: false,
-                source: compiled.source_starts().contains(&index),
-                wake: Arc::new(WakeSlot::default()),
-                request: None,
-                resources: options.resources.get(p.path()).cloned().unwrap_or_default(),
-                closed_in_activation: BTreeSet::new(),
+                };
+                let policy = match options.readiness.get(p.path()) {
+                    Some(policy) => policy.clone(),
+                    None if initial_failure.is_some() => Readiness::default(),
+                    None => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        p.factory().readiness()
+                    })) {
+                        Ok(policy) => policy,
+                        Err(payload) => {
+                            crate::discard_panic_payload(payload);
+                            initial_failure.get_or_insert_with(|| {
+                                format!("process factory readiness panicked: {}", p.path())
+                            });
+                            Readiness::default()
+                        }
+                    },
+                };
+                RuntimeProcess {
+                    handoff,
+                    inputs: p
+                        .interface()
+                        .inputs()
+                        .keys()
+                        .map(|name| InputPort {
+                            name: name.clone(),
+                            queues: vec![],
+                            shared_queues: vec![],
+                            lane_queues: BTreeMap::new(),
+                            cursor: 0,
+                            eos_delivered: false,
+                        })
+                        .collect(),
+                    outputs: p
+                        .interface()
+                        .outputs()
+                        .keys()
+                        .map(|name| (name.clone(), vec![]))
+                        .collect(),
+                    pending: None,
+                    pending_targets: vec![],
+                    waiting: None,
+                    waiting_policy: None,
+                    policy,
+                    cursor: 0,
+                    request_cursor: 0,
+                    queued: false,
+                    done: false,
+                    source: compiled.source_starts().contains(&index),
+                    wake: Arc::new(WakeSlot::default()),
+                    request: None,
+                    resources: options.resources.get(p.path()).cloned().unwrap_or_default(),
+                    closed_in_activation: BTreeSet::new(),
+                    deferred_ticket: None,
+                }
             })
             .collect();
         let mut queues = vec![];
@@ -344,6 +469,13 @@ impl NetworkSession {
                 .find(|p| p.name == input)
                 .unwrap()
                 .queues
+                .push(index);
+            processes[to]
+                .inputs
+                .iter_mut()
+                .find(|p| p.name == input)
+                .unwrap()
+                .shared_queues
                 .push(index);
             endpoints.push((
                 QueueEndpoint::Process {
@@ -370,6 +502,13 @@ impl NetworkSession {
                     .find(|p| p.name == *input)
                     .unwrap()
                     .queues
+                    .push(index);
+                processes[*to]
+                    .inputs
+                    .iter_mut()
+                    .find(|p| p.name == *input)
+                    .unwrap()
+                    .shared_queues
                     .push(index);
                 endpoints.push((
                     QueueEndpoint::Input(name.clone()),
@@ -402,12 +541,19 @@ impl NetworkSession {
             ));
             captures.insert(name.clone(), index);
         }
+        let queue_lanes = if options.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+            vec![None; queues.len()]
+        } else {
+            Vec::new()
+        };
         let mut session = Self {
             compiled,
             transport: ConnectionSet::new(queues),
             processes,
             ingress,
             captures,
+            request_lanes: BTreeMap::new(),
+            queue_lanes,
             endpoints,
             ready: VecDeque::new(),
             terminal: None,
@@ -423,11 +569,13 @@ impl NetworkSession {
             next_request: 0,
             max_requests: options.max_requests.get(),
             request_failure_policy: options.request_failure_policy,
+            deferred_job_timeout: options.deferred_job_timeout,
+            request_queue_policy: options.request_queue_policy,
             requests: BTreeMap::new(),
             signal: WakeSignal::new(),
             dispatcher: options.dispatcher,
             dispatch_return: None,
-            execution_guard: options.execution_guard,
+            execution_guards: options.execution_guards,
             lease: options.lease,
         };
         if let Some(error) = initial_failure {
@@ -467,6 +615,143 @@ impl NetworkSession {
         session
     }
 
+    /// Invalidate overdue externally owned jobs. This is cooperative supervision:
+    /// callers must drive the session, and external code is not preempted.
+    pub fn supervise_deferred_jobs(&mut self) {
+        let Some(timeout) = self.deferred_job_timeout else {
+            return;
+        };
+        let now = Instant::now();
+        let expired: Vec<_> = self
+            .processes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, process)| {
+                process.deferred_ticket.and_then(|(ticket, since)| {
+                    (process.handoff.outstanding() == Some(ticket)
+                        && now.saturating_duration_since(since) >= timeout)
+                        .then_some((index, ticket))
+                })
+            })
+            .collect();
+        for (index, ticket) in expired {
+            if self.processes[index]
+                .deferred_ticket
+                .is_none_or(|(current, _)| current != ticket)
+                || self.processes[index].handoff.outstanding() != Some(ticket)
+            {
+                continue;
+            }
+            self.processes[index].deferred_ticket = None;
+            let request = self.processes[index].request;
+            if let Some(request) = request
+                && let Some(scope) = self.requests.get_mut(&request)
+            {
+                scope.timed_out = true;
+            }
+            let path = self.compiled.processes()[index].path();
+            self.fail_process(
+                index,
+                format!(
+                    "deferred job timed out after {timeout:?}: process={path}, request={request:?}, activation={}, step={}",
+                    ticket.activation(),
+                    ticket.sequence()
+                ),
+            );
+        }
+    }
+
+    fn next_deferred_timeout(&self) -> Option<Duration> {
+        let timeout = self.deferred_job_timeout?;
+        let now = Instant::now();
+        self.processes
+            .iter()
+            .filter_map(|process| {
+                process.deferred_ticket.and_then(|(ticket, since)| {
+                    (process.handoff.outstanding() == Some(ticket))
+                        .then(|| timeout.saturating_sub(now.saturating_duration_since(since)))
+                })
+            })
+            .min()
+    }
+
+    fn timeout_invalidated(&self, ticket: StepTicket) -> bool {
+        self.requests
+            .values()
+            .any(|scope| scope.timed_out && scope.cancelled_jobs.contains(&ticket))
+    }
+
+    pub(super) fn prepare_request_lane(&mut self, lane: usize) -> Result<(), RequestError> {
+        if self.request_queue_policy == RequestQueuePolicy::SharedFifo {
+            return Ok(());
+        }
+        if let Some(existing) = self.request_lanes.get(&lane) {
+            if existing
+                .queues
+                .iter()
+                .any(|queue| !self.transport.queues()[*queue].is_empty())
+            {
+                return Err(RequestError::Busy);
+            }
+            return Ok(());
+        }
+
+        let mut request_lane = RequestLane {
+            inputs: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+            captures: BTreeMap::new(),
+            queues: Vec::new(),
+        };
+        let canonical_count = self
+            .queue_lanes
+            .iter()
+            .take_while(|lane| lane.is_none())
+            .count();
+        for canonical in 0..canonical_count {
+            let queue = self
+                .transport
+                .add_queue(self.transport.queues()[canonical].empty_like());
+            let endpoints = self.endpoints[canonical].clone();
+            match &endpoints.0 {
+                QueueEndpoint::Process { index, port } => {
+                    request_lane
+                        .outputs
+                        .entry((*index, port.clone()))
+                        .or_default()
+                        .push(queue);
+                }
+                QueueEndpoint::Input(name) => {
+                    request_lane
+                        .inputs
+                        .entry(name.clone())
+                        .or_default()
+                        .push(queue);
+                }
+                QueueEndpoint::Capture(_) => unreachable!("capture cannot be a writer"),
+            }
+            match &endpoints.1 {
+                QueueEndpoint::Process { index, port } => {
+                    let input = self.processes[*index]
+                        .inputs
+                        .iter_mut()
+                        .find(|input| &input.name == port)
+                        .unwrap();
+                    input.queues.push(queue);
+                    input.lane_queues.entry(lane).or_default().push(queue);
+                }
+                QueueEndpoint::Capture(name) => {
+                    request_lane.captures.insert(name.clone(), queue);
+                }
+                QueueEndpoint::Input(_) => unreachable!("ingress cannot be a reader"),
+            }
+            self.endpoints.push(endpoints);
+            self.queue_lanes.push(Some(lane));
+            request_lane.queues.push(queue);
+        }
+        self.request_lanes.insert(lane, request_lane);
+        Ok(())
+    }
+
     pub fn inject_local<T: Send + Sync + 'static>(
         &mut self,
         name: &str,
@@ -475,6 +760,7 @@ impl NetworkSession {
         self.inject(name, Value::local(value))
     }
     pub fn inject(&mut self, name: &str, value: Value) -> Result<(), InjectionError> {
+        self.supervise_deferred_jobs();
         self.inject_scoped(name, value, None)
     }
     fn inject_scoped(
@@ -487,10 +773,16 @@ impl NetworkSession {
             if self.terminal.is_some() {
                 return Err(ConnectionError::Cancelled);
             }
-            let indices = self
-                .ingress
-                .get(name)
-                .ok_or(ConnectionError::InvalidDestination)?;
+            let indices = match request {
+                Some(request) if self.request_queue_policy == RequestQueuePolicy::BoundedLanes => {
+                    self.requests
+                        .get(&request)
+                        .and_then(|scope| self.request_lanes.get(&scope.lane))
+                        .and_then(|lane| lane.inputs.get(name))
+                }
+                _ => self.ingress.get(name),
+            }
+            .ok_or(ConnectionError::InvalidDestination)?;
             if value.identity() != self.compiled.interface().inputs()[name].value {
                 return Err(ConnectionError::WrongType);
             }
@@ -529,6 +821,7 @@ impl NetworkSession {
         }
     }
     pub fn close_input(&mut self, name: &str) -> Result<(), ConnectionError> {
+        self.supervise_deferred_jobs();
         for index in self
             .ingress
             .get(name)
@@ -536,14 +829,28 @@ impl NetworkSession {
         {
             self.transport.close_writer(*index)?;
         }
+        for lane in self.request_lanes.values() {
+            for queue in &lane.inputs[name] {
+                self.transport.close_writer(*queue)?;
+            }
+        }
         self.refresh();
         Ok(())
     }
     pub fn take_output(&mut self, name: &str) -> Result<Option<Packet>, ConnectionError> {
+        self.supervise_deferred_jobs();
         let index = *self
             .captures
             .get(name)
             .ok_or(ConnectionError::InvalidDestination)?;
+        self.take_capture(name, index)
+    }
+
+    pub(super) fn take_capture(
+        &mut self,
+        name: &str,
+        index: usize,
+    ) -> Result<Option<Packet>, ConnectionError> {
         let packet = self.transport.pop(index);
         if let Some(packet) = &packet {
             self.observe_capture(name, packet);
@@ -556,8 +863,16 @@ impl NetworkSession {
             .captures
             .get(name)
             .ok_or(ConnectionError::InvalidDestination)?;
-        Ok(self.transport.queues()[index].is_eos()
-            || self.transport.queues()[index].reader_closed())
+        Ok(std::iter::once(index)
+            .chain(
+                self.request_lanes
+                    .values()
+                    .filter_map(|lane| lane.captures.get(name).copied()),
+            )
+            .all(|index| {
+                self.transport.queues()[index].is_eos()
+                    || self.transport.queues()[index].reader_closed()
+            }))
     }
     pub fn wake_handle(&self, path: &str) -> Option<WakeHandle> {
         let index = self
@@ -625,6 +940,15 @@ impl NetworkSession {
         p.wake.active.store(false, Ordering::Release);
         for queue in p.outputs.values().flatten() {
             self.transport.close_writer(*queue).unwrap();
+        }
+        for lane in self.request_lanes.values() {
+            for ((producer, _), queues) in &lane.outputs {
+                if *producer == index {
+                    for queue in queues {
+                        self.transport.close_writer(*queue).unwrap();
+                    }
+                }
+            }
         }
         for queue in p.inputs.iter().flat_map(|p| &p.queues) {
             let packets = self.transport.close_reader(*queue).unwrap();
@@ -725,6 +1049,15 @@ impl NetworkSession {
     /// Ownership stays in the handoff. The driver may run jobs on other threads.
     /// Publication retries happen here, never by re-running a completed step.
     pub fn next_job(&mut self) -> Option<(usize, ActivationJob)> {
+        self.supervise_deferred_jobs();
+        let (index, job) = self.next_job_inner()?;
+        if self.deferred_job_timeout.is_some() {
+            self.processes[index].deferred_ticket = Some((job.ticket(), Instant::now()));
+        }
+        Some((index, job))
+    }
+
+    fn next_job_inner(&mut self) -> Option<(usize, ActivationJob)> {
         self.refresh();
         while let Some(index) = self.ready.pop_front() {
             self.processes[index].queued = false;
@@ -749,7 +1082,7 @@ impl NetworkSession {
                 output: None,
                 origin: self.compiled.processes()[index].origin().cloned(),
             });
-            if let Some(guard) = &self.execution_guard {
+            for guard in &self.execution_guards {
                 job = job.with_guard(guard.clone());
             }
             return Some((index, job));
@@ -761,11 +1094,13 @@ impl NetworkSession {
         index: usize,
         completion: CompletedStep,
     ) -> Result<(), (HandoffError, Box<CompletedStep>)> {
+        self.supervise_deferred_jobs();
         let ticket = completion.ticket();
         let Some(p) = self.processes.get_mut(index) else {
             return Err((HandoffError::ForeignCompletion, Box::new(completion)));
         };
         let result = p.handoff.complete(completion)?;
+        self.processes[index].deferred_ticket = None;
         self.last_step = Some(ActivationMetadata {
             session: self.session_id,
             generation: self.generation,
@@ -794,7 +1129,18 @@ impl NetworkSession {
                     );
                     return Ok(());
                 }
-                let outgoing = &self.processes[index].outputs[&emission.output];
+                let outgoing = match (self.processes[index].request, self.request_queue_policy) {
+                    (Some(request), RequestQueuePolicy::BoundedLanes) => {
+                        let output_key = (index, emission.output.clone());
+                        let lane = self.requests[&request].lane;
+                        self.request_lanes
+                            .get(&lane)
+                            .and_then(|lane| lane.outputs.get(&output_key))
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[])
+                    }
+                    _ => self.processes[index].outputs[&emission.output].as_slice(),
+                };
                 let indices = if let Some(destinations) = &emission.destinations {
                     let selection = (|| -> Result<Vec<usize>, String> {
                         let budget = outgoing
@@ -862,7 +1208,7 @@ impl NetworkSession {
                         }
                     }
                 } else {
-                    outgoing.clone()
+                    outgoing.to_vec()
                 };
                 if indices.is_empty()
                     && emission.destinations.is_none()
@@ -935,10 +1281,12 @@ impl NetworkSession {
         index: usize,
         job: ActivationJob,
     ) -> Result<(), (HandoffError, ActivationJob)> {
+        self.supervise_deferred_jobs();
         let Some(p) = self.processes.get_mut(index) else {
             return Err((HandoffError::ForeignCompletion, job));
         };
         p.handoff.reject(job)?;
+        self.processes[index].deferred_ticket = None;
         self.refresh();
         Ok(())
     }
@@ -946,6 +1294,7 @@ impl NetworkSession {
         &mut self,
         completion: CompletedStep,
     ) -> Result<(), (HandoffError, Box<CompletedStep>)> {
+        self.supervise_deferred_jobs();
         let Some(index) = self
             .processes
             .iter()
@@ -1015,11 +1364,13 @@ impl NetworkSession {
             p.pending_targets.clear();
             p.wake.active.store(false, Ordering::Release);
             p.request = None;
+            p.deferred_ticket = None;
         }
         self.ready.clear();
         self.signal.invalidate();
     }
     pub fn cancel(&mut self) {
+        // Explicit cancellation wins if it is serialized before timeout supervision.
         self.stop_processes();
         for queue in self.transport.queues() {
             for packet in queue.packets() {
@@ -1036,6 +1387,7 @@ impl NetworkSession {
         self.terminal = Some(SessionState::Cancelled);
     }
     pub fn state(&mut self) -> SessionState {
+        self.supervise_deferred_jobs();
         self.refresh();
         if let Some(state) = self.terminal {
             return state;
@@ -1084,32 +1436,54 @@ impl NetworkSession {
         let before = self.publications;
         let mut steps = 0;
         while steps < budget {
-            let Some((index, job)) = self.next_job() else {
+            self.supervise_deferred_jobs();
+            let Some((index, job)) = self.next_job_inner() else {
                 break;
             };
+            let ticket = job.ticket();
             steps += 1;
             let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 self.dispatcher.dispatch(job)
             }));
+            self.supervise_deferred_jobs();
             let dispatched = match dispatched {
                 Ok(dispatched) => dispatched,
-                Err(_) => {
-                    self.fail_process(index, "process dispatcher panicked".into());
+                Err(payload) => {
+                    crate::discard_panic_payload(payload);
+                    if self.processes[index].handoff.outstanding() == Some(ticket) {
+                        self.fail_process(index, "process dispatcher panicked".into());
+                    }
                     break;
                 }
             };
             match dispatched {
                 DispatchResult::Completed(completion) => {
                     if let Err((error, completion)) = self.complete(index, completion) {
+                        let ticket = completion.ticket();
+                        if self.timeout_invalidated(ticket) || self.terminal.is_some() {
+                            drop(completion);
+                            break;
+                        }
                         self.dispatch_return =
                             Some(DispatchReturn::Completed { error, completion });
                         self.fail(format!("process dispatcher returned an invalid completion for process {index}: {error}"));
                         break;
                     }
                 }
-                DispatchResult::Deferred => {}
+                DispatchResult::Deferred => {
+                    if self.deferred_job_timeout.is_some()
+                        && self.processes[index].handoff.outstanding() == Some(ticket)
+                    {
+                        self.processes[index].deferred_ticket = Some((ticket, Instant::now()));
+                    }
+                }
                 DispatchResult::Rejected(job) => {
                     if let Err((error, job)) = self.reject(index, job) {
+                        let ticket = job.ticket();
+                        if self.timeout_invalidated(ticket) || self.terminal.is_some() {
+                            drop(job);
+                            break;
+                        }
                         self.dispatch_return = Some(DispatchReturn::Rejected { error, job });
                         self.fail(format!("process dispatcher returned an invalid rejected job for process {index}: {error}"));
                     }
@@ -1125,6 +1499,7 @@ impl NetworkSession {
             disposed_packets: self.disposed_packets,
             discarded_emissions: self.discarded_emissions,
             budget_exhausted: steps == budget && state == SessionState::Runnable,
+            next_deferred_timeout: self.next_deferred_timeout(),
         }
     }
     pub fn run_until_complete(&mut self, budget: usize) -> RunReport {
@@ -1155,6 +1530,12 @@ impl NetworkSession {
     /// Empty upstream queues relevant to idle/read-waiting processes. An open
     /// ingress is an external dependency, not a deadlock or synthetic EOS.
     pub fn input_waits(&self) -> Vec<QueueWait> {
+        let live_lanes: BTreeSet<_> =
+            if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+                self.requests.values().map(|scope| scope.lane).collect()
+            } else {
+                BTreeSet::new()
+            };
         self.processes
             .iter()
             .filter(|p| {
@@ -1170,6 +1551,10 @@ impl NetworkSession {
                     .filter(|port| p.waiting.as_ref().is_none_or(|name| name == &port.name))
             })
             .flat_map(|port| &port.queues)
+            .filter(|queue| {
+                self.request_queue_policy == RequestQueuePolicy::SharedFifo
+                    || self.queue_lanes[**queue].is_none_or(|lane| live_lanes.contains(&lane))
+            })
             .filter(|q| {
                 self.transport.queues()[**q].is_empty() && !self.transport.queues()[**q].is_eos()
             })

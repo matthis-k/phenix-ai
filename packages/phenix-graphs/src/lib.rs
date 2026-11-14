@@ -5,10 +5,17 @@
 
 extern crate self as phenix_graph;
 
+pub(crate) fn discard_panic_payload(payload: Box<dyn std::any::Any + Send>) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload))) {
+        std::mem::forget(payload);
+    }
+}
+
 pub mod component;
 pub mod compose;
 pub mod connection;
 pub mod contract;
+pub mod correlation;
 pub mod interface;
 mod limits;
 pub mod network;

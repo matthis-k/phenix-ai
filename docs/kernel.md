@@ -1,16 +1,16 @@
 # Kernel
 
-`phenix-kernel` composes Rust-only, in-process plugins into one graph using the
-existing `PluginCatalog`, `PluginSnapshot`, `ContributionHandle`, Graph compiler
-and Engine. It has no storage dependency and introduces no second scheduler.
-See [Contract Composition Iteration](contract-composition-iteration.md) for the
-current evidence ledger, ownership/mutation audit and pending verification gates.
+`phenix-kernel` composes Rust-only, in-process plugins into one native FBP network
+using `PluginCatalog`, `PluginSnapshot`, `ContributionHandle`, the graph compiler,
+and a persistent `NetworkSession`. It has no storage dependency or second scheduler.
+See the [campaign record](fbp-hardening-campaign-20261114.md) and authoritative
+[issue tracker](fbp-issue-progress-estimates-20261113.md) for current evidence and gaps.
 
 ```text
 catalog / plugin stages -> candidate snapshots -> resolve imports/dependencies
     -> compose contexts + candidate artifacts -> compile/check actual graph
     -> bind host adapters -> start producers -> publish generation
-    -> declared producer notice -> existing Engine -> separate wave
+    -> declared producer notice -> bounded ingress -> persistent NetworkSession
 ```
 
 ## ABI Boundary
@@ -29,19 +29,20 @@ cargo run -p phenix-kernel --example storage
 cargo test -p phenix-kernel
 ```
 
-`examples/basic.rs` composes a typed increment node and fires an ordinary wave.
+`examples/basic.rs` composes a typed increment process and drives the native session.
 `examples/storage.rs` uses memory and in-memory SQLite, with change notices routed
-into separate observer waves. Subscriptions are acquired on start, not composition.
+into the observer network. Subscriptions are acquired on start, not composition.
 These are runnable entry points, not a claim that these commands were rerun here.
 
 ## Composition API
 
-- Register `Contribution { id, requires, routes, compose }` using `Registrar::add`.
-  `compose` receives `&mut ComposeContext`, with the ordinary builder at `context.graph`.
+- Register `Contribution { id, requires, routes, patch, prepare }` using
+  `Registrar::add`. The immutable `NetworkPatch` carries edits, not write authority.
+  Trusted `BuildOptions.composition` supplies exact grants and priorities.
 - Dependencies use owner-qualified `Key::new(owner, id)`. All contributions compose
   in topological order, with lexical owner/id tie-breaking. Duplicates, missing
   dependencies, cycles and duplicate snapshot owners fail before composition.
-- Register `ContractDefinition { id, contract }`, `GraphOffer { id, producer,
+- Register `ContractDefinition { id, contract }`, `NetworkOffer { id, producer,
   unit, contract }`, and `ContractRequirement { id, consumer, contract }` as ordinary
   typed contributions. Producer/consumer keys must belong to the registering plugin.
 - `Kernel::build_with_options` applies `BuildOptions.imports`, the trusted
@@ -49,24 +50,21 @@ These are runnable entry points, not a claim that these commands were rerun here
   allow/deny pairs. Denial wins. A unique eligible compatible offer is selected
   automatically; missing, ambiguous or invalid selections fail closed.
 - Selected providers become dependencies of their consumers. A consumer calls
-  `context.import(local_requirement_id)?`, then `ResolvedImport::bind(graph)` to
+  `context.import(local_requirement_id)?`, then `ResolvedImport::bind(compiled)` to
   project actual claimed endpoints. Connect them explicitly with Graph APIs.
   Consumers need not capture provider paths; automatic edge insertion is not provided.
-- `context.activate(factory)` registers one candidate-local producer factory.
+- `CandidateArtifacts::activate(factory)` registers one candidate-local producer factory.
   There is no `Contribution.activate` field. The zero-argument factory captures
   the exact composed state and returns an owned `Box<dyn Producer>` after compile.
-- `context.export(value)` registers one typed candidate-owned export. Bundle
+- `CandidateArtifacts::export(value)` registers one typed candidate-owned export. Bundle
   multiple values in a struct; retrieve using `Kernel::export::<T>(&key)`.
   Missing keys/wrong types return `None`. Shared snapshot slots are not candidate exports.
 - Build validates all offers, including unused offers, all registered contract
   definitions against compiled claims/requests, exact contribution origins, and
-  declared routes before constructing one Deployment with the supplied Executor.
-   `Kernel::build` uses default options; both builders return `ResolutionError`.
-   `BuildOptions.execution` holds Graph-owned `ExecutionLimits`, for example
-   `ExecutionLimits { max_activations: 4096 }`. Kernel retains ownership of the
-   validated deployment: options cannot build/fire, substitute graphs, or install
-   per-node executors that bypass the supplied executor's guard.
-   The same options pass through `KernelHost::prepare` and `DerivedHost::prepare`.
+  declared routes before constructing one native session with the supplied
+  `ProcessDispatcher`. `Kernel::build` uses default options; both builders return
+  `ResolutionError`. `BuildOptions.execution` holds graph-owned `SessionOptions`.
+  The same options pass through `KernelHost::prepare` and `DerivedHost::prepare`.
 
 Graph owns actual shape and semantic matching. Kernel does not copy purported
 implementation shapes into offers. Per-composer origin children distinguish
@@ -84,24 +82,41 @@ artifacts available for retry. Factories must clean up partial acquisitions;
 producers must stop/release resources on drop. Producers die before graph/actions,
 artifacts and contribution/snapshot code leases; shutdown is not reverse dependency order.
 
-`Producer::poll` must not wait for events. It returns at most one `Notice`, idle,
+`Producer::poll` must not wait for events. It returns at most one input event, idle,
 or a terminal error. A poll error is reported once and retires that producer;
-transient unavailability must return `Ok(None)` and wake when ready to retry.
-Detached producers are dropped outside the producer-state lock. Routes are
-preflighted before activation and notices to undeclared
-routes reject. `drain(max_polls)` polls round-robin across calls; idle polls count
-toward the bound. Each notice fires a separate Engine wave. `ProducerError`
-distinguishes poll, undeclared-route and admission errors; invocation failures
-remain inside ordinary WaveReports. Errors do not stop remaining bounded polls
-of surviving producers.
+transient unavailability returns `Ok(None)` and wakes when ready to retry. Routes
+are checked against compiled public inputs before admission. `drain(max_polls)`
+polls round-robin across calls; idle polls count toward the bound, full inputs retain
+one event, and admission contention retains rather than repolls that event.
+`ProducerError` distinguishes poll, undeclared-route and admission errors.
 
-`fire` rejects before successful start; `drain` produces no events before start.
-`engine()` deliberately bypasses that startup guard. The optional blocking
-`run_until(&WakeHandle, on_event)` requires wake registration from every producer;
-it waits when idle and checks sticky shutdown between waves. Registration must
-synchronize with publication. There is no background thread or new async runtime.
-Poll count bounds admissions, not callback duration. Shutdown does not interrupt
-running polls, waves or callbacks; queue/overflow policy belongs to producers.
+Neither `poll` nor `set_waker` runs while the producer-state mutex is held. One
+producer callback lease serializes poll/wake registration; recursive or concurrent
+`drain` returns empty rather than blocking. Poll panic is a terminal poll error;
+wake-registration panic is a `DriverError`. `run_until(&WakeHandle, on_event)`
+requires wake registration from each producer, waits when idle, and checks sticky
+shutdown between bounded iterations. There is no background thread or new async
+runtime. Poll count bounds admissions, not callback duration. Shutdown cannot
+interrupt a callback already executing.
+
+`with_session` and `run_steps` exclusively lease the native session without holding
+the kernel session mutex across callbacks. Same-thread re-entry through that Kernel
+fails fast (`inject` returns `ReentrantSessionAccess` with the original value).
+The existing execution guard propagates this identity to dispatched process
+workers. Other callers wait for the exclusive lease. This does not prevent arbitrary
+plugin-vs-plugin deadlocks, plugin-spawned thread/join cycles, or resource-lock cycles.
+
+Producer admission claims its retirement boundary under the producer mutex, then
+injects without that mutex. Admission already claimed before retirement may finish;
+a poll result returned after retirement cannot claim admission. Callback count is
+not a preemption or shutdown-duration bound.
+
+`SessionOptions::deferred_job_timeout` is opt-in and defaults to `None`. Deferred
+handoffs expire at cooperative session supervision boundaries; late results cannot
+publish. A direct `next_job` call starts timing at handoff, while the built-in driver
+starts timing only after `DispatchResult::Deferred`. `run_until` wakes at the
+nearest deadline. Timeout cannot stop external work or release its leases, and
+restart can overlap the timed-out worker's still-running external effects.
 
 ## Host Publication
 
@@ -122,18 +137,19 @@ the store-owned nested-query guard on dispatch and worker threads. Validate with
 and exported application values can still cause external effects; those are not
 sandboxed or rolled back.
 
-`publish` rejects stale/foreign candidates, serializes with old producer drains,
-commits the validated plugin batch, marks old producers
-retired, and replaces the active pointer. A retained `Arc<Generation>` pins its
-old engine, exports and leases; explicit old waves/queries remain valid, but
-retired `drain` calls return empty. Host drop also retires active producers.
-Producer destructors complete before old leases are released.
+`publish` rejects stale/foreign candidates, commits the validated plugin batch,
+marks old producers retired, and replaces the active pointer. It does not wait for
+an in-flight producer callback. A callback that returns after retirement cannot
+admit its event; already-started external work is not revoked. A retained
+`Arc<Generation>` pins its old graph, exports and leases; explicit old session calls
+remain valid, but retired `drain` calls return empty. Host drop also retires active
+producers. Detached producer destructors complete outside the state lock and before
+old leases are released.
 
-`Generation::with_kernel` gives scoped read-only access to engine and exports;
-`with_engine` is the engine-only convenience. Explicit reads and waves do not
-hold the producer lock or block publication. The supported derived adapter queries
-within this scope. Explicit low-level `bind_engine` bypasses Kernel's startup guard
-and cannot ensure host-only dispatch on an arbitrary unguarded engine.
+`Generation::with_kernel` gives scoped access to compiled metadata, exports, and
+explicit session operations. It is not a read-only security capability: `Kernel`
+uses interior mutability. Explicit operations do not hold the producer mutex or
+block publication. The supported derived adapter queries within this scope.
 
 ## Limits
 
@@ -152,9 +168,9 @@ where applicable and expose the original cause through `Error::source`, without
 a string-only activation wrapper. Plugin failures support owned sources and record
 the plugin and construct/contribute/bind phase; binding also records the contribution
 id. Staging rejects a replaced registrar owner before accepting its inventory.
-Driver setup errors distinguish not-started from unsupported wake registration and
-retain the exact producer key. Invalid metadata, graph admission and wave diagnostics
+Driver setup errors distinguish not-started, callback contention, re-entry and
+unsupported/panicking wake registration. Invalid metadata and runtime diagnostics
 still have string-based paths; callback errors do not reconstruct types already lost
 by a caller. Schema identities use reclaimable `Arc<str>` ownership with no
-global interner. The graph deployment defaults to its existing in-memory resource store;
+global interner. Graph resources are explicitly supplied and granted;
 storage authorization and backend lifetimes remain external adapter responsibilities.

@@ -51,7 +51,8 @@ impl std::error::Error for LifecycleError {
 
 /// An immutable generation identity with serialized producer access. No mutable
 /// kernel or producer access escapes. Explicit session calls remain valid after
-/// replacement, but retired producers can never admit another event.
+/// replacement, but retired producers can never admit another event. A poll
+/// already executing at retirement may finish; its late event is discarded.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -219,8 +220,9 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement waits only for producer drains, never explicit session work or queries.
-    /// Producer destructors run after the transition.
+    /// Retirement does not wait for an in-flight producer callback or explicit
+    /// session work. A returning old callback cannot admit into the retired graph.
+    /// Producer destructors run after the transition and outside the state lock.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
