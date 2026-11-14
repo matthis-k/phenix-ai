@@ -16,7 +16,7 @@ impl NetworkSession {
         id: RequestId,
         diagnostic: impl Into<String>,
     ) -> Result<Vec<StepTicket>, RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         self.fail_request_inner(id, diagnostic.into())
     }
 

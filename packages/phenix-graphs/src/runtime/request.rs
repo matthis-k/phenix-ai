@@ -162,7 +162,7 @@ impl NetworkSession {
     /// Reserve one bounded scope. `Some(output)` requires exactly one capture
     /// in the scope, from that compiled projection, before successful settlement.
     pub fn begin_request(&mut self, exact_output: Option<&str>) -> Result<RequestId, RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         if self.terminal.is_some() || self.state() == SessionState::Completed {
             return Err(RequestError::Stale);
         }
@@ -253,7 +253,7 @@ impl NetworkSession {
         name: &str,
         value: Value,
     ) -> Result<(), RequestInjectionError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let validation = self.check_request(id).and_then(|r| {
             if self.terminal.is_some() || r.terminal.is_some() {
                 Err(RequestError::Stale)
@@ -283,7 +283,7 @@ impl NetworkSession {
     /// Start only an explicitly compiled zero-input source, using the same
     /// persistent process and handoff. No root guessing or process respawning.
     pub fn start_request_source(&mut self, id: RequestId, path: &str) -> Result<(), RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
@@ -319,7 +319,7 @@ impl NetworkSession {
     }
     /// Seals request ingress, not the persistent network's public input writers.
     pub fn close_request(&mut self, id: RequestId) -> Result<(), RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
@@ -377,7 +377,7 @@ impl NetworkSession {
         })
     }
     pub fn release_request(&mut self, id: RequestId) -> Result<(), RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         self.check_request(id)?;
         if self.terminal.is_none() && (self.request_live(id) || !self.requests[&id].sealed) {
             return Err(RequestError::NotSettled);
@@ -465,7 +465,7 @@ impl NetworkSession {
         id: RequestId,
         name: &str,
     ) -> Result<Option<Packet>, RequestError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let scope = self.check_request(id)?;
         let lane = scope.lane;
         let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes

@@ -397,6 +397,27 @@ methodology and flags are unchanged. Same-runtime polled/notified, mixed-agent a
 allocation workflows remain mode comparisons, not before/after evidence, and are
 unchanged. This correction claims no performance result or score change.
 
+### Exact-Baseline Counterevidence
+
+Head `94a822cfda7134785fd7594943e8020ec385e4a9` passed Flake and benchmark
+execution but did not pass a no-regression assessment. Three alternating paired
+runs against exact `516e088`, using identical release harness sources on each
+runner, measured these medians of three recorded run means (not pooled p50s):
+
+| Workload | Verified baseline | `94a822cf` | Evidence |
+| --- | ---: | ---: | --- |
+| Scoped request, one process | 1,611.2 ns/request | 1,887.6 ns/request | [43612305270](https://github.com/matthis-k/phenix-ai/actions/runs/43612305270), AMD EPYC 7763, unpinned |
+| EOS chain, 128 + 64 unrelated nodes | 51,953.0 ns/EOS | 60,515.9 ns/EOS | [43612305204](https://github.com/matthis-k/phenix-ai/actions/runs/43612305204), Intel Xeon 6975P-C, CPU 0 |
+| Scoped closure chain, 128 nodes | 7,383,400.6 ns/request | 8,153,688.0 ns/request | [43612305197](https://github.com/matthis-k/phenix-ai/actions/runs/43612305197), AMD EPYC 7763, unpinned |
+
+This prompted a concrete disabled-policy hot-path fix: internal supervision now
+checks whether `deferred_timeout` is configured before reading the clock. Admission,
+completion and dispatch boundaries previously read `Instant::now()` even with the
+default `None`. Supervision remains unchanged when enabled; passive `state()` stays
+passive. Focused deadline/lane/worker tests and strict workspace Clippy pass after
+the fix; its final same-head paired measurements are required before any new
+performance conclusion. No baseline timing is reused as a production-agent budget.
+
 ## Remaining Policy Boundaries
 
 The initial no-wait publication proposal is explicitly superseded by whole-drain

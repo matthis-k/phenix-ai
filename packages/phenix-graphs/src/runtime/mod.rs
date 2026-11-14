@@ -819,7 +819,7 @@ impl NetworkSession {
         self.inject(name, Value::local(value))
     }
     pub fn inject(&mut self, name: &str, value: Value) -> Result<(), InjectionError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         self.inject_scoped(name, value, None)
     }
     fn inject_scoped(
@@ -886,7 +886,7 @@ impl NetworkSession {
         }
     }
     pub fn close_input(&mut self, name: &str) -> Result<(), ConnectionError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let queues = self
             .ingress
             .get(name)
@@ -909,7 +909,7 @@ impl NetworkSession {
         Ok(())
     }
     pub fn take_output(&mut self, name: &str) -> Result<Option<Packet>, ConnectionError> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let index = *self
             .captures
             .get(name)
@@ -1346,6 +1346,12 @@ impl NetworkSession {
             .collect()
     }
 
+    fn supervise_configured_deferred(&mut self) {
+        if self.deferred_timeout.is_some() {
+            self.supervise_deferred(Instant::now());
+        }
+    }
+
     /// Host-driven watchdog. Failing a request or session invalidates outstanding
     /// tickets but cannot revoke worker ownership or undo external effects.
     pub fn supervise_deferred(&mut self, now: Instant) -> Vec<OverdueJob> {
@@ -1373,7 +1379,7 @@ impl NetworkSession {
     /// A configured deadline starts when this method returns the job.
     /// Publication retries happen here, never by re-running a completed step.
     pub fn next_job(&mut self) -> Option<(usize, ActivationJob)> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let (index, job) = self.next_job_inner()?;
         if self.deferred_timeout.is_some() {
             self.dispatched_at.insert(index, Instant::now());
@@ -1418,7 +1424,7 @@ impl NetworkSession {
         index: usize,
         completion: CompletedStep,
     ) -> Result<(), (HandoffError, Box<CompletedStep>)> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let ticket = completion.ticket();
         let Some(p) = self.processes.get_mut(index) else {
             return Err((HandoffError::ForeignCompletion, Box::new(completion)));
@@ -1612,7 +1618,7 @@ impl NetworkSession {
         index: usize,
         job: ActivationJob,
     ) -> Result<(), (HandoffError, ActivationJob)> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let Some(p) = self.processes.get_mut(index) else {
             return Err((HandoffError::ForeignCompletion, job));
         };
@@ -1626,7 +1632,7 @@ impl NetworkSession {
         &mut self,
         completion: CompletedStep,
     ) -> Result<(), (HandoffError, Box<CompletedStep>)> {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let Some(index) = self
             .processes
             .iter()
@@ -1825,11 +1831,11 @@ impl NetworkSession {
     /// Both drivers stop at quiescence or external backpressure. Neither spins
     /// waiting for an ingress, capture consumer, worker completion, or wake.
     pub fn run_until_idle(&mut self, budget: usize) -> RunReport {
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let before = self.publications;
         let mut steps = 0;
         while steps < budget {
-            self.supervise_deferred(Instant::now());
+            self.supervise_configured_deferred();
             let Some((index, job)) = self.next_job_inner() else {
                 break;
             };
@@ -1838,7 +1844,7 @@ impl NetworkSession {
             let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 self.dispatcher.dispatch(job)
             }));
-            self.supervise_deferred(Instant::now());
+            self.supervise_configured_deferred();
             let dispatched = match dispatched {
                 Ok(dispatched) => dispatched,
                 Err(payload) => {
@@ -1893,7 +1899,7 @@ impl NetworkSession {
                 }
             }
         }
-        self.supervise_deferred(Instant::now());
+        self.supervise_configured_deferred();
         let state = self.state();
         RunReport {
             state,
