@@ -20,6 +20,17 @@ and classifications 10 scoped verified / 7 partial / 16 open. The incoming
 score authority. M7 and M8 remain incomplete, including missing P1/P2 production
 model/provider, conversation, local/SSH tool and frontend adapters.
 
+Integrated implementation head `a87fd5a824496c4db04ebe11cbf8827b4f29e9ea`
+passed [six-job Flake CI 43611241004](https://github.com/matthis-k/phenix-ai/actions/runs/43611241004),
+[session Loom 43611240644](https://github.com/matthis-k/phenix-ai/actions/runs/43611240644),
+[wake Loom 43611240338](https://github.com/matthis-k/phenix-ai/actions/runs/43611240338),
+[eight-repeat native Q5 43611329715](https://github.com/matthis-k/phenix-ai/actions/runs/43611329715),
+and [in-flight recovery 43611329804](https://github.com/matthis-k/phenix-ai/actions/runs/43611329804).
+Its H4/H5/H6 workflows also completed, but the paired comparisons used older
+optimization parents; they do not establish incremental acceptance against
+`516e088`. Subsequent baseline-provenance corrections require their own exact-head
+CI and measured comparison. All scores remain unchanged.
+
 ## Dependency Map
 
 | Batch | Shared authority | Depends on | Evidence boundary |
@@ -369,9 +380,22 @@ head. Earlier local or PR #1300 runs must not be relabeled as its evidence.
 The six-job Flake inventory remains the full gate, alongside all scoped gates
 from the verified stack. The added path-scoped session Loom workflow is a separate
 failure domain, not a substitute for the wake verifier, native concurrency,
-benchmark or main/manual acceptance gates. No workflow edits are part of this
-documentation reconciliation. No new paired performance, allocation or RSS
+benchmark or main/manual acceptance gates. The earlier documentation reconciliation
+did not edit workflows. No new paired performance, allocation or RSS
 acceptance results are claimed.
+
+### Paired Benchmark Baseline Correction
+
+The existing green H4 EOS endpoint, targeted wake, optional idle, scoped sparse,
+H5 closure and H5 request-index evidence workflows used older baselines:
+`43564cfacc6905e218fc49f11ba3485d63655668` or pre-index
+`9911b42e3c0a3d84c7c60658090a51d426190dd1`. Those passes do not establish a
+comparison against the immediately verified PR #1300 head. Their baseline checkouts
+now pin exact `516e0883875d5ec483e3595d50b77b3d5e8979c4`; new paired runs are
+required against that baseline. Byte-identical benchmark copying, hardware
+methodology and flags are unchanged. Same-runtime polled/notified, mixed-agent and
+allocation workflows remain mode comparisons, not before/after evidence, and are
+unchanged. This correction claims no performance result or score change.
 
 ## Remaining Policy Boundaries
 
