@@ -74,29 +74,25 @@ impl NetworkSession {
         if scope.terminal.is_some() || p.done || !scope.reachable.contains(&index) {
             return false;
         }
-        match &p.policy {
+        let names = match &p.policy {
             Readiness::Optional { required, optional } if required.is_empty() => {
-                optional.iter().any(|name| {
-                    let port = p
-                        .inputs
-                        .iter()
-                        .position(|port| &port.name == name)
-                        .expect("validated optional readiness port");
-                    !scope.observed_inputs.contains(&(index, port))
-                })
+                optional.as_slice()
             }
-            Readiness::Custom(_) => scope.closure_ports.get(&index).is_some_and(|names| {
-                names.iter().any(|name| {
-                    let port = p
-                        .inputs
-                        .iter()
-                        .position(|port| &port.name == name)
-                        .expect("validated custom closure port");
-                    !scope.observed_inputs.contains(&(index, port))
-                })
-            }),
-            _ => false,
-        }
+            Readiness::Custom(_) => scope
+                .closure_ports
+                .get(&index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            _ => return false,
+        };
+        names.iter().any(|name| {
+            let port = p
+                .inputs
+                .iter()
+                .position(|port| &port.name == name)
+                .expect("validated closure readiness port");
+            !scope.observed_inputs.contains(&(index, port))
+        })
     }
 
     pub(super) fn request_input_closed(

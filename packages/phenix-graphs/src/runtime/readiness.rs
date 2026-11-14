@@ -226,9 +226,9 @@ impl NetworkSession {
             }
         }
         for request in candidates {
-            let snapshot = ReadinessSnapshot {
+            let mut snapshot = ReadinessSnapshot {
                 request,
-                correlation_lane: request.map(|id| self.requests[&id].lane),
+                correlation_lane: None,
                 heads: order
                     .iter()
                     .map(|port| InputHead {
@@ -312,6 +312,7 @@ impl NetworkSession {
                     }
                 }
                 Readiness::Custom(policy) => {
+                    snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         policy.select(&snapshot)
                     }))
