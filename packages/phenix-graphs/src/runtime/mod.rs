@@ -243,8 +243,6 @@ pub struct ActivationMetadata {
 struct InputPort {
     name: String,
     queues: Vec<usize>,
-    shared_queues: Vec<usize>,
-    lane_queues: BTreeMap<usize, Vec<usize>>,
     cursor: usize,
     eos_delivered: bool,
 }
@@ -260,7 +258,6 @@ struct RuntimeProcess {
     // Stable opt-in snapshot from the policy at session startup.
     notification_driven: bool,
     cursor: usize,
-    request_cursor: usize,
     queued: bool,
     done: bool,
     source: bool,
@@ -272,6 +269,7 @@ struct RuntimeProcess {
 
 struct RequestLane {
     inputs: BTreeMap<String, Vec<usize>>,
+    input_ports: BTreeMap<(usize, usize), Vec<usize>>,
     outputs: BTreeMap<(usize, String), Vec<usize>>,
     captures: BTreeMap<String, usize>,
     queues: Vec<usize>,
@@ -287,6 +285,7 @@ pub struct NetworkSession {
     ingress: BTreeMap<String, Vec<usize>>,
     captures: BTreeMap<String, usize>,
     request_lanes: BTreeMap<usize, RequestLane>,
+    request_cursors: BTreeMap<usize, usize>,
     queue_lanes: Vec<Option<usize>>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
@@ -496,8 +495,6 @@ impl NetworkSession {
                         .map(|name| InputPort {
                             name: name.clone(),
                             queues: vec![],
-                            shared_queues: vec![],
-                            lane_queues: BTreeMap::new(),
                             cursor: 0,
                             eos_delivered: false,
                         })
@@ -515,7 +512,6 @@ impl NetworkSession {
                     policy,
                     notification_driven: false,
                     cursor: 0,
-                    request_cursor: 0,
                     queued: false,
                     done: false,
                     source: compiled.source_starts().contains(&index),
@@ -548,13 +544,6 @@ impl NetworkSession {
                 .unwrap()
                 .queues
                 .push(index);
-            processes[to]
-                .inputs
-                .iter_mut()
-                .find(|p| p.name == input)
-                .unwrap()
-                .shared_queues
-                .push(index);
             endpoints.push((
                 QueueEndpoint::Process {
                     index: from,
@@ -580,13 +569,6 @@ impl NetworkSession {
                     .find(|p| p.name == *input)
                     .unwrap()
                     .queues
-                    .push(index);
-                processes[*to]
-                    .inputs
-                    .iter_mut()
-                    .find(|p| p.name == *input)
-                    .unwrap()
-                    .shared_queues
                     .push(index);
                 endpoints.push((
                     QueueEndpoint::Input(name.clone()),
@@ -662,6 +644,7 @@ impl NetworkSession {
             ingress,
             captures,
             request_lanes: BTreeMap::new(),
+            request_cursors: BTreeMap::new(),
             queue_lanes,
             endpoints,
             ready: VecDeque::new(),
@@ -757,6 +740,7 @@ impl NetworkSession {
 
         let mut request_lane = RequestLane {
             inputs: BTreeMap::new(),
+            input_ports: BTreeMap::new(),
             outputs: BTreeMap::new(),
             captures: BTreeMap::new(),
             queues: Vec::new(),
@@ -790,13 +774,17 @@ impl NetworkSession {
             }
             match &endpoints.1 {
                 QueueEndpoint::Process { index, port } => {
-                    let input = self.processes[*index]
+                    let position = self.processes[*index]
                         .inputs
-                        .iter_mut()
-                        .find(|input| &input.name == port)
+                        .iter()
+                        .position(|input| &input.name == port)
                         .unwrap();
-                    input.queues.push(queue);
-                    input.lane_queues.entry(lane).or_default().push(queue);
+                    self.processes[*index].inputs[position].queues.push(queue);
+                    request_lane
+                        .input_ports
+                        .entry((*index, position))
+                        .or_default()
+                        .push(queue);
                 }
                 QueueEndpoint::Capture(name) => {
                     request_lane.captures.insert(name.clone(), queue);

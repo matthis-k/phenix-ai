@@ -119,13 +119,18 @@ impl NetworkSession {
         let queues = match (self.request_queue_policy, request) {
             (RequestQueuePolicy::BoundedLanes, Some(request)) => {
                 let lane = self.requests[&request].lane;
-                input
-                    .lane_queues
-                    .get(&lane)
+                self.request_lanes[&lane]
+                    .input_ports
+                    .get(&(index, port))
                     .map(Vec::as_slice)
                     .unwrap_or(&[])
             }
-            (RequestQueuePolicy::BoundedLanes, None) => &input.shared_queues,
+            (RequestQueuePolicy::BoundedLanes, None) => {
+                let canonical_count = input
+                    .queues
+                    .partition_point(|queue| self.queue_lanes[*queue].is_none());
+                &input.queues[..canonical_count]
+            }
             (RequestQueuePolicy::SharedFifo, _) => &input.queues,
         };
         for offset in 0..queues.len() {
@@ -212,7 +217,8 @@ impl NetworkSession {
                 request.map_or(self.max_requests, |id| self.requests[&id].lane)
             });
             let next = candidates.partition_point(|request| {
-                request.map_or(self.max_requests, |id| self.requests[&id].lane) < p.request_cursor
+                request.map_or(self.max_requests, |id| self.requests[&id].lane)
+                    < self.request_cursors.get(&index).copied().unwrap_or(0)
             });
             let candidate_count = candidates.len();
             if candidate_count != 0 {
@@ -385,8 +391,8 @@ impl NetworkSession {
         let request = selected.request;
         self.processes[index].request = request;
         if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
-            self.processes[index].request_cursor =
-                request.map_or(0, |id| self.requests[&id].lane + 1);
+            self.request_cursors
+                .insert(index, request.map_or(0, |id| self.requests[&id].lane + 1));
         }
         let mut inputs = BTreeMap::new();
         let mut closed = vec![];

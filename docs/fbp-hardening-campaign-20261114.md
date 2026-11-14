@@ -418,6 +418,24 @@ passive. Focused deadline/lane/worker tests and strict workspace Clippy pass aft
 the fix; its final same-head paired measurements are required before any new
 performance conclusion. No baseline timing is reused as a production-agent budget.
 
+Head `584a7239784b084e9edd435ef2714847f434812d` removed the prior small-request
+and EOS-chain timing regressions in its paired runs, but not closure-chain cost:
+[43613368643](https://github.com/matthis-k/phenix-ai/actions/runs/43613368643)
+measured 1,882,119.1 -> 2,019,084.2 ns/request at 64 nodes and
+7,439,322.7 -> 8,279,280.5 at 128 nodes (medians of three run means versus `516e088`).
+The latter is +11.29%; green workflow status is not performance acceptance.
+
+The next minimal layout correction removes lane-only maps and duplicated canonical
+queue vectors from every `InputPort`, and the lane cursor from every
+`RuntimeProcess`. Their indexes/cursors now live only in opt-in lane/session records;
+default process/input layouts return to the verified baseline shape. Lane creation
+appends queues after a canonical prefix, whose order never changes on reuse; that
+prefix supplies unscoped input selection. This introduces no new scheduling policy
+or public API. Focused lane/deadline/dirty-scheduler tests, strict Clippy and an
+independent scoped review pass. Local pinned A/B closure timings were noisy, so
+they do not establish that the remaining regression is removed; final same-head
+paired CI measurements remain required.
+
 ## Remaining Policy Boundaries
 
 The initial no-wait publication proposal is explicitly superseded by whole-drain

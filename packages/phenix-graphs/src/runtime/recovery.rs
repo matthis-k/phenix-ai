@@ -173,7 +173,7 @@ impl NetworkSession {
                     p.wake = Arc::new(WakeSlot::default());
                     p.done = false;
                     p.cursor = 0;
-                    p.request_cursor = 0;
+                    self.request_cursors.remove(&index);
                     for port in &mut p.inputs {
                         port.cursor = 0;
                         port.eos_delivered = false;
