@@ -74,7 +74,7 @@ After:
 use phenix_storage::{Revision, Revisioned};
 
 let kv = storage.project()?.config::<AgentConfig>("phenix.agent/settings")?;
-let current: Option<Revisioned<AgentConfig>> = kv.get("default")?;
+let current: Option<Revisioned<AgentConfig>> = kv.get_revisioned("default")?;
 let expected: Option<&Revision> = current.as_ref().map(|v| &v.revision);
 let next: Revision = kv.compare_exchange("default", expected, &replacement)?;
 // current.as_ref().map(|v| &v.value) accesses the decoded value.
@@ -82,8 +82,9 @@ let next: Revision = kv.compare_exchange("default", expected, &replacement)?;
 ```
 
 `put` remains unconditional. Read authority does not imply write authority; CAS
-requires `Write`. Scoped read planning now requires revision support even for
-read-only requests. Tokens are opaque and key-local, not integers, grants or
+requires `Write`. The later [capability correction](fbp-storage-capabilities-20261114.md)
+restores plain `get` and makes revisioned/batch/CAS requirements independent;
+explicit revision consumers declare `RevisionedRead`. Tokens are opaque and key-local, not integers, grants or
 snapshot IDs. SQLite clock persistence and immediate transactions prevent normal
 delete/recreate ABA within a backend/mount; old-file restore and absence are explicitly
 outside a historical-token guarantee.

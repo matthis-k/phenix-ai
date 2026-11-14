@@ -6,7 +6,7 @@ use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::scoped::{
     BindingTarget, Identity, ResourceId, ScopeKind, Storage, StorageClass, Stored, XdgPaths,
 };
-use phenix_storage::{Codec, Operation, Revision, Revisioned, Schema};
+use phenix_storage::{Capability, Codec, Operation, Revision, Revisioned, Schema};
 use phenix_storage_plugin::{
     BackendPlacement, PreparedStorage, ResourceBinding, ResourceOffer, ResourceRequirements,
     StoragePolicy,
@@ -70,7 +70,7 @@ pub mod writer {
                 "phenix.agent/settings",
                 [Operation::Write],
             );
-            offer.request = offer.request.with_atomic_cas();
+            offer.request = offer.request.require(Capability::CompareExchange);
             registrar.add(offer)?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
@@ -141,14 +141,16 @@ pub mod observer {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            registrar.add(ResourceOffer::kv_schema(
+            let mut offer = ResourceOffer::kv_schema(
                 "config",
                 ScopeKind::Project,
                 StorageClass::Config,
                 "phenix.agent/settings",
                 Format.schema(),
                 [Operation::Read, Operation::Subscribe],
-            ))?;
+            );
+            offer.request = offer.request.require(Capability::RevisionedRead);
+            registrar.add(offer)?;
             let storage = self.storage.clone();
             let source = storage.clone();
             let reads = self.reads.clone();
@@ -166,7 +168,9 @@ pub mod observer {
                         .config::<ObservedConfig>("phenix.agent/settings")?;
                     let log = reads.clone();
                     let node = support::local_sink(move |_notice: phenix_storage::Notice| {
-                        log.lock().unwrap().push(kv.get("default").map_err(text));
+                        log.lock()
+                            .unwrap()
+                            .push(kv.get_revisioned("default").map_err(text));
                     });
                     context.patch = Some(support::input_patch(
                         "refresh_config",

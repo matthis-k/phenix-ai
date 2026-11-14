@@ -189,10 +189,7 @@ fn offers(registrar: &mut Registrar, operations: &[Operation]) -> Result<(), Fai
     for (id, spec) in [("a", A), ("b", B)] {
         registrar.add(ResourceOffer::new(
             id,
-            phenix_storage::scoped::ResourceRequest::new(
-                spec.resource_spec(),
-                operations.iter().copied(),
-            ),
+            spec.request(operations.iter().copied()),
         ))?;
     }
     Ok(())

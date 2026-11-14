@@ -61,11 +61,9 @@ fn revisions_conflicts_aba_and_notices() {
     for sqlite in [false, true] {
         let (_registry, session) = setup(sqlite);
         let a = address();
+        let caps = session.capabilities(&a, Operation::Read).unwrap();
         assert!(
-            session
-                .capabilities(&a, Operation::Read)
-                .unwrap()
-                .compare_exchange
+            caps.typed_kv && caps.revisioned_read && caps.atomic_read_many && caps.compare_exchange
         );
         assert!(session.get_revisioned(&a, "k", &Text).unwrap().is_none());
         let mut notices = session.subscribe(Scope::Dataset(a.clone()), 16).unwrap();
@@ -287,7 +285,7 @@ fn legacy_backend_revision_capability_is_explicitly_unsupported() {
     assert!(matches!(
         session.get_revisioned(&address(), "k", &Text),
         Err(Error::UnsupportedCapability {
-            capability: Capability::CompareExchange
+            capability: Capability::RevisionedRead
         })
     ));
     assert!(matches!(

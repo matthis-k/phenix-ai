@@ -198,6 +198,9 @@ impl Backend for Legacy {
     }
 }
 impl TypedKv for Legacy {
+    fn supports_revisioned_reads(&self) -> bool {
+        true
+    }
     fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
         self.0.get(d, k)
     }
@@ -222,7 +225,8 @@ fn external_backend_must_opt_in_to_atomic_reads() {
     let a = addr("main", "a");
     let schema = Format.schema();
     r.register(&a, schema.clone()).unwrap();
-    let s = r.session([grant(&a, [Operation::Read])]);
+    let s = r.session([grant(&a, [Operation::Read, Operation::Write])]);
+    s.put(&a, "v", &Number(11), &Format).unwrap();
     let keys = [request(&a, "v", &schema)];
     assert!(matches!(
         s.read_many(&keys, ReadConsistency::AtomicWithinMount),
@@ -230,24 +234,25 @@ fn external_backend_must_opt_in_to_atomic_reads() {
             capability: Capability::AtomicReadMany
         })
     ));
-    s.read_many(&keys, ReadConsistency::BestEffort).unwrap();
+    let snapshot = s.read_many(&keys, ReadConsistency::BestEffort).unwrap();
+    assert_eq!(
+        snapshot.entries()[0].value().unwrap().value,
+        11u64.to_be_bytes()
+    );
     let identity = Identity::user("u").unwrap().project("p").unwrap();
     let mut catalog = ResourceCatalog::new();
     catalog
         .bind(A.resource_spec().resolve(&identity).unwrap(), a)
         .unwrap();
     let storage = catalog.freeze().access(s, identity);
-    let (cell,) = storage.bind((A.read(),)).unwrap();
     assert!(matches!(
-        SnapshotReader::new(vec![cell.source()], ReadConsistency::AtomicWithinMount),
-        Err(phenix_storage::Error::UnsupportedCapability {
-            capability: Capability::AtomicReadMany
-        })
+        storage.bind((A.read(),)),
+        Err(phenix_storage::scoped::Error::Storage(
+            phenix_storage::Error::UnsupportedCapability {
+                capability: Capability::AtomicReadMany
+            }
+        ))
     ));
-    SnapshotReader::new(vec![cell.source()], ReadConsistency::BestEffort)
-        .unwrap()
-        .read()
-        .unwrap();
 }
 
 const A: CellSpec<Number> = CellSpec::project_state("test.values/a");

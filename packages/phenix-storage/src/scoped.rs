@@ -4,9 +4,15 @@
 //! paths. A trusted host binds logical resources to provisioned physical datasets.
 //! The low-level Registry/Session API remains available unchanged.
 use crate::{
-    Address, Codec, Operation, Revision, Revisioned, Schema, Scope, Session, Sql, Subscription,
+    Address, Capability, Codec, Operation, Revision, Revisioned, Schema, Scope, Session, Sql,
+    Subscription,
 };
-use std::{collections::BTreeMap, marker::PhantomData, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+    path::PathBuf,
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,7 +36,14 @@ impl std::fmt::Display for Error {
         write!(f, "{self:?}")
     }
 }
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Storage(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 impl From<crate::Error> for Error {
     fn from(error: crate::Error) -> Self {
         Self::Storage(error)
@@ -107,25 +120,20 @@ impl ResourceSpec {
 #[derive(Clone, Debug)]
 pub struct ResourceRequest {
     pub spec: ResourceSpec,
-    pub operations: std::collections::BTreeSet<Operation>,
-    pub atomic_cas: bool,
+    pub operations: BTreeSet<Operation>,
+    /// Additional backend support, not permission grants or resource identity.
+    pub required: BTreeSet<Capability>,
 }
 impl ResourceRequest {
-    /// Scoped reads return revision tokens even when no CAS write was requested.
-    pub fn requires_atomic_cas(&self) -> bool {
-        self.atomic_cas
-            || (matches!(self.spec.kind, ResourceKind::TypedKv(_))
-                && self.operations.contains(&Operation::Read))
-    }
     pub fn new(spec: ResourceSpec, operations: impl IntoIterator<Item = Operation>) -> Self {
         Self {
             spec,
             operations: operations.into_iter().collect(),
-            atomic_cas: false,
+            required: BTreeSet::new(),
         }
     }
-    pub fn with_atomic_cas(mut self) -> Self {
-        self.atomic_cas = true;
+    pub fn require(mut self, capability: Capability) -> Self {
+        self.required.insert(capability);
         self
     }
 }
@@ -399,6 +407,14 @@ impl<T> CellSpec<T> {
     }
 }
 impl<T: Stored> CellSpec<T> {
+    pub fn request(&self, operations: impl IntoIterator<Item = Operation>) -> ResourceRequest {
+        let request = ResourceRequest::new(self.resource_spec(), operations);
+        if request.operations.contains(&Operation::Read) {
+            request.require(Capability::AtomicReadMany)
+        } else {
+            request
+        }
+    }
     pub fn resource_spec(&self) -> ResourceSpec {
         ResourceSpec {
             scope: self.scope,
@@ -533,7 +549,10 @@ pub struct Kv<T: Stored> {
     _value: PhantomData<fn() -> T>,
 }
 impl<T: Stored> Kv<T> {
-    pub fn get(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
+    pub fn get(&self, key: &str) -> crate::Result<Option<T>> {
+        self.session.get(&self.address, key, &self.format)
+    }
+    pub fn get_revisioned(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
         self.session
             .get_revisioned(&self.address, key, &self.format)
     }
@@ -857,7 +876,7 @@ mod tests {
             .get("default")
             .unwrap()
             .unwrap();
-        assert_eq!(value.value.0, "selected");
+        assert_eq!(value.0, "selected");
         assert!(
             reader
                 .user()
@@ -930,7 +949,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "user"
         );
@@ -943,7 +961,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "project"
         );
@@ -1054,7 +1071,7 @@ mod tests {
                 .get("default")
                 .unwrap()
                 .unwrap();
-            assert_eq!(found.value.0, "persisted");
+            assert_eq!(found.0, "persisted");
         }
         std::fs::remove_file(path).unwrap();
     }

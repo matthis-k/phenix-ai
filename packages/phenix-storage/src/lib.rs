@@ -188,16 +188,19 @@ impl Grant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub typed_kv: bool,
-    /// Revisioned reads and atomic conditional writes, not additional authority.
+    pub revisioned_read: bool,
+    pub atomic_read_many: bool,
+    /// Atomic conditional writes, independent of read support or authority.
     pub compare_exchange: bool,
     pub sql: bool,
     pub invalidation: bool,
     pub observation: Observation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Capability {
     TypedKv,
+    RevisionedRead,
     CompareExchange,
     AtomicReadMany,
     Sql,
@@ -249,6 +252,10 @@ pub trait Backend: Send {
     }
 }
 pub trait TypedKv: Send {
+    /// Opt in only when get_revisioned is implemented. Independent of batch/CAS.
+    fn supports_revisioned_reads(&self) -> bool {
+        false
+    }
     /// Opt in only for a coherent, versioned snapshot over the entire batch.
     fn supports_atomic_read_many(&self) -> bool {
         false
@@ -264,7 +271,7 @@ pub trait TypedKv: Send {
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()>;
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool>;
-    /// Opt in only when both revision methods are implemented. All successful
+    /// Opt in only when compare_exchange is implemented. All successful
     /// puts must invalidate older tokens, including delete/recreate cycles.
     /// Durable backends must retain that guarantee across reopen.
     fn supports_compare_exchange(&self) -> bool {
@@ -276,7 +283,7 @@ pub trait TypedKv: Send {
         _key: &str,
     ) -> Result<Option<Revisioned<Vec<u8>>>> {
         Err(Error::UnsupportedCapability {
-            capability: Capability::CompareExchange,
+            capability: Capability::RevisionedRead,
         })
     }
     /// Must atomically compare and mutate within this backend's resource boundary.
@@ -321,6 +328,9 @@ impl Backend for MemoryBackend {
     }
 }
 impl TypedKv for MemoryBackend {
+    fn supports_revisioned_reads(&self) -> bool {
+        true
+    }
     fn supports_atomic_read_many(&self) -> bool {
         true
     }
@@ -475,6 +485,9 @@ impl SqliteBackend {
     }
 }
 impl TypedKv for SqliteBackend {
+    fn supports_revisioned_reads(&self) -> bool {
+        true
+    }
     fn supports_atomic_read_many(&self) -> bool {
         true
     }
@@ -893,12 +906,20 @@ impl Session {
     fn mount_capabilities(&self, mount: Arc<Mutex<Mount>>) -> Result<Capabilities> {
         let _active = Active::enter(&mount)?;
         let mut mount = mount.lock().map_err(|_| Error::Poisoned)?;
-        let (typed_kv, compare_exchange) = match mount.backend.typed_kv() {
-            Some(kv) => (true, kv.supports_compare_exchange()),
-            None => (false, false),
-        };
+        let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
+            match mount.backend.typed_kv() {
+                Some(kv) => (
+                    true,
+                    kv.supports_revisioned_reads(),
+                    kv.supports_atomic_read_many(),
+                    kv.supports_compare_exchange(),
+                ),
+                None => (false, false, false, false),
+            };
         Ok(Capabilities {
             typed_kv,
+            revisioned_read,
+            atomic_read_many,
             compare_exchange,
             sql: mount.backend.sql().is_some(),
             invalidation: true,
@@ -950,6 +971,11 @@ impl Session {
                 .ok_or(Error::UnsupportedCapability {
                     capability: Capability::TypedKv,
                 })?;
+            if !values.supports_revisioned_reads() {
+                return Err(Error::UnsupportedCapability {
+                    capability: Capability::RevisionedRead,
+                });
+            }
             values.get_revisioned(address.dataset(), key)?
         };
         bytes
@@ -1006,6 +1032,11 @@ impl Session {
             .ok_or(Error::UnsupportedCapability {
                 capability: Capability::TypedKv,
             })?;
+        if !values.supports_compare_exchange() {
+            return Err(Error::UnsupportedCapability {
+                capability: Capability::CompareExchange,
+            });
+        }
         let revision = values.compare_exchange(address.dataset(), key, expected, bytes)?;
         let wakes = lock(&self.inner)?.emit(
             Scope::Dataset(address.clone()),
