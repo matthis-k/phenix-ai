@@ -12,7 +12,7 @@ pub struct Contract {
 impl Contract {
     pub fn new(id: impl Into<String>, required: Arc<Interface>) -> Result<Self, InterfaceError> {
         let id = id.into();
-        if id.len() > 512 || !id.split('/').all(valid_segment) {
+        if id.len() > crate::MAX_IDENTIFIER_BYTES || !id.split('/').all(valid_segment) {
             return Err(InterfaceError::new("invalid contract identity"));
         }
         Ok(Self { id, required })

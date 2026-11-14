@@ -16,7 +16,7 @@ impl NetworkSession {
         id: RequestId,
         diagnostic: impl Into<String>,
     ) -> Result<Vec<StepTicket>, RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         self.fail_request_inner(id, diagnostic.into())
     }
 
@@ -68,6 +68,12 @@ impl NetworkSession {
         if scope.terminal.is_some() {
             return Ok(scope.cancelled_jobs.clone());
         }
+        // Request termination clears reachability below; detach only watches
+        // that were registered by an earlier close_request before clearing it.
+        if scope.sealed {
+            let reachable: Vec<_> = scope.reachable.iter().copied().collect();
+            self.unwatch_scoped_readiness(&reachable);
+        }
         let scope = self.requests.get_mut(&id).unwrap();
         scope.sealed = true;
         scope.terminal = Some(status);
@@ -82,32 +88,50 @@ impl NetworkSession {
             .filter(|(_, p)| p.request == Some(id))
             .map(|(index, _)| index)
             .collect();
-        let disposed = self.transport.discard_request(id);
+        let disposed_packets = self.transport.detach_request(id);
+        let disposed = disposed_packets.len();
         self.disposed_packets = self.disposed_packets.saturating_add(disposed);
         let scope = self.requests.get_mut(&id).unwrap();
         scope.disposal.queued_packets = scope.disposal.queued_packets.saturating_add(disposed);
         self.ready.retain(|index| !affected.contains(index));
+        let mut cancelled_processes = Vec::with_capacity(affected.len());
+        let mut pending_disposals = Vec::new();
         for index in &affected {
-            let p = &mut self.processes[*index];
-            let scope = self.requests.get_mut(&id).unwrap();
-            scope.disposal.activations += 1;
-            if let Some(pending) = p.pending.take() {
-                scope.disposal.prepared_packets += pending.retained_packets();
-            }
-            if let Some(ticket) = p.handoff.cancel() {
-                scope.cancelled_jobs.push(ticket);
-                scope.disposal.handed_jobs += 1;
-            }
-            p.pending_targets.clear();
-            p.wake.active.store(false, Ordering::Release);
-            p.wake.pending.store(false, Ordering::Release);
-            p.request = None;
-            p.waiting = None;
-            p.waiting_policy = None;
-            p.closed_in_activation.clear();
-            p.deferred_ticket = None;
-            p.queued = false;
+            self.dispatched_at.remove(index);
+            let retired_wake = {
+                let p = &mut self.processes[*index];
+                let scope = self.requests.get_mut(&id).unwrap();
+                scope.disposal.activations += 1;
+                if let Some(prepared) = p.pending.take() {
+                    scope.disposal.prepared_packets += prepared.retained_packets();
+                    pending_disposals.push(prepared);
+                }
+                let cancelled = p.handoff.cancel_detach();
+                if let Some(ticket) = cancelled.ticket() {
+                    scope.cancelled_jobs.push(ticket);
+                    scope.disposal.handed_jobs += 1;
+                }
+                cancelled_processes.push(cancelled);
+                p.pending_targets.clear();
+                p.request = None;
+                p.waiting = None;
+                p.waiting_policy = None;
+                p.closed_in_activation.clear();
+                p.queued = false;
+                p.wake.clone()
+            };
+            // A notifier for the old request may race with recovery. Retire
+            // under the same lock it uses to publish a process target, before
+            // a replacement slot can be installed for this compiled index.
+            self.signal.retire_target(*index, &retired_wake);
         }
+        let mut process_destructor_panicked = false;
+        for cancelled in cancelled_processes {
+            process_destructor_panicked |= cancelled.dispose().is_err();
+        }
+        let pending_destructor_panicked = drop_prepared_catching(pending_disposals);
+        let packet_destructor_panicked = drop_packets_catching(disposed_packets);
+        let mut recovery_failed = false;
         if !affected.is_empty() && self.terminal.is_none() {
             if self.request_failure_policy == RequestFailurePolicy::FailSession {
                 let diagnostic = self.requests[&id].failure.clone().unwrap_or_else(|| {
@@ -122,14 +146,22 @@ impl NetworkSession {
                     let process = match spawned {
                         Ok(process) => process,
                         Err(payload) => {
-                            crate::discard_panic_payload(payload);
+                            if let Err(payload) =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    drop(payload)
+                                }))
+                            {
+                                process_destructor_panicked = true;
+                                crate::discard_panic_payload(payload);
+                            }
                             let diagnostic = format!(
                                 "process factory panicked during request recovery: {}",
                                 self.compiled.processes()[index].path()
                             );
                             self.requests.get_mut(&id).unwrap().failure = Some(diagnostic.clone());
                             self.fail(diagnostic);
-                            return Err(RequestError::RecoveryFailed);
+                            recovery_failed = true;
+                            break;
                         }
                     };
                     let mut handoff = self.processes[index].handoff.replacement(process);
@@ -139,7 +171,6 @@ impl NetworkSession {
                     let p = &mut self.processes[index];
                     p.handoff = handoff;
                     p.wake = Arc::new(WakeSlot::default());
-                    p.deferred_ticket = None;
                     p.done = false;
                     p.cursor = 0;
                     p.request_cursor = 0;
@@ -151,8 +182,30 @@ impl NetworkSession {
             }
         }
         let tickets = self.requests[&id].cancelled_jobs.clone();
+        // Queue disposal and process replacement can affect arbitrary
+        // predecessors, so never rely on the packet-only dirty set here.
+        self.force_full_refresh = true;
         self.refresh();
         self.notifier().notify();
+        if (process_destructor_panicked
+            || pending_destructor_panicked
+            || packet_destructor_panicked)
+            && let Some(failure) = self
+                .requests
+                .get_mut(&id)
+                .and_then(|scope| scope.failure.as_mut())
+        {
+            failure.push_str("; destructor panicked during request cleanup");
+        }
+        if recovery_failed {
+            return Err(RequestError::RecoveryFailed);
+        }
+        if process_destructor_panicked {
+            return Err(RequestError::ProcessDestructorPanicked);
+        }
+        if pending_destructor_panicked || packet_destructor_panicked {
+            return Err(RequestError::PacketDestructorPanicked);
+        }
         Ok(tickets)
     }
 }

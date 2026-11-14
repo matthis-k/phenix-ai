@@ -2,7 +2,12 @@
 
 Status: the native engine replaced the old graph engine at `16e77f6c6`; Kernel,
 Plugin and StorageGraph use native networks. The current lifecycle/request-lane
-candidate is on `fix/fbp-lifecycle-request-lanes-20261114`; see its
+candidate is on `fix/fbp-lifecycle-request-lanes-20261114` (PR #1302), initially
+committed as `0d145f3` after incorrectly relying on stale local remote-tracking
+impl head `16e77f6c6`. Actual remote impl `89e00d0` includes later foundations.
+After fetching, exact verified PR #1300 head
+`516e0883875d5ec483e3595d50b77b3d5e8979c4` is now being merged to preserve
+the complete stack and scoped gates; full new-head acceptance is pending. See its
 [design/evidence record](fbp-hardening-campaign-20261114.md). The historical cutover
 verification and immutable Nix snapshot checks are recorded in the report. See
 [migration](fbp-migration.md), [review](fbp-critique.md), and the executable
@@ -79,6 +84,22 @@ execution-guard boundary so a synchronously joined dispatcher worker cannot wait
 on its own session lease. This does not make arbitrary plugin-created threads,
 resource-lock cycles, or non-yielding callbacks deadlock-free.
 
+`SessionOptions::execution_guards` is one ordered Vec. Kernel identity is entered
+first, then StorageGraph's host guard, then application/dispatcher guards.
+`ActivationJob::with_guard` appends rather than replaces. Guard tokens are torn
+down in reverse order and stay active through process panic-payload cleanup, so
+application-token destruction cannot remove Kernel identity prematurely.
+
+Only `SessionOptions.deferred_timeout` configures the opt-in cooperative watchdog
+(default `None`). Existing `overdue_jobs(now)` inspects passively and
+`supervise_deferred(now)` applies expiry to exact outstanding tickets. A direct
+`next_job` starts timing at handoff; `run_until_idle` starts timing after its
+dispatcher returns `Deferred`. Driver/completion operations supervise cooperatively;
+`state(&self)` remains passive under C9, with no readiness callbacks or timeout
+mutation. `RunReport::next_deferred_timeout` bounds the Kernel driver's idle wait,
+not callback duration. Timeout cannot stop a worker, undo effects, or release its
+owned payload/code leases; request restart may overlap that worker's effects.
+
 Each connection is a nonzero-capacity FIFO. Publication validates the entire
 selected fanout and prepares it once before committing to all destinations.
 Full waits without repeating process effects or preparation callbacks. One
@@ -127,8 +148,9 @@ cannot be manufactured from labels. Settlement accounts for queued, reserved,
 dispatched, continuation and pending-publication work, not just the first capture.
 Capture identity includes the exact export and actual producer origin.
 
-Head-only correlation preserves FIFO, including head blocking on crossed requests.
-There is no silent deeper-candidate search or general arrival-skew equivalence.
+Default shared-FIFO head-only correlation preserves FIFO, including head blocking
+on crossed requests. There is no silent deeper-candidate search or general
+arrival-skew equivalence.
 Request-local optional absence and staged closure are tested against conservative
 reachable upstream-work accounting. A live required producer must not be replaced
 by optional EOS; exhausted required groups fail. General cycle absence/progress
@@ -188,8 +210,22 @@ Replay never spawns factories or executes processes. `Composer::revoke` recompos
 from base and deactivates transitive dependents, not inverse-edit callbacks.
 
 Kernel binds selected plugin revisions, approved grants, exact offers/imports and
-leases outside patch payloads. Retirement stops old producer admission without
-pretending to unload code retained by old compiled handles, sessions or jobs.
+leases outside patch payloads. The verified whole-drain retirement gate and
+exclusive blocking-driver ownership remain: external publication waits for the
+whole admitted producer drain, not explicit session work; same-drain publication
+is rejected. Host self-destruction marks retirement and rejects a late poll event,
+while destruction is deferred outside locks. All Kernel session calls fail fast
+on cross-thread contention with busy/`WouldBlock`; same-kernel callback/worker
+re-entry also fails fast. Retry after release preserves the verified lock-inversion
+contract, not the initial, superseded waiter policy. `ExclusiveSlot` uses only
+`Mutex<Option<T>>`, `try_take` and idempotent release, without Condvar or waiters.
+A caller holding a plugin lock must not wait behind a callback that needs it.
+Retirement does not unload code retained by old compiled handles, sessions or jobs,
+nor revoke explicit old-generation calls.
+`Kernel::drain` returns `Result<Vec<ProducerEvent>, DriverError>`: manual drains
+serialize, recursive drains reject, and a live blocking driver excludes manual
+polling even for `drain(0)`. The initial no-wait/empty-return policy is discarded,
+not layered over the verified driver guarantees.
 StorageGraph preserves one bounded pending producer notice, explicit overflow/
 rescan semantics, subscribe-before-bootstrap, exact query origin and dispatch guards.
 
@@ -204,8 +240,11 @@ preserves leases on success, error and unwind. Cloning application data through 
 borrow remains the application's responsibility.
 
 Captures are bounded FIFOs (`SessionOptions::capture_capacity`) that must be
-drained to release publication credit. Native metadata inspection does not spawn
-factories. `RunReport` exposes state, steps, publications, disposed packets,
+drained to release publication credit. Global `take_output` stays FIFO;
+authenticated `take_request_output` can extract that request's first already-
+buffered capture behind another request, preserving within-request FIFO. It cannot
+bypass publication blocked by an occupied full queue. Native metadata inspection
+does not spawn factories. `RunReport` exposes state, steps, publications, disposed packets,
 discarded emissions and budget exhaustion, with queue/wait/last-step diagnostics.
 Legacy wildcard/full-payload tracing, wave reports and exact baseline report
 counters are not retained. No unbounded trace history, complete event ledger or
@@ -217,10 +256,15 @@ Morrison FBP motivates stateful processes and bounded FIFO packets; NoFlo motiva
 one primitive/composite boundary; NiFi motivates capacity diagnostics; Timely
 motivates explicit work accounting, not invented global frontier guarantees.
 DFIR inspired validate-once lowering, but no DFIR backend dependency or experimental
-spike was adopted. The native engine is the chosen implementation. No measured
-throughput, allocation or performance improvement is claimed.
+spike was adopted. The native engine is the chosen implementation. Historical
+scoped measurements remain in the [report](fbp-report.md) and verified stack;
+no new merged-head throughput, allocation or performance acceptance is claimed.
 
 The [regression ledger](fbp-regression-ledger.md) records M6 removals and named
 native tests, including independent randomized composition models. Final counts
 belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
 and final verification status are recorded in the migration/review documents.
+The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative:
+all scores stay at verified `516e088`, with no new increases or closures. M7/M8
+and missing production-agent, live-migration and OS-isolation adapters remain
+incomplete; queue isolation is not independent process state or universal fairness.

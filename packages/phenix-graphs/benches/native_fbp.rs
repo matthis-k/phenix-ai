@@ -68,10 +68,7 @@ fn pipeline() {
     )
     .unwrap();
     let mut s = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(
-        s.run_until_complete(ITEMS * 10).state,
-        SessionState::Completed
-    );
+    assert_eq!(s.run_until_idle(ITEMS * 10).state, SessionState::Completed);
     assert_eq!(seen.load(Ordering::Relaxed), ITEMS);
     assert_eq!(sum.load(Ordering::Relaxed), ITEMS * 2);
     black_box(sum);

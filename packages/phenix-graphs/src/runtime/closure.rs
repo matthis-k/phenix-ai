@@ -24,7 +24,7 @@ impl NetworkSession {
             return p.handoff.state() == HandoffState::WaitingInput;
         }
         match p.waiting_policy.as_ref().unwrap_or(&p.policy) {
-            Readiness::All => available < p.inputs.len(),
+            Readiness::All | Readiness::CorrelatedAll => available < p.inputs.len(),
             Readiness::AtLeast(n) => available < n.get(),
             Readiness::Optional { required, optional } => {
                 required.iter().any(|name| {
@@ -59,13 +59,8 @@ impl NetworkSession {
             if !scope.reachable.insert(index) {
                 continue;
             }
-            for edge in self
-                .compiled
-                .connections()
-                .iter()
-                .filter(|edge| edge.from().0 == index)
-            {
-                stack.push(edge.to().0);
+            for child in &self.downstream[index] {
+                stack.push(*child);
             }
         }
     }
@@ -114,18 +109,32 @@ impl NetworkSession {
         if !scope.sealed {
             return false;
         }
+        // Request roots register their entire downstream reachability. An
+        // upstream process outside this scope cannot own or publish packets
+        // bearing this request ID. Host ingress queues remain checked.
+        // A request reaching the entire compiled graph has nothing to prune.
+        // Avoid repeated tree lookups on long, wholly reachable closure chains.
+        let whole_graph = scope.reachable.len() == self.processes.len();
+        let relevant = |queue: usize| {
+            whole_graph
+                || match &self.endpoints[queue].0 {
+                    QueueEndpoint::Process { index, .. } => scope.reachable.contains(index),
+                    QueueEndpoint::Input(_) | QueueEndpoint::Capture(_) => true,
+                }
+        };
         let queues = &self.processes[index].inputs[port].queues;
-        if queues.iter().any(|q| {
-            self.transport.queues()[*q]
-                .packets()
-                .any(|packet| packet.metadata().and_then(|m| m.request()) == Some(request))
-        }) {
+        if queues
+            .iter()
+            .any(|q| relevant(*q) && self.transport.queues()[*q].request_count(request) != 0)
+        {
             return false;
         }
         let mut visited = BTreeSet::new();
         let mut stack = vec![];
         for queue in queues {
-            if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
+            if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0
+                && (whole_graph || scope.reachable.contains(index))
+            {
                 stack.push(*index);
             }
         }
@@ -138,10 +147,10 @@ impl NetworkSession {
                 return false;
             }
             for queue in p.inputs.iter().flat_map(|port| &port.queues) {
-                if self.transport.queues()[*queue]
-                    .packets()
-                    .any(|packet| packet.metadata().and_then(|m| m.request()) == Some(request))
-                {
+                if !relevant(*queue) {
+                    continue;
+                }
+                if self.transport.queues()[*queue].request_count(request) != 0 {
                     return false;
                 }
                 if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {

@@ -26,13 +26,18 @@ pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send 
 
 `CandidateArtifacts::default()`, `activate(factory)` and `export(value)` provide
 single-slot registration with duplicate detection. The prepare callback receives
-read-only `CandidateContext { compiled, .. }` and `import(id)`, never a mutable
+read-only `CandidateContext` with `import(id)` metadata and
+`bind_import(id)` scoped projection, never a raw compiled topology or mutable
 candidate/builder. It may construct its own definitions or an owned patch. Replay
 is exclusively native `Composer` work. Self-imports are checked against a compiled,
 host-authorized preview of the static patch; they cannot certify fabricated shapes.
 
 Host `BuildOptions` contains `imports: ImportPolicy`, `execution: SessionOptions`
-and `composition: BTreeMap<Key, CompositionPolicy>`. Each `CompositionPolicy` has
+and `composition: BTreeMap<Key, CompositionPolicy>`.
+Host `inspect_network: BTreeSet<Key>` is a separate default-deny read grant.
+A preparation callback may call `inspect_network()` only with an exact host
+grant; this preserves trusted compiled exports without exposing all topology
+to ordinary declared-import consumers. Each `CompositionPolicy` has
 `grants: BTreeSet<Footprint>` and `priority: i64`. Missing policy grants no writes.
 Grants and priorities are host decisions, never fields in plugin patch payloads.
 The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code

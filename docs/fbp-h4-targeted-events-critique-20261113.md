@@ -1,0 +1,18 @@
+# H4 targeted events — independent Phase 2 critique
+
+Review of [targeted wake/EOS proposal](fbp-h4-targeted-events-design-20261113.md) before implementation.
+
+1. **Atomic ordering:** old wake uses two signal-lock acquisitions: pending bit becomes true, then global notify. Targeted queue must be inserted in the *same* critical section as bit set and the wake epoch advance. Otherwise the driver may drain target indices between these operations and lose the wake. Keep a single lock acquisition.
+2. **Concurrent driver race:** never read a wake epoch after the scan and discard earlier targeted indices. Drain IDs BEFORE iterating; a new target enqueued during the scan must remain in the pending set for a later refresh.
+3. **Unaddressed notifier:** `SessionNotifier` is not tied to any process. Its generation must be independent of the generic listener epoch and force the original complete scan. Do not replace its semantics with an empty targeted set.
+4. **Host listener semantics:** `WakeListener::wait_timeout` compares the *aggregate* notification generation, which must still increment on every targeted and generic signal; cancellation invalidation must wake waiters even when no epoch increments.
+5. **Handle lifetime:** finish/cancel and affected-process restart invalidate old `WakeSlot`; stale handles cannot reinsert their process index. `WakeSignal.active` rejects notifications after terminal invalidation. Generation wrap cannot establish a policy violation in realistic use, but tests should not rely on numeric order.
+6. **Wake during ready work:** marking a ready node does not automatically run it twice. Existing `Handoff` and `queued` gate semantics must continue to decide. No ticket or activation is created by a target mark.
+7. **All-special fallback:** drain target IDs even if a full scan will run, otherwise pending BTreeSet membership may accumulate across drives. `BTreeSet` bounds its size by process count but clearing is cleaner.
+8. **EOS from a process completing during a full scan:** old loop rescans until no new finished node; don't change it if the event-queue implementation is not proved. Preserve original completion and closure handling in first pass before incremental extension.
+9. **EOS from `Finished` completion:** close-writer changes queue status, close-reader frees producer capacity; invalidation must cover both queue endpoints. Queue `is_eos()` must remain authoritative, not cached.
+10. **EOS from user `close_input()`:** writer closure can signal EOS without data; current endpoint dirtying already covers it. Multiple ingress aliases might share queues—dedup by process index, never assume uniqueness.
+11. **Failures/recovery:** cancellation discards arbitrary packets, replaces handoffs and invalidates handles. Full-scan fallback remains; do not narrow it without separate design/evidence.
+12. **Benchmarks:** a faster isolated wake is insufficient if the target is forced into `always_poll` by staged readiness; measure a waiting packet process whose `WakeHandle` is targetable among many unrelated nodes. Preserve optional-chain and fan-in controls to reject any regression.
+
+**Phase 2 disposition:** targeted WakeSignal state extension accepted for implementation with explicit global-notifier fallback and same-lock insertion. EOS work is **conditional** on first phase's exact-head tests and measurement: do not combine an unverified wake state change and an unverified completion-propagation refactor into a single performance claim. The accepted limitation is that `always_poll` processes and full-scan exception paths remain O(V).

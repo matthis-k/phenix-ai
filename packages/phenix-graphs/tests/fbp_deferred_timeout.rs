@@ -6,7 +6,10 @@ use phenix_graph::{
         ActivationJob, DispatchResult, HandoffError, Process, ProcessContext, ProcessDispatcher,
         ProcessEmission, Step, StepTicket,
     },
-    runtime::{RequestError, RequestFailurePolicy, RequestStatus, SessionOptions, SessionState},
+    runtime::{
+        RequestError, RequestFailurePolicy, RequestQueuePolicy, RequestStatus, SessionOptions,
+        SessionState,
+    },
 };
 use std::{
     num::NonZeroUsize,
@@ -93,7 +96,7 @@ fn echo(seen: Arc<Mutex<Vec<i64>>>) -> CompiledNetwork {
 fn default_timeout_accepts_direct_job_and_preserves_payload_provenance() {
     let seen = Arc::new(Mutex::new(vec![]));
     let options = SessionOptions::default();
-    assert_eq!(options.deferred_job_timeout, None);
+    assert_eq!(options.deferred_timeout, None);
     let mut session = echo(seen.clone()).start_with_options(options);
     let (value, drops) = payload(41);
     session.inject("input", value).unwrap();
@@ -104,7 +107,7 @@ fn default_timeout_accepts_direct_job_and_preserves_payload_provenance() {
     let report = session.run_until_idle(0);
     assert_eq!(report.state, SessionState::Waiting);
     assert_eq!(report.next_deferred_timeout, None);
-    session.supervise_deferred_jobs();
+    session.supervise_deferred(Instant::now());
     session.complete(index, job.run()).unwrap();
     let (_, continuation) = session.next_job().unwrap();
     session.complete_job(continuation.run()).unwrap();
@@ -126,11 +129,63 @@ fn default_timeout_accepts_direct_job_and_preserves_payload_provenance() {
 }
 
 #[test]
+fn lane_deadline_inspection_is_passive_and_restart_retires_the_registry_entry() {
+    let mut session = echo(Arc::new(Mutex::new(vec![]))).start_with_options(SessionOptions {
+        max_requests: one(),
+        request_queue_policy: RequestQueuePolicy::BoundedLanes,
+        request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
+        deferred_timeout: Some(Duration::from_secs(60)),
+        ..Default::default()
+    });
+    let old = session.begin_request(None).unwrap();
+    let (value, drops) = payload(5);
+    session.inject_request(old, "input", value).unwrap();
+    session.close_request(old).unwrap();
+    let (index, job) = session.next_job().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let overdue = session.overdue_jobs(deadline);
+    assert_eq!(overdue.len(), 1);
+    assert_eq!(overdue[0].process, index);
+    assert_eq!(overdue[0].ticket, job.ticket());
+    assert_eq!(session.state(), SessionState::Waiting);
+    assert_eq!(session.request_status(old).unwrap(), RequestStatus::Pending);
+    assert!(session.run_until_idle(0).next_deferred_timeout.is_some());
+    assert_eq!(session.supervise_deferred(deadline), overdue);
+    assert_eq!(session.request_status(old).unwrap(), RequestStatus::Failed);
+    assert!(session.overdue_jobs(deadline).is_empty());
+    assert_eq!(session.run_until_idle(0).next_deferred_timeout, None);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    session.release_request(old).unwrap();
+
+    let next = session.begin_request(Some("output")).unwrap();
+    let (value, next_drops) = payload(7);
+    session.inject_request(next, "input", value).unwrap();
+    session.close_request(next).unwrap();
+    assert_eq!(session.run_until_idle(8).publications, 1);
+    let packet = session
+        .take_request_output(next, "output")
+        .unwrap()
+        .unwrap();
+    assert_eq!(packet.value().borrow::<Payload>().unwrap().id, 7);
+    let (error, completion) = session.complete_job(job.run()).unwrap_err();
+    assert_eq!(error, HandoffError::ForeignCompletion);
+    assert_eq!(
+        session.request_status(next).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert_eq!(session.run_until_idle(0).next_deferred_timeout, None);
+    session.release_request(next).unwrap();
+    drop((packet, completion));
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(next_drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn zero_timeout_refuses_direct_reject_and_both_completion_apis_intact() {
     for api in ["reject", "complete", "complete_job"] {
         let seen = Arc::new(Mutex::new(vec![]));
         let mut session = echo(seen.clone()).start_with_options(SessionOptions {
-            deferred_job_timeout: Some(Duration::ZERO),
+            deferred_timeout: Some(Duration::ZERO),
             ..Default::default()
         });
         let (value, drops) = payload(73);
@@ -165,12 +220,7 @@ fn zero_timeout_refuses_direct_reject_and_both_completion_apis_intact() {
         assert_eq!(*seen.lock().unwrap(), [73]);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         assert_eq!(session.state(), SessionState::Failed);
-        assert!(
-            session
-                .failure()
-                .unwrap()
-                .contains("deferred job timed out")
-        );
+        assert!(session.failure().unwrap().contains("deferred job timeout"));
         assert!(session.take_output("output").unwrap().is_none());
         assert_eq!(session.run_until_idle(4).next_deferred_timeout, None);
         drop(session);
@@ -184,7 +234,7 @@ fn zero_timeout_refuses_direct_reject_and_both_completion_apis_intact() {
 fn synchronous_completed_dispatch_is_not_timed_with_zero_timeout() {
     let seen = Arc::new(Mutex::new(vec![]));
     let mut session = echo(seen.clone()).start_with_options(SessionOptions {
-        deferred_job_timeout: Some(Duration::ZERO),
+        deferred_timeout: Some(Duration::ZERO),
         ..Default::default()
     });
     let (value, drops) = payload(19);
@@ -222,7 +272,7 @@ fn synchronous_rejected_dispatch_is_not_timed_with_zero_timeout() {
     let seen = Arc::new(Mutex::new(vec![]));
     let dispatcher = Arc::new(RejectOnce(AtomicUsize::new(0)));
     let mut session = echo(seen.clone()).start_with_options(SessionOptions {
-        deferred_job_timeout: Some(Duration::ZERO),
+        deferred_timeout: Some(Duration::ZERO),
         dispatcher: dispatcher.clone(),
         ..Default::default()
     });
@@ -237,7 +287,7 @@ fn synchronous_rejected_dispatch_is_not_timed_with_zero_timeout() {
     assert!(session.failure().is_none());
     assert!(seen.lock().unwrap().is_empty());
     assert_eq!(drops.load(Ordering::SeqCst), 0);
-    session.supervise_deferred_jobs();
+    session.supervise_deferred(Instant::now());
     let report = session.run_until_idle(8);
     assert_eq!(report.steps, 2);
     assert_eq!(report.publications, 1);
@@ -257,7 +307,7 @@ fn synchronous_rejected_dispatch_is_not_timed_with_zero_timeout() {
 fn timely_direct_rejection_clears_timeout_and_redispatches_a_fresh_ticket() {
     let seen = Arc::new(Mutex::new(vec![]));
     let mut session = echo(seen.clone()).start_with_options(SessionOptions {
-        deferred_job_timeout: Some(Duration::MAX),
+        deferred_timeout: Some(Duration::MAX),
         ..Default::default()
     });
     let (value, drops) = payload(31);
@@ -394,7 +444,7 @@ fn timeout_restart_retains_external_job_and_lease_after_request_credit_reuse() {
     let mut session = compiled.start_with_options(SessionOptions {
         auto_start_sources: false,
         max_requests: one(),
-        deferred_job_timeout: Some(Duration::ZERO),
+        deferred_timeout: Some(Duration::ZERO),
         request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
         lease: Some(Arc::new(Lease(alive.clone()))),
         ..Default::default()
@@ -405,14 +455,14 @@ fn timeout_restart_retains_external_job_and_lease_after_request_credit_reuse() {
     let (_, job) = session.next_job().unwrap();
     let ticket = job.ticket();
     let metadata = job.metadata().unwrap().clone();
-    session.supervise_deferred_jobs();
+    session.supervise_deferred(Instant::now());
     assert_eq!(session.request_status(old).unwrap(), RequestStatus::Failed);
     assert!(
         session
             .request_failure(old)
             .unwrap()
             .unwrap()
-            .contains("deferred job timed out")
+            .contains("deferred job timeout")
     );
     assert_eq!(session.request_cancelled_jobs(old).unwrap(), &[ticket]);
     assert_eq!(session.request_disposal(old).unwrap().handed_jobs, 1);
@@ -501,7 +551,7 @@ fn zero_timeout_does_not_expire_wait_wake() {
         .compile()
         .unwrap()
         .start_with_options(SessionOptions {
-            deferred_job_timeout: Some(Duration::ZERO),
+            deferred_timeout: Some(Duration::ZERO),
             ..Default::default()
         });
     let wake = session.wake_handle("wake").unwrap();
@@ -510,7 +560,7 @@ fn zero_timeout_does_not_expire_wait_wake() {
     assert_eq!(report.state, SessionState::Waiting);
     let activation = session.last_step().unwrap().activation;
     for _ in 0..3 {
-        session.supervise_deferred_jobs();
+        session.supervise_deferred(Instant::now());
         let report = session.run_until_idle(4);
         assert_eq!(report.steps, 0);
         assert_eq!(report.state, SessionState::Waiting);
@@ -532,7 +582,7 @@ fn zero_timeout_does_not_expire_nondeferred_publication_backpressure() {
     let seen = Arc::new(Mutex::new(vec![]));
     let mut session = echo(seen.clone()).start_with_options(SessionOptions {
         capture_capacity: one(),
-        deferred_job_timeout: Some(Duration::ZERO),
+        deferred_timeout: Some(Duration::ZERO),
         ..Default::default()
     });
     let (first, first_drops) = payload(101);
@@ -546,7 +596,7 @@ fn zero_timeout_does_not_expire_nondeferred_publication_backpressure() {
     assert_eq!(report.state, SessionState::Waiting);
     assert_eq!(session.blocked_queues().len(), 1);
     for _ in 0..3 {
-        session.supervise_deferred_jobs();
+        session.supervise_deferred(Instant::now());
         let report = session.run_until_idle(4);
         assert_eq!(report.steps, 0);
         assert_eq!(report.state, SessionState::Waiting);
@@ -652,7 +702,7 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
                 .unwrap()
                 .start_with_options(SessionOptions {
                     max_requests: NonZeroUsize::new(2).unwrap(),
-                    deferred_job_timeout: Some(TIMEOUT),
+                    deferred_timeout: Some(TIMEOUT),
                     request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
                     dispatcher: dispatcher.clone(),
                     ..Default::default()
@@ -698,7 +748,7 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
                     .request_failure(a)
                     .unwrap()
                     .unwrap()
-                    .contains("deferred job timed out")
+                    .contains("deferred job timeout")
             );
             assert_eq!(
                 session.request_cancelled_jobs(a).unwrap(),
@@ -776,6 +826,340 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
             assert!(session.take_output("b").unwrap().is_none());
             assert!(session.failure().is_none());
             assert_eq!(session.state(), SessionState::Quiescent);
+        }
+    }
+}
+
+#[test]
+fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease() {
+    use phenix_graph::{
+        ComponentDef, Store,
+        process::{ProcessExecutionGuard, ResourceGrant},
+    };
+    use std::{any::Any, collections::BTreeMap, sync::Weak};
+
+    const TIMEOUT: Duration = Duration::from_millis(100);
+    type Events = Arc<Mutex<Vec<(&'static str, usize)>>>;
+    struct Lease(Events);
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push(("lease", 0));
+        }
+    }
+    #[derive(Clone)]
+    struct Probes {
+        lease: Weak<Lease>,
+        events: Events,
+    }
+    impl Probes {
+        fn probe(&self, name: &'static str, panic: bool) -> Probe {
+            Probe {
+                probes: self.clone(),
+                name,
+                panic,
+            }
+        }
+        fn record(&self, name: &'static str) {
+            let leases = self.lease.strong_count();
+            assert!(leases > 0, "{name} lost the code lease");
+            self.events.lock().unwrap().push((name, leases));
+        }
+    }
+    struct PanicPayload(Probes);
+    impl Drop for PanicPayload {
+        fn drop(&mut self) {
+            self.0.record("panic-payload");
+            panic!("panic payload destructor panicked");
+        }
+    }
+    struct Probe {
+        probes: Probes,
+        name: &'static str,
+        panic: bool,
+    }
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.probes.record(self.name);
+            if self.panic {
+                std::panic::panic_any(PanicPayload(self.probes.clone()));
+            }
+        }
+    }
+    struct Guard(Probe);
+    impl ProcessExecutionGuard for Guard {
+        fn enter(&self) -> Result<Box<dyn Any>, String> {
+            let _ = &self.0;
+            Ok(Box::new(()))
+        }
+    }
+    struct Worker {
+        probes: Probes,
+        hostile: bool,
+        emitted: bool,
+    }
+    impl Process for Worker {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+            if self.hostile {
+                let grants = ["resource-left", "resource-right"].map(|name| {
+                    let mut store = Store::new();
+                    store.insert("resource", self.probes.probe(name, true));
+                    ResourceGrant::read(Arc::new(store), "resource")
+                });
+                *cx = std::mem::take(cx).with_resources(grants.into());
+                // Leave both inputs and resource grants owned by the returned job.
+                return Ok(Step::Emit(ProcessEmission::new(
+                    "out",
+                    Value::local(self.probes.probe("emission", true)),
+                )));
+            }
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            cx.take("left").ok_or("missing replacement left")?;
+            cx.take("right").ok_or("missing replacement right")?;
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::local(self.probes.probe("replacement-output", false)),
+            )))
+        }
+    }
+    impl Drop for Worker {
+        fn drop(&mut self) {
+            if self.hostile {
+                drop(self.probes.probe("process", true));
+            }
+        }
+    }
+    struct ExpireSibling {
+        calls: AtomicUsize,
+        held: Mutex<Option<ActivationJob>>,
+        completed: bool,
+        probes: Probes,
+    }
+    impl ProcessDispatcher for ExpireSibling {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            match self.calls.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    assert_eq!(job.metadata().unwrap().path, "a");
+                    *self.held.lock().unwrap() = Some(job);
+                    DispatchResult::Deferred
+                }
+                1 => {
+                    assert_eq!(job.metadata().unwrap().path, "b");
+                    std::thread::sleep(TIMEOUT * 2);
+                    let job = job
+                        .with_guard(Arc::new(Guard(self.probes.probe("guard-first", true))))
+                        .with_guard(Arc::new(Guard(self.probes.probe("guard-last", true))));
+                    if self.completed {
+                        DispatchResult::Completed(job.run())
+                    } else {
+                        DispatchResult::Rejected(job)
+                    }
+                }
+                _ => DispatchResult::Completed(job.run()),
+            }
+        }
+    }
+
+    for completed in [true, false] {
+        for scoped in [true, false] {
+            for request_queue_policy in [
+                RequestQueuePolicy::SharedFifo,
+                RequestQueuePolicy::BoundedLanes,
+            ] {
+                let events = Events::default();
+                let lease = Arc::new(Lease(events.clone()));
+                let probes = Probes {
+                    lease: Arc::downgrade(&lease),
+                    events: events.clone(),
+                };
+                let dispatcher = Arc::new(ExpireSibling {
+                    calls: AtomicUsize::new(0),
+                    held: Mutex::new(None),
+                    completed,
+                    probes: probes.clone(),
+                });
+                let mut builder = NetworkBuilder::new();
+                let a = builder
+                    .add("a", Arc::new(ComponentDef::sink(|_: &i64| {})))
+                    .unwrap();
+                builder
+                    .expose_input("a", a.input::<i64>("input").unwrap(), one())
+                    .unwrap();
+                let spawns = Arc::new(AtomicUsize::new(0));
+                let b = builder
+                    .node(
+                        "b",
+                        Arc::new(
+                            Interface::new(
+                                [
+                                    PortDef::local::<Probe>("left"),
+                                    PortDef::local::<Probe>("right"),
+                                ],
+                                [PortDef::local::<Probe>("out")],
+                            )
+                            .unwrap(),
+                        ),
+                        Arc::new({
+                            let probes = probes.clone();
+                            let spawns = spawns.clone();
+                            move || Worker {
+                                probes: probes.clone(),
+                                hostile: spawns.fetch_add(1, Ordering::SeqCst) == 0,
+                                emitted: false,
+                            }
+                        }),
+                    )
+                    .unwrap();
+                for name in ["left", "right"] {
+                    builder
+                        .expose_input(name, b.input::<Probe>(name).unwrap(), one())
+                        .unwrap();
+                }
+                builder
+                    .expose_output("out", b.output::<Probe>("out").unwrap())
+                    .unwrap();
+                let mut session = builder
+                    .build()
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+                    .start_with_options(SessionOptions {
+                        max_requests: NonZeroUsize::new(2).unwrap(),
+                        readiness: BTreeMap::from([(
+                            "b".into(),
+                            phenix_graph::runtime::Readiness::All,
+                        )]),
+                        request_queue_policy,
+                        request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
+                        deferred_timeout: Some(TIMEOUT),
+                        dispatcher: dispatcher.clone(),
+                        lease: Some(lease),
+                        ..Default::default()
+                    });
+                let requests = if scoped {
+                    let old = session.begin_request(None).unwrap();
+                    session.inject_request_local(old, "a", 1_i64).unwrap();
+                    for name in ["left", "right"] {
+                        session
+                            .inject_request_local(old, name, probes.probe(name, true))
+                            .unwrap();
+                    }
+                    session.close_request(old).unwrap();
+                    let next = session.begin_request(Some("out")).unwrap();
+                    for name in ["left", "right"] {
+                        session
+                            .inject_request_local(
+                                next,
+                                name,
+                                probes.probe("replacement-input", false),
+                            )
+                            .unwrap();
+                    }
+                    session.close_request(next).unwrap();
+                    Some((old, next))
+                } else {
+                    session.inject_local("a", 1_i64).unwrap();
+                    for name in ["left", "right"] {
+                        session
+                            .inject_local(name, probes.probe(name, true))
+                            .unwrap();
+                    }
+                    None
+                };
+
+                let report = session.run_until_idle(2);
+                assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 2);
+                assert_eq!(report.publications, 0);
+                assert!(session.take_dispatch_return().is_none());
+                let recorded = events.lock().unwrap().clone();
+                let names: Vec<_> = recorded
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .filter(|name| *name != "panic-payload")
+                    .collect();
+                assert_eq!(
+                    names,
+                    if completed {
+                        vec![
+                            "emission",
+                            "left",
+                            "right",
+                            "resource-left",
+                            "resource-right",
+                            "process",
+                            "guard-last",
+                            "guard-first",
+                        ]
+                    } else {
+                        vec!["left", "right", "process", "guard-last", "guard-first"]
+                    }
+                );
+                assert_eq!(
+                    recorded
+                        .iter()
+                        .filter(|(name, _)| *name == "panic-payload")
+                        .count(),
+                    names.len()
+                );
+                let guard_leases = recorded
+                    .iter()
+                    .find(|(name, _)| *name == "guard-first")
+                    .unwrap()
+                    .1;
+                assert_eq!(
+                    guard_leases,
+                    probes.lease.strong_count() + 1,
+                    "the exact job lease must be released after its last guard"
+                );
+                let diagnostic = if let Some((old, next)) = requests {
+                    assert_eq!(report.state, SessionState::Runnable);
+                    assert!(session.failure().is_none());
+                    assert_eq!(session.request_status(old).unwrap(), RequestStatus::Failed);
+                    let diagnostic = session.request_failure(old).unwrap().unwrap().to_owned();
+                    assert_eq!(session.request_failure(next).unwrap(), None);
+                    assert_eq!(session.run_until_idle(8).publications, 1);
+                    let packet = session.take_request_output(next, "out").unwrap().unwrap();
+                    assert_eq!(
+                        packet.value().borrow::<Probe>().unwrap().name,
+                        "replacement-output"
+                    );
+                    assert_eq!(packet.metadata().unwrap().request(), Some(next));
+                    assert_eq!(
+                        session.request_status(next).unwrap(),
+                        RequestStatus::Settled { captures: 1 }
+                    );
+                    session.release_request(old).unwrap();
+                    session.release_request(next).unwrap();
+                    drop(packet);
+                    assert!(session.failure().is_none());
+                    diagnostic
+                } else {
+                    assert_eq!(report.state, SessionState::Failed);
+                    let diagnostic = session.failure().unwrap().to_owned();
+                    session.cancel();
+                    assert_eq!(session.failure(), Some(diagnostic.as_str()));
+                    diagnostic
+                };
+                assert!(
+                    diagnostic.contains("deferred job timeout for process 0 (a,"),
+                    "{diagnostic}"
+                );
+                assert!(
+                    diagnostic
+                        .ends_with("; destructor panicked during late dispatcher return cleanup"),
+                    "{diagnostic}"
+                );
+                let held = dispatcher.held.lock().unwrap().take().unwrap();
+                drop(session);
+                drop(dispatcher);
+                assert!(probes.lease.upgrade().is_some());
+                drop(held);
+                assert!(probes.lease.upgrade().is_none());
+                assert_eq!(events.lock().unwrap().last().unwrap().0, "lease");
+            }
         }
     }
 }

@@ -67,8 +67,7 @@ impl PluginInstance for Plugin {
             routes: vec![],
             patch: NetworkPatch::new([]),
             prepare: Some(Box::new(move |context| {
-                let selected = context.import("transform")?;
-                let bound = selected.bind(context.compiled)?;
+                let bound = context.bind_import("transform")?;
                 // Only contract-visible names and C's own Rust types are used.
                 assert!(bound.wire_input::<Request>("extra").is_err());
                 bound.wire_input::<Request>("left")?;

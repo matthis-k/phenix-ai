@@ -5,6 +5,11 @@ pub enum Readiness {
     #[default]
     Any,
     All,
+    /// Opt-in request-scoped join. Selects the earliest packet of one request
+    /// from each bounded input queue, even behind another request's head.
+    /// Preserves order within each request, not global cross-request FIFO.
+    /// Unscoped packets remain strictly head-only.
+    CorrelatedAll,
     AtLeast(NonZeroUsize),
     /// Omit optional inputs only at actual EOS or scheduler-proven request-local
     /// upstream closure. Sealing a request alone is not closure evidence.
@@ -21,6 +26,7 @@ impl std::fmt::Debug for Readiness {
         match self {
             Self::Any => f.write_str("Any"),
             Self::All => f.write_str("All"),
+            Self::CorrelatedAll => f.write_str("CorrelatedAll"),
             Self::AtLeast(n) => f.debug_tuple("AtLeast").field(n).finish(),
             Self::Optional { required, optional } => f
                 .debug_struct("Optional")
@@ -52,34 +58,93 @@ pub trait ReadinessPolicy: Send + Sync {
     /// Return distinct port names whose heads should be atomically reserved.
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
+
+    /// Opt in to event-driven readiness. False (the default) retains polling.
+    ///
+    /// Returning true promises that every external state change affecting
+    /// select() is followed by a ProcessNotifier::notify() for this process.
+    /// Packet, global EOS and sealed request changes remain kernel events.
+    /// This declaration is read once when the session starts. Violating the
+    /// contract can strand work; the kernel cannot observe arbitrary state.
+    fn notification_driven(&self) -> bool {
+        false
+    }
 }
 pub(super) struct Reservation {
-    pub ports: Vec<(usize, Option<usize>)>,
+    pub ports: Vec<(usize, Option<(usize, usize)>)>,
     request: Option<RequestId>,
+}
+
+/// Validate only declarations. Never inspect application code or spawn a factory.
+pub(super) fn validate_policy_ports<'a>(
+    ports: impl Iterator<Item = &'a str>,
+    policy: &Readiness,
+) -> Result<(), String> {
+    let names: BTreeSet<&str> = ports.collect();
+    match policy {
+        Readiness::AtLeast(n) if n.get() > names.len() => {
+            return Err("readiness threshold exceeds input port count".into());
+        }
+        Readiness::Optional { required, optional } => {
+            let mut seen = BTreeSet::new();
+            for name in required.iter().chain(optional) {
+                if !names.contains(name.as_str()) || !seen.insert(name) {
+                    return Err(format!("invalid optional readiness port {name}"));
+                }
+            }
+            if seen.is_empty() {
+                return Err("empty optional readiness policy".into());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 impl NetworkSession {
     pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), String> {
-        let inputs = &self.processes[index].inputs;
-        validate_policy(policy, inputs.iter().map(|port| port.name.as_str()))
+        validate_policy_ports(
+            self.processes[index].inputs.iter().map(|p| p.name.as_str()),
+            policy,
+        )
     }
-    fn head_for(&self, index: usize, port: usize, request: Option<RequestId>) -> Option<usize> {
-        let p = &self.processes[index].inputs[port];
+    fn packet_for(
+        &self,
+        index: usize,
+        port: usize,
+        request: Option<RequestId>,
+        correlated: bool,
+    ) -> Option<(usize, usize)> {
+        let input = &self.processes[index].inputs[port];
         let queues = match (self.request_queue_policy, request) {
             (RequestQueuePolicy::BoundedLanes, Some(request)) => {
                 let lane = self.requests[&request].lane;
-                p.lane_queues.get(&lane).map(Vec::as_slice).unwrap_or(&[])
+                input
+                    .lane_queues
+                    .get(&lane)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
             }
-            (RequestQueuePolicy::BoundedLanes, None) => &p.shared_queues,
-            (RequestQueuePolicy::SharedFifo, _) => &p.queues,
+            (RequestQueuePolicy::BoundedLanes, None) => &input.shared_queues,
+            (RequestQueuePolicy::SharedFifo, _) => &input.queues,
         };
-        (0..queues.len())
-            .map(|offset| queues[(p.cursor + offset) % queues.len()])
-            .find(|q| {
-                self.transport.queues()[*q]
-                    .head()
-                    .is_some_and(|packet| packet.metadata().and_then(|m| m.request()) == request)
-            })
+        for offset in 0..queues.len() {
+            let queue = queues[(input.cursor + offset) % queues.len()];
+            let packets = &self.transport.queues()[queue];
+            let position = if correlated && request.is_some() {
+                packets
+                    .packets()
+                    .position(|packet| packet.metadata().and_then(|m| m.request()) == request)
+            } else {
+                packets.head().and_then(|packet| {
+                    (packet.metadata().and_then(|m| m.request()) == request).then_some(0)
+                })
+            };
+            if let Some(position) = position {
+                return Some((queue, position));
+            }
+        }
+        None
     }
     pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
         let p = &self.processes[index];
@@ -91,7 +156,7 @@ impl NetworkSession {
                 .iter()
                 .position(|port| &port.name == waiting)
                 .unwrap();
-            let queue = self.head_for(index, port, p.request);
+            let queue = self.packet_for(index, port, p.request, false);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
                 return Err(format!(
@@ -110,28 +175,22 @@ impl NetworkSession {
         let order: Vec<_> = (0..count)
             .map(|offset| (p.cursor + offset) % count)
             .collect();
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        let correlated = matches!(policy, Readiness::CorrelatedAll);
         let mut candidates = vec![];
-        let mut consider_queue = |queue: usize| {
-            if let Some(head) = self.transport.queues()[queue].head() {
-                let request = head.metadata().and_then(|metadata| metadata.request());
-                if !candidates.contains(&request) {
-                    candidates.push(request);
-                }
-            }
-        };
         for port in &order {
             let input = &p.inputs[*port];
-            for offset in 0..input.shared_queues.len() {
-                consider_queue(
-                    input.shared_queues[(input.cursor + offset) % input.shared_queues.len()],
-                );
-            }
-            if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
-                for scope in self.requests.values() {
-                    if let Some(lane_queues) = input.lane_queues.get(&scope.lane) {
-                        for queue in lane_queues {
-                            consider_queue(*queue);
-                        }
+            for offset in 0..input.queues.len() {
+                let queue = input.queues[(input.cursor + offset) % input.queues.len()];
+                for (position, packet) in self.transport.queues()[queue].packets().enumerate() {
+                    if position > 0 && !correlated {
+                        break;
+                    }
+                    let request = packet.metadata().and_then(|m| m.request());
+                    // A global (unscoped) packet is never dequeued out of FIFO
+                    // order, even under this explicit request correlation policy.
+                    if (position == 0 || request.is_some()) && !candidates.contains(&request) {
+                        candidates.push(request);
                     }
                 }
             }
@@ -168,7 +227,7 @@ impl NetworkSession {
                     .iter()
                     .map(|port| InputHead {
                         port: p.inputs[*port].name.clone(),
-                        available: self.head_for(index, *port, request).is_some(),
+                        available: self.packet_for(index, *port, request, correlated).is_some(),
                         closed: self.input_closed_for(index, *port, request),
                     })
                     .collect(),
@@ -194,7 +253,7 @@ impl NetworkSession {
                             format!("required input {name} closed before its staged reservation")
                         })
                     }
-                    Readiness::All => snapshot
+                    Readiness::All | Readiness::CorrelatedAll => snapshot
                         .heads
                         .iter()
                         .find(|h| !h.available && h.closed)
@@ -228,7 +287,7 @@ impl NetworkSession {
             }
             let names = match policy {
                 Readiness::Any => available.into_iter().take(1).collect(),
-                Readiness::All if available.len() == count => available,
+                Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
                 Readiness::AtLeast(n) if available.len() >= n.get() => {
                     available.into_iter().take(n.get()).collect()
                 }
@@ -275,9 +334,17 @@ impl NetworkSession {
                     .iter()
                     .position(|port| port.name == name)
                     .ok_or_else(|| format!("unknown readiness port {name}"))?;
-                let queue = self.head_for(index, port, request);
+                let queue = self.packet_for(index, port, request, correlated);
+                // The immutable snapshot already proved closure for this
+                // candidate/port. A second proof would rewalk its upstream
+                // graph without any intervening session mutation.
+                let closed = snapshot
+                    .heads
+                    .iter()
+                    .find(|head| head.port == name)
+                    .is_some_and(|head| head.closed);
                 if ports.iter().any(|(selected, _)| *selected == port)
-                    || (queue.is_none() && !self.input_closed_for(index, port, request))
+                    || (queue.is_none() && !closed)
                 {
                     return Err(format!("invalid readiness selection for {name}"));
                 }
@@ -328,10 +395,13 @@ impl NetworkSession {
             let global_eos = self.closed(index, port);
             let p = &mut self.processes[index].inputs[port];
             if let Some(queue) = queue {
-                let packet = self.transport.pop(queue).unwrap();
+                let packet = self.transport.pop_at(queue.0, queue.1).unwrap();
                 inputs.insert(p.name.clone(), packet.into_value());
                 p.cursor =
-                    (p.queues.iter().position(|q| *q == queue).unwrap() + 1) % p.queues.len();
+                    (p.queues.iter().position(|q| *q == queue.0).unwrap() + 1) % p.queues.len();
+                // Releasing bounded input capacity can unblock a retained
+                // producer fanout even if the producer precedes this consumer.
+                self.dirty_queue(queue.0);
             } else {
                 if global_eos {
                     p.eos_delivered = true;
@@ -363,26 +433,5 @@ pub(crate) fn validate_policy<'a>(
     policy: &Readiness,
     input_names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), String> {
-    match policy {
-        Readiness::AtLeast(n) => {
-            if n.get() > input_names.into_iter().count() {
-                return Err("readiness threshold exceeds input port count".into());
-            }
-            Ok(())
-        }
-        Readiness::Optional { required, optional } => {
-            let inputs: BTreeSet<_> = input_names.into_iter().collect();
-            let mut seen = BTreeSet::new();
-            for name in required.iter().chain(optional) {
-                if !inputs.contains(name.as_str()) || !seen.insert(name) {
-                    return Err(format!("invalid optional readiness port {name}"));
-                }
-            }
-            if seen.is_empty() {
-                return Err("empty optional readiness policy".into());
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
+    validate_policy_ports(input_names.into_iter(), policy)
 }

@@ -9,6 +9,67 @@ milestone status. The final outcome section and [report](fbp-report.md) supersed
 their pending labels. See [design](fbp-design.md), [critique](fbp-critique.md),
 [regression mapping](fbp-regression-ledger.md), and [measurements](fbp-measurements.md).
 
+## Verified-Stack Reconciliation
+
+The 2026-11-14 campaign incorrectly relied on stale local remote-tracking
+`origin/impl/graph-consolidation-20261110` at `16e77f6c6`, with inherited
+callback/correlation work. Its first commit `0d145f3` is on
+`fix/fbp-lifecycle-request-lanes-20261114` (PR #1302, based on the impl graph
+branch). Actual remote impl `89e00d06498979a2f231dfc8ca780eba44140d27`
+already includes later foundations. After fetching, exact verified PR #1300 head
+`516e0883875d5ec483e3595d50b77b3d5e8979c4` is now being merged to preserve
+the complete stack and all scoped gates. Historical baseline inventories and
+verification below are retained, not relabeled as acceptance for this merge.
+
+The canonical merged API uses only `SessionOptions.deferred_timeout` and existing
+`overdue_jobs(now)` / `supervise_deferred(now)`; the candidate-specific timeout
+field is not retained as an alias or second timer. C9 `state(&self)` remains passive
+and never supervises expiry. `RunReport::next_deferred_timeout` bounds driver idle
+waits, not callback duration. `execution_guards` is an ordered Vec in place of the
+single replaceable guard slot: `ActivationJob::with_guard` appends, with reverse
+token teardown preserving Kernel identity through application-token destruction
+and process panic-payload cleanup. Exhaustive option literals and error matches
+must account for the current fields and detailed non-`Copy` `RequestError`.
+
+Kernel retains verified whole-drain retirement and exclusive blocking-driver
+ownership. External publication waits for an admitted whole producer drain, not
+explicit session work; same-drain publication rejects. Host self-destruction marks
+retirement and discards a late poll result, with destruction deferred outside
+locks. All Kernel session calls fail fast on cross-thread contention with
+busy/`WouldBlock`; same-kernel callback/worker re-entry also fails fast. Callers can
+retry after release. This preserves the verified lock-inversion contract for
+ordinary callers as well as producers: initial waiter claims are historical and
+superseded, never an accepted Kernel lock cycle. `lease_session` always uses
+`try_lease_session`. `ExclusiveSlot` is only `Mutex<Option<T>>` with `try_take` and
+idempotent release, without Condvar or waiters. The revised three-property Loom
+verifier covers competing exclusive ownership, busy/no-theft plus retry, and
+idempotent early release/state publication; initial Loom passes do not accept this
+new head. The initial no-wait-publication proposal is also superseded.
+The initial no-wait/empty-return competing-drain policy is discarded as well:
+`Kernel::drain` returns a `Result`, manual drains serialize, recursive drains reject,
+and a live blocking driver excludes manual polling even for `drain(0)`. The
+whole-drain and driver/direct-drain tests remain merge acceptance obligations.
+
+Optional `BoundedLanes` isolates per-request queues across connections, ingress
+and captures, not independent process state. A staged continuation, blocked atomic
+publication or nonconsuming reader still limits progress. The verified stack's
+authenticated non-head buffered capture extraction is retained; it does not create
+extra queue capacity or a fairness guarantee.
+
+Local workspace, no-default-feature, Clippy, Loom and Nix checks passed for initial
+`0d145f3`, not the new merged head. PR #1302 remote workflows initially conflicted;
+manual [Flake #43588157944](https://github.com/matthis-k/phenix-ai/actions/runs/43588157944)
+targets `0d145f3` and is not final acceptance. **New full acceptance is pending.**
+The tracker is the sole current score authority: all 33 deltas against verified
+`516e088` are +0.0 pp; H3b 78.0%, Q5 74.0%, mean 55.3%, classifications
+10 scoped verified / 7 partial / 16 open. The incoming issue ledger remains
+historical detail. No issue or milestone closure is claimed; M7/M8 and missing
+production-agent and OS-isolation adapters remain incomplete. Strict C3 revocation
+versus leased archival still needs owner decision; C6 live migration is absent.
+The new merge head's performance is unmeasured. Historical cutover commands and
+the immutable Nix snapshot remain in the [report](fbp-report.md#historical-cutover-evidence);
+neither they nor earlier stack benchmarks establish this merge's performance.
+
 ## Exact Baseline
 
 | Item | Recorded value |
@@ -190,7 +251,7 @@ test mappings and deliberate syntax changes are recorded in the regression ledge
 | StorageGraph per-wave notices/queries | Bounded source admission, explicit correlation, capture and exact query origin | M5 |
 | Physical node/edge IDs | Compiler-private deterministic indexes and source maps | M2-M6 |
 
-## Gates And Regression Evidence
+## Historical Gates And Regression Evidence
 
 | Milestone | Required evidence | Status |
 |---|---|---|
@@ -221,7 +282,7 @@ Existing test anchors to migrate rather than delete for convenience:
   `activation_artifacts`, `generation_retirement`, `generations`, and `storage`.
 - StorageGraph: `binding`, `derived`, `derived_plugins`, and `host_derived`.
 
-Add the requested `fbp_components`, `fbp_types`, `fbp_streams`, `fbp_cycles`,
+Historical pre-implementation instruction: add the requested `fbp_components`, `fbp_types`, `fbp_streams`, `fbp_cycles`,
 `fbp_composition`, `fbp_authority`, and integration regression suites only against
 the production implementation. Compile and run `basic_fbp`, `streaming_fbp`, and
 `plugin_composition`; none exists yet. Also rerun current graph/kernel/storage
@@ -373,7 +434,7 @@ Ordinary ignored/manual tests remain skipped. No post-extraction CI or Nix check
 build is claimed: new source files remain untracked and a Git-backed flake source
 would omit them. Baseline Nix/CI results above apply only to the baseline.
 
-## Final Worktree Outcome
+## Historical Final Worktree Outcome
 
 The canonical model, compiler, composer and persistent runtime now replace the
 old implementation. Kernel, Plugin and StorageGraph use that native path.
@@ -408,7 +469,8 @@ external effects. Values, factories, jobs, query results and callback errors kee
 their code/resource leases independently of the original host generation.
 
 See the final report for local verification and immutable Nix snapshot results.
-There is no new commit or remote CI result because neither was requested. The
+At that historical cutover there was no new commit or remote CI result because
+neither was requested; this is not the current PR #1302 verification status. The
 retired-suite ledger records meaningful behavior mappings and intentional API
 changes, not a claim that fewer tests prove every historical assertion equivalent.
 No DFIR experiment, native performance baseline or formal progress proof is

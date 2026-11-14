@@ -181,7 +181,9 @@ impl ReadinessPolicy for LanePolicy {
             .collect();
         let selected = match &self.policy {
             Readiness::Any => available.into_iter().take(1).collect(),
-            Readiness::All if available.len() == self.names.len() => available,
+            Readiness::All | Readiness::CorrelatedAll if available.len() == self.names.len() => {
+                available
+            }
             Readiness::AtLeast(n) if available.len() >= n.get() => {
                 available.into_iter().take(n.get()).collect()
             }
@@ -242,7 +244,7 @@ impl Process for Join {
         result.map(|step| match step {
             Step::WaitInput(name) => Step::WaitInput(lane_name(lane, &name)),
             Step::WaitInputs(policy) => Step::WaitInputs(match policy {
-                Readiness::All => Readiness::Optional {
+                Readiness::All | Readiness::CorrelatedAll => Readiness::Optional {
                     required: self.names.iter().map(|n| lane_name(lane, n)).collect(),
                     optional: vec![],
                 },

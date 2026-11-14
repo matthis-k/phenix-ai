@@ -27,6 +27,92 @@ fn lane_options() -> SessionOptions {
     }
 }
 
+#[test]
+fn dirty_lane_capture_retry_and_eos_propagate_without_a_full_scan() {
+    use phenix_graph::ComponentDef;
+
+    let mut builder = NetworkBuilder::new();
+    let first = builder
+        .add("first", Arc::new(ComponentDef::map(|value: i64| value + 1)))
+        .unwrap();
+    let second = builder
+        .add(
+            "second",
+            Arc::new(ComponentDef::map(|value: i64| value + 1)),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", first.input::<i64>("input").unwrap(), one())
+        .unwrap();
+    builder
+        .connect(
+            first.output::<i64>("output").unwrap(),
+            second.input::<i64>("input").unwrap(),
+            one(),
+        )
+        .unwrap();
+    builder
+        .expose_output("output", second.output::<i64>("output").unwrap())
+        .unwrap();
+    for index in 0..8 {
+        let idle = builder
+            .add(
+                format!("idle-{index}"),
+                Arc::new(ComponentDef::sink(|_: &i64| {})),
+            )
+            .unwrap();
+        builder
+            .expose_input(
+                format!("idle-{index}"),
+                idle.input::<i64>("input").unwrap(),
+                one(),
+            )
+            .unwrap();
+    }
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(lane_options());
+    let request = session.begin_request(None).unwrap();
+    session
+        .inject_request_local(request, "input", 10_i64)
+        .unwrap();
+    assert_eq!(session.run_until_idle(32).publications, 2);
+    session
+        .inject_request_local(request, "input", 20_i64)
+        .unwrap();
+    assert_eq!(session.run_until_idle(32).publications, 1);
+    assert_eq!(
+        session.request_work(request).unwrap().capture_backpressure,
+        1
+    );
+    session.close_request(request).unwrap();
+    session.close_input("input").unwrap();
+    let first = session
+        .take_request_output(request, "output")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.value().borrow::<i64>(), Some(&12));
+    assert_eq!(session.run_until_idle(32).publications, 1);
+    let second = session
+        .take_request_output(request, "output")
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.value().borrow::<i64>(), Some(&22));
+    session.run_until_idle(32);
+    assert!(session.output_closed("output").unwrap());
+    assert_eq!(session.state(), SessionState::Quiescent);
+    assert_eq!(
+        session.request_status(request).unwrap(),
+        RequestStatus::Settled { captures: 2 }
+    );
+    assert_eq!(session.request_work(request).unwrap().queued, 0);
+    session.release_request(request).unwrap();
+    assert!(session.failure().is_none());
+}
+
 struct Echo(bool);
 impl Process for Echo {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {

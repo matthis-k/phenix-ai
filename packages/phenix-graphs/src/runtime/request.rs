@@ -92,6 +92,8 @@ pub enum RequestError {
     CaptureCount(usize),
     NotSettled,
     RecoveryFailed,
+    ProcessDestructorPanicked,
+    PacketDestructorPanicked,
     Transport(ConnectionError),
 }
 
@@ -142,6 +144,10 @@ pub struct RequestWork {
     pub waiting_input: usize,
     pub waiting_wake: usize,
     pub publication_pending: usize,
+    /// Number of distinct full capture FIFOs targeted by this request's
+    /// retained, uncommitted publications. Passive snapshot only: the host
+    /// must consume or explicitly dispose buffered captures to free capacity.
+    pub capture_backpressure: usize,
     /// Bounded all-optional closure obligations registered by admitted roots.
     pub closure_pending: usize,
 }
@@ -156,7 +162,7 @@ impl NetworkSession {
     /// Reserve one bounded scope. `Some(output)` requires exactly one capture
     /// in the scope, from that compiled projection, before successful settlement.
     pub fn begin_request(&mut self, exact_output: Option<&str>) -> Result<RequestId, RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         if self.terminal.is_some() || self.state() == SessionState::Completed {
             return Err(RequestError::Stale);
         }
@@ -247,7 +253,7 @@ impl NetworkSession {
         name: &str,
         value: Value,
     ) -> Result<(), RequestInjectionError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         let validation = self.check_request(id).and_then(|r| {
             if self.terminal.is_some() || r.terminal.is_some() {
                 Err(RequestError::Stale)
@@ -277,7 +283,7 @@ impl NetworkSession {
     /// Start only an explicitly compiled zero-input source, using the same
     /// persistent process and handoff. No root guessing or process respawning.
     pub fn start_request_source(&mut self, id: RequestId, path: &str) -> Result<(), RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
@@ -313,12 +319,28 @@ impl NetworkSession {
     }
     /// Seals request ingress, not the persistent network's public input writers.
     pub fn close_request(&mut self, id: RequestId) -> Result<(), RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         let scope = self.check_request(id)?;
         if self.terminal.is_some() || scope.terminal.is_some() {
             return Err(RequestError::Stale);
         }
+        let first_seal = !self.requests[&id].sealed;
         self.requests.get_mut(&id).unwrap().sealed = true;
+        // Only authenticated downstream reachability of this sealed scope
+        // can gain an request-local input closure with no physical packet. The
+        // watcher is registered once even if close_request is repeated.
+        let reachable: Vec<_> = self.requests[&id].reachable.iter().copied().collect();
+        for index in reachable {
+            // Registration and dirtying share the existing reachability pass:
+            // no second O(V) traversal on every request seal.
+            if first_seal
+                && (matches!(&self.processes[index].policy, Readiness::Optional { .. })
+                    || self.processes[index].notification_driven)
+            {
+                *self.scoped_readiness_poll.entry(index).or_default() += 1;
+            }
+            self.dirty_process(index);
+        }
         self.refresh();
         Ok(())
     }
@@ -355,7 +377,7 @@ impl NetworkSession {
         })
     }
     pub fn release_request(&mut self, id: RequestId) -> Result<(), RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         self.check_request(id)?;
         if self.terminal.is_none() && (self.request_live(id) || !self.requests[&id].sealed) {
             return Err(RequestError::NotSettled);
@@ -368,38 +390,59 @@ impl NetworkSession {
         {
             return Err(RequestError::NotSettled);
         }
+        // Terminal cancellation already cleared reachability and detached
+        // this scope's optional watch. A normal settled sealed request still
+        // owns exactly one registration until this release.
+        let scope = &self.requests[&id];
+        if scope.sealed && scope.terminal.is_none() {
+            let reachable: Vec<_> = scope.reachable.iter().copied().collect();
+            self.unwatch_scoped_readiness(&reachable);
+        }
         self.requests.remove(&id);
         Ok(())
     }
     fn request_live(&self, id: RequestId) -> bool {
-        self.processes
-            .iter()
-            .enumerate()
-            .any(|(index, p)| p.request == Some(id) || self.closure_obligation(index, id))
-            || self.transport.queues().iter().any(|q| {
-                q.packets()
-                    .any(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-            })
+        // Retain the conservative full active-owner check, but never ask
+        // for a request-local closure outside its registered reachability.
+        self.processes.iter().any(|p| p.request == Some(id))
+            || self.requests[&id]
+                .reachable
+                .iter()
+                .any(|index| self.closure_obligation(*index, id))
+            || self
+                .transport
+                .queues()
+                .iter()
+                .any(|queue| queue.request_count(id) != 0)
     }
     /// Snapshot only; overdue jobs are applied by a supervision operation.
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
         let mut work = RequestWork {
-            closure_pending: (0..self.processes.len())
-                .filter(|index| self.closure_obligation(*index, id))
+            closure_pending: self.requests[&id]
+                .reachable
+                .iter()
+                .filter(|index| self.closure_obligation(**index, id))
                 .count(),
             queued: self
                 .transport
                 .queues()
                 .iter()
-                .map(|q| {
-                    q.packets()
-                        .filter(|p| p.metadata().and_then(|m| m.request()) == Some(id))
-                        .count()
-                })
+                .map(|queue| queue.request_count(id))
                 .sum(),
             ..Default::default()
         };
+        let blocked_captures: BTreeSet<_> = self
+            .processes
+            .iter()
+            .filter(|p| p.request == Some(id) && p.pending.is_some())
+            .flat_map(|p| p.pending_targets.iter().copied())
+            .filter(|queue| {
+                matches!(&self.endpoints[*queue].1, QueueEndpoint::Capture(_))
+                    && self.transport.queues()[*queue].is_full()
+            })
+            .collect();
+        work.capture_backpressure = blocked_captures.len();
         for p in self.processes.iter().filter(|p| p.request == Some(id)) {
             match p.handoff.state() {
                 HandoffState::Ready => work.ready += 1,
@@ -412,12 +455,17 @@ impl NetworkSession {
         }
         Ok(work)
     }
+    /// Read this request's first buffered capture, even when an unrelated
+    /// request precedes it in the shared output queue. Global take_output
+    /// retains strict FIFO, while scoped reads preserve FIFO within each
+    /// request. This cannot bypass a full queue that has not published the
+    /// requested packet yet.
     pub fn take_request_output(
         &mut self,
         id: RequestId,
         name: &str,
     ) -> Result<Option<Packet>, RequestError> {
-        self.supervise_deferred_jobs();
+        self.supervise_deferred(Instant::now());
         let scope = self.check_request(id)?;
         let lane = scope.lane;
         let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
@@ -435,15 +483,21 @@ impl NetworkSession {
             self.captures.get(name).copied()
         }
         .ok_or(RequestError::UnknownOutput)?;
-        if self.transport.queues()[queue]
-            .head()
-            .is_none_or(|p| p.metadata().and_then(|m| m.request()) != Some(id))
-        {
+        let Some((offset, packet)) = self.transport.queues()[queue]
+            .packets()
+            .enumerate()
+            .find(|(_, packet)| packet.metadata().and_then(|m| m.request()) == Some(id))
+        else {
             return Ok(None);
-        }
-        self.validate_capture(id, name, self.transport.queues()[queue].head().unwrap())?;
-        self.take_capture(name, queue)
-            .map_err(RequestError::Transport)
+        };
+        // Check the exact original packet before any ownership transfer. A
+        // malformed matching capture must not be removed or skipped.
+        self.validate_capture(id, name, packet)?;
+        let packet = self.transport.pop_at(queue, offset).unwrap();
+        self.observe_capture(name, &packet);
+        self.dirty_queue(queue);
+        self.refresh();
+        Ok(Some(packet))
     }
     pub fn validate_capture(
         &self,
@@ -502,5 +556,144 @@ impl NetworkSession {
                 .is_none_or(|expected| expected == name);
         request.invalid |= !valid;
         request.captures = request.captures.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+mod queue_request_index_tests {
+    use super::*;
+    use crate::connection::{ConnectionQueue, ConnectionSet, FanoutTarget};
+    use std::num::NonZeroUsize;
+
+    fn request(sequence: u64) -> RequestId {
+        RequestId {
+            session: 11,
+            generation: 3,
+            sequence,
+        }
+    }
+
+    fn packet(request: Option<RequestId>, value: i64) -> Packet {
+        let mut packet = Packet::new(Value::of(value));
+        packet.metadata = Some(Arc::new(CaptureMetadata {
+            session: 11,
+            generation: 3,
+            process: Some(0),
+            output: "out".into(),
+            activation: 1,
+            request,
+            capture: None,
+        }));
+        packet
+    }
+
+    fn queue(capacity: usize) -> ConnectionQueue {
+        ConnectionQueue::new(
+            NonZeroUsize::new(capacity).unwrap(),
+            Value::of(0_i64).identity().clone(),
+        )
+    }
+
+    #[test]
+    fn indexed_queue_tracks_duplicate_requests_middle_removal_and_reader_disposal() {
+        let a = request(1);
+        let b = request(2);
+        let foreign = RequestId { session: 12, ..a };
+        let mut queue = queue(4);
+        queue.push(packet(Some(a), 1)).unwrap();
+        queue.push(packet(Some(b), 2)).unwrap();
+        queue.push(packet(Some(a), 3)).unwrap();
+        queue.push(packet(None, 4)).unwrap();
+
+        assert_eq!(queue.request_count(a), 2);
+        assert_eq!(queue.request_count(b), 1);
+        assert_eq!(queue.request_count(foreign), 0);
+        assert_eq!(
+            queue.push(packet(Some(foreign), 5)).unwrap_err().0,
+            ConnectionError::Full
+        );
+        assert_eq!(queue.request_count(foreign), 0);
+        assert_eq!(queue.pop_at(1).unwrap().value().get::<i64>().unwrap(), 2);
+        assert_eq!(queue.request_count(b), 0);
+        assert_eq!(queue.request_count(a), 2);
+        assert_eq!(queue.pop().unwrap().value().get::<i64>().unwrap(), 1);
+        assert_eq!(queue.request_count(a), 1);
+        assert_eq!(queue.pop_at(1).unwrap().value().get::<i64>().unwrap(), 4);
+        assert_eq!(queue.request_count(a), 1);
+
+        // Closing only the writer retains the accepted queue and index.
+        queue.close_writer();
+        assert_eq!(queue.request_count(a), 1);
+        let disposed = queue.close_reader();
+        assert_eq!(disposed.len(), 1);
+        assert_eq!(queue.request_count(a), 0);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn atomic_fanout_full_retry_and_disposal_preserve_exact_request_counts() {
+        let a = request(1);
+        let b = request(2);
+        let mut transport = ConnectionSet::new(vec![queue(3), queue(1)]);
+        let targets = [FanoutTarget::identity(0), FanoutTarget::identity(1)];
+        let mut first = transport.prepare(&packet(Some(a), 10), &targets).unwrap();
+        first.stamp_capture(1, "capture");
+        transport.commit(&mut first).unwrap();
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert_eq!(transport.queues()[1].request_count(a), 1);
+
+        let mut second = transport.prepare(&packet(Some(b), 20), &targets).unwrap();
+        assert_eq!(transport.commit(&mut second), Err(ConnectionError::Full));
+        assert_eq!(second.retained_packets(), 2);
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.queues()[1].request_count(b), 0);
+
+        // Free just one destination; replay the retained transaction without
+        // re-preparing adapters or admitting a partial fanout.
+        let old = transport.pop(1).unwrap();
+        assert_eq!(old.metadata().unwrap().request(), Some(a));
+        assert_eq!(old.metadata().unwrap().capture(), Some("capture"));
+        transport.commit(&mut second).unwrap();
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert_eq!(transport.queues()[0].request_count(b), 1);
+        assert_eq!(transport.queues()[1].request_count(a), 0);
+        assert_eq!(transport.queues()[1].request_count(b), 1);
+        assert_eq!(transport.detach_request(a).len(), 1);
+        assert!(transport.detach_request(a).is_empty());
+        assert_eq!(transport.queues()[0].request_count(a), 0);
+        assert_eq!(transport.queues()[0].request_count(b), 1);
+        assert_eq!(
+            transport
+                .pop_at(0, 0)
+                .unwrap()
+                .value()
+                .get::<i64>()
+                .unwrap(),
+            20
+        );
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.cancel().len(), 1);
+        assert_eq!(transport.queues()[1].request_count(b), 0);
+        assert_eq!(transport.queues()[1].len(), 0);
+    }
+
+    #[test]
+    fn invalid_admissions_do_not_create_phantom_request_membership() {
+        let a = request(1);
+        let b = request(2);
+        let mut queue = queue(2);
+        queue.push(packet(Some(a), 7)).unwrap();
+        let wrong = Packet::new(Value::of(String::from("wrong type")));
+        assert_eq!(queue.push(wrong).unwrap_err().0, ConnectionError::WrongType);
+        assert_eq!(queue.request_count(a), 1);
+
+        let mut transport = ConnectionSet::new(vec![queue]);
+        let invalid = [FanoutTarget::identity(0), FanoutTarget::identity(12)];
+        assert!(transport.prepare(&packet(Some(b), 8), &invalid).is_err());
+        assert_eq!(transport.queues()[0].request_count(b), 0);
+        assert_eq!(transport.queues()[0].request_count(a), 1);
+        assert!(transport.detach_request(b).is_empty());
+        assert_eq!(transport.detach_request(a).len(), 1);
+        assert_eq!(transport.queues()[0].request_count(a), 0);
     }
 }

@@ -2,7 +2,8 @@
 //!
 //! Grants authorize exact writes, not reads or semantic claims. The host must
 //! construct registrations itself; accepting a registration from a plugin is not
-//! a security boundary. Only root public scope is editable in this version.
+//! a security boundary. Root topology edits remain public-only. A composite may
+//! explicitly expose child replacement seams, still requiring exact host grants.
 //!
 //! # Selection and replay
 //! Dependencies must exist and form a DAG. Transitive dependencies order writes;
@@ -34,7 +35,7 @@
 use crate::component::{Body, ComponentDef};
 use crate::network::{
     CompiledNetwork, ConnectionDef, InputProjection, NetworkDef, NetworkError, PortPath,
-    collect_component_obligations,
+    collect_component_obligations, normalize_requirements,
 };
 use crate::{GraphOrigin, Interface};
 use std::collections::{BTreeMap, BTreeSet};
@@ -96,8 +97,14 @@ pub enum Edit {
 impl Edit {
     fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
         match self {
-            Self::Add { path, definition } | Self::Replace { path, definition } => {
+            Self::Add { path, definition } => {
                 public_path(path)?;
+                definition_origin(definition, origin, path)?;
+            }
+            Self::Replace { path, definition } => {
+                for part in path.split('/') {
+                    public_path(part)?;
+                }
                 definition_origin(definition, origin, path)?;
             }
             Self::Connect(edge) => {
@@ -463,7 +470,7 @@ fn compose(
                     });
                 }
             }
-            if let Some(footprint) = left.intersection(right).next()
+            if let Some(footprint) = overlapping_write(left, right)
                 && registrations[a].priority == registrations[b].priority
             {
                 return Err(ComposeError::Conflict {
@@ -491,7 +498,7 @@ fn compose(
             let loses = selected.iter().any(|winner| {
                 !ancestors[id].contains(winner)
                     && !ancestors[winner].contains(id)
-                    && !footprints[id].is_disjoint(&footprints[winner])
+                    && overlapping_write(&footprints[id], &footprints[winner]).is_some()
             });
             if !loses {
                 selected.insert(id.clone());
@@ -519,6 +526,7 @@ fn compose(
         .connections
         .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
     network.sources.sort();
+    normalize_requirements(&mut network.requirements);
     let compiled = network.compile()?;
     footprints.retain(|id, _| active.contains(id));
     Ok(Composition {
@@ -529,8 +537,35 @@ fn compose(
     })
 }
 
+/// Exact grants remain separate. Selection conflict is broader: replacing an
+/// ancestor composite changes the definition containing every nested child.
+/// Independently selected ancestor and descendant replacements would otherwise
+/// silently erase each other depending on lexical replay order.
+fn overlapping_write<'a>(
+    left: &'a BTreeSet<Footprint>,
+    right: &BTreeSet<Footprint>,
+) -> Option<&'a Footprint> {
+    left.iter().find(|write| {
+        right.iter().any(|other| {
+            if *write == other {
+                return true;
+            }
+            match (write, other) {
+                (Footprint::Component(a), Footprint::Component(b)) => {
+                    b.strip_prefix(a)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                        || a.strip_prefix(b)
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                }
+                _ => false,
+            }
+        })
+    })
+}
+
 fn public_path(path: &str) -> Result<(), ComposeError> {
     if path.is_empty()
+        || path.len() > crate::MAX_IDENTIFIER_BYTES
         || path.contains('/')
         || matches!(path, "." | "..")
         || path.chars().any(char::is_control)
@@ -584,6 +619,16 @@ fn replay(
     let invalid = || ComposeError::InvalidEdit(format!("{}: {edit:?}", registration.id));
     match edit {
         Edit::Add { path, definition } | Edit::Replace { path, definition } => {
+            if matches!(edit, Edit::Replace { .. }) && path.contains('/') {
+                replace_nested(network, path, definition, &registration.origin)?;
+                let root = path.split('/').next().unwrap();
+                collect_component_obligations(
+                    &network.instances[root],
+                    root,
+                    &mut network.requirements,
+                );
+                return Ok(());
+            }
             if matches!(edit, Edit::Add { .. }) {
                 if network.instances.contains_key(path) {
                     return Err(invalid());
@@ -724,5 +769,56 @@ fn replay(
             splices.insert(anchor.clone(), (output.clone(), capacity));
         }
     }
+    Ok(())
+}
+
+/// Copy-on-write replacement through explicit *immediate-child* seams. A
+/// root-level host grant never bypasses a composite author's private boundary.
+fn replace_nested(
+    network: &mut NetworkDef,
+    path: &str,
+    definition: &Arc<ComponentDef>,
+    origin: &GraphOrigin,
+) -> Result<(), ComposeError> {
+    let (parent, remainder) = path
+        .split_once('/')
+        .ok_or_else(|| ComposeError::PrivateEditScope(path.into()))?;
+    let ancestor = network
+        .instances
+        .get(parent)
+        .ok_or_else(|| ComposeError::InvalidEdit(format!("unknown composite {parent}")))?
+        .clone();
+    let Body::Composite(child) = ancestor.body() else {
+        return Err(ComposeError::PrivateEditScope(path.into()));
+    };
+    let immediate = remainder.split('/').next().unwrap();
+    if !child.replacement_points.contains(immediate) {
+        return Err(ComposeError::PrivateEditScope(path.into()));
+    }
+    let mut updated = (**child).clone();
+    if remainder.contains('/') {
+        replace_nested(&mut updated, remainder, definition, origin)?;
+    } else {
+        let previous = updated
+            .instances
+            .get(remainder)
+            .ok_or_else(|| ComposeError::InvalidEdit(format!("unknown nested component {path}")))?;
+        if previous.interface() != definition.interface() {
+            return Err(NetworkError::InterfaceMismatch(path.into()).into());
+        }
+        updated.instances.insert(
+            remainder.into(),
+            Arc::new((**definition).clone().with_origin(origin.clone())),
+        );
+        collect_component_obligations(
+            &updated.instances[remainder],
+            remainder,
+            &mut updated.requirements,
+        );
+    }
+    network.instances.insert(
+        parent.into(),
+        Arc::new(ancestor.with_updated_network(updated)),
+    );
     Ok(())
 }

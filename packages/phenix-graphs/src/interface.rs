@@ -130,9 +130,12 @@ impl Interface {
 }
 
 fn validate_port_name(name: &str) -> Result<(), InterfaceError> {
-    if name.is_empty() || name.chars().any(char::is_control) {
+    if name.is_empty()
+        || name.len() > crate::MAX_IDENTIFIER_BYTES
+        || name.chars().any(char::is_control)
+    {
         Err(InterfaceError::new(
-            "port name must be nonempty and contain no control characters",
+            "port name must be nonempty, bounded and contain no control characters",
         ))
     } else {
         Ok(())

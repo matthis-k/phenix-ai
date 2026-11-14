@@ -3,7 +3,10 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
-use crate::{BuildOptions, CallbackError, Kernel, Key, ProducerEvent, ResolutionError, StartError};
+use crate::{
+    BuildOptions, CallbackError, Kernel, KernelLockScope, Key, ProducerEvent, ResolutionError,
+    StartError,
+};
 use phenix_graph::{
     Value,
     component::DefinitionKey,
@@ -22,6 +25,7 @@ pub enum LifecycleError {
     Binding(CallbackError),
     StaleCandidate,
     EpochExhausted,
+    ReentrantDrain,
 }
 
 impl std::fmt::Display for LifecycleError {
@@ -33,6 +37,9 @@ impl std::fmt::Display for LifecycleError {
             Self::Binding(error) => write!(f, "generation binding: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
+            Self::ReentrantDrain => {
+                f.write_str("publication attempted during its own producer drain")
+            }
         }
     }
 }
@@ -51,8 +58,9 @@ impl std::error::Error for LifecycleError {
 
 /// An immutable generation identity with serialized producer access. No mutable
 /// kernel or producer access escapes. Explicit session calls remain valid after
-/// replacement, but retired producers can never admit another event. A poll
-/// already executing at retirement may finish; its late event is discarded.
+/// replacement. Publication waits for an admitted whole drain; self-retirement
+/// inside a callback rejects its late event. An admission that won the retirement
+/// boundary may finish, including its eager session callbacks.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -88,7 +96,7 @@ impl Generation {
         self.kernel.run_steps(budget)
     }
 
-    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+    pub fn drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, crate::DriverError> {
         self.kernel.drain(max_polls)
     }
 }
@@ -204,7 +212,13 @@ impl KernelHost {
             .map_err(LifecycleError::Plugins)?;
         let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        bind(&Binding { kernel: &kernel }).map_err(|cause| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            bind(&Binding { kernel: &kernel })
+        }))
+        .unwrap_or_else(|payload| {
+            Err(crate::contained_panic_message("generation binding panicked", payload).into())
+        })
+        .map_err(|cause| {
             LifecycleError::Binding(phenix_plugin::lease_callback_error(
                 cause,
                 kernel.code_lease.clone(),
@@ -220,14 +234,35 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement does not wait for an in-flight producer callback or explicit
-    /// session work. A returning old callback cannot admit into the retired graph.
+    /// Retirement waits for an admitted whole producer drain, but never for
+    /// explicit session work. No new drain can poll a retired generation.
     /// Producer destructors run after the transition and outside the state lock.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
         }
-        let mut old = self.active.as_ref().map(|generation| {
+        // Own an Arc separately from the mutable active pointer. It keeps
+        // the old kernel and plugin code leased through retirement and Drops.
+        let retiring = self.active.clone();
+        // Reject same-thread publication from a producer callback before
+        // blocking on the whole-drain gate. Other threads still wait normally.
+        let drain_scope = retiring
+            .as_ref()
+            .map(|generation| {
+                KernelLockScope::enter(&generation.kernel.producer_drain)
+                    .ok_or(LifecycleError::ReentrantDrain)
+            })
+            .transpose()?;
+        // The whole-drain gate is acquired before the inventory lock. A
+        // running drain finishes all of its polls before retirement begins.
+        let drain = retiring.as_ref().map(|generation| {
+            generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+        });
+        let mut old = retiring.as_ref().map(|generation| {
             generation
                 .kernel
                 .producers
@@ -244,10 +279,16 @@ impl KernelHost {
         drop(old);
         self.epoch = candidate.generation.epoch;
         let previous = self.active.replace(candidate.generation.clone());
+        drop(drain);
+        drop(drain_scope);
+        if let Some(generation) = &retiring {
+            generation.kernel.notify_driver_retirement();
+        }
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
         drop(previous);
+        drop(retiring);
         Ok(candidate.generation)
     }
 }
@@ -255,6 +296,26 @@ impl KernelHost {
 impl Drop for KernelHost {
     fn drop(&mut self) {
         if let Some(generation) = &self.active {
+            // A producer callback may synchronously destroy its host while
+            // holding this generation's drain gate. Do not deadlock on the
+            // same mutex or detach its temporarily checked-out producer.
+            // The enclosing drain/registration restores the slot and retires
+            // all producers after releasing its gate and inventory locks.
+            if KernelLockScope::held(&generation.kernel.producer_drain) {
+                generation
+                    .kernel
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .retired = true;
+                generation.kernel.notify_driver_retirement();
+                return;
+            }
+            let drain = generation
+                .kernel
+                .producer_drain
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut state = generation
                 .kernel
                 .producers
@@ -263,6 +324,8 @@ impl Drop for KernelHost {
             state.retired = true;
             let producers = std::mem::take(&mut state.producers);
             drop(state);
+            drop(drain);
+            generation.kernel.notify_driver_retirement();
             drop(producers);
         }
     }
@@ -305,6 +368,360 @@ mod tests {
                 })),
             })
         }
+    }
+
+    #[test]
+    fn host_drop_during_producer_callbacks_defers_retirement_and_destructors() {
+        use std::cell::RefCell;
+        use std::sync::Weak;
+
+        thread_local! {
+            static OWNER: RefCell<Option<KernelHost>> = const { RefCell::new(None) };
+        }
+
+        #[derive(Clone, Copy)]
+        enum Trigger {
+            Poll,
+            Wake,
+            WakeUnsupported,
+            WakePanics,
+            Never,
+        }
+
+        struct RetireSource {
+            generation: Weak<Generation>,
+            trigger: Trigger,
+            calls: Arc<AtomicUsize>,
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Producer for RetireSource {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if matches!(self.trigger, Trigger::Poll) {
+                    OWNER.with(|owner| drop(owner.borrow_mut().take()));
+                    // The in-flight producer cannot be destroyed until its
+                    // callback returns and the whole drain gate is released.
+                    assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                    return Ok(Some(InputEvent {
+                        input: "in".into(),
+                        value: Value::local(7_i64),
+                    }));
+                }
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: crate::WakeHandle) -> bool {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if matches!(
+                    self.trigger,
+                    Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                ) {
+                    OWNER.with(|owner| drop(owner.borrow_mut().take()));
+                    assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                    if matches!(self.trigger, Trigger::WakeUnsupported) {
+                        return false;
+                    }
+                    if matches!(self.trigger, Trigger::WakePanics) {
+                        panic!("intentional wake-registration failure");
+                    }
+                }
+                true
+            }
+        }
+
+        impl Drop for RetireSource {
+            fn drop(&mut self) {
+                let generation = self.generation.upgrade().unwrap();
+                let _gate = generation
+                    .kernel
+                    .producer_drain
+                    .try_lock()
+                    .expect("producer destroyed while drain gate is locked");
+                let _inventory = generation
+                    .kernel
+                    .producers
+                    .try_lock()
+                    .expect("producer destroyed while inventory is locked");
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        for trigger in [
+            Trigger::Poll,
+            Trigger::Wake,
+            Trigger::WakeUnsupported,
+            Trigger::WakePanics,
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let other_calls = Arc::new(AtomicUsize::new(0));
+            let drops = Arc::new(AtomicUsize::new(0));
+            let generation = Arc::new_cyclic(|weak| {
+                let mut kernel =
+                    Kernel::build("reentrant-host-drop", [], Arc::new(LocalProcessDispatcher))
+                        .unwrap();
+                kernel.start().unwrap();
+
+                if matches!(
+                    trigger,
+                    Trigger::Poll | Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                ) {
+                    // Both producer admission and wake registration need live
+                    // ingress to prove no packet is admitted after retirement.
+                    // Construct a live ingress so the callback really runs.
+                    let mut builder = phenix_graph::network::NetworkBuilder::new();
+                    let sink = builder
+                        .add(
+                            "sink",
+                            Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})),
+                        )
+                        .unwrap();
+                    builder
+                        .expose_input(
+                            "in",
+                            sink.input::<i64>("input").unwrap(),
+                            std::num::NonZeroUsize::new(1).unwrap(),
+                        )
+                        .unwrap();
+                    kernel.session = crate::ExclusiveSlot::new(
+                        builder.build().unwrap().compile().unwrap().start(),
+                    );
+                }
+
+                kernel.routes.insert(
+                    Key::new("test", "destroy-host"),
+                    std::collections::BTreeSet::from(["in".to_owned()]),
+                );
+                kernel.producers.get_mut().unwrap().producers = vec![
+                    (
+                        Key::new("test", "destroy-host"),
+                        Some(Box::new(RetireSource {
+                            generation: weak.clone(),
+                            trigger,
+                            calls: calls.clone(),
+                            drops: drops.clone(),
+                        }) as Box<dyn Producer>),
+                        None,
+                    ),
+                    (
+                        Key::new("test", "must-not-run"),
+                        Some(Box::new(RetireSource {
+                            generation: weak.clone(),
+                            trigger: Trigger::Never,
+                            calls: other_calls.clone(),
+                            drops: drops.clone(),
+                        }) as Box<dyn Producer>),
+                        None,
+                    ),
+                ];
+                Generation { epoch: 1, kernel }
+            });
+
+            let mut host = KernelHost::new(PluginCatalog::new().instance());
+            host.epoch = 1;
+            host.active = Some(generation.clone());
+            OWNER.with(|owner| {
+                assert!(owner.borrow().is_none());
+                *owner.borrow_mut() = Some(host);
+            });
+
+            match trigger {
+                Trigger::Poll => assert!(generation.drain(3).unwrap().is_empty()),
+                Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics => {
+                    let wake = crate::WakeHandle::default();
+                    wake.shutdown();
+                    let outcome = generation.kernel.run_until(&wake, |_| {});
+                    match outcome {
+                        Err(crate::DriverError::Retired) => {
+                            assert!(matches!(trigger, Trigger::Wake));
+                        }
+                        Err(crate::DriverError::UnsupportedWake { .. }) => {
+                            assert!(matches!(trigger, Trigger::WakeUnsupported));
+                        }
+                        Err(crate::DriverError::WakeRegistrationPanicked { .. }) => {
+                            assert!(matches!(trigger, Trigger::WakePanics));
+                        }
+                        other => panic!("unexpected wake-registration result: {other:?}"),
+                    }
+                }
+                Trigger::Never => unreachable!(),
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert_eq!(other_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(drops.load(Ordering::SeqCst), 2);
+            assert!(
+                generation.kernel.driver_wake.lock().unwrap().is_none(),
+                "driver wake registration must be released on every exit"
+            );
+            assert_eq!(
+                generation.with_session(|session| session.state()).unwrap(),
+                phenix_graph::runtime::SessionState::Quiescent,
+                "an event returned after self-retirement must never enter the session"
+            );
+            let state = generation.kernel.producers.lock().unwrap();
+            assert!(state.retired);
+            assert!(state.producers.is_empty());
+            drop(state);
+
+            // Keeping a retired generation handle alive must not resurrect
+            // callbacks or prevent immediate producer cleanup.
+            assert!(generation.drain(2).unwrap().is_empty());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn externally_retired_live_driver_exits_without_shutdown_and_preserves_session() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct Idle {
+            registered: mpsc::Sender<()>,
+            polled: mpsc::Sender<()>,
+        }
+
+        impl Producer for Idle {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polled.send(()).unwrap();
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: crate::WakeHandle) -> bool {
+                self.registered.send(()).unwrap();
+                true
+            }
+        }
+
+        for replace in [false, true] {
+            let (registered, registration) = mpsc::channel();
+            let (polled, poll) = mpsc::channel();
+            let mut kernel =
+                Kernel::build("live-retirement", [], Arc::new(LocalProcessDispatcher)).unwrap();
+            kernel.start().unwrap();
+
+            let mut builder = phenix_graph::network::NetworkBuilder::new();
+            let sink = builder
+                .add(
+                    "sink",
+                    Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})),
+                )
+                .unwrap();
+            builder
+                .expose_input(
+                    "input",
+                    sink.input::<i64>("input").unwrap(),
+                    std::num::NonZeroUsize::new(1).unwrap(),
+                )
+                .unwrap();
+            kernel.session =
+                crate::ExclusiveSlot::new(builder.build().unwrap().compile().unwrap().start());
+            kernel.producers.get_mut().unwrap().producers.push((
+                Key::new("test", "idle"),
+                Some(Box::new(Idle { registered, polled })),
+                None,
+            ));
+
+            let generation = Arc::new(Generation { epoch: 1, kernel });
+            let mut host = KernelHost::new(PluginCatalog::new().instance());
+            host.epoch = 1;
+            host.active = Some(generation.clone());
+
+            let wake = crate::WakeHandle::default();
+            let worker_wake = wake.clone();
+            let worker_generation = generation.clone();
+            let (result_tx, result_rx) = mpsc::channel();
+            let driver = std::thread::spawn(move || {
+                let outcome = worker_generation.kernel.run_until(&worker_wake, |_| {});
+                result_tx.send(outcome).unwrap();
+            });
+            registration.recv_timeout(Duration::from_secs(2)).unwrap();
+            poll.recv_timeout(Duration::from_secs(2)).unwrap();
+
+            if replace {
+                let candidate = host
+                    .prepare(
+                        vec![],
+                        BuildOptions::default(),
+                        Arc::new(LocalProcessDispatcher),
+                        "replacement",
+                        |_| Ok(()),
+                    )
+                    .unwrap();
+                host.publish(candidate).unwrap();
+            } else {
+                drop(host);
+            }
+
+            // A regression cannot hang CI for the driver wait interval:
+            // shutdown is a fallback only, never part of the success path.
+            let outcome = result_rx.recv_timeout(Duration::from_secs(2));
+            if outcome.is_err() {
+                wake.shutdown();
+            }
+            driver.join().unwrap();
+            assert_eq!(outcome.unwrap(), Err(crate::DriverError::Retired));
+            assert!(generation.kernel.driver_wake.lock().unwrap().is_none());
+            assert!(generation.kernel.producers.lock().unwrap().retired);
+
+            // Retired producer admission is revoked, but the retained
+            // generation's explicit native session remains operational.
+            generation.inject("input", Value::local(7_i64)).unwrap();
+            generation.run_steps(32).unwrap();
+            assert!(
+                generation
+                    .with_session(|session| session.failure().is_none())
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn publication_rejects_same_thread_reentry_into_a_held_producer_drain() {
+        let mut host = KernelHost::new(PluginCatalog::new().instance());
+        let first = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "initial",
+                |_| Ok(()),
+            )
+            .unwrap();
+        let active = host.publish(first).unwrap();
+        let replacement = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "replacement",
+                |_| Ok(()),
+            )
+            .unwrap();
+
+        // A producer callback holds exactly these two guards during a drain.
+        let scope = crate::KernelLockScope::enter(&active.kernel.producer_drain).unwrap();
+        let gate = active.kernel.producer_drain.lock().unwrap();
+        let error = match host.publish(replacement) {
+            Ok(_) => panic!("recursive publication must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LifecycleError::ReentrantDrain));
+        assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
+        assert_eq!(active.epoch(), 1);
+        drop(gate);
+        drop(scope);
+
+        // Failed publication did not consume the epoch or poison the gate.
+        let next = host
+            .prepare(
+                vec![],
+                BuildOptions::default(),
+                Arc::new(LocalProcessDispatcher),
+                "next",
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(host.publish(next).unwrap().epoch(), 2);
     }
 
     #[test]
@@ -359,7 +776,7 @@ mod tests {
                 host.plugins().snapshot(&key).unwrap().revision(),
                 snapshot.revision()
             );
-            assert!(active.drain(1).is_empty());
+            assert!(active.drain(1).unwrap().is_empty());
         }
     }
 }

@@ -171,7 +171,7 @@ mod consumer {
                 routes: vec![],
                 patch: NetworkPatch::new([]),
                 prepare: Some(Box::new(move |context| {
-                    let bound = context.import("transform")?.bind(context.compiled)?;
+                    let bound = context.bind_import("transform")?;
                     bound.wire_input::<Request>("run")?;
                     bound.wire_output::<Response>("value")?;
                     let mut artifacts = CandidateArtifacts::default();

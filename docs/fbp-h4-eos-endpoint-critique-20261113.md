@@ -1,0 +1,18 @@
+# H4 EOS endpoint invalidation — independent Phase 2 critique
+
+Review of [EOS design revision](fbp-h4-eos-endpoint-design-20261113.md), written before code.
+
+1. **Reader disposal affects upstream publishers**: `ConnectionSet::close_reader` frees or discards bounded queue capacity. Mark queue producer *and* consumer, even for downstream reader closure where only an upstream publisher can make progress.
+2. **Writer EOS affects downstream consumers**: `close_writer` may yield a legal closure notification without data. Mark downstream process even when queue was empty. Never mark a queue as EOS solely because its producer is idle or absent for one request.
+3. **Failed finish must not invalidate**: `finish()` checks for abandoned accepted input; on nonempty input, it calls `fail_input` and returns. Do not dirty arbitrary endpoints before the failed check.
+4. **One-pass deterministic order**: in the original `refresh()`, a process that becomes ready after its turn is not retried unless a finish causes a new pass. Keep newly dirtied indices pending across ordinary passes. On finish, revisit newly dirtied sorted endpoints and every always-polled process. Avoid retroactively replaying a selection that has already admitted a ticket.
+5. **Global full-scan control**: retain full `refresh_all_processes` for startup, generic notifier, cancellation, recovery, all-special graphs and any wake without a trustworthy target. New dirty marks during a full pass may be pending for a later driver, never silently lost.
+6. **Cycle termination**: an EOS cycle may never have its writers closed; the patch must NOT manufacture progress. Incremental passes repeat only when a process actually finishes, not merely because a dirty mark was made, preventing a spin on open cycles.
+7. **Global and scoped closure**: request-sealed absent inputs are not global EOS and may remain blocked by other owners. `Optional` and `Custom` are always polled under #1286/#1287, so local finish propagation cannot override `closure_obligation` or scoped queue matching.
+8. **Backpressure**: an upstream `pending` publisher can become runnable when a connected downstream process `Finished` closes its input reader. Its queue capacity must be rechecked, and the prepared transaction must not be re-run as a new step.
+9. **Capture preservation**: finishing an output producer closes capture writer; queued captures must remain available until consumed. Do not close captures' readers as an optimization.
+10. **No-input and staged waits**: source nodes, staged `WaitInput`/group and externally woken nodes belong to `always_poll`. Their readiness remains evaluated in every incremental pass after actual finish, preserving close propagation that does not produce a packet.
+11. **Double close / idempotence**: compiled graph queues are unique indices within the connection set, but a process with multiple input ports or output aliases may touch the same physical queue. Duplicated dirty-set inserts are harmless; actual transport closes must preserve the existing invocation multiplicity and error behavior.
+12. **Small and dense graphs**: BTreeSet union may regress tiny graphs or all-special chains. `prefer_full_refresh()` remains the existing fallback; paired benchmarks must quantify any remaining overhead, not only sparse improvement.
+
+**Disposition:** conditional acceptance for Phase 3. No new persistent caches, no public API, no change to packet transport or EOS authority. If exact-head CI or paired EOS benchmark fails to establish correctness and a useful win, close unmerged; don't conflate wake and EOS success.

@@ -1,0 +1,19 @@
+# H4 scoped optional polling — independent Phase 2 adversarial critique
+
+Separate review of [Phase 0/1 design](fbp-h4-scoped-optional-poll-design-20261113.md) before implementation.
+
+1. **Required + optional data is not all-optional:** an upstream request-owned producer may finish with no packet while the required port has a buffered request packet. Request-local optional absence is now true with *no queue event*. **Watch every `Optional` policy**, not only `required=[]`; never use `closure_obligation` (which only covers all-optional) as a watch membership test.
+2. **Unsealed scopes:** `request_input_closed` explicitly returns false until seal; no zero-packet optional progress is enabled by a live unsealed scope. External events remain dirty. Safe to omit optional watch before seal.
+3. **Repeated close_request:** existing API permits resealing the same active scope. Only increment watch membership on the false→true seal transition; otherwise release decrements once and leaks an always-polled node.
+4. **Cancellation clears reachability:** `terminate_request` clears `scope.reachable` before other disposal. Unregister watch *before* clearing; unsealed cancelled requests have no registered watch. Request cancellation still forces full scan for transport disposal.
+5. **Released cancelled request:** terminal status is sticky and reachability cleared, so release must **not** decrement a second time. This is why release checks scope's current terminal state before using its reachability.
+6. **Multiple scopes sharing the same node:** reference count must only remove watch on the final registered scope's removal. One request may settle while another still owns an upstream job. Never equate completed one request with global process closure.
+7. **Staged policy:** `WaitInput` or `WaitInputs` inserts into unconditional `always_poll` permanently. A later scope release cannot remove that set membership; dynamic map must be separate. Otherwise staged closure and custom policies can stall.
+8. **Custom policies:** application code might change a Custom policy's selection without packet/wake notifications. They remain unconditionally polled; do not treat them as packet-driven.
+9. **EOS and writer-open:** an unscoped optional node with an entirely empty, writer-open physical input has nothing to select. Global writer closure is a `dirty_queue` event. A process complete without `Finished` does not close writers and therefore does not synthesize global EOS.
+10. **Cycle and fan-in:** one all-optional node may be reachable from multiple roots and cycles. The watch is membership only, never a positive closure proof; original `request_input_closed` traversal and ownership checks remain intact.
+11. **Full-scan fallback:** overestimating `always_poll.len() + scoped_optional_poll.len()` can occasionally choose a full scan when the node is also staged. That is conservative and may hurt speed, but does not discard work. Record in Phase 4.
+12. **Overhead:** two tree lookups/insertions per sealed/released reachable optional node trade away O(optional) work on every scheduler refresh. Measure repeated scopes and one-event no-scope throughput; if maps dominate realistic workloads, reject.
+13. **Concurrent drivers and recovery:** `NetworkSession` mutators are single-owner; wake handles only publish under the separate WakeSignal lock. Watch updates happen before `refresh` while the owning driver holds the session. Panic/failure path still conservatively terminates/refreshes.
+
+**Phase 2 decision:** conditionally accept for implementation if scope membership, idempotent reseal, terminal cancellation, staged permanence and multiple simultaneous sealed scopes are explicitly tested. Keep full-scan escape hatches. No new public API or negative closure cache. Failure to preserve required+optional closure is a correctness defect, not an accepted tradeoff.

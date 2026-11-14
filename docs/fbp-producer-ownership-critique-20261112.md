@@ -1,0 +1,16 @@
+# H3b producer ownership — Phase 2 independent adversarial review
+
+2026-11-12. Review target: `fbp-producer-ownership-design-20261112.md`.
+
+1. **Atomic linearizability.** The driver must acquire its exclusive sentinel through CAS against exactly 0. A direct drainer must increment the reference count through CAS/fetch-update only when the sentinel is absent. Two simultaneous starts must have one winner. A per-kernel separate `driver_active` bit plus counts with non-atomic checks is invalid.
+2. **RAII/drop order.** Release the manual lease only after the gated drain drops producer destructors, preserving test assertions about mutex unlock. Driver lease survives session preflight, wake-registration, callbacks, idle waits, errors, and unwind. Do not allow rejected attempts to clear a winning lease.
+3. **Same-thread callback recursion.** `KernelLockScope::held` must precede lease acquisition so a direct callback returning into `drain` is diagnosed `ReentrantDrain`. After changing to Result, existing tests expecting a panic and terminal error must instead prove typed rejection and producer survival; do not hide a missing error with `.unwrap()` inside recursive callbacks.
+4. **Error distinction.** A second driver gets `AlreadyRunning`; a driver attempting to enter during a manual drain gets `DrainInProgress`; an external manual call while the driver runs gets `AlreadyRunning`. Future dedicated driver-ownership error can be considered if consumers require additional granularity, not invented now.
+5. **No silent skip.** Denied manual drains must return `Err`, not empty Vec. A `drain(0)` is still an attempted admission and should not circumvent exclusive mode.
+6. **Session lock ordering.** Do not hold the drain gate for the driver lifetime or while doing the blocking session preflight; atomic ownership state is lock-free for this purpose. A previously admitted manual callback can finish before the driver acquires ownership, and vice versa.
+7. **No unrelated API churn.** Update every `Kernel::drain` / `Generation::drain` use, not stream or storage subscription `.drain()`. Other production code must not assume a Vec after signature change. If the change exposes more consumers than expected, assess those separately instead of inserting legacy helpers.
+8. **Boundary/overflow.** Manual count cannot equal the sentinel; `fetch_update` rejects saturation, though reaching it is not realistic. Atomic Release in Drop and Acquire on admission is sufficient for owner state; the gated mutex remains responsible for producer inventories and round-robin data.
+9. **Failure paths.** Unsupported wake registration, callback panics, retired driver result, terminal session and graceful shutdown must each free exclusive ownership so a subsequent direct drain can operate normally.
+10. **Scope honesty.** This fixes exclusive producer polling ownership, not external user mutex cycles, request starvation, or native static liveness; H3b and Q5 remain partial until broader validation.
+
+**Disposition:** Accepted for implementation with public Result, no duplicate API; Phase 4 must compare actual diff and CI to this critique, particularly the early driver-vs-manual race and updated recursive tests.

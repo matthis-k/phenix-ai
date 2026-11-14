@@ -5,7 +5,7 @@ use phenix_graph::{
     process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{RequestFailurePolicy, RequestStatus, SessionOptions, SessionState},
 };
-use phenix_kernel::{BuildOptions, Kernel, ProducerEvent, WakeHandle};
+use phenix_kernel::{BuildOptions, DriverError, Kernel, ProducerEvent, WakeHandle};
 use phenix_plugin::PluginSnapshot;
 use std::{cell::Cell, marker::PhantomData};
 
@@ -69,7 +69,7 @@ impl DerivedRuntime {
     pub fn kernel(&self) -> &Kernel {
         &self.kernel
     }
-    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+    pub fn drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError> {
         self.kernel.drain(max_polls)
     }
     pub fn run_until(

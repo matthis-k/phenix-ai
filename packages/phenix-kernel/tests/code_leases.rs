@@ -198,7 +198,7 @@ fn moved_prepare_activation_and_poll_causes_pin_code_and_application_until_cause
             Phase::Poll => {
                 let mut kernel = result.unwrap();
                 kernel.start().unwrap();
-                let result = kernel.drain(1).pop().unwrap().result;
+                let result = kernel.drain(1).unwrap().pop().unwrap().result;
                 drop(kernel);
                 let error = result.unwrap_err();
                 inspect(&error);
@@ -321,7 +321,7 @@ impl PluginInstance for DeclarationPlugin {
             patch: NetworkPatch::new([]),
             prepare: Some(Box::new(|context| {
                 let mut artifacts = CandidateArtifacts::default();
-                artifacts.export(context.compiled.clone())?;
+                artifacts.export(context.inspect_network()?.clone())?;
                 Ok(artifacts)
             })),
         })
@@ -345,6 +345,7 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
         );
         let mut options = support::options(std::slice::from_ref(&snapshot));
         options.execution.lease = Some(Arc::new(application));
+        options.inspect_network.insert(Key::new("plugin", "export"));
         let kernel = Kernel::build_with_options(
             "declarations",
             [snapshot],
@@ -384,4 +385,51 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
         assert!(!application_alive.load(Ordering::SeqCst));
         assert_eq!(*log.lock().unwrap(), ["application", "plugin"]);
     }
+}
+
+struct CompetingSnapshot {
+    life: Life,
+}
+impl PluginInstance for CompetingSnapshot {
+    fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+        assert!(self.life.alive.load(Ordering::SeqCst));
+        into.add(support::contribution(
+            "unit",
+            support::patch("worker", false, false, 1, "test/competing@1"),
+        ))
+    }
+}
+
+#[test]
+fn detached_compiled_network_does_not_pin_defeated_snapshot_revisions() {
+    let log = Log::default();
+    let winner_life = Life::new("winner", &log);
+    let winner_alive = winner_life.alive.clone();
+    let loser_life = Life::new("loser", &log);
+    let loser_alive = loser_life.alive.clone();
+    let winner = support::snapshot("winner", CompetingSnapshot { life: winner_life });
+    let loser = support::snapshot("loser", CompetingSnapshot { life: loser_life });
+    let mut options = support::options(&[winner.clone(), loser.clone()]);
+    options
+        .composition
+        .get_mut(&Key::new("winner", "unit"))
+        .unwrap()
+        .priority = 10;
+    let kernel = Kernel::build_with_options(
+        "defeated-lease",
+        [winner, loser],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
+    let detached = kernel.compiled().clone();
+    assert!(winner_alive.load(Ordering::SeqCst));
+    assert!(loser_alive.load(Ordering::SeqCst));
+    drop(kernel);
+    assert!(winner_alive.load(Ordering::SeqCst));
+    assert!(!loser_alive.load(Ordering::SeqCst));
+    assert_eq!(*log.lock().unwrap(), ["loser"]);
+    drop(detached);
+    assert!(!winner_alive.load(Ordering::SeqCst));
+    assert_eq!(*log.lock().unwrap(), ["loser", "winner"]);
 }

@@ -245,7 +245,7 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
     let old = host.publish(candidate).unwrap();
     assert_eq!(old.epoch(), 1);
     assert!(Arc::ptr_eq(&old, &host.active().unwrap()));
-    assert_eq!(old.drain(2).len(), 2);
+    assert_eq!(old.drain(2).unwrap().len(), 2);
     fire(&old, "alpha");
 
     for revision in 2..=4 {
@@ -261,8 +261,8 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
         let previous = host.active().unwrap();
         let current = host.publish(candidate).unwrap();
         assert_eq!(current.epoch(), revision as u64);
-        assert!(previous.drain(100).is_empty());
-        assert_eq!(current.drain(1).len(), 1);
+        assert!(previous.drain(100).unwrap().is_empty());
+        assert_eq!(current.drain(1).unwrap().len(), 1);
         fire(&current, "alpha");
         assert!(
             log.lock()
@@ -291,12 +291,12 @@ fn publication_pins_old_engines_but_stops_old_producers_and_batches_unload() {
     let empty = host.publish(candidate).unwrap();
     assert_eq!(host.plugins().snapshots().count(), 0);
     assert!(empty.inject("alpha", Value::local(1_i64)).is_err());
-    assert!(latest.drain(100).is_empty());
+    assert!(latest.drain(100).unwrap().is_empty());
     fire(&old, "beta");
     drop(old);
     assert!(log.lock().unwrap().contains(&"plugin:alpha:1".into()));
     drop(host);
-    assert!(empty.drain(100).is_empty());
+    assert!(empty.drain(100).unwrap().is_empty());
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
         assert_eq!(host.plugins().snapshot(&a).unwrap().revision(), 1);
         assert!(host.plugins().snapshot(&b).is_err());
         fire(&old, "alpha");
-        assert_eq!(old.drain(1).len(), 1);
+        assert_eq!(old.drain(1).unwrap().len(), 1);
     }
 }
 
@@ -463,10 +463,10 @@ fn interleaved_candidates_foreign_hosts_and_empty_batch_epochs() {
         host.publish(stale),
         Err(LifecycleError::StaleCandidate)
     ));
-    assert!(current.drain(100).is_empty());
+    assert!(current.drain(100).unwrap().is_empty());
     fire(&current, "alpha");
     drop(host);
-    assert!(refreshed.drain(100).is_empty());
+    assert!(refreshed.drain(100).unwrap().is_empty());
     fire(&refreshed, "alpha");
 }
 
@@ -525,7 +525,7 @@ fn publication_does_not_wait_for_old_explicit_wave_or_callback() {
     published.expect("explicit operations must not block publication");
     let (host, current) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
-    assert!(old.drain(100).is_empty());
+    assert!(old.drain(100).unwrap().is_empty());
     assert!(old.compiled().inputs().contains_key("alpha"));
     assert!(old.with_kernel(|kernel| kernel.compiled().inputs().contains_key("alpha")));
     assert!(!current.compiled().inputs().contains_key("alpha"));

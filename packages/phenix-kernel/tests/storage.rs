@@ -183,12 +183,12 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
         drop(markers);
         assert!(kernel.inject("observed", Value::local(())).is_err());
         counter.write(1).unwrap();
-        assert!(kernel.drain(8).is_empty());
+        assert!(kernel.drain(8).unwrap().is_empty());
         assert!(observed.lock().unwrap().is_empty());
     }
     kernel.start().unwrap();
     assert!(
-        kernel.drain(8).is_empty(),
+        kernel.drain(8).unwrap().is_empty(),
         "retry must create fresh subscriptions"
     );
     assert_eq!(
@@ -202,7 +202,7 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
         2
     );
     counter.write(2).unwrap();
-    let events = kernel.drain(8);
+    let events = kernel.drain(8).unwrap();
     assert_eq!(events.len(), 2);
     assert!(events.iter().all(|event| event.result.is_ok()));
     kernel.run_steps(64).unwrap();
@@ -255,11 +255,11 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
                 .inject("write_counter", Value::local(1_i64))
                 .is_err()
         );
-        assert!(demo.kernel.drain(8).is_empty());
+        assert!(demo.kernel.drain(8).unwrap().is_empty());
         // A write before startup must not be queued by a build-time subscription.
         demo.counter.write(0).unwrap();
         demo.kernel.start().unwrap();
-        assert!(demo.kernel.drain(8).is_empty());
+        assert!(demo.kernel.drain(8).unwrap().is_empty());
         assert_eq!(demo.counter.read().unwrap(), Some(0));
         assert!(
             demo.kernel
@@ -279,9 +279,9 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
             vec![Ok(Some(17)), Ok(Some(29)), Ok(Some(-4))]
         );
         assert!(demo.observed.lock().unwrap().is_empty());
-        assert!(demo.kernel.drain(0).is_empty());
+        assert!(demo.kernel.drain(0).unwrap().is_empty());
         for count in 1..=3 {
-            let events = demo.kernel.drain(1);
+            let events = demo.kernel.drain(1).unwrap();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].producer, Key::new("observer", "observer"));
             assert!(events[0].result.is_ok());
@@ -311,7 +311,7 @@ fn both_backends_route_real_effects_into_separate_bounded_waves() {
         }
         drop(observed);
         assert!(
-            demo.kernel.drain(32).is_empty(),
+            demo.kernel.drain(32).unwrap().is_empty(),
             "observer sink must not write or feed back"
         );
         assert_eq!(demo.counter.read().unwrap(), Some(-4));
@@ -338,7 +338,7 @@ fn schema_mismatch_has_no_effect_or_notice() {
             Err(Error::SchemaMismatch)
         ));
         assert_eq!(demo.counter.read().unwrap(), None);
-        assert!(demo.kernel.drain(8).is_empty());
+        assert!(demo.kernel.drain(8).unwrap().is_empty());
     }
 }
 
@@ -349,7 +349,7 @@ fn overflow_is_a_typed_notice_and_polling_recovers() {
         demo.kernel.start().unwrap();
         demo.counter.write(1).unwrap();
         demo.counter.write(2).unwrap();
-        let events = demo.kernel.drain(1);
+        let events = demo.kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
         assert!(events[0].result.is_ok());
         demo.kernel.run_steps(64).unwrap();
@@ -358,13 +358,13 @@ fn overflow_is_a_typed_notice_and_polling_recovers() {
             [Notice::Overflow { .. }]
         ));
         demo.counter.write(3).unwrap();
-        assert_eq!(demo.kernel.drain(1).len(), 1);
+        assert_eq!(demo.kernel.drain(1).unwrap().len(), 1);
         demo.kernel.run_steps(64).unwrap();
         assert!(matches!(
             demo.observed.lock().unwrap().last(),
             Some(Notice::Changed(_))
         ));
-        assert!(demo.kernel.drain(16).is_empty());
+        assert!(demo.kernel.drain(16).unwrap().is_empty());
         assert_eq!(demo.counter.read().unwrap(), Some(3));
     }
 }

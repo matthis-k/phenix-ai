@@ -25,7 +25,7 @@ network.connect(source.output::<i64>("output")?, map.input::<i64>("input")?, cap
 network.connect(map.output::<i64>("output")?, sink.input::<i64>("input")?, capacity)?;
 network.start(&source)?;
 let mut session = network.build()?.compile()?.start();
-let report = session.run_until_complete(128);
+let report = session.run_until_idle(128);
 assert_eq!(report.state, phenix_graph::runtime::SessionState::Completed);
 assert_eq!(*observed.lock().unwrap(), [2, 4, 6]);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -101,7 +101,7 @@ let mut session = network.build()?.compile()?.start_with_options(SessionOptions 
     max_requests: NonZeroUsize::new(2).unwrap(),
     capture_capacity: NonZeroUsize::new(1).unwrap(),
     request_queue_policy: RequestQueuePolicy::BoundedLanes,
-    deferred_job_timeout: Some(Duration::from_secs(30)),
+    deferred_timeout: Some(Duration::from_secs(30)),
     ..Default::default()
 });
 let slow = session.begin_request(Some("output"))?;
@@ -122,7 +122,9 @@ assert!(session.take_request_output(slow, "output")?.is_some());
 Deferred timeouts are cooperative ticket invalidation, not worker preemption.
 The built-in driver times only jobs whose dispatcher returns `Deferred`; manual
 `next_job` handoff starts its timer immediately. Status queries are snapshots until
-the session is supervised/driven. Execution guards are an ordered
+the session is supervised/driven via `supervise_deferred(Instant::now())` or a driver
+operation. `overdue_jobs(now)` is passive; `RunReport::next_deferred_timeout` bounds
+the driver's next wait. Execution guards are an ordered
 `SessionOptions::execution_guards` list; `ActivationJob::with_guard` appends rather
 than replacing installed guards, and guard teardown happens in reverse order.
 

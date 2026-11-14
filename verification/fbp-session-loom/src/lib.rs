@@ -23,39 +23,43 @@ mod tests {
         bounded_model(|| {
             let session = Arc::new(ExclusiveSlot::new(0_usize));
             let active = Arc::new(AtomicUsize::new(0));
+            let successes = Arc::new(AtomicUsize::new(0));
             let mut workers = Vec::new();
             for _ in 0..2 {
                 let session = session.clone();
                 let active = active.clone();
+                let successes = successes.clone();
                 workers.push(thread::spawn(move || {
-                    let mut lease = session.take();
-                    assert_eq!(active.fetch_add(1, Ordering::SeqCst), 0);
-                    *lease += 1;
-                    active.fetch_sub(1, Ordering::SeqCst);
+                    if let Some(mut lease) = session.try_take() {
+                        assert_eq!(active.fetch_add(1, Ordering::SeqCst), 0);
+                        *lease += 1;
+                        successes.fetch_add(1, Ordering::SeqCst);
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    }
                 }));
             }
             for worker in workers {
                 worker.join().unwrap();
             }
-            assert_eq!(*session.try_take().unwrap(), 2);
+            assert_eq!(
+                *session.try_take().unwrap(),
+                successes.load(Ordering::SeqCst)
+            );
+            assert!(successes.load(Ordering::SeqCst) > 0);
         });
     }
 
     #[test]
-    fn waiting_session_caller_is_not_lost_during_lease_handoff() {
+    fn busy_session_caller_cannot_steal_ownership_and_can_retry_after_release() {
         bounded_model(|| {
             let session = Arc::new(ExclusiveSlot::new(0_usize));
-            let mut workers = Vec::new();
-            for _ in 0..3 {
-                let session = session.clone();
-                workers.push(thread::spawn(move || {
-                    let mut lease = session.take();
-                    *lease += 1;
-                }));
-            }
-            for worker in workers {
-                worker.join().unwrap();
-            }
+            let mut owner = session.try_take().unwrap();
+            let contender = session.clone();
+            thread::spawn(move || assert!(contender.try_take().is_none()))
+                .join()
+                .unwrap();
+            *owner = 3;
+            drop(owner);
             assert_eq!(*session.try_take().unwrap(), 3);
         });
     }
@@ -65,7 +69,7 @@ mod tests {
         bounded_model(|| {
             let session = ExclusiveSlot::new(1_usize);
             {
-                let mut lease = session.take();
+                let mut lease = session.try_take().unwrap();
                 *lease = 9;
                 lease.release();
                 lease.release();

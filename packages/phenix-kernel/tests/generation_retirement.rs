@@ -137,13 +137,13 @@ fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
 }
 
 fn assert_live(generation: &Generation) {
-    let events = generation.drain(1);
+    let events = generation.drain(1).unwrap();
     assert_eq!(events.len(), 1);
     assert!(events[0].result.is_ok());
 }
 
 #[test]
-fn publication_retires_a_blocked_poll_and_rejects_its_late_event() {
+fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     let log = Log::default();
     let polls = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new((Barrier::new(2), Barrier::new(2)));
@@ -168,7 +168,7 @@ fn publication_retires_a_blocked_poll_and_rejects_its_late_event() {
     let old = host.publish(candidate).unwrap();
     let candidate = prepare(&host, vec![host.plugins().prepare_unload(&key).unwrap()]);
     let reader = old.clone();
-    let drain = std::thread::spawn(move || reader.drain(3));
+    let drain = std::thread::spawn(move || reader.drain(3).unwrap());
     gate.0.wait();
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     let publishing = Arc::new(Barrier::new(2));
@@ -178,26 +178,33 @@ fn publication_retires_a_blocked_poll_and_rejects_its_late_event() {
     let publisher = std::thread::spawn(move || {
         publisher_gate.wait();
         let current = host.publish(candidate).unwrap();
-        assert_eq!(polls_during_publish.load(Ordering::SeqCst), 1);
+        assert_eq!(polls_during_publish.load(Ordering::SeqCst), 3);
         published.send(()).unwrap();
         (host, current, polls_during_publish)
     });
     publishing.wait();
-    publication_complete
-        .recv_timeout(std::time::Duration::from_secs(2))
-        .expect("publication waited for plugin poll");
+    assert!(
+        publication_complete
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err(),
+        "publication cut an admitted whole drain short"
+    );
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     gate.1.wait();
     let events = drain.join().unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 3);
+    assert!(events.iter().all(|event| event.result.is_ok()));
+    publication_complete
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
     let (host, current, polls) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert_eq!(current.epoch(), 2);
     for _ in 0..3 {
-        assert!(old.drain(10).is_empty());
+        assert!(old.drain(10).unwrap().is_empty());
     }
-    assert_eq!(polls.load(Ordering::SeqCst), 1);
-    // Retirement rejects the in-flight result but does not preempt the callback.
+    assert_eq!(polls.load(Ordering::SeqCst), 3);
+    // Retirement stops producers, not already admitted work or explicit queries.
     old.run_steps(100).unwrap();
     assert_eq!(
         log.lock()
@@ -206,7 +213,7 @@ fn publication_retires_a_blocked_poll_and_rejects_its_late_event() {
             .filter(|event| event.starts_with("tick:"))
             .cloned()
             .collect::<Vec<_>>(),
-        Vec::<String>::new()
+        ["tick:1:1", "tick:1:2", "tick:1:3"]
     );
     assert_eq!(
         log.lock()

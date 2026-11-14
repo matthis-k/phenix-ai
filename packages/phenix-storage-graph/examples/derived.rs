@@ -486,7 +486,7 @@ impl Demo {
     pub fn drain(&mut self) -> Result<usize, String> {
         let mut count = 0;
         for _ in 0..128 {
-            let events = self.runtime.drain(64);
+            let events = self.runtime.drain(64).unwrap();
             if events.is_empty() {
                 return Ok(count);
             }

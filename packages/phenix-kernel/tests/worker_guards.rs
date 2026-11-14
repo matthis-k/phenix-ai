@@ -315,7 +315,7 @@ fn retained_wrong_type_admission_error_and_value_pin_application_and_plugin_code
     )
     .unwrap();
     kernel.start().unwrap();
-    let mut events = kernel.drain(1);
+    let mut events = kernel.drain(1).unwrap();
     assert_eq!(events.len(), 1);
     let error = events.pop().unwrap().result.unwrap_err();
     drop(events);

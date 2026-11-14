@@ -1,10 +1,14 @@
 //! Bounded FIFO transport and retained per-emission atomic fanout.
 //!
-//! These types own payloads, not readiness history. A policy may inspect heads
-//! but may not skip earlier packets or create an auxiliary payload buffer.
+//! These types own payloads, not readiness history. Strict readiness policies
+//! inspect only queue heads. The explicit CorrelatedAll policy may extract an
+//! authenticated request behind another request while preserving per-request
+//! order and the same fixed physical queue capacity; no extra buffer is owned.
+
+use crate::runtime::RequestId;
 pub use crate::value::Leased;
 use crate::{GraphOrigin, TypeIdentity, Value};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -65,6 +69,9 @@ pub struct ConnectionQueue {
     capacity: NonZeroUsize,
     identity: TypeIdentity,
     packets: VecDeque<Packet>,
+    // Bounded by the occupied queue: only request-owned committed packets
+    // contribute, and the last removal drops its key.
+    request_counts: BTreeMap<RequestId, usize>,
     writer_closed: bool,
     reader_closed: bool,
 }
@@ -74,6 +81,7 @@ impl ConnectionQueue {
             capacity,
             identity,
             packets: VecDeque::new(),
+            request_counts: BTreeMap::new(),
             writer_closed: false,
             reader_closed: false,
         }
@@ -93,6 +101,11 @@ impl ConnectionQueue {
     pub fn packets(&self) -> impl Iterator<Item = &Packet> {
         self.packets.iter()
     }
+    /// Passive request membership without inspecting payloads or FIFO offsets.
+    /// The queue is the sole owner of this committed-packet count.
+    pub(crate) fn request_count(&self, request: RequestId) -> usize {
+        self.request_counts.get(&request).copied().unwrap_or(0)
+    }
     pub fn is_full(&self) -> bool {
         self.len() == self.capacity()
     }
@@ -110,17 +123,67 @@ impl ConnectionQueue {
         if let Err(error) = self.check(&packet) {
             return Err((error, packet));
         }
-        self.packets.push_back(packet);
+        self.enqueue(packet);
         Ok(())
     }
+    // Only use after check() has accepted the packet. In particular, atomic
+    // fanout runs all destination checks before the first queue mutation.
+    fn enqueue(&mut self, packet: Packet) {
+        if let Some(request) = packet.metadata().and_then(|metadata| metadata.request()) {
+            *self.request_counts.entry(request).or_default() += 1;
+        }
+        self.packets.push_back(packet);
+    }
+    fn note_removal(&mut self, packet: &Packet) {
+        if let Some(request) = packet.metadata().and_then(|metadata| metadata.request()) {
+            let count = self
+                .request_counts
+                .get_mut(&request)
+                .expect("committed request packet must be indexed");
+            *count -= 1;
+            if *count == 0 {
+                self.request_counts.remove(&request);
+            }
+        }
+    }
     pub fn pop(&mut self) -> Option<Packet> {
-        self.packets.pop_front()
+        let packet = self.packets.pop_front()?;
+        self.note_removal(&packet);
+        Some(packet)
+    }
+    /// Explicit correlated-mode extraction, preserving order among all
+    /// remaining packets and never increasing the queue's bounded capacity.
+    pub fn pop_at(&mut self, offset: usize) -> Option<Packet> {
+        let packet = self.packets.remove(offset)?;
+        self.note_removal(&packet);
+        Some(packet)
+    }
+    /// Dispose one request's accepted packets without touching any other
+    /// request's FIFO positions. Unindexed requests cannot own a packet here.
+    fn detach_request(&mut self, request: RequestId) -> Vec<Packet> {
+        let Some(count) = self.request_counts.get(&request).copied() else {
+            return vec![];
+        };
+        let mut retained = VecDeque::with_capacity(self.packets.len().saturating_sub(count));
+        let mut discarded = Vec::with_capacity(count);
+        for packet in std::mem::take(&mut self.packets) {
+            if packet.metadata().and_then(|metadata| metadata.request()) == Some(request) {
+                discarded.push(packet);
+            } else {
+                retained.push_back(packet);
+            }
+        }
+        self.packets = retained;
+        self.request_counts.remove(&request);
+        debug_assert_eq!(discarded.len(), count);
+        discarded
     }
     pub fn close_writer(&mut self) {
         self.writer_closed = true;
     }
     pub fn close_reader(&mut self) -> VecDeque<Packet> {
         self.reader_closed = true;
+        self.request_counts.clear();
         std::mem::take(&mut self.packets)
     }
     pub(crate) fn empty_like(&self) -> Self {
@@ -128,6 +191,7 @@ impl ConnectionQueue {
             capacity: self.capacity,
             identity: self.identity.clone(),
             packets: VecDeque::new(),
+            request_counts: BTreeMap::new(),
             writer_closed: self.writer_closed,
             reader_closed: self.reader_closed,
         }
@@ -169,7 +233,12 @@ pub enum ConnectionError {
     ForeignTopology,
     AlreadyCommitted,
     Cancelled,
-    ReentrantSessionAccess,
+    /// A kernel callback tried to acquire a session mutex already owned on this thread.
+    Reentrant,
+    /// Session lock is held elsewhere, and a producer callback cannot safely
+    /// wait for it while holding the whole-drain/retirement gate. Caller keeps
+    /// ownership of the original input value and may retry after contention.
+    WouldBlock,
 }
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -237,19 +306,22 @@ impl ConnectionSet {
     pub fn pop(&mut self, index: usize) -> Option<Packet> {
         self.queues.get_mut(index)?.pop()
     }
-    /// Explicit request disposal, not delivery or rollback. Unrelated packets
-    /// retain their exact FIFO order and queue reader/writer state is unchanged.
-    pub fn discard_request(&mut self, request: crate::runtime::RequestId) -> usize {
-        self.queues
-            .iter_mut()
-            .map(|queue| {
-                let before = queue.len();
-                queue
-                    .packets
-                    .retain(|packet| packet.metadata().and_then(|m| m.request()) != Some(request));
-                before - queue.len()
-            })
-            .sum()
+    pub fn pop_at(&mut self, index: usize, offset: usize) -> Option<Packet> {
+        self.queues.get_mut(index)?.pop_at(offset)
+    }
+    /// Detach a request's accepted packets, not delivery or rollback. The caller
+    /// owns their destruction after queue and request lifecycle state is settled.
+    /// Unrelated packets retain exact FIFO order and reader/writer state is unchanged.
+    pub fn detach_request(&mut self, request: crate::runtime::RequestId) -> Vec<Packet> {
+        let total = self.queues.iter().fold(0_usize, |total, queue| {
+            total.saturating_add(queue.request_count(request))
+        });
+        let mut discarded = Vec::with_capacity(total);
+        for queue in &mut self.queues {
+            discarded.extend(queue.detach_request(request));
+        }
+        debug_assert_eq!(discarded.len(), total);
+        discarded
     }
     pub fn close_writer(&mut self, index: usize) -> Result<(), ConnectionError> {
         self.queues
@@ -363,18 +435,22 @@ impl ConnectionSet {
             return Err(ConnectionError::Full);
         }
         for (index, packet) in transaction.prepared.drain(..) {
-            self.queues[index].packets.push_back(packet);
+            self.queues[index].enqueue(packet);
         }
         transaction.committed = true;
         Ok(())
     }
     /// Cancellation disposal is explicit and countable, not successful delivery.
-    pub fn cancel(&mut self) -> usize {
+    /// Returned packets remain caller-owned so payload destruction happens after
+    /// queue state has reached its terminal form.
+    pub fn cancel(&mut self) -> Vec<Packet> {
         self.cancelled = true;
-        self.queues
-            .iter_mut()
-            .map(|queue| queue.close_reader().len())
-            .sum()
+        let count = self.queues.iter().map(ConnectionQueue::len).sum();
+        let mut packets = Vec::with_capacity(count);
+        for queue in &mut self.queues {
+            packets.extend(queue.close_reader());
+        }
+        packets
     }
 }
 
@@ -396,6 +472,13 @@ pub struct PreparedFanout {
     committed: bool,
 }
 impl PreparedFanout {
+    pub(crate) fn into_packets(self) -> Vec<Packet> {
+        self.prepared
+            .into_iter()
+            .map(|(_, packet)| packet)
+            .collect()
+    }
+
     /// Scheduler-only capture projection stamp, before the atomic commit.
     pub(crate) fn stamp_capture(&mut self, connection: usize, name: &str) {
         let (_, packet) = self

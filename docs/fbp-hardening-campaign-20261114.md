@@ -1,9 +1,24 @@
 # FBP Hardening Campaign: Dependency And Policy Record
 
-Status: implementation/evidence record for branch
-`fix/fbp-lifecycle-request-lanes-20261114`, based on `16e77f6c6` plus the inherited
-callback/correlation worktree. This is not the PR #1300 stack. No entire issue or
-milestone closure is claimed; the 33-issue tracker keeps all baseline scores.
+Status: verified-stack merge reconciliation for branch
+`fix/fbp-lifecycle-request-lanes-20261114`, PR #1302 based on
+`impl/graph-consolidation-20261110`. The campaign initially relied incorrectly on
+stale local remote-tracking `origin/impl/graph-consolidation-20261110` at
+`16e77f6c6`, plus inherited callback/correlation work. First commit `0d145f3`
+therefore did not contain the later foundations already on actual remote impl
+head `89e00d06498979a2f231dfc8ca780eba44140d27`. After fetching, we are now
+merging exact verified PR #1300 head
+`516e0883875d5ec483e3595d50b77b3d5e8979c4`, preserving the full stack and
+all scoped gates. Earlier descriptions of a separate candidate missing that stack
+were true only of the initial tree, not the merge target.
+
+No entire issue or milestone closure is claimed. The authoritative
+[33-issue tracker](fbp-issue-progress-estimates-20261113.md) compares all scores to
+verified `516e088`: every delta is +0.0 pp, H3b 78.0%, Q5 74.0%, mean 55.3%,
+and classifications 10 scoped verified / 7 partial / 16 open. The incoming
+[issue ledger](fbp-issue-ledger-20261111.md) remains historical detail, not a second
+score authority. M7 and M8 remain incomplete, including missing P1/P2 production
+model/provider, conversation, local/SSH tool and frontend adapters.
 
 ## Dependency Map
 
@@ -21,8 +36,9 @@ three independently executed check shards. Graph, Kernel, Storage, StorageGraph,
 no-default-feature, integration, format and workspace Clippy checks already
 partition the main failure domains. This candidate adds a path-scoped session
 ownership Loom workflow over the actual Kernel ownership primitive. PR #1300's
-different wake Loom, thread-stress and paired benchmark checks apply only to that
-PR's exact SHA, not this branch. The pinned CI library documents dependency-derived
+wake Loom, thread-stress and paired benchmark gates must also be retained by the
+merge. Their historical passes apply only to their exact SHAs, not the new head.
+The pinned CI library documents dependency-derived
 PR impact selection and exact-head Nix check sharding as experimental. Do not
 configure them here without validating the generated workflow and its required-
 check semantics retain full main/manual acceptance.
@@ -34,14 +50,18 @@ check semantics retain full main/manual acceptance.
 Kernel owns producer/session synchronization and admission. Plugin callbacks must
 not run under those mutexes. The existing session mutex serializes mutable graph
 state; moving the session out of that mutex must not allow same-thread or synchronous
-worker re-entry to wait on its own exclusive lease. Host publication must not wait
-for arbitrary plugin callbacks. Panic containment must restore or retire ownership
+worker re-entry to wait on its own exclusive lease. The reconciled host policy
+retains the verified whole-drain gate: external publication waits for an admitted
+producer drain, but never for explicit session work. The initial broader no-wait
+publication constraint is superseded; a nonreturning producer callback can delay
+publication. Panic containment must restore or retire ownership
 before returning. Existing tickets, producer retry, code leases, and request IDs
 remain authoritative.
 
-The checkout is `impl/graph-consolidation-20261110` at `16e77f6c6`, with uncommitted
-changes. PR #1300 at `516e0883875d5ec483e3595d50b77b3d5e8979c4` is open and its exact
-head passed its configured checks, but it is not this candidate.
+Historical Phase 0 checkout: `impl/graph-consolidation-20261110` at `16e77f6c6`,
+with uncommitted changes and a stale remote-tracking reference. PR #1300 at
+`516e0883875d5ec483e3595d50b77b3d5e8979c4` passed its configured checks and
+is now the exact incoming merge head. Those checks do not accept the new merge.
 
 ### Phase 1: alternatives
 
@@ -53,10 +73,14 @@ head passed its configured checks, but it is not this candidate.
 - **Smallest extension:** release the producer mutex after a `retired` check and
   then inject. Rejected because publication could win between the check and graph
   admission. A second check after injection would not undo a committed packet.
-- **Proposed extension:** claim admission while holding the producer mutex, release
-  it before session injection, and treat the permit as the admission linearization
-  point. Retirement does not wait for a permit already issued; a late poll cannot
-  obtain one. Propagate a stable Kernel session identity using the existing process
+- **Initial proposal, reconciled:** perform admission without the producer inventory
+  mutex, retaining the verified whole-drain gate across polling and eager admission.
+  External publication waits for the entire admitted drain; publication from that
+  same drain returns `LifecycleError::ReentrantDrain`. Host self-destruction marks
+  retirement without waiting on its own gate, rejecting a late poll result; an
+  admission already permitted before self-retirement can finish. The initial
+  independent no-wait admission-permit policy is not the merged contract.
+  Propagate a stable Kernel session identity using the existing process
   execution-guard interface, composing rather than replacing the caller's guard.
   Validate request closure declarations before installing request state and reuse
   one readiness validator before correlation wraps a built-in policy as custom.
@@ -85,8 +109,28 @@ Kernel control. In-process Rust code is trusted, not sandboxed.
 Candidate regressions cover request admission callbacks, local and worker process
 re-entry, closure-policy panic/invalid names, readiness wrapper validation,
 producer retirement during poll, and panic-on-drop panic payloads. The focused graph
-stream and Kernel session tests pass locally. This remains candidate-local evidence;
-full exact-head CI and independent post-fix review are still required.
+stream and Kernel session passes belong to the initial candidate verification
+record, not a rerun of the new merged head. This remains candidate-local evidence;
+full exact-head CI and independent post-fix review are still required for the new
+merge. All Kernel session calls fail fast on cross-thread contention, preserving
+the verified contract; callback/worker re-entry also rejects. `lease_session`
+always delegates to `try_lease_session`. The original
+`concurrent_session_calls_fail_fast_without_kernel_lock_inversion` regression is
+retained without a synthetic producer callback marker: an ordinary caller holding
+a plugin mutex must not wait behind a session callback that needs that mutex.
+`native_sessions::concurrent_session_calls_fail_fast_and_can_retry_after_lease_release`
+expects busy while the lease is held and successful retry after release. Initial
+waiter claims are historical and superseded, never an accepted Kernel lock cycle.
+Plugin-created thread/join and external lock cycles remain outside the guarantee.
+
+`ExclusiveSlot` is now only `Mutex<Option<T>>` with `try_take` and idempotent
+release/RAII restoration, without Condvar or waiter bookkeeping. The revised
+[session Loom verifier](../verification/fbp-session-loom/src/lib.rs) exercises three
+bounded properties: competing `try_take` calls retain one exclusive owner; a busy
+caller cannot steal ownership and can retry successfully after release; early
+release is idempotent and publishes mutated state to the next owner. These are
+current source/test obligations, not new-head acceptance inferred from initial
+`0d145f3` passes.
 
 ## Lifecycle Policy Decisions
 
@@ -94,10 +138,15 @@ full exact-head CI and independent post-fix review are still required.
 
 Current tested behavior distinguishes host ownership from explicit capabilities:
 
-- Publication retires host-owned producer polling and rejects a poll result that
-  returns after retirement.
-- An event with an admission permit acquired before retirement may finish admission;
-  publication never waits for its callback.
+- External publication waits for the whole admitted producer drain before retiring
+  host-owned polling. Its in-flight poll results may enter the old session before
+  publication; no new drain polls after retirement. Same-drain publication is
+  rejected rather than waiting on itself.
+- Host self-destruction within a producer callback instead marks retirement and
+  defers producer destruction until the enclosing drain/registration releases its
+  locks. A poll result returned after that retirement is discarded. Admission
+  already permitted before self-retirement may finish. Explicit session work does
+  not block publication; this is not a no-wait guarantee for producer callbacks.
 - A caller that retains `Arc<Generation>` may continue explicit old-generation
   `inject`, `run_steps`, and `with_session` calls. Those calls can affect only the
   old session, whose plugin/code/resource leases remain alive. They do not target
@@ -116,15 +165,20 @@ revocation rather than explicit archival.
 
 ### C5: deferred-job supervision
 
-- **No change:** zero clock/ticket bookkeeping, but an accepted external job can
-  remain pending indefinitely.
-- **Opt-in per-handoff deadline (implemented in this candidate):**
-  `SessionOptions.deferred_job_timeout` defaults to `None`. `run_until_idle` starts
+- **No change to the stale starting tree:** zero clock/ticket bookkeeping, but an
+  accepted external job can remain pending indefinitely. This historical option is
+  not a description of verified `516e088`, which already has the watchdog API.
+- **Opt-in per-handoff deadline (reconciled with the existing stack API):**
+  Only `SessionOptions.deferred_timeout` exists and defaults to `None`.
+  `overdue_jobs(now)` is passive inspection; `supervise_deferred(now)` performs
+  explicit host-driven mutation. `state(&self)` remains a passive C9 snapshot:
+  it neither supervises expiry nor runs readiness callbacks. `run_until_idle` starts
   timing only after its dispatcher returns `Deferred`; public `next_job` starts at
   handoff. The deadline is accepted by the session, so work completed earlier but
   delivered after the deadline is overdue. Supervision invalidates the exact ticket
   and uses existing request failure policy; unscoped work fails the session.
-  `Kernel::run_until` waits no longer than the earliest outstanding deadline.
+  `RunReport::next_deferred_timeout` lets `Kernel::run_until` bound idle waits by
+  the earliest outstanding deadline, but cannot preempt callbacks already running.
 - **Dedicated watchdog thread/executor:** rejected because session recovery must
   still acquire the exclusive session lease, adding a timer thread cannot preempt a
   synchronous dispatcher call, and it creates a competing lifecycle authority.
@@ -137,7 +191,7 @@ The implementation does so and tests both default terminal policy and request-lo
 restart with an unrelated request continuing. A late worker still owns its process,
 payloads and code lease until it actually drops them. The timeout cannot stop the
 worker, undo effects, bound a blocking dispatcher call, or enforce expiry if a
-manual session is never driven; `request_status`/`request_work` remain snapshots
+manual session is never driven; `state`/`request_status`/`request_work` remain snapshots
 until a supervision operation. Explicit cancellation wins if serialized before
 supervision. These limits are part of the contract, not security or liveness claims.
 
@@ -171,11 +225,15 @@ agent-integration work.
 
 ### Phase 0: current contract
 
-There is one FIFO per compiled connection, shared across request IDs. `head_for`
+Under default `SharedFifo` there is one FIFO per compiled connection, shared
+across request IDs. `head_for`
 never skips a packet; it only selects a matching request at a connection head.
 Public input admission atomically fans out to the compiled ingress queues. Each
-export has one shared bounded capture FIFO, and `take_request_output` cannot bypass
-another request at its head. Each compiled physical process has one mutable
+export has one shared bounded capture FIFO by default. The verified stack already
+supports authenticated request-specific extraction of a non-head buffered capture;
+that does not reserve extra storage or free an indefinitely retained full queue.
+The initial claim that `take_request_output` was always head-only was stale.
+Each compiled physical process has one mutable
 `ProcessHandoff`; a staged continuation or pending fanout is a serialization point.
 `max_requests` bounds active request records, not all queue payload bytes or
 application-private state.
@@ -184,7 +242,7 @@ application-private state.
 
 - **Keep current shared FIFO:** preserves the strongest simple ordering contract
   and has no request-lane memory multiplier. Crossed arrivals and a slow capture
-  can block later requests; this is correct backpressure, not fairness.
+  can block later publication; this is correct backpressure, not fairness.
 - **Partition only public ingress/captures:** independent bounded lanes at these
   endpoints would fix ingress/capture head-of-line cases, but internal compiled
   connection queues remain shared. It must not be called general demultiplexing.
@@ -221,7 +279,8 @@ all-or-nothing fanout, alias capture authentication, and session/generation tick
 validation. `take_output` remains the shared unscoped FIFO; scoped lane captures are
 retrieved with `take_request_output`. Cross-order between scoped lanes and unscoped
 traffic is not promised. StorageGraph's request-specific capture draining still
-requires integration verification.
+requires merged-head integration verification; the initial-candidate local passes
+listed below do not discharge that obligation.
 
 ### Phase 3: implementation candidate
 
@@ -230,9 +289,23 @@ request completing, internal-edge routing, lane reuse after settlement and
 cancellation, and aggregate packet-capacity overflow. The existing shared-FIFO
 behavior remains the default, and its head-of-line regressions remain. These tests
 do not prove arbitrary repeated-stream fairness or process-state isolation; H1/H7
-remain open pending adversarial workspace and StorageGraph integration review.
+remain partial, with their scores unchanged pending merged-head acceptance and
+broader adversarial workspace and StorageGraph integration review.
 
 ## Post-Implementation Review
+
+Merge-specific adversarial review also found and fixed resolved factory policies
+escaping startup validation, `CorrelatedAll` falling through the lane adapter, and
+leased readiness wrappers losing `notification_driven`. Their regressions live in
+`fbp_merge_integration`. The original cross-thread Kernel lock-inversion test is
+preserved without adding a synthetic producer-callback marker; all Kernel session
+contention remains fail-fast.
+
+Late timeout-invalidated dispatcher returns now detach and dispose completion/job
+pieces with panic containment, holding code leases through all cleanup. A teardown
+panic is appended to the originating request's failure, not attributed to an
+unrelated replacement. The timeout suite exercises both return variants, both queue
+policies, scoped/unscoped failures, cleanup order and replacement progress.
 
 Independent reviews reproduced and drove fixes for premature global EOS, missing
 global endpoint closure propagation, lane reuse reopening finished readers,
@@ -263,25 +336,71 @@ and without queued replacement work.
 Before: `options.execution_guard = Some(guard)` could be displaced by another
 caller or dispatcher. After: `options.execution_guards.push(guard)` composes in
 entry order with reverse teardown. Other public source changes include the new
-`SessionOptions` fields, `RunReport::next_deferred_timeout`, and detailed invalid
+`SessionOptions` queue-policy fields and detailed invalid
 closure declarations; `RequestError` is no longer `Copy`. Exhaustive downstream
 struct literals/matches require migration. No compatibility shim is retained.
+Timeout supervision reuses only `SessionOptions.deferred_timeout`,
+`overdue_jobs(now)` / `supervise_deferred(now)` and `RunReport::next_deferred_timeout`;
+the initial candidate timeout field is not a parallel API. C9 `state(&self)` stays
+passive rather than becoming a supervision operation.
 The request-lane example in `packages/phenix-graphs/API-EXAMPLES.md` is Rustdoc-tested.
 
 ### Verification Record
 
-Local lower-tier checks on the assembled working sources passed:
+Local checks for the initial `0d145f3` candidate sources passed:
 
 - Default workspace tests, Rustdoc examples, and compile-fail tests.
 - No-default-feature workspace tests and graph-only no-default-feature tests.
 - Strict workspace all-target Clippy (rerun after test-only lint fixes).
-- Three bounded Loom properties over the production `ExclusiveSlot` source.
+- Three bounded Loom properties over the initial production `ExclusiveSlot`
+  variant; not acceptance for the revised try-only properties described above.
 - Native request-lane, timeout, producer/session, worker-guard and generation suites.
 - StorageGraph host queries under both queue policies, local/offloaded execution,
   observer drain, failure recovery, one-request credit reuse and retained-value leases.
+- Local Nix checks, including `nix flake check --no-update-lock-file --print-build-logs`.
 
-The final accepted commit and GitHub run URLs belong in the draft PR's exact-head
-check rollup. Earlier local or PR #1300 runs must not be relabeled as this head's
-evidence. The unchanged six-job Flake inventory remains the full gate; the added
-path-scoped session Loom workflow is a separate failure domain, not a substitute.
-No new paired performance, allocation or RSS acceptance results are claimed.
+These passes are not acceptance for the new merged head. PR #1302's remote
+workflows initially conflicted; manual
+[Flake #43588157944](https://github.com/matthis-k/phenix-ai/actions/runs/43588157944)
+targets initial commit `0d145f3`, not the final merge. **New full acceptance is
+pending.** The accepted commit and GitHub run URLs must identify the exact new
+head. Earlier local or PR #1300 runs must not be relabeled as its evidence.
+
+The six-job Flake inventory remains the full gate, alongside all scoped gates
+from the verified stack. The added path-scoped session Loom workflow is a separate
+failure domain, not a substitute for the wake verifier, native concurrency,
+benchmark or main/manual acceptance gates. No workflow edits are part of this
+documentation reconciliation. No new paired performance, allocation or RSS
+acceptance results are claimed.
+
+## Remaining Policy Boundaries
+
+The initial no-wait publication proposal is explicitly superseded by whole-drain
+retirement, as exercised by
+[`generation_retirement`](../packages/phenix-kernel/tests/generation_retirement.rs)
+and [`host.rs`](../packages/phenix-kernel/src/host.rs) tests. External
+publication can wait indefinitely for a nonreturning producer callback; bounded
+poll counts do not bound callback duration. All Kernel session calls instead fail
+fast on cross-thread contention, as specified by the original lock-inversion test
+and [`native_sessions`](../packages/phenix-kernel/tests/native_sessions.rs) busy/retry
+regression. Waiting for a session lease while holding a plugin lock is not accepted;
+this scoped guarantee is not universal plugin-lock deadlock freedom.
+The initial no-wait/empty-return competing-drain policy is also discarded.
+[`lib.rs`](../packages/phenix-kernel/src/lib.rs) retains manual-drain serialization,
+typed `ReentrantDrain` rejection, and exclusive blocking-driver ownership. Its
+`live_driver_exclusively_owns_polls_and_releases_manual_drain_after_exit` test checks
+that even `drain(0)` returns `AlreadyRunning` while a driver owns polling;
+`in_flight_direct_drain_denies_driver_without_registering_wake` checks the inverse
+`DrainInProgress` rejection. These are source/test contract anchors, not new passes
+reported by this documentation-only reconciliation.
+
+The earlier `Kernel::run_until` Rustdoc error-attribution mismatch is fixed in the
+main reconciliation: a manual drain encountering a live driver returns
+`AlreadyRunning`; driver startup encountering an admitted manual drain returns
+`DrainInProgress`. It is no longer an unresolved documentation contradiction.
+
+Any stronger no-wait publication or arbitrary plugin-thread/lock deadlock-freedom
+guarantee would need a separately approved policy/API change and new acceptance,
+not a documentation claim. C3 strict revocation versus leased archival still
+requires owner decision;
+automatic C6 live-state migration and a C7 OS isolation adapter remain unimplemented.

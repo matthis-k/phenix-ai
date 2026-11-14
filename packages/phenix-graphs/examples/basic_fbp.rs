@@ -42,10 +42,7 @@ fn main() {
     )
     .unwrap();
     let mut session = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(
-        session.run_until_complete(64).state,
-        SessionState::Completed
-    );
+    assert_eq!(session.run_until_idle(64).state, SessionState::Completed);
     assert_eq!(*seen.lock().unwrap(), ["value: 2", "value: 4", "value: 6"]);
 }
 

@@ -233,14 +233,14 @@ fn nth_activation_failure_retries_the_exact_composed_state_without_recomposition
     };
     assert_eq!(first.start().unwrap_err().to_string(), expected.to_string());
     assert_eq!(*log.lock().unwrap(), [format!("producer:a:{}", a.id)]);
-    assert!(first.drain(4).is_empty());
+    assert!(first.drain(4).unwrap().is_empty());
     assert!(first.inject("missing", Value::local(())).is_err());
     first.start().unwrap();
     assert!(matches!(
         first.start().unwrap_err(),
         phenix_kernel::StartError::AlreadyStarted
     ));
-    assert!(first.drain(2).is_empty());
+    assert!(first.drain(2).unwrap().is_empty());
     assert_eq!(a.polls.load(Ordering::SeqCst), 1);
     assert_eq!(b.polls.load(Ordering::SeqCst), 1);
     assert_eq!(other_a.polls.load(Ordering::SeqCst), 0);

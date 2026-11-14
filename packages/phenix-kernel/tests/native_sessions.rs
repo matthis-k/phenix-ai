@@ -115,14 +115,14 @@ fn full_retains_exactly_one_event_and_does_not_repoll_or_execute() {
     let (mut kernel, polls, calls, _) = fixture(false);
     assert!(kernel.with_session(|_| ()).is_err());
     kernel.start().unwrap();
-    assert_eq!(kernel.drain(10).len(), 2); // One reserved input plus one queued input.
+    assert_eq!(kernel.drain(10).unwrap().len(), 2); // One reserved input plus one queued input.
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     assert!(calls.lock().unwrap().is_empty());
-    assert!(kernel.drain(100).is_empty());
+    assert!(kernel.drain(100).unwrap().is_empty());
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     kernel.run_steps(100).unwrap();
     assert_eq!(*calls.lock().unwrap(), [1, 2]);
-    assert_eq!(kernel.drain(1).len(), 1);
+    assert_eq!(kernel.drain(1).unwrap().len(), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     kernel.run_steps(100).unwrap();
     assert_eq!(*calls.lock().unwrap(), [1, 2, 3]);
@@ -144,7 +144,10 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
                 .unwrap()
                 .upgrade()
                 .unwrap();
-            assert!(kernel.drain(0).is_empty());
+            assert_eq!(
+                kernel.drain(0).unwrap_err(),
+                phenix_kernel::DriverError::ReentrantDrain
+            );
             self.failures
                 .lock()
                 .unwrap()
@@ -196,7 +199,8 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
     std::thread::spawn(move || sent.send(driver.drain(1)).unwrap());
     let events = received
         .recv_timeout(std::time::Duration::from_secs(2))
-        .expect("readiness callback deadlocked on kernel ownership");
+        .expect("readiness callback deadlocked on kernel ownership")
+        .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(
         *failures.lock().unwrap(),
@@ -255,16 +259,16 @@ fn explicit_session_ownership_defers_producer_admission_without_blocking_retirem
             .unwrap()
     });
     ready.recv().unwrap();
-    assert!(kernel.drain(100).is_empty());
+    assert!(kernel.drain(100).unwrap().is_empty());
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     release.send(()).unwrap();
     worker.join().unwrap();
-    assert_eq!(kernel.drain(1).len(), 1);
+    assert_eq!(kernel.drain(1).unwrap().len(), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn concurrent_session_calls_wait_for_the_exclusive_session_lease() {
+fn concurrent_session_calls_fail_fast_and_can_retry_after_lease_release() {
     let (mut kernel, _, _, _) = fixture(false);
     kernel.start().unwrap();
     let kernel = Arc::new(kernel);
@@ -284,21 +288,17 @@ fn concurrent_session_calls_wait_for_the_exclusive_session_lease() {
     let reader = kernel.clone();
     let (completed, completion) = std::sync::mpsc::channel();
     let waiter = std::thread::spawn(move || {
-        completed.send(reader.run_steps(0).is_ok()).unwrap();
+        completed.send(reader.run_steps(0)).unwrap();
     });
-    assert!(
-        completion
-            .recv_timeout(std::time::Duration::from_millis(20))
-            .is_err()
-    );
+    let result = completion.recv_timeout(std::time::Duration::from_secs(2));
     release.send(()).unwrap();
     holder.join().unwrap();
-    assert!(
-        completion
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap()
+    assert_eq!(
+        result.expect("contending caller blocked").unwrap_err(),
+        "kernel session busy"
     );
     waiter.join().unwrap();
+    assert!(kernel.run_steps(0).is_ok());
 }
 
 #[test]
@@ -499,6 +499,71 @@ fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
 }
 
 #[test]
+fn process_callback_does_not_hold_kernel_session_mutex() {
+    struct Probe(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Option<Result<(), String>>>>,
+    );
+    impl Process for Probe {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
+            let result = kernel.with_session(|_| ());
+            *self.1.lock().unwrap() = Some(result);
+            Ok(Step::Finished)
+        }
+    }
+
+    struct Plugin(
+        Arc<Mutex<Option<std::sync::Weak<Kernel>>>>,
+        Arc<Mutex<Option<Result<(), String>>>>,
+    );
+    impl PluginInstance for Plugin {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            let kernel = self.0.clone();
+            let result = self.1.clone();
+            let source = Arc::new(ComponentDef::primitive(
+                Arc::new(Interface::new([], []).unwrap()),
+                Arc::new(move || Probe(kernel.clone(), result.clone())),
+            ));
+            into.add(support::contribution(
+                "probe",
+                NetworkPatch::new([
+                    Edit::Add {
+                        path: "probe".into(),
+                        definition: source,
+                    },
+                    Edit::AddSource("probe".into()),
+                ]),
+            ))
+        }
+    }
+
+    let kernel_ref = Arc::new(Mutex::new(None));
+    let result = Arc::new(Mutex::new(None));
+    let snapshot = support::snapshot(
+        "session-lock-probe",
+        Plugin(kernel_ref.clone(), result.clone()),
+    );
+    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut kernel = Kernel::build_with_options(
+        "session-lock-probe",
+        [snapshot],
+        Arc::new(LocalProcessDispatcher),
+        options,
+    )
+    .unwrap();
+    kernel.start().unwrap();
+    let kernel = Arc::new(kernel);
+    *kernel_ref.lock().unwrap() = Some(Arc::downgrade(&kernel));
+
+    assert_eq!(kernel.run_steps(1).unwrap().steps, 1);
+    assert_eq!(
+        *result.lock().unwrap(),
+        Some(Err("reentrant access to the same kernel session".into()))
+    );
+}
+
+#[test]
 fn request_scopes_are_bounded_authenticated_and_reusable_after_release() {
     use phenix_graph::runtime::{RequestError, RequestStatus};
     let snapshot = support::snapshot(
@@ -674,7 +739,7 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
     let held = Arc::new(Mutex::new(None));
     let snapshot = support::snapshot("timeout", Plugin);
     let mut options = support::options(std::slice::from_ref(&snapshot));
-    options.execution.deferred_job_timeout = Some(std::time::Duration::from_millis(20));
+    options.execution.deferred_timeout = Some(std::time::Duration::from_millis(20));
     let mut kernel = Kernel::build_with_options(
         "deferred-timeout",
         [snapshot],
@@ -701,7 +766,7 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
         phenix_kernel::DriverError::SessionStopped {
             state: phenix_graph::runtime::SessionState::Failed,
             cause: Some(cause),
-        } if cause.contains("deferred job timed out")
+        } if cause.contains("deferred job timeout")
     ));
     assert!(held.lock().unwrap().is_some());
 }
@@ -771,9 +836,25 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
 
 #[test]
 fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
-    let mut kernel = Kernel::build("cancelled", [], Arc::new(LocalProcessDispatcher)).unwrap();
+    // The empty graph is already Completed and correctly cannot be
+    // transformed into Cancelled. Use an open-ingress session instead.
+    let (mut kernel, _, _, _) = fixture(false);
     kernel.start().unwrap();
-    kernel.with_session(|session| session.cancel()).unwrap();
+    kernel
+        .with_session(|session| {
+            assert_eq!(
+                session.state(),
+                phenix_graph::runtime::SessionState::Quiescent
+            );
+            session.cancel();
+            assert_eq!(
+                session.state(),
+                phenix_graph::runtime::SessionState::Cancelled
+            );
+        })
+        .unwrap();
+    // No wake registration is needed for an already-terminal session;
+    // the fixture's producer deliberately does not support set_waker.
     assert_eq!(
         kernel
             .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
@@ -782,5 +863,19 @@ fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
             state: phenix_graph::runtime::SessionState::Cancelled,
             cause: None
         }
+    );
+}
+
+#[test]
+fn completed_empty_session_returns_success_without_blocking_or_registering_wakes() {
+    let mut kernel = Kernel::build("completed", [], Arc::new(LocalProcessDispatcher)).unwrap();
+    kernel.start().unwrap();
+    assert_eq!(
+        kernel.with_session(|session| session.state()).unwrap(),
+        phenix_graph::runtime::SessionState::Completed
+    );
+    assert_eq!(
+        kernel.run_until(&phenix_kernel::WakeHandle::default(), |_| {}),
+        Ok(())
     );
 }

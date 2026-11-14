@@ -1,45 +1,21 @@
 #![allow(unexpected_cfgs)]
 
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(loom)]
-use loom::sync::{Condvar, Mutex, MutexGuard};
+use loom::sync::{Mutex, MutexGuard};
 use std::ops::{Deref, DerefMut};
 use std::sync::TryLockError;
 #[cfg(not(loom))]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(not(loom))]
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
 /// Exclusive ownership transfer for mutable state accessed by callbacks.
 pub(crate) struct ExclusiveSlot<T> {
     value: Mutex<Option<T>>,
-    available: Condvar,
-    waiters: AtomicUsize,
 }
 
 impl<T> ExclusiveSlot<T> {
     pub(crate) fn new(value: T) -> Self {
         Self {
             value: Mutex::new(Some(value)),
-            available: Condvar::new(),
-            waiters: AtomicUsize::new(0),
-        }
-    }
-
-    pub(crate) fn take(&self) -> ExclusiveLease<'_, T> {
-        let mut slot = self.lock();
-        while slot.is_none() {
-            self.waiters.fetch_add(1, Ordering::Relaxed);
-            slot = self
-                .available
-                .wait(slot)
-                .unwrap_or_else(|error| error.into_inner());
-            self.waiters.fetch_sub(1, Ordering::Relaxed);
-        }
-        ExclusiveLease {
-            owner: self,
-            value: slot.take(),
         }
     }
 
@@ -77,9 +53,6 @@ impl<T> ExclusiveLease<'_, T> {
         };
         let mut slot = self.owner.lock();
         *slot = Some(value);
-        if self.owner.waiters.load(Ordering::Relaxed) != 0 {
-            self.owner.available.notify_one();
-        }
     }
 }
 

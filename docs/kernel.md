@@ -90,9 +90,15 @@ polls round-robin across calls; idle polls count toward the bound, full inputs r
 one event, and admission contention retains rather than repolls that event.
 `ProducerError` distinguishes poll, undeclared-route and admission errors.
 
-Neither `poll` nor `set_waker` runs while the producer-state mutex is held. One
-producer callback lease serializes poll/wake registration; recursive or concurrent
-`drain` returns empty rather than blocking. Poll panic is a terminal poll error;
+Neither `poll` nor `set_waker` runs while the producer-state mutex is held. The
+verified whole-drain gate serializes callbacks; concurrent manual drains serialize
+on it and recursive drains return `DriverError::ReentrantDrain`. A blocking driver
+owns polling for its whole lifetime: competing manual drains return
+`AlreadyRunning`; driver startup during a manual drain returns `DrainInProgress`.
+This includes `drain(0)`, which polls nothing but still checks polling ownership
+and participates in the whole-drain gate. The initial no-wait/empty-return
+competing-drain policy is discarded, preserving the verified baseline contract.
+Retired drains return empty. Poll panic is a terminal poll error;
 wake-registration panic is a `DriverError`. `run_until(&WakeHandle, on_event)`
 requires wake registration from each producer, waits when idle, and checks sticky
 shutdown between bounded iterations. There is no background thread or new async
@@ -102,20 +108,37 @@ interrupt a callback already executing.
 `with_session` and `run_steps` exclusively lease the native session without holding
 the kernel session mutex across callbacks. Same-thread re-entry through that Kernel
 fails fast (`inject` returns `ReentrantSessionAccess` with the original value).
-The existing execution guard propagates this identity to dispatched process
-workers. Other callers wait for the exclusive lease. This does not prevent arbitrary
-plugin-vs-plugin deadlocks, plugin-spawned thread/join cycles, or resource-lock cycles.
+Ordered `SessionOptions::execution_guards` propagates this identity to dispatched
+process workers. Kernel identity enters first, followed by the StorageGraph host
+guard and application/dispatcher guards. `ActivationJob::with_guard` appends;
+reverse token teardown keeps identity active through application-token destruction
+and process panic-payload cleanup. All Kernel session calls fail fast on
+cross-thread contention: `with_session`/`run_steps` report busy, `inject` returns
+`WouldBlock` with the original value, and the blocking driver reports
+`SessionBusy`. Callers can retry after release. `lease_session` always uses
+`try_lease_session`; `ExclusiveSlot` is only `Mutex<Option<T>>` with `try_take` and
+idempotent release/RAII restoration, without Condvar or waiters. This preserves
+the verified lock-inversion contract for ordinary callers, not just producers;
+initial waiting claims are historical and superseded. A caller holding a plugin
+lock must not wait behind a session callback that needs it. This does not prevent
+arbitrary plugin-vs-plugin deadlocks, plugin-spawned thread/join cycles, or
+resource-lock cycles.
 
-Producer admission claims its retirement boundary under the producer mutex, then
-injects without that mutex. Admission already claimed before retirement may finish;
-a poll result returned after retirement cannot claim admission. Callback count is
-not a preemption or shutdown-duration bound.
+Producer admission retains the whole-drain gate but injects without the producer
+inventory mutex, using nonblocking session access. External publication waits for
+the entire admitted drain. Host self-destruction instead marks retirement within
+a callback: a later poll result is discarded, while admission already permitted
+before self-retirement may finish. Callback count is not a preemption or
+shutdown/publication-duration bound.
 
-`SessionOptions::deferred_job_timeout` is opt-in and defaults to `None`. Deferred
-handoffs expire at cooperative session supervision boundaries; late results cannot
+Only `SessionOptions.deferred_timeout` configures expiry, opt-in with default `None`.
+Existing `overdue_jobs(now)` is passive inspection; `supervise_deferred(now)` mutates
+the session. C9 `state(&self)` remains a passive snapshot, not a supervision call.
+Deferred handoffs expire at cooperative supervision boundaries; late results cannot
 publish. A direct `next_job` call starts timing at handoff, while the built-in driver
 starts timing only after `DispatchResult::Deferred`. `run_until` wakes at the
-nearest deadline. Timeout cannot stop external work or release its leases, and
+nearest deadline via `RunReport::next_deferred_timeout`, subject to callbacks
+returning cooperatively. Timeout cannot stop external work or release its leases, and
 restart can overlap the timed-out worker's still-running external effects.
 
 ## Host Publication
@@ -137,19 +160,51 @@ the store-owned nested-query guard on dispatch and worker threads. Validate with
 and exported application values can still cause external effects; those are not
 sandboxed or rolled back.
 
-`publish` rejects stale/foreign candidates, commits the validated plugin batch,
-marks old producers retired, and replaces the active pointer. It does not wait for
-an in-flight producer callback. A callback that returns after retirement cannot
-admit its event; already-started external work is not revoked. A retained
+`publish` rejects stale/foreign candidates and waits for the old generation's
+admitted **whole producer drain** before committing the validated plugin batch,
+marking its producers retired and replacing the active pointer. An in-flight drain may finish
+all polls/admissions before retirement; no new drain can poll after retirement.
+Same-drain publication returns `LifecycleError::ReentrantDrain`, rather than
+waiting on its own gate. A nonreturning producer callback can delay external
+publication indefinitely; the initial candidate no-wait claim is superseded.
+Already-started external work is not revoked. A retained
 `Arc<Generation>` pins its old graph, exports and leases; explicit old session calls
 remain valid, but retired `drain` calls return empty. Host drop also retires active
-producers. Detached producer destructors complete outside the state lock and before
-old leases are released.
+producers. Host self-destruction from a producer callback marks retirement without
+waiting on its own gate, discards a late poll result, and defers destruction until
+the enclosing drain/registration releases ownership and locks. Detached producer
+destructors complete outside the state lock and before old leases are released.
 
 `Generation::with_kernel` gives scoped access to compiled metadata, exports, and
 explicit session operations. It is not a read-only security capability: `Kernel`
 uses interior mutability. Explicit operations do not hold the producer mutex or
 block publication. The supported derived adapter queries within this scope.
+
+## Merge Evidence
+
+PR #1302 on `fix/fbp-lifecycle-request-lanes-20261114` first committed `0d145f3`
+after incorrectly relying on stale local remote-tracking impl `16e77f6c6`.
+Actual remote impl `89e00d0` includes later foundations. After fetching, exact
+verified PR #1300 head `516e0883875d5ec483e3595d50b77b3d5e8979c4` is now
+being merged, retaining the whole-drain and exclusive-driver gates and all other
+scoped acceptance obligations. `generation_retirement` tests whole-drain waiting;
+`host.rs` tests self-retirement, and the original
+`concurrent_session_calls_fail_fast_without_kernel_lock_inversion` regression has
+no synthetic producer callback marker. `native_sessions` requires busy on ordinary
+cross-thread contention and successful retry after release. The three revised
+session Loom properties cover competing `try_take` exclusive ownership, busy
+callers unable to steal ownership plus successful retry, and idempotent early
+release/state publication. Their exact merged-head acceptance is still pending.
+
+Local workspace, no-default-feature, Clippy, Loom and Nix passes on initial
+`0d145f3` are not acceptance for the new merged head. PR #1302 remote workflows
+initially conflicted; manual [Flake #43588157944](https://github.com/matthis-k/phenix-ai/actions/runs/43588157944)
+targets that initial commit, not the final merge. Full new-head acceptance remains
+pending. No tracker score increases, issue closures or M7/M8 completion are claimed.
+The new merge head's performance is unmeasured; old microbenchmarks and scoped
+stack measurements are not new-head timing, allocation or RSS acceptance.
+Optional `BoundedLanes` isolates connection/ingress/capture queue credit only, not
+process state; no missing production-agent or OS-isolation adapter is finished.
 
 ## Limits
 
