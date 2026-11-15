@@ -189,18 +189,29 @@ definitions are not. Blocked queue/cycle diagnostics are not progress guarantees
 
 `NetworkPatch` owns immutable `Edit`s, not callbacks. Trusted host `Registration`
 separately supplies ID, dependency set, integer priority, exact origin and grants.
-Only root public declarations are editable; private nested writes reject even
-with an exact-looking grant. Grants name a component, exact connection endpoints,
+Root public declarations are editable; private nested writes require an explicitly
+exposed replacement seam as well as exact host grants. General private extension
+is not implied. Grants name a component, exact connection endpoints,
 directional export or source start; they never imply incident edges, descendants,
 namespace prefixes or semantic membership. Payload origins, including nested
 definitions, must be absent or exactly the registration origin.
 
 Dependencies must exist and form a DAG. They order writes; independent overlapping
-writes require unequal priorities, otherwise reject. Higher-priority selection
-defeats the losing registration as a whole; defeated prerequisites deactivate
-dependents, which cannot suppress eligible independent patches. Independent
-splices of one anchor remain ambiguous even with priorities. Ordered splices
-require explicit grants for the anchor and every removed/generated edge.
+writes require unequal priorities, otherwise reject. A registration is active if
+and only if every direct prerequisite is active and no strictly higher-priority
+independent overlapping writer is active. A unique consistent selection is required;
+zero/multiple models and selection-budget exhaustion reject atomically. Transient
+prerequisite defeat does not permanently suppress an otherwise eligible dependent.
+Independent splices of one anchor remain ambiguous even with priorities. Ordered
+splices require explicit grants for the anchor and every removed/generated edge.
+
+`SelectionLimits::max_work` is a finite, host-controlled allowance for selector
+construction, propagation and the complete uniqueness proof. It does not bound
+ancestor/footprint planning, replay, compilation or total Kernel construction.
+`Composer::set_selection_limits` changes future updates without republishing.
+Kernel `BuildOptions::selection_limits` applies to both its main composer and
+self-import previews, separately for each update. See the [selection design and
+accounting contract](fbp-selection-correctness-20261115.md).
 
 Replacement changes the definition at a stable symbolic path, preserving adjacent
 edges/exports but revoking old authoring revisions. Full public interface equality

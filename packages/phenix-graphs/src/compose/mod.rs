@@ -8,10 +8,10 @@
 //! # Selection and replay
 //! Dependencies must exist and form a DAG. Transitive dependencies order writes;
 //! independent overlapping writes with equal priorities are errors. Otherwise,
-//! the lower-priority registration is defeated as a whole. Higher priorities
-//! are selected first, so a loser cannot suppress another independent patch.
-//! Missing selected prerequisites deactivate dependents for this resolution;
-//! selection repeats without them so they cannot suppress eligible patches.
+//! a registration is selected exactly when its direct dependencies are selected
+//! and no independent, overlapping, higher-priority registration is selected.
+//! Selection must have exactly one consistent solution; no solution, ambiguity,
+//! or exhaustion of the finite selection budget rejects the entire update.
 //! Priority is an explicit integer, not an insertion index or fractional splice
 //! position. Independent splices of the same anchor are always ambiguous.
 //!
@@ -42,6 +42,32 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+
+mod selection;
+
+/// Finite work allowance for exact registration selection on each update.
+///
+/// The default is 1,000,000 work units. Units cover selector index and adjacency
+/// construction, propagation, and the complete search proving uniqueness. Each
+/// initialized equation slot or ID-index entry, dependency lookup, constructed
+/// edge, seed inspection, queue push/pop (including discarded entries), assignment,
+/// traversed forward/reverse edge, undone trail entry, inspected search slot,
+/// search-frame creation/visit, and captured model entry costs one unit.
+/// Registry cloning, dependency/ancestor planning, footprint and pairwise conflict
+/// validation/blocker collection, selected-ID materialization, replay, compilation,
+/// and allocation failure are outside this allowance. It is not a bound on total
+/// composition work. An empty selection costs zero units.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelectionLimits {
+    pub max_work: usize,
+}
+impl Default for SelectionLimits {
+    fn default() -> Self {
+        Self {
+            max_work: 1_000_000,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ConnectionKey {
@@ -233,6 +259,11 @@ pub enum ComposeError {
         dependency: String,
     },
     DependencyCycle,
+    NoConsistentSelection,
+    AmbiguousSelection,
+    SelectionBudgetExceeded {
+        limit: usize,
+    },
     Conflict {
         first: String,
         second: String,
@@ -300,18 +331,25 @@ pub struct Composer {
     base: NetworkDef,
     registrations: BTreeMap<String, Registration>,
     current: Composition,
+    selection_limits: SelectionLimits,
 }
 impl Composer {
     pub fn new(base: NetworkDef) -> Result<Self, ComposeError> {
-        let current = guarded_compose(&base, &BTreeMap::new())?;
+        let selection_limits = SelectionLimits::default();
+        let current = guarded_compose(&base, &BTreeMap::new(), selection_limits)?;
         Ok(Self {
             base,
             registrations: BTreeMap::new(),
             current,
+            selection_limits,
         })
     }
     pub fn current(&self) -> &Composition {
         &self.current
+    }
+    /// Apply limits to future updates only, without recomposing or publishing.
+    pub fn set_selection_limits(&mut self, limits: SelectionLimits) {
+        self.selection_limits = limits;
     }
     /// Batch admission permits dependencies to be supplied in any order.
     pub fn register(
@@ -325,7 +363,7 @@ impl Composer {
             }
             candidate.insert(registration.id.clone(), registration);
         }
-        let current = guarded_compose(&self.base, &candidate)?;
+        let current = guarded_compose(&self.base, &candidate, self.selection_limits)?;
         self.registrations = candidate;
         self.current = current;
         Ok(&self.current)
@@ -354,7 +392,7 @@ impl Composer {
             .filter(|(id, _)| !removed.contains(*id))
             .map(|(id, registration)| (id.clone(), registration.clone()))
             .collect();
-        let current = guarded_compose(&self.base, &candidate)?;
+        let current = guarded_compose(&self.base, &candidate, self.selection_limits)?;
         self.registrations = candidate;
         self.current = current;
         Ok(removed)
@@ -364,9 +402,10 @@ impl Composer {
 fn guarded_compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
+    selection_limits: SelectionLimits,
 ) -> Result<Composition, ComposeError> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compose(base, registrations)
+        compose(base, registrations, selection_limits)
     })) {
         Ok(result) => result,
         Err(payload) => {
@@ -379,6 +418,7 @@ fn guarded_compose(
 fn compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
+    selection_limits: SelectionLimits,
 ) -> Result<Composition, ComposeError> {
     let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut order = Vec::new();
@@ -458,8 +498,9 @@ fn compose(
     }
     // Fail closed on ambiguities, even when a third registration could defeat
     // one participant. Dependency ordering is the only splice ordering key.
+    let mut blockers = Vec::new();
     for (i, a) in order.iter().enumerate() {
-        for b in &order[i + 1..] {
+        for (j, b) in order.iter().enumerate().skip(i + 1) {
             if ancestors[b].contains(a) || ancestors[a].contains(b) {
                 continue;
             }
@@ -477,50 +518,28 @@ fn compose(
                     });
                 }
             }
-            if let Some(footprint) = overlapping_write(left, right)
-                && registrations[a].priority == registrations[b].priority
-            {
-                return Err(ComposeError::Conflict {
-                    first: a.clone(),
-                    second: b.clone(),
-                    footprint: Box::new(footprint.clone()),
-                });
+            if let Some(footprint) = overlapping_write(left, right) {
+                match registrations[a].priority.cmp(&registrations[b].priority) {
+                    std::cmp::Ordering::Equal => {
+                        return Err(ComposeError::Conflict {
+                            first: a.clone(),
+                            second: b.clone(),
+                            footprint: Box::new(footprint.clone()),
+                        });
+                    }
+                    std::cmp::Ordering::Greater => blockers.push((i, j)),
+                    std::cmp::Ordering::Less => blockers.push((j, i)),
+                }
             }
         }
     }
-    let mut candidates = order.clone();
-    candidates.sort_by(|a, b| {
-        registrations[b]
-            .priority
-            .cmp(&registrations[a].priority)
-            .then_with(|| a.cmp(b))
-    });
-    let mut deactivated = BTreeSet::new();
-    let active = loop {
-        let mut selected = BTreeSet::new();
-        for id in &candidates {
-            if deactivated.contains(id) {
-                continue;
-            }
-            let loses = selected.iter().any(|winner| {
-                !ancestors[id].contains(winner)
-                    && !ancestors[winner].contains(id)
-                    && overlapping_write(&footprints[id], &footprints[winner]).is_some()
-            });
-            if !loses {
-                selected.insert(id.clone());
-            }
-        }
-        let before = deactivated.len();
-        for id in &order {
-            if !ancestors[id].is_subset(&selected) {
-                deactivated.insert(id.clone());
-            }
-        }
-        if before == deactivated.len() {
-            break selected;
-        }
-    };
+    let selected = selection::select(registrations, &order, &blockers, selection_limits)?;
+    let active: BTreeSet<String> = order
+        .iter()
+        .zip(selected)
+        .filter(|(_, selected)| *selected)
+        .map(|(id, _)| id.clone())
+        .collect();
     let mut network = base.clone();
     let mut splices = BTreeMap::new();
     for id in order.iter().filter(|id| active.contains(*id)) {

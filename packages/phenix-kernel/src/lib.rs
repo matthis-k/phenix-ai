@@ -5,7 +5,7 @@ pub mod host;
 use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
     Value,
-    compose::{Composer, Footprint, NetworkPatch, Registration},
+    compose::{Composer, Footprint, NetworkPatch, Registration, SelectionLimits},
     contract::Contract,
     network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
     process::{ProcessDispatcher, ProcessExecutionGuard},
@@ -535,6 +535,8 @@ pub struct ImportPolicy {
 #[derive(Default)]
 pub struct BuildOptions {
     pub imports: ImportPolicy,
+    /// Host-owned selection budget per composer update, including self-import previews.
+    pub selection_limits: SelectionLimits,
     /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.
@@ -1250,6 +1252,7 @@ impl Kernel {
             .map_err(|cause| ResolutionError::Compilation { cause })?;
         let mut composer =
             Composer::new(base).map_err(|cause| ResolutionError::Invalid(cause.to_string()))?;
+        composer.set_selection_limits(options.selection_limits);
         let registration_ids: BTreeMap<_, _> = keys
             .iter()
             .enumerate()
@@ -1271,6 +1274,7 @@ impl Kernel {
                             cause: Box::new(cause),
                         }
                     })?;
+                preview.set_selection_limits(options.selection_limits);
                 preview
                     .register([Registration::new(
                         "self",

@@ -189,6 +189,21 @@ the pending producer request, not the request owning older buffered packets.
 Foreign/released request IDs reject; the query neither supervises deadlines nor
 proves deadlock or progress. `blocked_queues()` remains the session-wide view.
 
+### Bounded Composition Selection
+
+`Composer` requires exactly one consistent dependency/priority selection before
+replay and compilation. A lower-priority registration is eligible again when its
+only blocker is itself ineligible; provisional defeat is not permanent exclusion.
+Zero or multiple models reject as `NoConsistentSelection` or `AmbiguousSelection`.
+
+Use `composer.set_selection_limits(SelectionLimits { max_work: ... })` from
+`phenix_graph::compose` to change the finite allowance for future updates. The
+default is 1,000,000 charged selector operations; exhausted construction/search or
+uniqueness proof returns `SelectionBudgetExceeded`, even if one model was found.
+Changing limits alone leaves current bindings/topology intact. This allowance
+does not bound dependency/footprint planning, replay, compilation or total build
+time. Kernel hosts configure both composer paths through `BuildOptions::selection_limits`.
+
 ### Programs
 
 - `cargo run -p phenix-graph --example basic_fbp --locked`: source, map, sink.

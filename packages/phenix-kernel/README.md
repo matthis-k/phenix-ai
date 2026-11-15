@@ -58,6 +58,14 @@ grant; this preserves trusted compiled exports without exposing all topology
 to ordinary declared-import consumers. Each `CompositionPolicy` has
 `grants: BTreeSet<Footprint>` and `priority: i64`. Missing policy grants no writes.
 Grants and priorities are host decisions, never fields in plugin patch payloads.
+Host `selection_limits: phenix_graph::compose::SelectionLimits` defaults to
+`max_work: 1_000_000`. The budget applies independently to each `Composer` update
+and each self-import preview, not to the total kernel build. Incremental
+registration is unchanged: every registered prefix must independently have a
+unique valid selection. Budget exhaustion remains a typed `ComposeError` source
+in `ResolutionError::Composition`. Limits do not preempt all callbacks: ordinary
+preparation runs before main registration; self-import preview failure runs before
+that contribution's preparation. External callback effects are not rolled back.
 The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code
 lease is added without discarding an application-provided lease.
 
