@@ -17,8 +17,8 @@ and all scoped gates. Earlier claims that the later stack was absent describe th
 initial candidate, not the reconciled merge target.
 
 The immediately preceding correctness-verified candidate is
-`a2d7b4d388bae7eddda61e09fad2cec7d88d9d67`, with
-[six-job Flake CI 43641831034](https://github.com/matthis-k/phenix-ai/actions/runs/43641831034)
+`f608a3fc91abbcee67d928067c276c33f13feae0`, with
+[six-job Flake CI 43670026704](https://github.com/matthis-k/phenix-ai/actions/runs/43670026704)
 and both Loom/native concurrency gates passing. Exact paired measurements still
 showed closure-chain/scoped-optional regressions, so it did not receive blanket
 performance acceptance. Its issue scores remained identical to verified `516e088`.
@@ -71,13 +71,13 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A1 | Private composite extension | 18.0% | 18.0% | +0.0 | Open | [Baseline][B]; general extension API missing |
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
 | A3 | Graph/store separation | 20.0% | 20.0% | +0.0 | Open | [Storage capability correction](fbp-storage-capabilities-20261114.md); graph-local Store separation still open |
-| A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Baseline][B]; not redesigned in this batch |
-| A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | [Baseline][B]; not redesigned in this batch |
+| A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Composer-owned registration](fbp-composer-registration-20261114.md); one native authoring route, final-head gate |
+| A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | Producer/consumer keys derived during atomic registration; physical graph paths still exposed |
 | A6 | Admission API ergonomics | 30.0% | 30.0% | +0.0 | Open | Plain scoped reads and checked capability admission corrected; typed graph ingress remains open |
-| A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; bounds retained by merge |
+| A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; newly found double-`id()` validation gap fixed with stateful-ID regression, exact-head gate |
 | Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
-| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Baseline][B]; not implemented |
+| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight avoids full namespace clone; graph dependency algorithm unchanged |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
 | Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate deadline path/request/ticket context |
@@ -101,14 +101,20 @@ rollup, not an older commit's passing run.
 | WIP #1257 snapshots | Missing planned batch capability; cell binding checked weaker consistency | Explicit request capability set; conditional `CellSpec::request`; eager atomic binding | Populated batch-only/no-CAS/no-single-revision snapshots; zero-payload preflight tests |
 | WIP #1257 authority | Distinct support promises conflated; declarations could not express actual needs | Validate lower-bound requirements independently per plugin; capabilities never grant operations | CAS-only Write, invalid combinations, missing advertisements, false actual support, same-identity/different-grants tests |
 | Q7 source provenance | Scoped/plugin error envelopes hid existing typed causes | `Error::source` forwards nested storage/scoped/filesystem causes | `phenix-storage-plugin/tests/error_sources.rs` downcast and error-kind checks |
+| H4 admission work | Every request scanned all processes just to find Custom declarations | Construction-time Custom ID index includes polled/notified policies; callbacks still evaluated per scope | `fbp_custom_closure_admission`; no claimed wall-time speedup |
+| WIP #1259 ownership/atomicity | Composer/offer/import records independently authored and partially installed on caught failure | One public composer builder and consuming atomic register; metadata keys derived; private resolver payloads | Registrar atomicity, reserved-kind, multi-offer, self-import, lease and three-plugin nested extension proofs; final hosted gate |
+| Newly found identity defect | `Registrar::add` validated one `id()` value but stored a second callback result | Capture and validate one stored ID; bundle preflight invokes no payload callbacks | Stateful-ID and invalid stored-name regressions; all original bounds remain |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
 snapshots, persistence, subscriptions and provider leases. Independent review
 found no blocking defect; full workspace/default/no-default and strict local gates
-pass. This completes that bounded implementation scope subject to hosted exact-head
-acceptance, not all of A3/A6/Q7 or M7/M8. WIPs #1259/#1258 and broad production-agent
-integration remain independent follow-up work, not silently marked complete.
+pass. WIP #1257 passed hosted acceptance at `f608a3fc` and is closed as superseded
+by its native adaptation in #1302, not merged to main. WIP #1259's bounded native
+implementation/migration and independent review are complete locally; it remains
+open until final exact-head hosted acceptance. Neither scope closes all of
+A1/A3/A4/A5/A6/Q7 or M7/M8. WIP #1258 and broad production-agent integration remain
+independent follow-up work, not silently marked complete.
 
 ## Historical Candidate Evidence
 

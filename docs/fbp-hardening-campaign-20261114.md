@@ -4,10 +4,15 @@
 
 The merge sequence below is historical: `a2d7b4d3` subsequently passed all fifteen
 exact-head workflows, with measured closure/scoped-optional regressions remaining.
-The current follow-on work implements a source-profiled closure correction and
-finishes the independent-storage-capability scope from WIP #1257 on native FBP.
+The follow-on work implements a source-profiled closure correction and finishes the
+independent-storage-capability scope from WIP #1257 on native FBP. That scope passed
+hosted acceptance at `f608a3fc` and its old WIP is closed as superseded, not merged.
+The next assembled batch finishes composer-owned atomic registration from WIP #1259
+and eliminates a per-request inventory scan for Custom closure declarations.
 See [closure diagnosis/correction](fbp-closure-overhead-20261114.md) and
 [storage design/independent review](fbp-storage-capabilities-20261114.md).
+[Composer registration design/review](fbp-composer-registration-20261114.md)
+records the one public authoring route, migration and cross-plugin nested proof.
 Both have independent diff review and passing local workspace, no-default-feature
 and strict checks. Hosted same-head correctness and paired timing remain the final
 acceptance evidence; historical passes are not reused. Completed subproblem work is
