@@ -35,6 +35,14 @@ resolver-cause and invalid-emission diagnostic fixes leave all scores unchanged.
 The [design, review and evidence](fbp-error-context-20261115.md) also records a
 separately reproduced, still-unfixed Q3 selection defect.
 
+Latest implementation `979572eb9e08462adddac07d35625bd7f2cb940e` passed all
+fifteen workflows, including [six-job Flake CI 43705906267][K]. It fixes public
+tuple snapshot cardinality, query declaration-cause loss and continuation wait-lane
+attribution; [design/review/evidence](fbp-quick-boundaries-20261115.md) records their
+bounded acceptance and the separate, unresolved request-terminal precedence gap.
+Scores and classifications below are unchanged by this batch; C1 verification is
+the inherited session-level scope, not a claim about every request transition.
+
 The unweighted issue mean is **57.4%**, previously 55.3%. Formal classifications are
 **11 scoped verified / 7 partial / 15 open**. This mean is not a substitute for issue
 closure or milestone completion.
@@ -65,7 +73,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Profiled closure correction](fbp-closure-overhead-20261114.md); same-head timing required |
 | H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | Exact paired baseline and regression evidence retained; no production acceptance |
 | H7 | Request isolation and fairness | 56.0% | 56.0% | +0.0 | Partial | [Baseline][B]; candidate `fbp_request_lanes`, bounded RR |
-| C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate recovery regression gates |
+| C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] session-level precedence retained; [request-level inherited-outcome gap reproduced](fbp-quick-boundaries-20261115.md#deferred-findings), unresolved |
 | C2 | Obligation deduplication | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate closure-only fairness test |
 | C3 | Retired-generation revocation | 20.0% | 20.0% | +0.0 | Open | **Decision required:** [archival/revocation alternatives][C] |
 | C4 | Preparation authority | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate binding compile-fail tests |
@@ -87,20 +95,21 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight retained; [transient dependency-defeat defect reproduced](fbp-error-context-20261115.md#separate-q3-reproduction), not fixed |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
-| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | Passive request blockers plus [exact-head][E] invalid-emission path/output and identity context; general readiness/liveness explanations remain |
-| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Typed graph/derived/storage sources plus [exact-head][E] selected-import InterfaceError cause; process/runtime strings remain |
+| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | Passive request blockers, emission context and [exact-head][K] owned-continuation input wait lanes; general readiness/liveness explanations remain |
+| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Typed graph/derived/storage and selected-import causes, plus [exact-head][K] query declaration lookup causes; process/runtime strings remain |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
 
 [B]: https://github.com/matthis-k/phenix-ai/actions/runs/43537983510
 [C]: fbp-hardening-campaign-20261114.md
 [A]: https://github.com/matthis-k/phenix-ai/actions/runs/43696623155
 [E]: https://github.com/matthis-k/phenix-ai/actions/runs/43702741898
+[K]: https://github.com/matthis-k/phenix-ai/actions/runs/43705906267
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `51878d147`, not an older commit's passing
+implementation acceptance is exact-head `979572eb9`, not an older commit's passing
 run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
@@ -118,6 +127,9 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | Q7 graph source provenance | Graph envelopes hid nested typed causes; derived conversion stringified NetworkError | Forward real sources and retain typed NetworkError in derived errors | Real graph/StorageGraph failure-path downcasts; [exact-head][A]; broader typed runtime protocol remains open |
 | Q7 resolver provenance | Explicit incompatible import selection stringified its InterfaceError | Typed IneligibleReason retains the actual cause; policy denial remains sourceless | Context, direct cause identity, denial/allowlist forms, diagnostic precedence and zero preparation; [exact-head][E] |
 | Q6 invalid emissions | Unknown output and incompatible identity shared an opaque process-index message | Compiled path/output context and expected/actual identities before routing | No-consumer/discard, malformed mismatched-schema bytes and request-local recovery under both policies; [exact-head][E] |
+| Snapshot tuple cardinality | Public tuple decoding panicked on short input and ignored extras | Exact macro-counted arity check before any decoder; typed SnapshotEntryMismatch | Arity one through four, zero custom callbacks and real-cell source identity; [exact-head][K] |
+| Q7 query binding | Missing/ambiguous tap or root lookup was flattened to WrongGeneration | Preserve actual NetworkError in runtime and preparation binding; remove unused variant | Typed source identity, all four lookup failure paths, read-free valid binding and no activation on failure; [exact-head][K] |
+| Q6 continuation input waits | Owned continuations reported canonical and unrelated request-lane queues | Filter bounded waits by actual owner, retaining idle/shared behavior | Scoped/unscoped WaitInput/WaitInputs, queue IDs/endpoints, unrelated traffic, lane reuse and passivity; [exact-head][K] |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,

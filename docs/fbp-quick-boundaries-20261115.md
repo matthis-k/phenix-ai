@@ -1,7 +1,7 @@
 # Small Snapshot And Diagnostic Boundary Corrections
 
-Status: implemented, independently reviewed and locally verified; exact-head hosted
-acceptance pending. Based on verified `94cae313f`.
+Status: implemented, independently reviewed and exact-head verified at `979572eb9`.
+Based on verified `94cae313f`.
 
 ## Constraints And Alternatives
 
@@ -56,13 +56,43 @@ tests with default and no-default features, formatting and strict all-target
 workspace Clippy pass locally. Existing scoped concurrency and authority guarantees
 remain required by the final same-head hosted gates.
 
+## Exact-Head Acceptance
+
+Implementation `979572eb9e08462adddac07d35625bd7f2cb940e` passed all fifteen
+hosted workflows, including:
+
+- [Full six-job Flake matrix 43705906267](https://github.com/matthis-k/phenix-ai/actions/runs/43705906267).
+- [Actual-source wake Loom 43705905883](https://github.com/matthis-k/phenix-ai/actions/runs/43705905883).
+- [Session ownership Loom 43705905876](https://github.com/matthis-k/phenix-ai/actions/runs/43705905876).
+- [Eight-repeat native notifier/plugin-lock gate 43705910462](https://github.com/matthis-k/phenix-ai/actions/runs/43705910462).
+- [Twelve-repeat in-flight worker recovery 43705910508](https://github.com/matthis-k/phenix-ai/actions/runs/43705910508).
+
+These accept the three bounded corrections, not general query cleanup, static
+liveness or whole Q6/Q7 findings. Benchmark workflow success is not blanket
+performance acceptance. This evidence-only follow-up requires its own head's checks.
+
 ## Deferred Findings
 
 The separately reproduced Q3 dependency-defeat bug still needs a termination and
 ambiguity design; see [its reproduction](fbp-error-context-20261115.md#separate-q3-reproduction).
 
-Source inspection also found that late request termination can replace a status
-inherited from terminal session failure/cancellation. A blanket no-op guard is not
+An isolated worktree at `/tmp/opencode/fbp-terminal-reproduction-979572eb`, based
+on that implementation, reproduces two request-terminal precedence failures:
+
+- `terminal_precedence_session_cancel_survives_late_request_failure`: session
+  cancellation reports a request Cancelled, but late fail_request changes it to
+  Failed while the session remains Cancelled.
+- `terminal_precedence_global_failure_survives_cancel_and_retains_capture`: another
+  request fails the session; late cancel_request changes an inherited Failed to
+  Cancelled and actually disposes the retained capture, as confirmed by queued and
+  disposal counts. The session remains Failed.
+
+Both new tests fail against production; the existing retained-capture control
+passes. Only the isolated tracked test file is changed, not the accepted batch.
+This is a request-level gap beyond the scorecard's inherited session-level C1
+regressions, not evidence that the broader terminal protocol is complete.
+
+A blanket no-op guard is not
 accepted here: query cleanup uses termination to dispose captures and then release
 its scope. Bounded-lane release rejects retained packets, potentially masking the
 original query error with NotSettled. Reconcile terminal precedence, explicit

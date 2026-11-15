@@ -2,6 +2,23 @@
 
 ## Current Accepted Batch
 
+The [quick boundary corrections](fbp-quick-boundaries-20261115.md) passed all
+fifteen exact-head workflows at `979572eb9`: public snapshot tuples reject malformed
+lengths before any decoder, query binding preserves missing/ambiguous declaration
+causes, and input-wait diagnostics respect continuation ownership. Independent
+review and full local default/no-default/format/strict-Clippy gates pass. No
+scheduler, request cleanup or policy was changed; Q6/Q7 scores and all issue counts
+remain unchanged. The documentation-only evidence revision needs its own checks.
+
+A separate isolated Rust reproduction confirms request-level inherited terminal
+outcomes can be overwritten and retained failure captures explicitly discarded by
+late request termination. Reconcile outcome precedence with disposal, release and
+query cleanup rather than adding a blanket guard. It is unresolved, as is Q3
+dependency defeat. Inherited C1 verification remains the bounded session-level
+regression scope, not a general terminal-protocol claim.
+
+## Previous Resolver/Emission Batch
+
 The follow-on [resolver/emission diagnostic batch](fbp-error-context-20261115.md)
 passed all fifteen exact-head workflows at `51878d147`. Explicit incompatible
 import selections retain their actual InterfaceError; invalid emissions distinguish
