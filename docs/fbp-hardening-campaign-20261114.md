@@ -1,6 +1,27 @@
 # FBP Hardening Campaign: Dependency And Policy Record
 
-## Current Follow-On Batch
+## Current Accepted Batch
+
+Typed admission and the independent Q6/Q7 diagnostic corrections passed all
+fifteen exact-head workflows at `08ab8fd23679522544c02ecedb431a3d0e1a992d`.
+The [typed-admission design/review](fbp-typed-admission-20261115.md#exact-head-acceptance)
+records the full Flake, both Loom and both native concurrency runs. The original
+bounded A6 admission finding is scoped verified: 30.0% to 100.0%, +70.0 pp.
+The authoritative [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is now
+11 scoped verified / 7 partial / 15 open, mean 57.4%. Q6/Q7 scores remain unchanged;
+general diagnostics and string-based process/runtime errors are not closed.
+Keys are typed names, not generation authority. No blanket performance or M7/M8
+acceptance follows from these passing workflows. This evidence-only revision
+requires its own exact-head checks, separate from the implementation head above.
+
+WIP #1259 passed at `90591a12` and is closed as superseded by native #1302, like
+#1257. Neither old WIP was merged to main. Continue easy independent correctness
+work before broader architecture or performance tuning. The next source-reviewed
+candidates are retained resolver contract-error causes (Q7), actionable invalid
+emission context (Q6), then reproduction/review of transient dependency defeat (Q3).
+These are follow-up candidates, not implemented or credited findings.
+
+## Previous Follow-On Batches
 
 The merge sequence below is historical: `a2d7b4d3` subsequently passed all fifteen
 exact-head workflows, with measured closure/scoped-optional regressions remaining.
@@ -30,10 +51,12 @@ merging exact verified PR #1300 head
 all scoped gates. Earlier descriptions of a separate candidate missing that stack
 were true only of the initial tree, not the merge target.
 
-No entire issue or milestone closure is claimed. The authoritative
+At that historical reconciliation, no entire issue or milestone closure was
+claimed. The authoritative
 [33-issue tracker](fbp-issue-progress-estimates-20261113.md) compares all scores to
 verified `516e088`: every delta is +0.0 pp, H3b 78.0%, Q5 74.0%, mean 55.3%,
-and classifications 10 scoped verified / 7 partial / 16 open. The incoming
+and classifications 10 scoped verified / 7 partial / 16 open. Current A6 acceptance
+and counts supersede those historical values as recorded above. The incoming
 [issue ledger](fbp-issue-ledger-20261111.md) remains historical detail, not a second
 score authority. M7 and M8 remain incomplete, including missing P1/P2 production
 model/provider, conversation, local/SSH tool and frontend adapters.

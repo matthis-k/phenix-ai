@@ -17,19 +17,20 @@ and all scoped gates. Earlier claims that the later stack was absent describe th
 initial candidate, not the reconciled merge target.
 
 The immediately preceding correctness-verified candidate is
-`f608a3fc91abbcee67d928067c276c33f13feae0`, with
-[six-job Flake CI 43670026704](https://github.com/matthis-k/phenix-ai/actions/runs/43670026704)
-and both Loom/native concurrency gates passing. Exact paired measurements still
-showed closure-chain/scoped-optional regressions, so it did not receive blanket
-performance acceptance. Its issue scores remained identical to verified `516e088`.
-The table below compares with those unchanged scores: **no whole-issue closure or
-percentage increase is manufactured from the new subproblem work**. This is the
-authoritative 33-issue scorecard;
+`90591a1202e4a1e803c4258e50a1b7d80ec97d6c`, with
+[six-job Flake CI 43674358770](https://github.com/matthis-k/phenix-ai/actions/runs/43674358770)
+and both Loom/native concurrency gates passing. Its issue scores remained identical
+to verified `516e088`; configuration-dependent performance counterevidence remains
+open. The table compares with those unchanged scores. Implementation head
+`08ab8fd23679522544c02ecedb431a3d0e1a992d` now passes all fifteen workflows,
+including [six-job Flake CI 43696623155][A], and closes the bounded original A6
+admission finding after independent review. Q6/Q7 subproblem fixes do not receive
+whole-issue closure or score increases. This is the authoritative 33-issue scorecard;
 the [historical issue ledger](fbp-issue-ledger-20261111.md) and campaign record
 provide detail, not a second current score authority.
 
-The unweighted issue mean remains **55.3%**. Formal classifications remain **10
-scoped verified / 7 partial / 16 open**. This mean is not a substitute for issue
+The unweighted issue mean is **57.4%**, previously 55.3%. Formal classifications are
+**11 scoped verified / 7 partial / 15 open**. This mean is not a substitute for issue
 closure or milestone completion.
 
 ## Verified Baseline Evidence
@@ -71,28 +72,29 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A1 | Private composite extension | 18.0% | 18.0% | +0.0 | Open | [Baseline][B]; general extension API missing |
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
 | A3 | Graph/store separation | 20.0% | 20.0% | +0.0 | Open | [Storage capability correction](fbp-storage-capabilities-20261114.md); graph-local Store separation still open |
-| A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Composer-owned registration](fbp-composer-registration-20261114.md); one native authoring route, final-head gate |
+| A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Composer-owned registration](fbp-composer-registration-20261114.md); native registration verified, broader authoring consolidation remains |
 | A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | Producer/consumer keys derived during atomic registration; physical graph paths still exposed |
-| A6 | Admission API ergonomics | 30.0% | 30.0% | +0.0 | Open | Plain scoped reads and checked capability admission corrected; typed graph ingress remains open |
-| A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; newly found double-`id()` validation gap fixed with stateful-ID regression, exact-head gate |
+| A6 | Admission API ergonomics | 30.0% | 100.0% | +70.0 | Scoped verified | [Typed key admission design/review](fbp-typed-admission-20261115.md); [exact-head acceptance][A]; keys are names, not generation authority |
+| A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
 | Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight avoids full namespace clone; graph dependency algorithm unchanged |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
-| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate deadline path/request/ticket context |
-| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Structured closure errors plus retained scoped/plugin storage causes; broader audit open |
+| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | [Exact-head][A] passive request-specific publication blockers and attribution; general readiness/liveness explanations remain |
+| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | [Exact-head][A] typed graph/derived error sources plus retained scoped/plugin storage causes; process/runtime strings remain |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
 
 [B]: https://github.com/matthis-k/phenix-ai/actions/runs/43537983510
 [C]: fbp-hardening-campaign-20261114.md
+[A]: https://github.com/matthis-k/phenix-ai/actions/runs/43696623155
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
-The following actual defects/WIP requirements are separately implemented and
-locally verified; final hosted evidence belongs to the same-head PR #1302 check
-rollup, not an older commit's passing run.
+The following actual defects/WIP requirements are separately implemented. Latest
+implementation acceptance is exact-head `08ab8fd23`, not an older commit's passing
+run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
 | --- | --- | --- | --- |
@@ -102,8 +104,11 @@ rollup, not an older commit's passing run.
 | WIP #1257 authority | Distinct support promises conflated; declarations could not express actual needs | Validate lower-bound requirements independently per plugin; capabilities never grant operations | CAS-only Write, invalid combinations, missing advertisements, false actual support, same-identity/different-grants tests |
 | Q7 source provenance | Scoped/plugin error envelopes hid existing typed causes | `Error::source` forwards nested storage/scoped/filesystem causes | `phenix-storage-plugin/tests/error_sources.rs` downcast and error-kind checks |
 | H4 admission work | Every request scanned all processes just to find Custom declarations | Construction-time Custom ID index includes polled/notified policies; callbacks still evaluated per scope | `fbp_custom_closure_admission`; no claimed wall-time speedup |
-| WIP #1259 ownership/atomicity | Composer/offer/import records independently authored and partially installed on caught failure | One public composer builder and consuming atomic register; metadata keys derived; private resolver payloads | Registrar atomicity, reserved-kind, multi-offer, self-import, lease and three-plugin nested extension proofs; final hosted gate |
+| WIP #1259 ownership/atomicity | Composer/offer/import records independently authored and partially installed on caught failure | One public composer builder and consuming atomic register; metadata keys derived; private resolver payloads | Registrar atomicity, reserved-kind, multi-offer, self-import, lease and three-plugin nested extension proofs; hosted acceptance at `90591a12`, retained at [current head][A] |
 | Newly found identity defect | `Registrar::add` validated one `id()` value but stored a second callback result | Capture and validate one stored ID; bundle preflight invokes no payload callbacks | Stateful-ID and invalid stored-name regressions; all original bounds remain |
+| A6 typed payload admission | Typed authoring keys were disconnected from injection, allowing wrong Rust payloads until runtime | Mode-aware existing input keys feed canonical session/request/Kernel/Generation and producer admission | Move-only/wire payloads, compile-fail direction/type, actual host, request, retry, codec ordering and lease regressions; [exact-head][A] |
+| Q6 request wait attribution | Session-wide blockers could not isolate a request's pending publication | Passive authenticated `request_blocked_queues`, attributed to pending producers | Both policies, internal/capture relief, cross-request buffered packets, invalid IDs and passivity; [exact-head][A] |
+| Q7 graph source provenance | Graph envelopes hid nested typed causes; derived conversion stringified NetworkError | Forward real sources and retain typed NetworkError in derived errors | Real graph/StorageGraph failure-path downcasts; [exact-head][A]; broader typed runtime protocol remains open |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
@@ -111,9 +116,10 @@ snapshots, persistence, subscriptions and provider leases. Independent review
 found no blocking defect; full workspace/default/no-default and strict local gates
 pass. WIP #1257 passed hosted acceptance at `f608a3fc` and is closed as superseded
 by its native adaptation in #1302, not merged to main. WIP #1259's bounded native
-implementation/migration and independent review are complete locally; it remains
-open until final exact-head hosted acceptance. Neither scope closes all of
-A1/A3/A4/A5/A6/Q7 or M7/M8. WIP #1258 and broad production-agent integration remain
+implementation/migration passed at `90591a12` and it is also closed as superseded,
+not merged to main. Neither WIP alone closes all of A1/A3/A4/A5/A6/Q7 or M7/M8.
+The subsequent independently accepted typed-admission batch closes only A6.
+WIP #1258 and broad production-agent integration remain
 independent follow-up work, not silently marked complete.
 
 ## Historical Candidate Evidence
@@ -184,7 +190,8 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 | C7 | In-process native callbacks explicitly classified as trusted | OS-isolated untrusted plugin adapter not implemented |
 | H1, H7 | Opt-in bounded FIFO lanes across ingress, internal edges, captures; round-robin runnable lane selection; EOS, cancellation/reuse, retained-capture, mixed-traffic regressions | Queue isolation is not independent process state or progress through a nonconsuming reader; no per-payload byte budget or universal fairness claim |
 | H4, H5, H6 | Verified optimization stack retained; exact paired timing/RSS exposed regressions, leading to a profiled correction | Same-head comparison must verify correction; production-representative acceptance remains outstanding |
-| A1, A2, A4, A5, A6, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension, authoring consolidation, admission ergonomics, incremental compilation and dependency scaling remain |
+| A6 | Existing typed input keys now feed actual session/request/Kernel/Generation and producer admission; independent review and `08ab8fd23` exact-head acceptance | Bounded finding closed; runtime validation still applies and generation authority belongs to A5 |
+| A1, A2, A4, A5, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension, authoring consolidation, physical-path exposure, incremental compilation and dependency scaling remain |
 | A3, Q1, Q6, Q7 | Ownership primitive, typed closure/deadline diagnostics, independent storage capabilities and retained error causes | Broader graph/store authority separation, module concentration and runtime error provenance remain |
 | Q4 | Intentional blocking and finite FIFO limitations documented/tested | Static liveness analysis and sound progress diagnostics remain |
 | H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained and exercised at `a2d7b4d3`; newer changes require their own same-head gates | No permission to weaken existing guarantees or substitute earlier CI for current acceptance |
@@ -205,7 +212,8 @@ passed. This is historical provenance, not the current table's comparison head.
 The [incoming historical tracker](https://github.com/matthis-k/phenix-ai/blob/516e0883875d5ec483e3595d50b77b3d5e8979c4/docs/fbp-issue-progress-estimates-20261113.md)
 records the earlier H3b 76.0% to 78.0% and Q5 73.0% to 74.0% increases, with
 the mean moving from 55.2% to 55.3%. Those historical deltas are not repeated in
-the authoritative current table: all 33 current deltas remain +0.0 pp.
+the authoritative current table: only the newly accepted A6 delta is +70.0 pp;
+the other 32 current deltas remain +0.0 pp.
 The accepted stack evidence includes the actual `wake.rs` Loom verifier, all
 13,440 serialized wake-operation orders,
 real notification/retirement races, delegated-worker cancellation/replacement,

@@ -1,6 +1,6 @@
 # Typed Admission Using Existing Input Keys
 
-Status: implemented and independently reviewed; exact-head hosted acceptance pending.
+Status: implemented, independently reviewed and exact-head CI verified at `08ab8fd23`.
 Based on correctness-verified `90591a12`.
 
 ## Actual Problem And Constraints
@@ -100,4 +100,22 @@ of existing publication waits, sharing the session-wide blocker calculation. Tes
 cover full captures/internal queues, attribution behind another request's buffered
 capture, relief, invalid IDs, unscoped exclusion and no callback/deadline mutation.
 It resolves a Q6 attribution/diagnostic gap, not general Custom readiness explanations
-or static liveness. Both independent corrections require final same-head CI too.
+or static liveness. Both independent corrections passed the same-head CI below.
+
+## Exact-Head Acceptance
+
+Implementation head `08ab8fd23679522544c02ecedb431a3d0e1a992d` passed all
+fifteen hosted workflows, including:
+
+- [Full six-job Flake matrix 43696623155](https://github.com/matthis-k/phenix-ai/actions/runs/43696623155).
+- [Actual-source wake Loom 43696622738](https://github.com/matthis-k/phenix-ai/actions/runs/43696622738).
+- [Session ownership Loom 43696622936](https://github.com/matthis-k/phenix-ai/actions/runs/43696622936).
+- [Eight-repeat native notifier/plugin-lock gate 43696627598](https://github.com/matthis-k/phenix-ai/actions/runs/43696627598).
+- [Twelve-repeat in-flight worker recovery 43696627520](https://github.com/matthis-k/phenix-ai/actions/runs/43696627520).
+
+The original bounded A6 admission payload/ergonomics finding is therefore scoped
+verified. Generation-bound authority remains A5, not a newly implied key guarantee.
+Q6 and Q7 remain open with unchanged scores; their corrections above are bounded
+subproblems. Benchmark workflow success is not blanket performance acceptance.
+This subsequent evidence-only documentation revision requires its own exact-head
+checks; the implementation runs are not relabeled as a pass for another commit.
