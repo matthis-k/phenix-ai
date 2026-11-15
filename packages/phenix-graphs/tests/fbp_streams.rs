@@ -107,6 +107,7 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let before_query = calls.load(Ordering::SeqCst);
     // Startup has no input heads, so the custom policy need not be invoked.
     assert_eq!(session.state(), SessionState::Quiescent);
+    assert_eq!(session.input_waits().len(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), before_query);
     assert_eq!(effects.load(Ordering::SeqCst), 0);
 
@@ -116,12 +117,14 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let snapshot: &NetworkSession = &session;
     for _ in 0..4 {
         assert_eq!(snapshot.state(), SessionState::Waiting);
+        assert!(snapshot.input_waits().is_empty());
     }
     assert_eq!(calls.load(Ordering::SeqCst), after_admission);
 
     allowed.store(true, Ordering::SeqCst);
     // A pure observation does not drive a newly enabled readiness policy.
     assert_eq!(snapshot.state(), SessionState::Waiting);
+    assert!(snapshot.input_waits().is_empty());
     assert_eq!(calls.load(Ordering::SeqCst), after_admission);
     assert!(session.run_until_idle(64).steps > 0);
     assert_eq!(
@@ -483,27 +486,33 @@ fn capture_aliases_are_one_atomic_fanout() {
 struct Waiter {
     phase: usize,
     total: Arc<AtomicUsize>,
+    wait_inputs: bool,
+    lane: Arc<Mutex<Option<usize>>>,
 }
 impl Process for Waiter {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        *self.lane.lock().unwrap() = cx.correlation_lane();
         match self.phase {
             0 => {
                 cx.take("a").unwrap();
                 self.phase = 1;
-                Ok(Step::WaitInput("b".into()))
             }
             _ => {
                 if let Some(value) = cx.take("b") {
                     self.total
                         .fetch_add(value.get::<i64>()? as usize, Ordering::SeqCst);
-                    Ok(Step::WaitInput("b".into()))
                 } else if cx.is_closed("b") {
-                    Ok(Step::Finished)
+                    return Ok(Step::Finished);
                 } else {
-                    Err("resumed without data or EOS".into())
+                    return Err("resumed without data or EOS".into());
                 }
             }
         }
+        Ok(if self.wait_inputs {
+            Step::WaitInputs(Readiness::Any)
+        } else {
+            Step::WaitInput("b".into())
+        })
     }
 }
 #[test]
@@ -527,6 +536,8 @@ fn wait_input_resumes_same_activation_for_values_and_eos() {
             Arc::new(move || Waiter {
                 phase: 0,
                 total: shared.clone(),
+                wait_inputs: false,
+                lane: Arc::new(Mutex::new(None)),
             }),
         )
         .unwrap();
@@ -548,6 +559,186 @@ fn wait_input_resumes_same_activation_for_values_and_eos() {
     assert_ne!(s.run_until_idle(10).state, SessionState::Completed);
     s.close_input("a").unwrap();
     assert_eq!(s.state(), SessionState::Completed);
+}
+
+#[test]
+fn input_waits_follow_waiter_ownership_and_live_lane_registration() {
+    use phenix_graph::runtime::{QueueEndpoint, RequestQueuePolicy};
+
+    for (policy, wait_inputs) in [
+        (RequestQueuePolicy::SharedFifo, false),
+        (RequestQueuePolicy::SharedFifo, true),
+        (RequestQueuePolicy::BoundedLanes, false),
+        (RequestQueuePolicy::BoundedLanes, true),
+    ] {
+        let total = Arc::new(AtomicUsize::new(0));
+        let shared = total.clone();
+        let lane = Arc::new(Mutex::new(None));
+        let observed_lane = lane.clone();
+        let mut b = NetworkBuilder::new();
+        let p = b
+            .node(
+                "wait",
+                Arc::new(
+                    Interface::new(
+                        [
+                            PortDef::wire::<i64>("a").unwrap(),
+                            PortDef::wire::<i64>("b").unwrap(),
+                        ],
+                        [],
+                    )
+                    .unwrap(),
+                ),
+                Arc::new(move || Waiter {
+                    phase: 0,
+                    total: shared.clone(),
+                    wait_inputs,
+                    lane: observed_lane.clone(),
+                }),
+            )
+            .unwrap();
+        for port in ["a", "b"] {
+            b.expose_input(port, p.wire_input::<i64>(port).unwrap(), one())
+                .unwrap();
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut config = restarting_options();
+        config.max_requests = NonZeroUsize::new(2).unwrap();
+        config.request_queue_policy = policy;
+        config.readiness.insert(
+            "wait".into(),
+            Readiness::Custom(Arc::new(ReadinessCalls(
+                calls.clone(),
+                Arc::new(AtomicBool::new(true)),
+            ))),
+        );
+        let mut s = b
+            .build()
+            .unwrap()
+            .compile()
+            .unwrap()
+            .start_with_options(config);
+        let queues = |s: &NetworkSession| {
+            let before = calls.load(Ordering::SeqCst);
+            let waits = s.input_waits();
+            assert_eq!(calls.load(Ordering::SeqCst), before);
+            waits
+                .into_iter()
+                .map(|wait| {
+                    let QueueEndpoint::Input(port) = wait.producer else {
+                        panic!("expected ingress producer");
+                    };
+                    assert!(matches!(
+                        wait.consumer,
+                        QueueEndpoint::Process { index: 0, port: ref name } if name == &port
+                    ));
+                    assert_eq!(wait.occupancy, 0);
+                    assert_eq!(wait.capacity, one().get());
+                    (port, wait.queue)
+                })
+                .collect::<Vec<_>>()
+        };
+        let waited_ports = |entries: &[(String, usize)]| {
+            entries
+                .iter()
+                .filter(|(port, _)| wait_inputs || port == "b")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let canonical = queues(&s);
+        assert_eq!(
+            canonical
+                .iter()
+                .map(|(port, _)| port.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        let a = s.begin_request(None).unwrap();
+        let a_idle = queues(&s);
+        let a_queues = if policy == RequestQueuePolicy::BoundedLanes {
+            a_idle
+                .iter()
+                .filter(|entry| !canonical.contains(entry))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            canonical.clone()
+        };
+        let b = s.begin_request(None).unwrap();
+        let all_idle = queues(&s);
+        if policy == RequestQueuePolicy::BoundedLanes {
+            assert_eq!(a_queues.len(), 2);
+            // Idle diagnostics keep canonical, A, then B within each port.
+            assert_eq!(all_idle.len(), 6);
+            for (position, port) in ["a", "b"].into_iter().enumerate() {
+                assert_eq!(all_idle[position * 3], canonical[position]);
+                assert_eq!(all_idle[position * 3 + 1], a_queues[position]);
+                assert_eq!(all_idle[position * 3 + 2].0, port);
+            }
+        } else {
+            assert_eq!(all_idle, canonical);
+        }
+
+        s.inject_request(a, "a", Value::of(1_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), Some(0));
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.inject_request(b, "b", Value::of(99_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 0);
+        assert_eq!(s.request_work(a).unwrap().waiting_input, 1);
+        assert_eq!(total.load(Ordering::SeqCst), 0);
+        // Shared FIFO's occupied b queue is not an empty-queue dependency.
+        let expected = if policy == RequestQueuePolicy::SharedFifo {
+            waited_ports(&canonical)
+                .into_iter()
+                .filter(|(port, _)| port != "b")
+                .collect()
+        } else {
+            waited_ports(&a_queues)
+        };
+        assert_eq!(queues(&s), expected);
+        s.cancel_request(b).unwrap();
+        s.release_request(b).unwrap();
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.cancel_request(a).unwrap();
+        s.release_request(a).unwrap();
+        assert_eq!(queues(&s), canonical);
+
+        let reused = s.begin_request(None).unwrap();
+        assert_eq!(queues(&s), a_idle);
+        s.inject_request(reused, "a", Value::of(2_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), Some(0));
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.inject_request(reused, "b", Value::of(3_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(total.load(Ordering::SeqCst), 3);
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.cancel_request(reused).unwrap();
+        s.release_request(reused).unwrap();
+
+        let _a = s.begin_request(None).unwrap();
+        let b = s.begin_request(None).unwrap();
+        assert_eq!(queues(&s), all_idle);
+        s.inject("a", Value::of(4_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), None);
+        assert_eq!(queues(&s), waited_ports(&canonical));
+        s.inject_request(b, "b", Value::of(99_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 0);
+        if policy == RequestQueuePolicy::SharedFifo {
+            assert_eq!(queues(&s), expected);
+        } else {
+            assert_eq!(queues(&s), waited_ports(&canonical));
+        }
+        assert_eq!(total.load(Ordering::SeqCst), 3);
+        if policy == RequestQueuePolicy::BoundedLanes {
+            s.inject("b", Value::of(5_i64)).unwrap();
+            assert_eq!(s.run_until_idle(10).steps, 1);
+            assert_eq!(total.load(Ordering::SeqCst), 8);
+            assert_eq!(queues(&s), waited_ports(&canonical));
+        }
+    }
 }
 
 #[test]
@@ -4440,6 +4631,8 @@ fn request_cancellation_restarts_input_continuation_without_reusing_staged_state
             Arc::new(move || Waiter {
                 phase: 0,
                 total: shared.clone(),
+                wait_inputs: false,
+                lane: Arc::new(Mutex::new(None)),
             }),
         )
         .unwrap();

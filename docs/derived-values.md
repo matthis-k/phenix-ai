@@ -1,6 +1,6 @@
 # Derived Values
 
-Derived values are graph declarations over authorized Storage snapshots, not another reactive runtime. Storage owns persisted values, codecs and access; Graph owns execution; plugin contributions own declarations; Kernel owns producer lifecycle and waves. This guide describes the current V1 API. [Design rationale](derived-values-design.md) and [review/verification ledger](derived-values-review.md) are separate.
+Derived values are graph declarations over authorized Storage snapshots, not another reactive runtime. This guide records the historical wave-era V1 API; its Engine-era examples are not the current native FBP interface. Current authoring and query contracts are in `packages/phenix-storage-graph/src/derived/` and its executable examples/tests. [Design rationale](derived-values-design.md) and [review/verification ledger](derived-values-review.md) are historical evidence, not acceptance for the native implementation.
 
 ## Complete Author Example
 
@@ -165,7 +165,7 @@ Authority is fixed per binding/session. Binding validates read permission/schema
 
 ## Queries And Limits
 
-`query_spec` adds a terminal tap because ordinary compute output payloads can disappear under terminal-only retention when they fan out. `bind_query` requires exactly one source action and one tap action in the final engine via `Engine::node_ids_for_action`. Shared stateless `with_dyn_action` allocations permit deliberate compatible deployment reuse. Fresh incompatible recomposition rejects an old spec; multiple physical instances of the same actions are ambiguous and rejected with `WrongGeneration`.
+In native FBP, `query_spec` adds a terminal tap and binding requires unique final source/tap declarations through `CompiledNetwork::lookup_definition`. Missing declarations return `Error::Network(NetworkError::UnknownDefinition)`; repeated physical instances return `Error::Network(NetworkError::AmbiguousDefinition)`. The nested NetworkError is available through `Error::source`; there is no `WrongGeneration` variant. Declaration reuse permits deliberate redeployment but grants no generation authority. The Engine-specific description below is historical.
 
 Binding also inspects `Engine::trigger_targets`: the named refresh route must
 accept exactly one payload and target only the bound source's port 0, slot 0.

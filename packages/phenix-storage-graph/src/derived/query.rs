@@ -109,12 +109,8 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
         })
     }
     fn validate_compiled(&self, compiled: &CompiledNetwork) -> Result<(), Error> {
-        let tap = compiled
-            .lookup_definition(self.definition)
-            .map_err(|_| Error::WrongGeneration)?;
-        let root = compiled
-            .lookup_definition(self.value.root.definition.definition_key())
-            .map_err(|_| Error::WrongGeneration)?;
+        let tap = compiled.lookup_definition(self.definition)?;
+        let root = compiled.lookup_definition(self.value.root.definition.definition_key())?;
         self.validate_targets(
             root.index,
             compiled
@@ -137,12 +133,8 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
         &self,
         binding: &phenix_kernel::host::Binding<'_>,
     ) -> Result<(), Error> {
-        let tap = binding
-            .lookup_definition(self.definition)
-            .map_err(|_| Error::WrongGeneration)?;
-        let root = binding
-            .lookup_definition(self.value.root.definition.definition_key())
-            .map_err(|_| Error::WrongGeneration)?;
+        let tap = binding.lookup_definition(self.definition)?;
+        let root = binding.lookup_definition(self.value.root.definition.definition_key())?;
         self.validate_targets(
             root.index,
             binding.input_targets(self.value.refresh_route()),

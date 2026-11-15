@@ -65,7 +65,6 @@ pub enum Error {
     Kernel(phenix_kernel::CallbackError),
     Storage(phenix_storage::Error),
     MultipleRefreshRoots,
-    WrongGeneration,
     InvalidRefreshRoute(String),
     NestedQuery,
     PublicationCount(usize),

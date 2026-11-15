@@ -1991,11 +1991,21 @@ impl NetworkSession {
                 p.inputs
                     .iter()
                     .filter(|port| p.waiting.as_ref().is_none_or(|name| name == &port.name))
-            })
-            .flat_map(|port| &port.queues)
-            .filter(|queue| {
-                self.request_queue_policy == RequestQueuePolicy::SharedFifo
-                    || self.queue_lanes[**queue].is_none_or(|lane| live_lanes.contains(&lane))
+                    .flat_map(|port| &port.queues)
+                    .filter(|queue| {
+                        if self.request_queue_policy == RequestQueuePolicy::SharedFifo {
+                            return true;
+                        }
+                        let lane = self.queue_lanes[**queue];
+                        if p.handoff.state() == HandoffState::WaitingInput {
+                            match p.request {
+                                Some(request) => lane == Some(self.requests[&request].lane),
+                                None => lane.is_none(),
+                            }
+                        } else {
+                            lane.is_none_or(|lane| live_lanes.contains(&lane))
+                        }
+                    })
             })
             .filter(|q| {
                 self.transport.queues()[**q].is_empty() && !self.transport.queues()[**q].is_eos()

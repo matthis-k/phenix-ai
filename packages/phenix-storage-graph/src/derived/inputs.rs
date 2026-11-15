@@ -51,6 +51,8 @@ pub trait StoredInputs {
     type Owned: Clone + Send + Sync + 'static;
     fn owned(&self) -> Self::Owned;
     fn sources(inputs: &Self::Owned) -> Vec<ReadSource>;
+    /// Tuple implementations require exactly one entry per input and reject a
+    /// cardinality mismatch before invoking any cell decoder.
     fn decode(
         inputs: &Self::Owned,
         entries: &[SnapshotEntry],
@@ -99,7 +101,13 @@ macro_rules! tuples {
             type Owned = ($($T::Owned,)+);
             fn owned(&self) -> Self::Owned { ($(self.$i.owned(),)+) }
             fn sources(v: &Self::Owned) -> Vec<ReadSource> { vec![$($T::source(&v.$i)),+] }
-            fn decode(v: &Self::Owned, entries: &[SnapshotEntry]) -> phenix_storage::Result<Self::Values> { Ok(($($T::decode(&v.$i, &entries[$i])?,)+)) }
+            fn decode(v: &Self::Owned, entries: &[SnapshotEntry]) -> phenix_storage::Result<Self::Values> {
+                const ARITY: usize = [$(stringify!($T)),+].len();
+                if entries.len() != ARITY {
+                    return Err(phenix_storage::Error::SnapshotEntryMismatch);
+                }
+                Ok(($($T::decode(&v.$i, &entries[$i])?,)+))
+            }
         }
         impl<F, O, $($T),+> TupleFunction<($($T,)+), O> for F
         where F: Fn($($T),+) -> O + Send + Sync + 'static {

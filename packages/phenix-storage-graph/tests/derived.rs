@@ -1,13 +1,14 @@
 mod support;
 use phenix_graph::{
     Value,
-    network::NetworkBuilder,
+    network::{NetworkBuilder, NetworkError},
     process::{ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher},
     runtime::{RequestStatus, SessionState},
 };
 use phenix_storage::{
     Backend, Codec, Grant, MemoryBackend, Operation, Revisioned, Scope, TypedKv,
     scoped::{Identity, ResourceCatalog},
+    snapshot::{ReadConsistency, ReadSource, SnapshotEntry, SnapshotReader},
 };
 use phenix_storage_graph::derived::*;
 use std::sync::{
@@ -15,6 +16,99 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use support::*;
+
+#[test]
+fn stored_inputs_decode_checks_all_tuple_lengths_before_any_callback() {
+    struct Probe(Arc<AtomicUsize>);
+    impl CellInput for &Probe {
+        type Value = ();
+        type Owned = Arc<AtomicUsize>;
+        fn owned(&self) -> Self::Owned {
+            self.0.clone()
+        }
+        fn source(_: &Self::Owned) -> ReadSource {
+            panic!("length validation must not collect sources")
+        }
+        fn decode(calls: &Self::Owned, _: &SnapshotEntry) -> phenix_storage::Result<()> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let f = Fixture::new(false);
+    f.put(&f.a, 3);
+    f.put(&f.b, 5);
+    let snapshot = SnapshotReader::new(
+        vec![
+            f.a.source(),
+            f.b.source(),
+            f.a.source(),
+            f.b.source(),
+            f.a.source(),
+        ],
+        ReadConsistency::AtomicWithinMount,
+    )
+    .unwrap()
+    .read()
+    .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let probe = Probe(calls.clone());
+    fn decode<I: StoredInputs>(
+        inputs: I,
+        entries: &[SnapshotEntry],
+    ) -> phenix_storage::Result<I::Values> {
+        I::decode(&inputs.owned(), entries)
+    }
+    macro_rules! check {
+        ($arity:expr, $probes:expr, $cells:expr, $expected:expr) => {{
+            calls.store(0, Ordering::SeqCst);
+            for len in 0..=snapshot.entries().len() {
+                if len == $arity {
+                    continue;
+                }
+                assert!(matches!(
+                    decode($probes, &snapshot.entries()[..len]),
+                    Err(phenix_storage::Error::SnapshotEntryMismatch)
+                ));
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    0,
+                    "arity={}, len={len}",
+                    $arity
+                );
+                assert!(matches!(
+                    decode($cells, &snapshot.entries()[..len]),
+                    Err(phenix_storage::Error::SnapshotEntryMismatch)
+                ));
+            }
+            decode($probes, &snapshot.entries()[..$arity]).unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), $arity);
+            assert_eq!(
+                decode($cells, &snapshot.entries()[..$arity]).unwrap(),
+                $expected
+            );
+            let mut wrong_source = snapshot.entries()[..$arity].to_vec();
+            wrong_source[$arity - 1] = snapshot.entries()[$arity].clone();
+            assert!(matches!(
+                decode($cells, &wrong_source),
+                Err(phenix_storage::Error::SnapshotEntryMismatch)
+            ));
+        }};
+    }
+    check!(1, (&probe,), (&f.a,), (Number(3),));
+    check!(2, (&probe, &probe), (&f.a, &f.b), (Number(3), Number(5)));
+    check!(
+        3,
+        (&probe, &probe, &probe),
+        (&f.a, &f.b, &f.a),
+        (Number(3), Number(5), Number(3))
+    );
+    check!(
+        4,
+        (&probe, &probe, &probe, &probe),
+        (&f.a, &f.b, &f.a, &f.b),
+        (Number(3), Number(5), Number(3), Number(5))
+    );
+}
 
 struct ReadProbe {
     memory: MemoryBackend,
@@ -67,6 +161,31 @@ fn one_atomic_batch_per_query_no_build_or_binding_reads_and_denial_recovers() {
     f.put(&f.a, 3);
     f.put(&f.b, 5);
     let (plugin, spec) = sum(&f, false);
+    let mut catalog = phenix_plugin::PluginCatalog::new();
+    let kind = catalog
+        .register("domain", |plugin: Plugin| Ok(plugin))
+        .unwrap();
+    let mut plugins = catalog.instance();
+    plugins.load(&kind, plugin.clone()).unwrap();
+    let host = DerivedHost::new(plugins);
+    let mut validated = false;
+    let candidate = host
+        .prepare(
+            vec![],
+            options(&plugin),
+            Arc::new(LocalProcessDispatcher),
+            "valid binding",
+            |binding| {
+                spec.validate_binding(binding)?;
+                assert_eq!(reads.load(Ordering::SeqCst), 0);
+                validated = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(validated);
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    drop(candidate);
     let mut runtime = local(plugin);
     runtime.bind_query(&spec).unwrap();
     assert_eq!(reads.load(Ordering::SeqCst), 0);
@@ -406,7 +525,7 @@ fn final_definition_keys_reject_fresh_and_ambiguous_declarations_but_allow_redep
     let other = local(fresh);
     assert!(matches!(
         other.bind_query(&spec),
-        Err(Error::WrongGeneration)
+        Err(Error::Network(error)) if *error == NetworkError::UnknownDefinition
     ));
     let mut child = NetworkBuilder::new();
     let sum = child
@@ -420,7 +539,7 @@ fn final_definition_keys_reject_fresh_and_ambiguous_declarations_but_allow_redep
     let runtime = local(authored(parent, spec.clone(), None));
     assert!(matches!(
         runtime.bind_query(&spec),
-        Err(Error::WrongGeneration)
+        Err(Error::Network(error)) if *error == NetworkError::AmbiguousDefinition
     ));
 }
 
