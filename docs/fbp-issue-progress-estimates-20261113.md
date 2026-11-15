@@ -11,14 +11,20 @@ The campaign initially relied incorrectly on stale local remote-tracking
 `origin/impl/graph-consolidation-20261110` at `16e77f6c6`. Its first commit,
 `0d145f3`, is on `fix/fbp-lifecycle-request-lanes-20261114` (PR #1302, based on
 the impl graph branch). The actual remote impl head is `89e00d0`, with later
-foundations. After fetching, the campaign is now merging exact verified PR #1300
+foundations. The campaign subsequently merged exact verified PR #1300
 head `516e0883875d5ec483e3595d50b77b3d5e8979c4` to preserve the complete stack
 and all scoped gates. Earlier claims that the later stack was absent describe the
 initial candidate, not the reconciled merge target.
 
-**No issue score increase or closure is accepted** here. The new merged head's
-full acceptance is pending; neither verified baseline CI nor local checks on
-`0d145f3` accept that new head. This is the authoritative 33-issue scorecard;
+The immediately preceding correctness-verified candidate is
+`a2d7b4d388bae7eddda61e09fad2cec7d88d9d67`, with
+[six-job Flake CI 43641831034](https://github.com/matthis-k/phenix-ai/actions/runs/43641831034)
+and both Loom/native concurrency gates passing. Exact paired measurements still
+showed closure-chain/scoped-optional regressions, so it did not receive blanket
+performance acceptance. Its issue scores remained identical to verified `516e088`.
+The table below compares with those unchanged scores: **no whole-issue closure or
+percentage increase is manufactured from the new subproblem work**. This is the
+authoritative 33-issue scorecard;
 the [historical issue ledger](fbp-issue-ledger-20261111.md) and campaign record
 provide detail, not a second current score authority.
 
@@ -48,9 +54,9 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | H2 | Callback panic containment | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate `worker_guards` |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] |
 | H3b | Session/drain and worker interleavings | 78.0% | 78.0% | +0.0 | Partial | [Baseline][B]; candidate `native_sessions`, `worker_guards` |
-| H4 | Scheduling scans | 76.0% | 76.0% | +0.0 | Partial | [Baseline][B]; scheduler stack preserved by merge, acceptance pending |
-| H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Baseline][B]; closure stack preserved by merge, acceptance pending |
-| H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | [Baseline][B]; no new paired measurements |
+| H4 | Scheduling scans | 76.0% | 76.0% | +0.0 | Partial | [Baseline][B]; dirty scheduler retained; paired workload assessment |
+| H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Profiled closure correction](fbp-closure-overhead-20261114.md); same-head timing required |
+| H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | Exact paired baseline and regression evidence retained; no production acceptance |
 | H7 | Request isolation and fairness | 56.0% | 56.0% | +0.0 | Partial | [Baseline][B]; candidate `fbp_request_lanes`, bounded RR |
 | C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate recovery regression gates |
 | C2 | Obligation deduplication | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate closure-only fairness test |
@@ -64,10 +70,10 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | C10 | Redundant execution API | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; API removal retained by merge |
 | A1 | Private composite extension | 18.0% | 18.0% | +0.0 | Open | [Baseline][B]; general extension API missing |
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
-| A3 | Graph/store separation | 20.0% | 20.0% | +0.0 | Open | [Baseline][B]; dependency direction unchanged |
+| A3 | Graph/store separation | 20.0% | 20.0% | +0.0 | Open | [Storage capability correction](fbp-storage-capabilities-20261114.md); graph-local Store separation still open |
 | A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Baseline][B]; not redesigned in this batch |
 | A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | [Baseline][B]; not redesigned in this batch |
-| A6 | Admission API ergonomics | 30.0% | 30.0% | +0.0 | Open | [Baseline][B]; candidate typed closure errors only |
+| A6 | Admission API ergonomics | 30.0% | 30.0% | +0.0 | Open | Plain scoped reads and checked capability admission corrected; typed graph ingress remains open |
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; bounds retained by merge |
 | Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
@@ -75,13 +81,40 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
 | Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate deadline path/request/ticket context |
-| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | [Baseline][B]; candidate invalid closure-port details |
+| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Structured closure errors plus retained scoped/plugin storage causes; broader audit open |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
 
 [B]: https://github.com/matthis-k/phenix-ai/actions/runs/43537983510
 [C]: fbp-hardening-campaign-20261114.md
 
-## Candidate Evidence, Not Yet Score-Accepted
+## Concrete Work And WIP Disposition
+
+Percentages above describe whole findings, not whether any implementation changed.
+The following actual defects/WIP requirements are separately implemented and
+locally verified; final hosted evidence belongs to the same-head PR #1302 check
+rollup, not an older commit's passing run.
+
+| Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
+| --- | --- | --- | --- |
+| H5 measured regression | Optional hot loop outlined after Custom support; built-ins looked up unused lane metadata | Common borrowed-name observed-input loop; lane lookup only before effective Custom callback | `fbp_readiness_lanes`, closure/optional suites, independent review, instruction profiling; exact paired native timing |
+| WIP #1257 plain/revision reads | Every scoped Read implicitly required CAS and returned tokens | Plain `Kv::get`, explicit `get_revisioned`, independent revision predicate | Populated plain-only/revision-only tests and native observer migration |
+| WIP #1257 snapshots | Missing planned batch capability; cell binding checked weaker consistency | Explicit request capability set; conditional `CellSpec::request`; eager atomic binding | Populated batch-only/no-CAS/no-single-revision snapshots; zero-payload preflight tests |
+| WIP #1257 authority | Distinct support promises conflated; declarations could not express actual needs | Validate lower-bound requirements independently per plugin; capabilities never grant operations | CAS-only Write, invalid combinations, missing advertisements, false actual support, same-identity/different-grants tests |
+| Q7 source provenance | Scoped/plugin error envelopes hid existing typed causes | `Error::source` forwards nested storage/scoped/filesystem causes | `phenix-storage-plugin/tests/error_sources.rs` downcast and error-kind checks |
+
+The storage WIP is adapted onto the native FBP branch, not merged from its old
+Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
+snapshots, persistence, subscriptions and provider leases. Independent review
+found no blocking defect; full workspace/default/no-default and strict local gates
+pass. This completes that bounded implementation scope subject to hosted exact-head
+acceptance, not all of A3/A6/Q7 or M7/M8. WIPs #1259/#1258 and broad production-agent
+integration remain independent follow-up work, not silently marked complete.
+
+## Historical Candidate Evidence
+
+The observations below describe the earlier candidate/merge sequence. Subsequent
+exact-head correctness acceptance at `a2d7b4d3` is recorded above; neither that
+acceptance nor the new local checks certify a later untested head.
 
 - Kernel producer callbacks run outside the producer-state mutex. The verified
   whole-drain retirement gate and exclusive blocking-driver ownership are retained;
@@ -138,17 +171,17 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 
 | Issues | Candidate implementation/evidence | Closure gap |
 | --- | --- | --- |
-| H3b, Q5 | Unlocked producer/session ownership transfer, ordered worker guards, whole-drain gate, exclusive driver ownership, real-thread regressions, actual-source three-property session Loom plus retained PR #1300 wake verifier | Exact merged-head acceptance pending; arbitrary plugin-created thread/lock cycles remain outside the contract |
+| H3b, Q5 | Unlocked producer/session ownership transfer, ordered worker guards, whole-drain gate, exclusive driver ownership, real-thread regressions, actual-source three-property session Loom plus retained PR #1300 wake verifier | `a2d7b4d3` exact-head gates passed; arbitrary plugin-created thread/lock cycles remain outside the contract |
 | C5 | Only `SessionOptions.deferred_timeout`, existing `overdue_jobs(now)` / `supervise_deferred(now)`, exact-ticket invalidation and driver deadline wake | `state()` stays passive; supervision is cooperative, external workers retain jobs/leases and can still perform effects |
 | C6 | Generation replacement tested with fresh process-private state and independent old sessions | Restart-only policy documented; universal live-state migration not implemented |
 | C3 | Explicit leased archival behavior documented | **Decision required:** strict old-generation revocation would change existing public behavior and independently cloned execution capabilities |
 | C7 | In-process native callbacks explicitly classified as trusted | OS-isolated untrusted plugin adapter not implemented |
 | H1, H7 | Opt-in bounded FIFO lanes across ingress, internal edges, captures; round-robin runnable lane selection; EOS, cancellation/reuse, retained-capture, mixed-traffic regressions | Queue isolation is not independent process state or progress through a nonconsuming reader; no per-payload byte budget or universal fairness claim |
-| H4, H5, H6 | Verified optimization stack and scoped gates retained by merge; no new acceptance credit | New exact-head gates and representative paired timing/allocation/RSS acceptance remain outstanding |
+| H4, H5, H6 | Verified optimization stack retained; exact paired timing/RSS exposed regressions, leading to a profiled correction | Same-head comparison must verify correction; production-representative acceptance remains outstanding |
 | A1, A2, A4, A5, A6, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension, authoring consolidation, admission ergonomics, incremental compilation and dependency scaling remain |
-| A3, Q1, Q6, Q7 | Explicit ownership primitive; typed invalid closure diagnostics; deadline context | Broader graph/store authority separation, diagnostics and error provenance audit remain |
+| A3, Q1, Q6, Q7 | Ownership primitive, typed closure/deadline diagnostics, independent storage capabilities and retained error causes | Broader graph/store authority separation, module concentration and runtime error provenance remain |
 | Q4 | Intentional blocking and finite FIFO limitations documented/tested | Static liveness analysis and sound progress diagnostics remain |
-| H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained as merge acceptance obligations, not re-proven by initial candidate CI | Full merged-head acceptance pending |
+| H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained and exercised at `a2d7b4d3`; newer changes require their own same-head gates | No permission to weaken existing guarantees or substitute earlier CI for current acceptance |
 
 M0-M6 retain substantial native implementation, but this candidate does not close
 M7. M8 P1/P2 production-agent integration is still outstanding; no executable model,
