@@ -2,6 +2,19 @@
 
 ## Current Accepted Batch
 
+The follow-on [resolver/emission diagnostic batch](fbp-error-context-20261115.md)
+passed all fifteen exact-head workflows at `51878d147`. Explicit incompatible
+import selections retain their actual InterfaceError; invalid emissions distinguish
+unknown outputs from value-identity mismatches with compiled path context. Full
+workspace/default/no-default, formatting, strict Clippy and independent review pass.
+Q6/Q7 remain open with unchanged scores and counts. A separate isolated production-
+Composer regression now reproduces transient dependency defeat (Q3); it is not
+fixed or included as a failing test in this accepted batch. Its algorithm design
+must address termination and zero/multiple consistent selections before changing
+selection. This evidence-only revision requires its own exact-head checks.
+
+## Previous Typed Admission Batch
+
 Typed admission and the independent Q6/Q7 diagnostic corrections passed all
 fifteen exact-head workflows at `08ab8fd23679522544c02ecedb431a3d0e1a992d`.
 The [typed-admission design/review](fbp-typed-admission-20261115.md#exact-head-acceptance)
@@ -17,9 +30,10 @@ requires its own exact-head checks, separate from the implementation head above.
 WIP #1259 passed at `90591a12` and is closed as superseded by native #1302, like
 #1257. Neither old WIP was merged to main. Continue easy independent correctness
 work before broader architecture or performance tuning. The next source-reviewed
-candidates are retained resolver contract-error causes (Q7), actionable invalid
+candidates were retained resolver contract-error causes (Q7), actionable invalid
 emission context (Q6), then reproduction/review of transient dependency defeat (Q3).
-These are follow-up candidates, not implemented or credited findings.
+The current batch above records their subsequent implementation/reproduction,
+without additional whole-finding completion credit.
 
 ## Previous Follow-On Batches
 

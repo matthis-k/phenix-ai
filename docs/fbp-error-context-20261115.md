@@ -1,7 +1,7 @@
 # Resolver Causes And Invalid-Emission Context
 
-Status: implemented, independently reviewed and locally verified; exact-head hosted
-acceptance pending. Based on verified `b74201d80`.
+Status: implemented, independently reviewed and exact-head verified at `51878d147`.
+Based on verified `b74201d80`.
 
 ## Constraints And Alternatives
 
@@ -66,5 +66,42 @@ Final independent diff review found no actionable defects. Full locked workspace
 tests with default and no-default features, workspace formatting and strict
 all-target Clippy pass locally. Malformed bytes with a mismatched identity test
 metadata-only diagnosis, not byte-integrity validation of a matching schema.
-Hosted same-head acceptance is still required; earlier passing commits do not
-certify this batch.
+## Exact-Head Acceptance
+
+Implementation `51878d147e194a9f7aebf2020c2c550a10e50f9f` passed all fifteen
+hosted workflows, including:
+
+- [Full six-job Flake matrix 43702741898](https://github.com/matthis-k/phenix-ai/actions/runs/43702741898).
+- [Actual-source wake Loom 43702741535](https://github.com/matthis-k/phenix-ai/actions/runs/43702741535).
+- [Session ownership Loom 43702741498](https://github.com/matthis-k/phenix-ai/actions/runs/43702741498).
+- [Eight-repeat native notifier/plugin-lock gate 43702786081](https://github.com/matthis-k/phenix-ai/actions/runs/43702786081).
+- [Twelve-repeat in-flight worker recovery 43702785925](https://github.com/matthis-k/phenix-ai/actions/runs/43702785925).
+
+This evidence-only follow-up requires its own exact-head checks. Benchmark workflow
+success is not blanket performance acceptance. Q6/Q7 scores remain unchanged.
+
+## Separate Q3 Reproduction
+
+A detached worktree at `/tmp/opencode/fbp-q3-reproduction-51878d14`, based on the
+same implementation commit, reproduces a selection-correctness defect. Its single
+added regression uses the existing production Composer and exhaustive test oracle:
+`dependent_recovers_when_its_prerequisite_winner_is_later_deactivated`.
+
+| Registration | Priority | Requires | Writes |
+| --- | ---: | --- | --- |
+| P | 10 | p | x |
+| Q | 5 | q | a |
+| R | 3 | none | b |
+| p | 0 | none | a |
+| q | 0 | none | b |
+
+The oracle uniquely expects `{P, R, p}`; production selects `{R, p}`. The first
+pass selects `{P, Q, R}` and permanently deactivates both P and Q for missing
+prerequisites. Removing Q restores p, but P is never reconsidered. The new test
+fails at the existing active-set assertion; the four pre-existing model tests pass
+when it is skipped. The failing test is isolated, not committed into this batch.
+
+Q3 remains open and unchanged. Do not fix this by blindly clearing the deactivated
+set: mixed dependency/defeat feedback needs a termination argument and explicit
+handling of zero or multiple consistent selections. Preserve overlap, priority,
+dependency-ordered writes, grants, ambiguity rejection and atomic publication.

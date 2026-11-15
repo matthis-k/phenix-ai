@@ -16,7 +16,7 @@ head `516e0883875d5ec483e3595d50b77b3d5e8979c4` to preserve the complete stack
 and all scoped gates. Earlier claims that the later stack was absent describe the
 initial candidate, not the reconciled merge target.
 
-The immediately preceding correctness-verified candidate is
+The correctness-verified score comparison candidate, before A6 closure, is
 `90591a1202e4a1e803c4258e50a1b7d80ec97d6c`, with
 [six-job Flake CI 43674358770](https://github.com/matthis-k/phenix-ai/actions/runs/43674358770)
 and both Loom/native concurrency gates passing. Its issue scores remained identical
@@ -28,6 +28,12 @@ admission finding after independent review. Q6/Q7 subproblem fixes do not receiv
 whole-issue closure or score increases. This is the authoritative 33-issue scorecard;
 the [historical issue ledger](fbp-issue-ledger-20261111.md) and campaign record
 provide detail, not a second current score authority.
+
+Subsequent implementation `51878d147e194a9f7aebf2020c2c550a10e50f9f` passed all
+fifteen workflows, including [six-job Flake CI 43702741898][E]. Its additional
+resolver-cause and invalid-emission diagnostic fixes leave all scores unchanged.
+The [design, review and evidence](fbp-error-context-20261115.md) also records a
+separately reproduced, still-unfixed Q3 selection defect.
 
 The unweighted issue mean is **57.4%**, previously 55.3%. Formal classifications are
 **11 scoped verified / 7 partial / 15 open**. This mean is not a substitute for issue
@@ -78,22 +84,23 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
-| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight avoids full namespace clone; graph dependency algorithm unchanged |
+| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight retained; [transient dependency-defeat defect reproduced](fbp-error-context-20261115.md#separate-q3-reproduction), not fixed |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
-| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | [Exact-head][A] passive request-specific publication blockers and attribution; general readiness/liveness explanations remain |
-| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | [Exact-head][A] typed graph/derived error sources plus retained scoped/plugin storage causes; process/runtime strings remain |
+| Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | Passive request blockers plus [exact-head][E] invalid-emission path/output and identity context; general readiness/liveness explanations remain |
+| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Typed graph/derived/storage sources plus [exact-head][E] selected-import InterfaceError cause; process/runtime strings remain |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
 
 [B]: https://github.com/matthis-k/phenix-ai/actions/runs/43537983510
 [C]: fbp-hardening-campaign-20261114.md
 [A]: https://github.com/matthis-k/phenix-ai/actions/runs/43696623155
+[E]: https://github.com/matthis-k/phenix-ai/actions/runs/43702741898
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `08ab8fd23`, not an older commit's passing
+implementation acceptance is exact-head `51878d147`, not an older commit's passing
 run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
@@ -109,6 +116,8 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | A6 typed payload admission | Typed authoring keys were disconnected from injection, allowing wrong Rust payloads until runtime | Mode-aware existing input keys feed canonical session/request/Kernel/Generation and producer admission | Move-only/wire payloads, compile-fail direction/type, actual host, request, retry, codec ordering and lease regressions; [exact-head][A] |
 | Q6 request wait attribution | Session-wide blockers could not isolate a request's pending publication | Passive authenticated `request_blocked_queues`, attributed to pending producers | Both policies, internal/capture relief, cross-request buffered packets, invalid IDs and passivity; [exact-head][A] |
 | Q7 graph source provenance | Graph envelopes hid nested typed causes; derived conversion stringified NetworkError | Forward real sources and retain typed NetworkError in derived errors | Real graph/StorageGraph failure-path downcasts; [exact-head][A]; broader typed runtime protocol remains open |
+| Q7 resolver provenance | Explicit incompatible import selection stringified its InterfaceError | Typed IneligibleReason retains the actual cause; policy denial remains sourceless | Context, direct cause identity, denial/allowlist forms, diagnostic precedence and zero preparation; [exact-head][E] |
+| Q6 invalid emissions | Unknown output and incompatible identity shared an opaque process-index message | Compiled path/output context and expected/actual identities before routing | No-consumer/discard, malformed mismatched-schema bytes and request-local recovery under both policies; [exact-head][E] |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
