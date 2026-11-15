@@ -84,7 +84,14 @@ impl fmt::Display for NetworkError {
         write!(f, "network: {self:?}")
     }
 }
-impl std::error::Error for NetworkError {}
+impl std::error::Error for NetworkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Interface(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct Capability {

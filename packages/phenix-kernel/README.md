@@ -102,6 +102,9 @@ pub trait Producer: Send {
 producers and permit retry without reconstructing candidate artifacts.
 
 - `inject(&self, input: &str, value: Value) -> Result<(), InjectionError>` admits exactly one value and returns its ownership on failure.
+- `inject_key(&self, InputKey<T>, T)` pairs a public input name with its payload;
+  local and encoded keys preserve their modes. Conversion precedes session access,
+  and failure returns the constructed Value. Generation forwards the same method.
 - `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, String>` permits native requests, captures, completions and wakes only after start.
 - `run_steps(&self, budget: usize) -> Result<RunReport, String>` executes bounded native steps through the actual dispatcher and worker execution guards.
 - `drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError>` only
@@ -110,6 +113,8 @@ producers and permit retry without reconstructing candidate artifacts.
 - `compiled()` exposes immutable native declarations; `export::<T>(&Key)` retrieves a candidate-owned artifact.
 
 Each producer retains at most one pending event on `Full` without repolling.
+`InputEvent::new(key, payload)` supplies the same typed conversion for producers;
+it does not declare or grant a route, and retry reuses the retained envelope.
 Round-robin position persists across calls. Terminal poll errors detach producers
 and destroy them outside the producer mutex. Explicit session work does not hold
 the producer mutex; a drain defers admission instead of waiting behind it.

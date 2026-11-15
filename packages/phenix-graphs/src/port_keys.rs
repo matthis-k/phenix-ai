@@ -66,6 +66,7 @@ pub struct InputKey<T> {
     name: &'static str,
     mode: Mode<InputRef<T>>,
     decode: Option<Decoder<T>>,
+    encode: Option<fn(T) -> Value>,
 }
 impl<T> Copy for InputKey<T> {}
 impl<T> Clone for InputKey<T> {
@@ -79,6 +80,7 @@ impl<T: 'static> InputKey<T> {
             name,
             mode: Mode::Local,
             decode: None,
+            encode: None,
         }
     }
     pub const fn name(&self) -> &'static str {
@@ -100,6 +102,7 @@ impl<T: ContractValue> InputKey<T> {
                 definition: wire_definition::<T>,
             },
             decode: Some(|value| T::decode(value.bytes())),
+            encode: Some(Value::of::<T>),
         }
     }
 }
@@ -289,6 +292,28 @@ impl<T: InputRecord> InputGroup<T> {
 }
 
 impl<T: Send + Sync + 'static> InputKey<T> {
+    /// Construct a local value for `new`, or the canonical wire envelope for
+    /// `encoded`. Local payloads require neither Clone nor a codec.
+    ///
+    /// Conversion runs before admission and may panic, block or reenter through
+    /// application codec code. Rejection returns this Value, not the original T.
+    /// Keys grant no authority and infer no code/resource lease. To attach one,
+    /// use `key.value(payload).with_lease(lease)` with raw admission.
+    /// ```
+    /// use phenix_graph::InputKey;
+    /// struct MoveOnly(String);
+    /// let value = InputKey::<MoveOnly>::new("input").value(MoveOnly("hello".into()));
+    /// assert_eq!(value.borrow::<MoveOnly>().unwrap().0, "hello");
+    /// let wire = InputKey::<i64>::encoded("input").value(7);
+    /// assert_eq!(wire.bytes(), 7_i64.to_le_bytes());
+    /// ```
+    pub fn value(&self, payload: T) -> Value {
+        match self.encode {
+            Some(encode) => encode(payload),
+            None => Value::local(payload),
+        }
+    }
+
     fn take(&self, context: &mut ProcessContext, prefix: &str) -> Result<Value, String> {
         let name = path(prefix, self.name);
         let expected = self.definition().map_err(|error| error.to_string())?.value;

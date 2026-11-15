@@ -804,6 +804,35 @@ impl NetworkSession {
         Ok(())
     }
 
+    /// Convert a typed public input name and payload, then use ordinary admission.
+    /// Actual exported name, type/schema, closure and credit checks still apply.
+    /// Conversion precedes those checks; errors return the constructed Value.
+    /// ```
+    /// use phenix_graph::{InputKey, runtime::NetworkSession};
+    /// fn admit(session: &mut NetworkSession) {
+    ///     let _ = session.inject_key(InputKey::<i64>::new("input"), 7);
+    /// }
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::{InputKey, runtime::NetworkSession};
+    /// fn wrong(session: &mut NetworkSession) {
+    ///     session.inject_key(InputKey::<i64>::new("input"), String::new());
+    /// }
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::{OutputKey, runtime::NetworkSession};
+    /// fn wrong(session: &mut NetworkSession) {
+    ///     session.inject_key(OutputKey::<i64>::new("input"), 7);
+    /// }
+    /// ```
+    pub fn inject_key<T: Send + Sync + 'static>(
+        &mut self,
+        key: crate::InputKey<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        self.inject(key.name(), key.value(payload))
+    }
+
     pub fn inject_local<T: Send + Sync + 'static>(
         &mut self,
         name: &str,
@@ -1908,9 +1937,15 @@ impl NetworkSession {
     /// Actual full-queue publication dependencies, including external captures.
     /// These are diagnostics, not a proof that a cycle can make progress.
     pub fn blocked_queues(&self) -> Vec<QueueWait> {
+        self.blocked_queues_matching(None)
+    }
+
+    fn blocked_queues_matching(&self, request: Option<RequestId>) -> Vec<QueueWait> {
         self.processes
             .iter()
-            .filter(|p| p.pending.is_some())
+            .filter(|p| {
+                p.pending.is_some() && request.is_none_or(|request| p.request == Some(request))
+            })
             .flat_map(|p| &p.pending_targets)
             .filter(|q| self.transport.queues()[**q].is_full())
             .map(|q| {

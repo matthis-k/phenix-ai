@@ -90,7 +90,7 @@ A process holding a staged continuation or blocked publication still serializes
 other requests. Queue capacities bound packet counts, not arbitrary payload bytes.
 
 ```rust
-use phenix_graph::{ComponentDef, NetworkBuilder, SessionOptions, Value};
+use phenix_graph::{ComponentDef, InputKey, NetworkBuilder, SessionOptions};
 use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 let mut network = NetworkBuilder::new();
@@ -106,8 +106,8 @@ let mut session = network.build()?.compile()?.start_with_options(SessionOptions 
 });
 let slow = session.begin_request(Some("output"))?;
 let fast = session.begin_request(Some("output"))?;
-session.inject_request(slow, "input", Value::local(1_i64))?;
-session.inject_request(fast, "input", Value::local(2_i64))?;
+session.inject_request_key(slow, InputKey::<i64>::new("input"), 1)?;
+session.inject_request_key(fast, InputKey::<i64>::new("input"), 2)?;
 session.close_request(slow)?;
 session.close_request(fast)?;
 session.run_until_idle(16);
@@ -127,6 +127,18 @@ operation. `overdue_jobs(now)` is passive; `RunReport::next_deferred_timeout` bo
 the driver's next wait. Execution guards are an ordered
 `SessionOptions::execution_guards` list; `ActivationJob::with_guard` appends rather
 than replacing installed guards, and guard teardown happens in reverse order.
+
+`inject_key` and `inject_request_key` pair an existing typed input key with its
+payload. `InputKey::new` constructs a local Value; `encoded` uses the canonical
+wire codec/schema. Keys name public exports and grant no authority or topology
+identity. Conversion runs before admission checks, and failures retain the
+constructed Value. Runtime-discovered inputs continue using raw `inject`.
+
+For a pending request, `request_blocked_queues(id)` passively reports its exact
+full publication destinations, including occupancy/capacity. Attribution follows
+the pending producer request, not the request owning older buffered packets.
+Foreign/released request IDs reject; the query neither supervises deadlines nor
+proves deadlock or progress. `blocked_queues()` remains the session-wide view.
 
 ### Programs
 

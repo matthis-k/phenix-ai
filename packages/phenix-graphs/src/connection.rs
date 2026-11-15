@@ -464,7 +464,14 @@ impl fmt::Display for PrepareError {
         write!(f, "fanout preparation: {self:?}")
     }
 }
-impl std::error::Error for PrepareError {}
+impl std::error::Error for PrepareError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Connection(error) => Some(error),
+            Self::Adapter(_) => None,
+        }
+    }
+}
 
 pub struct PreparedFanout {
     owner: Arc<()>,

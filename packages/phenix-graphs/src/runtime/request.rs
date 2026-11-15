@@ -156,7 +156,14 @@ impl std::fmt::Display for RequestError {
         write!(f, "request: {self:?}")
     }
 }
-impl std::error::Error for RequestError {}
+impl std::error::Error for RequestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transport(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl NetworkSession {
     /// Reserve one bounded scope. `Some(output)` requires exactly one capture
@@ -273,6 +280,36 @@ impl NetworkSession {
                 value: e.value,
             })
     }
+    /// Typed conversion followed by public scoped admission. Request authority,
+    /// actual ingress and bounded credit remain runtime checks. Conversion runs
+    /// first, including for invalid requests; errors own the constructed Value.
+    /// ```
+    /// use phenix_graph::{InputKey, runtime::{NetworkSession, RequestId}};
+    /// fn admit(session: &mut NetworkSession, id: RequestId) {
+    ///     let _ = session.inject_request_key(id, InputKey::<i64>::encoded("input"), 7);
+    /// }
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::{InputKey, runtime::{NetworkSession, RequestId}};
+    /// fn wrong(session: &mut NetworkSession, id: RequestId) {
+    ///     session.inject_request_key(id, InputKey::<i64>::new("input"), String::new());
+    /// }
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::{OutputKey, runtime::{NetworkSession, RequestId}};
+    /// fn wrong(session: &mut NetworkSession, id: RequestId) {
+    ///     session.inject_request_key(id, OutputKey::<i64>::new("input"), 7);
+    /// }
+    /// ```
+    pub fn inject_request_key<T: Send + Sync + 'static>(
+        &mut self,
+        id: RequestId,
+        key: crate::InputKey<T>,
+        payload: T,
+    ) -> Result<(), RequestInjectionError> {
+        self.inject_request(id, key.name(), key.value(payload))
+    }
+
     pub fn inject_request_local<T: Send + Sync + 'static>(
         &mut self,
         id: RequestId,

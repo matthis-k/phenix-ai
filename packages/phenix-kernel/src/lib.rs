@@ -143,6 +143,36 @@ pub struct InputEvent {
     pub value: Value,
 }
 
+impl InputEvent {
+    /// Convert a typed public input name and payload into a producer event.
+    /// This grants no route authority. Conversion runs now, before route and
+    /// admission checks. Admission errors retain the constructed Value, not T;
+    /// undeclared routes keep the existing producer error/disposal behavior.
+    /// ```
+    /// use phenix_graph::InputKey;
+    /// use phenix_kernel::InputEvent;
+    /// let event = InputEvent::new(InputKey::<i64>::encoded("input"), 7);
+    /// assert_eq!(event.input, "input");
+    /// assert_eq!(event.value.bytes(), 7_i64.to_le_bytes());
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::InputKey;
+    /// use phenix_kernel::InputEvent;
+    /// InputEvent::new(InputKey::<i64>::new("input"), String::new());
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::OutputKey;
+    /// use phenix_kernel::InputEvent;
+    /// InputEvent::new(OutputKey::<i64>::new("input"), 7);
+    /// ```
+    pub fn new<T: Send + Sync + 'static>(key: phenix_graph::InputKey<T>, payload: T) -> Self {
+        Self {
+            input: key.name().into(),
+            value: key.value(payload),
+        }
+    }
+}
+
 /// A producer must not wait for an event. Poll/wake callbacks run without the
 /// kernel producer inventory mutex; recursive drain returns a typed error.
 /// Concurrent manual drains serialize; a blocking driver owns polling exclusively.
@@ -1437,6 +1467,18 @@ impl Kernel {
         session.notify_on_drop();
         let result = use_session(&mut session);
         Ok(result)
+    }
+
+    /// Convert before acquiring session ownership, then use raw admission.
+    /// Codec callbacks may panic, block or reenter; no rollback is implied.
+    /// Errors, including WouldBlock/Reentrant, return the constructed Value.
+    pub fn inject_key<T: Send + Sync + 'static>(
+        &self,
+        key: phenix_graph::InputKey<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        let value = key.value(payload);
+        self.inject(key.name(), value)
     }
 
     /// Inject one value. Reentrant same-thread session access returns the value

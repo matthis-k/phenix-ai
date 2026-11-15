@@ -61,6 +61,7 @@ pub enum RefreshCause {
 #[derive(Debug)]
 pub enum Error {
     Graph(String),
+    Network(Box<NetworkError>),
     Kernel(phenix_kernel::CallbackError),
     Storage(phenix_storage::Error),
     MultipleRefreshRoots,
@@ -86,6 +87,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Network(e) => Some(e.as_ref()),
             Self::Kernel(e) => Some(e.as_ref()),
             Self::Storage(e) => Some(e),
             Self::Request(e) => Some(e),
@@ -101,7 +103,7 @@ impl From<String> for Error {
 }
 impl From<NetworkError> for Error {
     fn from(e: NetworkError) -> Self {
-        Self::Graph(e.to_string())
+        Self::Network(Box::new(e))
     }
 }
 impl From<phenix_storage::Error> for Error {

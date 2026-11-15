@@ -92,6 +92,16 @@ impl Generation {
         self.kernel.inject(input, value)
     }
 
+    /// Ordinary typed admission through this generation's Kernel. Keys are names,
+    /// not generation authority; conversion precedes session acquisition.
+    pub fn inject_key<T: Send + Sync + 'static>(
+        &self,
+        key: phenix_graph::InputKey<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_key(key, payload)
+    }
+
     pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
         self.kernel.run_steps(budget)
     }

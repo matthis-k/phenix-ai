@@ -17,6 +17,15 @@ pub struct CorrelationBlock {
     pub heads: Vec<(String, Vec<RequestId>)>,
 }
 impl NetworkSession {
+    /// Snapshot actual full-queue publication waits owned by this request's
+    /// pending producers, not by the packets currently buffered in the queues.
+    /// Does not drive, supervise, call readiness policies or inspect payloads.
+    /// An empty snapshot is not a progress or deadlock guarantee.
+    pub fn request_blocked_queues(&self, id: RequestId) -> Result<Vec<QueueWait>, RequestError> {
+        self.check_request(id)?;
+        Ok(self.blocked_queues_matching(Some(id)))
+    }
+
     /// Inspect authenticated request heads without driving the session.
     /// Does not bypass FIFO, inspect packet values or call readiness policies.
     /// A mismatched snapshot may become obsolete after other graph activity.

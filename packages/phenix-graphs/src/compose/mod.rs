@@ -258,7 +258,14 @@ impl fmt::Display for ComposeError {
         write!(f, "composition: {self:?}")
     }
 }
-impl std::error::Error for ComposeError {}
+impl std::error::Error for ComposeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Network(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Published immutable candidate and its complete compiled topology.
 #[derive(Clone, Debug)]
