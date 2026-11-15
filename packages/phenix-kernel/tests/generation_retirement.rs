@@ -72,12 +72,9 @@ impl PluginInstance for Plugin {
         let log = self.log.clone();
         let polls = self.polls.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "source".into(),
-            requires: vec![],
-            routes: vec!["tick".into()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("source", NetworkPatch::new([]))
+            .route(["tick".into()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 context.export(Guard("export", id, log.clone()))?;
                 let action = Guard("action", id, log.clone());
@@ -111,8 +108,8 @@ impl PluginInstance for Plugin {
                     }))
                 })?;
                 Ok(context)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 

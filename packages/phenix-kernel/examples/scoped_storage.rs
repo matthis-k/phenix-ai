@@ -74,12 +74,8 @@ pub mod writer {
             registrar.add(offer)?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
-            registrar.add(Contribution {
-                id: "writer".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("writer", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
@@ -99,8 +95,8 @@ pub mod writer {
                     });
                     context.patch = Some(support::input_patch("save_config", "configure", node));
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -154,12 +150,9 @@ pub mod observer {
             let storage = self.storage.clone();
             let source = storage.clone();
             let reads = self.reads.clone();
-            registrar.add(Contribution {
-                id: "observer".into(),
-                requires: vec![],
-                routes: vec!["config_changed".into()],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("observer", NetworkPatch::new([]))
+                .route(["config_changed".into()])
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
@@ -191,8 +184,8 @@ pub mod observer {
                         )))
                     })?;
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -215,10 +208,8 @@ pub mod code_index {
             ))?;
             let storage = self.storage.clone();
             let results = self.results.clone();
-            registrar.add(Contribution {
-                id: "index".into(), requires: vec![], routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("index", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let sql = storage.get().ok_or("index storage not injected")?.project()?
                         .sql(StorageClass::Data, "phenix.code/index")?;
@@ -236,8 +227,8 @@ pub mod code_index {
                     });
                     context.patch = Some(support::input_patch("index_symbols", "index", node));
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }

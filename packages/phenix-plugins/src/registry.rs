@@ -43,13 +43,13 @@ impl Registrar {
         &self.owner
     }
     pub fn add<C: Contribution>(&mut self, value: C) -> Result<(), Failure> {
-        if !identifier(C::KIND) || !identifier(value.id()) {
+        let id = value.id().to_owned();
+        if !identifier(C::KIND) || !identifier(&id) {
             return Err(Failure::new(
                 Code::DescriptorInvalid,
                 "invalid contribution identity",
             ));
         }
-        let id = value.id().to_owned();
         if !self.names.insert((C::KIND, id.clone())) {
             return Err(Failure::new(
                 Code::DescriptorInvalid,
@@ -62,6 +62,29 @@ impl Registrar {
             id,
             value: Box::new(value),
         });
+        Ok(())
+    }
+    /// Admit a same-owner bundle atomically, including its reserved names.
+    /// Only stored identities are inspected; erased payload callbacks never run.
+    pub fn merge(&mut self, batch: Contributions) -> Result<(), Failure> {
+        let mut names = BTreeSet::new();
+        for entry in &batch.entries {
+            if entry.owner != self.owner || !identifier(entry.kind) || !identifier(&entry.id) {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "invalid bundle contribution identity or owner",
+                ));
+            }
+            let name = (entry.kind, entry.id.clone());
+            if self.names.contains(&name) || !names.insert(name) {
+                return Err(Failure::new(
+                    Code::DescriptorInvalid,
+                    "duplicate contribution",
+                ));
+            }
+        }
+        self.names.extend(names);
+        self.entries.extend(batch.entries);
         Ok(())
     }
     pub fn finish(self) -> Contributions {
@@ -179,5 +202,123 @@ mod tests {
         assert!(Registrar::new("").is_err());
         let mut r = Registrar::new("alpha").unwrap();
         assert!(r.add(Patch("")).is_err());
+    }
+
+    struct StatefulId {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        first: &'static str,
+        later: &'static str,
+    }
+    impl Contribution for StatefulId {
+        const KIND: &'static str = "stateful";
+        fn id(&self) -> &str {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                self.first
+            } else {
+                self.later
+            }
+        }
+    }
+
+    #[test]
+    fn add_captures_identity_once_and_merge_uses_stored_identity() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut bundle = Registrar::new("alpha").unwrap();
+        bundle
+            .add(StatefulId {
+                calls: calls.clone(),
+                first: "valid",
+                later: "invalid/id",
+            })
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut destination = Registrar::new("alpha").unwrap();
+        destination.merge(bundle.finish()).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            destination.finish().keys().collect::<Vec<_>>(),
+            [("alpha", "stateful", "valid")]
+        );
+    }
+
+    #[test]
+    fn add_rejects_the_captured_invalid_identity_without_retrying() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut destination = Registrar::new("alpha").unwrap();
+        assert!(
+            destination
+                .add(StatefulId {
+                    calls: calls.clone(),
+                    first: "invalid/id",
+                    later: "valid",
+                })
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(destination.finish().keys().count(), 0);
+    }
+
+    #[test]
+    fn registrar_caught_late_collision_installs_and_reserves_nothing() {
+        let mut destination = Registrar::new("alpha").unwrap();
+        destination.add(Resource("taken")).unwrap();
+        let mut bundle = Registrar::new("alpha").unwrap();
+        bundle.add(Patch("fresh")).unwrap();
+        bundle.add(Resource("fresh")).unwrap();
+        bundle.add(Resource("taken")).unwrap();
+        assert!(destination.merge(bundle.finish()).is_err());
+        assert_eq!(destination.entries.len(), 1);
+        destination.add(Patch("fresh")).unwrap();
+        destination.add(Resource("fresh")).unwrap();
+        assert_eq!(destination.finish().keys().count(), 3);
+    }
+
+    #[test]
+    fn registrar_merge_rejects_multiowner_bundles_before_mutation() {
+        let mut destination = Registrar::new("alpha").unwrap();
+        destination.add(Patch("installed")).unwrap();
+        let mut local = Registrar::new("alpha").unwrap();
+        local.add(Patch("fresh")).unwrap();
+        let mut bundle = local.finish();
+        let mut foreign = Registrar::new("zeta").unwrap();
+        foreign.add(Resource("foreign")).unwrap();
+        // Host inventories still support combining distinct owners.
+        bundle.merge(foreign.finish()).unwrap();
+        assert!(destination.merge(bundle).is_err());
+        assert_eq!(destination.entries.len(), 1);
+        destination.add(Patch("fresh")).unwrap();
+        destination.add(Resource("foreign")).unwrap();
+    }
+
+    #[test]
+    fn registrar_merge_preflights_all_stored_names_and_identities() {
+        for invalid in ["id", "kind", "duplicate"] {
+            let mut destination = Registrar::new("alpha").unwrap();
+            let mut source = Registrar::new("alpha").unwrap();
+            source.add(Patch("fresh")).unwrap();
+            source.add(Patch("later")).unwrap();
+            let mut bundle = source.finish();
+            match invalid {
+                "id" => bundle.entries[1].id = "invalid/id".into(),
+                "kind" => bundle.entries[1].kind = "invalid/kind",
+                "duplicate" => bundle.entries[1].id = "fresh".into(),
+                _ => unreachable!(),
+            }
+            assert!(destination.merge(bundle).is_err());
+            assert!(destination.entries.is_empty());
+            assert!(destination.names.is_empty());
+            destination.add(Patch("fresh")).unwrap();
+            destination.add(Patch("later")).unwrap();
+        }
     }
 }

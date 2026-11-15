@@ -112,12 +112,10 @@ impl PluginInstance for Plugin {
         let start_log = log.clone();
         let start_name = name.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: self.requires.clone(),
-            routes: vec![name.clone()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .after(self.requires.clone())
+            .route([name.clone()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 log.lock()
                     .unwrap()
@@ -176,8 +174,8 @@ impl PluginInstance for Plugin {
                     return Err("composition failed".into());
                 }
                 Ok(context)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 

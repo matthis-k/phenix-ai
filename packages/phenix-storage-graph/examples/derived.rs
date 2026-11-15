@@ -211,12 +211,8 @@ pub mod writer {
             offers(registrar, &[Operation::Write])?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
-            registrar.add(Contribution {
-                id: "writer".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("writer", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut graph = NetworkBuilder::new();
                     let project = storage
                         .get()
@@ -237,8 +233,8 @@ pub mod writer {
                         patch: Some(patch(graph.build()?)),
                         ..Default::default()
                     })
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -269,12 +265,9 @@ pub mod reader {
             let name = self.name;
             let storage = self.storage.clone();
             let state = self.state.clone();
-            registrar.add(Contribution {
-                id: name.into(),
-                requires: vec![],
-                routes: vec![format!("{name}.values.refresh")],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new(name, NetworkPatch::new([]))
+                .route([format!("{name}.values.refresh")])
+                .prepare(move |_| {
                     let mut graph = NetworkBuilder::new();
                     let (a, b) = storage
                         .get()
@@ -319,8 +312,8 @@ pub mod reader {
                     artifacts.export(queries)?;
                     artifacts.activate(move || observation.activate().map_err(Into::into))?;
                     Ok(artifacts)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }

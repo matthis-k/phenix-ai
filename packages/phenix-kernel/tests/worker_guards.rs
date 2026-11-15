@@ -3,7 +3,7 @@ mod support;
 use phenix_graph::{
     Interface, Value,
     component::ComponentDef,
-    compose::{Edit, NetworkPatch},
+    compose::{Edit, Footprint, NetworkPatch},
     connection::ConnectionError,
     process::{
         ActivationJob, DispatchResult, LocalProcessDispatcher, Process, ProcessContext,
@@ -12,7 +12,8 @@ use phenix_graph::{
     runtime::SessionState,
 };
 use phenix_kernel::{
-    CallbackError, CandidateArtifacts, Contribution, InputEvent, Kernel, Producer, ProducerError,
+    BuildOptions, CallbackError, CandidateArtifacts, Contribution, InputEvent, Kernel, Key,
+    Producer, ProducerError,
 };
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::{
@@ -128,7 +129,7 @@ impl PluginInstance for WorkerPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         let probe = self.probe.clone();
         let mode = self.mode;
-        into.add(support::contribution(
+        support::contribution(
             "worker",
             NetworkPatch::new([
                 Edit::Add {
@@ -143,12 +144,27 @@ impl PluginInstance for WorkerPlugin {
                 },
                 Edit::AddSource("worker".into()),
             ]),
-        ))
+        )
+        .register(into)
     }
 }
 
 fn check_worker_reentry(mode: Mode) {
     let probe = Probe::default();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("worker", "worker"),
+        [
+            Footprint::Component("worker".into()),
+            Footprint::Source("worker".into()),
+        ],
+    );
+    options.execution.execution_guards.push(Arc::new(Guard {
+        probe: probe.clone(),
+        name: "application",
+        reenter_on_drop: matches!(mode, Mode::GuardDrop),
+    }));
     let snapshot = support::snapshot(
         "worker",
         WorkerPlugin {
@@ -156,12 +172,6 @@ fn check_worker_reentry(mode: Mode) {
             mode,
         },
     );
-    let mut options = support::options(std::slice::from_ref(&snapshot));
-    options.execution.execution_guards.push(Arc::new(Guard {
-        probe: probe.clone(),
-        name: "application",
-        reenter_on_drop: matches!(mode, Mode::GuardDrop),
-    }));
     let mut kernel = Kernel::build_with_options(
         "worker-guards",
         [snapshot],
@@ -272,11 +282,9 @@ impl Drop for AdmissionPlugin {
 impl PluginInstance for AdmissionPlugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         let drops = self.0.clone();
-        into.add(Contribution {
-            id: "producer".into(),
-            requires: vec![],
-            routes: vec!["input".into()],
-            patch: NetworkPatch::new([
+        Contribution::new(
+            "producer",
+            NetworkPatch::new([
                 Edit::Add {
                     path: "sink".into(),
                     definition: support::sink(|_| panic!("wrong-typed value reached the sink")),
@@ -287,26 +295,36 @@ impl PluginInstance for AdmissionPlugin {
                     capacity: support::capacity(),
                 },
             ]),
-            prepare: Some(Box::new(move |_| {
-                let drops = drops.clone();
-                let mut artifacts = CandidateArtifacts::default();
-                artifacts.activate(move || {
-                    Ok(Box::new(WrongTypeProducer(Some(PluginPayload(
-                        drops.clone(),
-                    )))))
-                })?;
-                Ok(artifacts)
-            })),
+        )
+        .route(["input".into()])
+        .prepare(move |_| {
+            let drops = drops.clone();
+            let mut artifacts = CandidateArtifacts::default();
+            artifacts.activate(move || {
+                Ok(Box::new(WrongTypeProducer(Some(PluginPayload(
+                    drops.clone(),
+                )))))
+            })?;
+            Ok(artifacts)
         })
+        .register(into)
     }
 }
 
 #[test]
 fn retained_wrong_type_admission_error_and_value_pin_application_and_plugin_code() {
     let drops = Drops::default();
-    let snapshot = support::snapshot("admission", AdmissionPlugin(drops.clone()));
-    let mut options = support::options(std::slice::from_ref(&snapshot));
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("admission", "producer"),
+        [
+            Footprint::Component("sink".into()),
+            Footprint::InputExport("input".into()),
+        ],
+    );
     options.execution.lease = Some(Arc::new(ApplicationLease(drops.application.clone())));
+    let snapshot = support::snapshot("admission", AdmissionPlugin(drops.clone()));
     let mut kernel = Kernel::build_with_options(
         "admission-leases",
         [snapshot],

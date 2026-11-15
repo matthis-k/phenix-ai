@@ -10,10 +10,11 @@ use phenix_graph::{
     runtime::Readiness,
 };
 use phenix_kernel::{
-    BuildOptions, ContractDefinition, Contribution, Key, NetworkOffer,
+    BuildOptions, ContractDefinition, Contribution, Key,
     host::{Generation, KernelHost, LifecycleError},
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar, StagedPlugin};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(feature = "independently-compiled-consumer"))]
@@ -120,12 +121,6 @@ mod provider {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(NetworkOffer {
-                id: "service".into(),
-                producer: Key::new(into.owner(), "main"),
-                unit: self.path.into(),
-                contract: Key::new("definition", "transform"),
-            })?;
             let left = if matches!(self.fault, Fault::Codec) {
                 PortDef::wire::<WrongCodec>("left").unwrap()
             } else {
@@ -182,52 +177,46 @@ mod provider {
                     component = ComponentDef::composite(child.build().unwrap());
                 }
             }
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([Edit::Add {
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
                     path: self.path.into(),
                     definition: Arc::new(component),
                 }]),
-                prepare: None,
-            })
+            )
+            .offer("service", self.path, Key::new("definition", "transform"))
+            .register(into)
         }
     }
 }
 
-fn options(host: &KernelHost, stages: &[StagedPlugin], owner: &str) -> BuildOptions {
-    let snapshots = host.plugins().candidate_snapshots(stages).unwrap();
-    let mut options = support::options(&snapshots);
+fn options(providers: &BTreeMap<&str, provider::Plugin>, owner: &str) -> BuildOptions {
+    let mut options = BuildOptions::default();
     options.imports.selections.insert(
         Key::new("consumer", "transform"),
         Key::new(owner, "service"),
     );
-    let mut grants = vec![
+    let grants = [
         Footprint::Component("consumer-sink".into()),
         Footprint::InputExport("left".into()),
         Footprint::InputExport("right".into()),
+        Footprint::Connection(ConnectionKey::new(
+            support::path(providers[owner].path, "value"),
+            support::path("consumer-sink", "value"),
+        )),
     ];
-    for snapshot in &snapshots {
-        if let Some(contribution) = snapshot.get::<Contribution>("main") {
-            for edit in contribution.patch.edits() {
-                if let Edit::Add { path, definition } = edit {
-                    grants.push(Footprint::Connection(ConnectionKey::new(
-                        support::path(path, "value"),
-                        support::path("consumer-sink", "value"),
-                    )));
-                    let physical = if matches!(
-                        definition.body(),
-                        phenix_graph::component::Body::Composite(_)
-                    ) {
-                        format!("{path}/inside/worker")
-                    } else {
-                        path.clone()
-                    };
-                    options.execution.readiness.insert(physical, Readiness::All);
-                }
-            }
-        }
+    for (owner, config) in providers {
+        support::grant(
+            &mut options,
+            Key::new(*owner, "main"),
+            [Footprint::Component(config.path.into())],
+        );
+        let physical = if config.nested {
+            format!("{}/inside/worker", config.path)
+        } else {
+            config.path.into()
+        };
+        options.execution.readiness.insert(physical, Readiness::All);
     }
     support::grant(&mut options, Key::new("consumer", "main"), grants);
     options
@@ -236,8 +225,9 @@ fn prepare(
     host: &KernelHost,
     stages: Vec<StagedPlugin>,
     owner: &str,
+    providers: &BTreeMap<&str, provider::Plugin>,
 ) -> Result<phenix_kernel::host::Candidate, LifecycleError> {
-    let options = options(host, &stages, owner);
+    let options = options(providers, owner);
     host.prepare(
         stages,
         options,
@@ -288,6 +278,12 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         increment: 200,
         fault: provider::Fault::None,
     };
+    let mut providers = BTreeMap::from([
+        ("node-provider", node.clone()),
+        ("module-provider", module.clone()),
+    ]);
+    // The host approves its fixture configurations before any plugin registration.
+    let initial_options = options(&providers, "node-provider");
     let stages = vec![
         host.plugins()
             .prepare_load(&c, consumer::Plugin(observed.clone()))
@@ -296,14 +292,22 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         host.plugins().prepare_load(&a, ()).unwrap(),
         host.plugins().prepare_load(&b1, node.clone()).unwrap(),
     ];
-    let candidate = prepare(&host, stages, "node-provider").unwrap();
+    let candidate = host
+        .prepare(
+            stages,
+            initial_options,
+            Arc::new(LocalProcessDispatcher),
+            "portable",
+            |_| Ok(()),
+        )
+        .unwrap();
     assert!(host.active().is_none());
     assert_eq!(host.plugins().snapshots().count(), 0);
     let original = host.publish(candidate).unwrap();
     execute(&original, 2, 3);
     assert_eq!(*observed.lock().unwrap(), [123]);
     let switched = host
-        .publish(prepare(&host, vec![], "module-provider").unwrap())
+        .publish(prepare(&host, vec![], "module-provider", &providers).unwrap())
         .unwrap();
     assert_eq!(switched.epoch(), 2);
     execute(&switched, 2, 3);
@@ -314,7 +318,7 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
         (&b2, "module-provider", module),
     ] {
         let active = host
-            .publish(prepare(&host, vec![], owner).unwrap())
+            .publish(prepare(&host, vec![], owner, &providers).unwrap())
             .unwrap();
         let revision = host.plugins().snapshot(handle).unwrap().revision();
         for fault in [
@@ -326,10 +330,19 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
             broken.path = "rejected-path";
             broken.increment = 9000;
             broken.fault = fault;
+            let mut candidate_providers = providers.clone();
+            candidate_providers.insert(owner, broken.clone());
+            let candidate_options = options(&candidate_providers, owner);
             let stage = host.plugins().prepare_reload(handle, broken).unwrap();
             assert!(
                 matches!(
-                    prepare(&host, vec![stage], owner),
+                    host.prepare(
+                        vec![stage],
+                        candidate_options,
+                        Arc::new(LocalProcessDispatcher),
+                        "portable",
+                        |_| Ok(())
+                    ),
                     Err(LifecycleError::Build(_))
                 ),
                 "{fault:?}"
@@ -351,13 +364,24 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
             "renamed-node"
         };
         replacement.increment += 1000;
+        providers.insert(owner, replacement.clone());
+        let candidate_options = options(&providers, owner);
         let stage = host
             .plugins()
             .prepare_reload(handle, replacement.clone())
             .unwrap();
         let candidate_revision = stage.candidate().unwrap().revision();
         let current = host
-            .publish(prepare(&host, vec![stage], owner).unwrap())
+            .publish(
+                host.prepare(
+                    vec![stage],
+                    candidate_options,
+                    Arc::new(LocalProcessDispatcher),
+                    "portable",
+                    |_| Ok(()),
+                )
+                .unwrap(),
+            )
             .unwrap();
         assert_eq!(current.epoch(), active.epoch() + 1);
         assert_eq!(

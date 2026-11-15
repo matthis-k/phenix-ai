@@ -3,7 +3,7 @@ use crate::StorageBinding;
 use phenix_graph::Value;
 use phenix_kernel::{InputEvent, Producer, WakeHandle};
 
-/// Deferred observation request. Put `route()` in Contribution::routes and call
+/// Deferred observation request. Declare `route()` with `Contribution::route` and call
 /// `activate()` in its activation factory, never during graph composition.
 /// All subscriptions are acquired before queuing one bootstrap full rescan.
 /// Concurrent registry-local commits remain queued for subsequent rescans. There

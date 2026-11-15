@@ -5,7 +5,7 @@ use phenix_graph::{
     network::{ConnectionDef, PortPath},
     process::{Process, ProcessContext, Step},
 };
-use phenix_kernel::{CandidateArtifacts, ContractRequirement, Contribution, Key};
+use phenix_kernel::{CandidateArtifacts, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -55,18 +55,10 @@ impl Process for Sink {
 
 impl PluginInstance for Plugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(ContractRequirement {
-            id: "transform".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new("definition", "transform"),
-        })?;
         let observed = self.0.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |context| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .import("transform", Key::new("definition", "transform"))
+            .prepare(move |context| {
                 let bound = context.bind_import("transform")?;
                 // Only contract-visible names and C's own Rust types are used.
                 assert!(bound.wire_input::<Request>("extra").is_err());
@@ -105,7 +97,7 @@ impl PluginInstance for Plugin {
                     patch: Some(NetworkPatch::new(edits)),
                     ..Default::default()
                 })
-            })),
-        })
+            })
+            .register(into)
     }
 }

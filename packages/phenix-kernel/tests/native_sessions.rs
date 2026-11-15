@@ -2,13 +2,15 @@ mod support;
 use phenix_graph::{
     Interface, Value,
     component::ComponentDef,
-    compose::{Edit, NetworkPatch},
+    compose::{Edit, Footprint, NetworkPatch},
     process::{
         ActivationJob, DispatchResult, LocalProcessDispatcher, Process, ProcessContext,
         ProcessDispatcher, ProcessExecutionGuard, Step,
     },
 };
-use phenix_kernel::{CandidateArtifacts, Contribution, InputEvent, Kernel, Producer, WakeHandle};
+use phenix_kernel::{
+    BuildOptions, CandidateArtifacts, Contribution, InputEvent, Kernel, Key, Producer, WakeHandle,
+};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{
     Arc, Mutex,
@@ -30,6 +32,7 @@ struct Fixture {
     calls: Arc<Mutex<Vec<i64>>>,
     drops: Arc<AtomicUsize>,
     capture: bool,
+    definition: Option<Arc<ComponentDef>>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -39,7 +42,9 @@ impl Drop for Fixture {
 impl PluginInstance for Fixture {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         let calls = self.calls.clone();
-        let definition = if self.capture {
+        let definition = if let Some(definition) = &self.definition {
+            definition.clone()
+        } else if self.capture {
             support::function(move |value| {
                 calls.lock().unwrap().push(value);
                 value
@@ -67,18 +72,15 @@ impl PluginInstance for Fixture {
             });
         }
         let polls = self.polls.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec!["input".into()],
-            patch: NetworkPatch::new(edits),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("main", NetworkPatch::new(edits))
+            .route(["input".into()])
+            .prepare(move |_| {
                 let mut artifacts = CandidateArtifacts::default();
                 let polls = polls.clone();
                 artifacts.activate(move || Ok(Box::new(CountingSource(polls.clone()))))?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 type BuiltFixture = (
@@ -87,10 +89,30 @@ type BuiltFixture = (
     Arc<Mutex<Vec<i64>>>,
     Arc<AtomicUsize>,
 );
+fn fixture_options(capture: bool) -> BuildOptions {
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("fixture", "main"),
+        [
+            Footprint::Component("worker".into()),
+            Footprint::InputExport("input".into()),
+        ],
+    );
+    if capture {
+        support::grant(
+            &mut options,
+            Key::new("fixture", "main"),
+            [Footprint::OutputExport("output".into())],
+        );
+    }
+    options
+}
 fn fixture(capture: bool) -> BuiltFixture {
     let polls = Arc::new(AtomicUsize::new(0));
     let calls = Arc::new(Mutex::new(vec![]));
     let drops = Arc::new(AtomicUsize::new(0));
+    let options = fixture_options(capture);
     let snapshot = support::snapshot(
         "fixture",
         Fixture {
@@ -98,9 +120,9 @@ fn fixture(capture: bool) -> BuiltFixture {
             calls: calls.clone(),
             drops: drops.clone(),
             capture,
+            definition: None,
         },
     );
-    let options = support::options(std::slice::from_ref(&snapshot));
     let kernel = Kernel::build_with_options(
         "bounded",
         [snapshot],
@@ -164,6 +186,16 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
     let polls = Arc::new(AtomicUsize::new(0));
     let calls = Arc::new(Mutex::new(vec![]));
     let drops = Arc::new(AtomicUsize::new(0));
+    let kernel_ref = Arc::new(Mutex::new(None));
+    let failures = Arc::new(Mutex::new(Vec::new()));
+    let mut options = fixture_options(false);
+    options.execution.readiness.insert(
+        "worker".into(),
+        phenix_graph::runtime::Readiness::Custom(Arc::new(ReentrantReadiness {
+            kernel: kernel_ref.clone(),
+            failures: failures.clone(),
+        })),
+    );
     let snapshot = support::snapshot(
         "fixture",
         Fixture {
@@ -171,17 +203,8 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
             calls,
             drops,
             capture: false,
+            definition: None,
         },
-    );
-    let kernel_ref = Arc::new(Mutex::new(None));
-    let failures = Arc::new(Mutex::new(Vec::new()));
-    let mut options = support::options(std::slice::from_ref(&snapshot));
-    options.execution.readiness.insert(
-        "worker".into(),
-        phenix_graph::runtime::Readiness::Custom(Arc::new(ReentrantReadiness {
-            kernel: kernel_ref.clone(),
-            failures: failures.clone(),
-        })),
     );
     let mut built = Kernel::build_with_options(
         "admission-callback",
@@ -310,6 +333,7 @@ fn host_grants_are_required_and_cannot_be_supplied_by_the_patch() {
             calls: Arc::default(),
             drops: Arc::default(),
             capture: false,
+            definition: None,
         },
     );
     let error = Kernel::build("no-grants", [snapshot], Arc::new(LocalProcessDispatcher))
@@ -346,13 +370,25 @@ fn portless_sources_require_explicit_start_edits() {
             if self.1 {
                 edits.push(Edit::AddSource("source".into()));
             }
-            into.add(support::contribution("main", NetworkPatch::new(edits)))
+            support::contribution("main", NetworkPatch::new(edits)).register(into)
         }
     }
     for explicit in [false, true] {
         let calls = Arc::new(AtomicUsize::new(0));
+        let mut options = BuildOptions::default();
+        support::grant(
+            &mut options,
+            Key::new("fixture", "main"),
+            [Footprint::Component("source".into())],
+        );
+        if explicit {
+            support::grant(
+                &mut options,
+                Key::new("fixture", "main"),
+                [Footprint::Source("source".into())],
+            );
+        }
         let snapshot = support::snapshot("fixture", Plugin(calls.clone(), explicit));
-        let options = support::options(std::slice::from_ref(&snapshot));
         let mut kernel = Kernel::build_with_options(
             "source",
             [snapshot],
@@ -384,6 +420,11 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
     }
     let jobs = Arc::new(Mutex::new(vec![]));
     let entered = Arc::new(Mutex::new(vec![]));
+    let mut options = fixture_options(false);
+    options
+        .execution
+        .execution_guards
+        .push(Arc::new(Guard(entered.clone())));
     let snapshot = support::snapshot(
         "fixture",
         Fixture {
@@ -391,13 +432,9 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
             calls: Arc::default(),
             drops: Arc::default(),
             capture: false,
+            definition: None,
         },
     );
-    let mut options = support::options(std::slice::from_ref(&snapshot));
-    options
-        .execution
-        .execution_guards
-        .push(Arc::new(Guard(entered.clone())));
     let mut kernel = Kernel::build_with_options(
         "worker",
         [snapshot],
@@ -463,7 +500,7 @@ fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
                 Arc::new(Interface::new([], []).unwrap()),
                 Arc::new(move || ReentrantProcess(access.clone(), failures.clone())),
             ));
-            into.add(support::contribution(
+            support::contribution(
                 "source",
                 NetworkPatch::new([
                     Edit::Add {
@@ -472,14 +509,23 @@ fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
                     },
                     Edit::AddSource("source".into()),
                 ]),
-            ))
+            )
+            .register(into)
         }
     }
 
     let access = Arc::new(Mutex::new(None));
     let failures = Arc::new(Mutex::new(Vec::new()));
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("reentrant", "source"),
+        [
+            Footprint::Component("source".into()),
+            Footprint::Source("source".into()),
+        ],
+    );
     let snapshot = support::snapshot("reentrant", Plugin(access.clone(), failures.clone()));
-    let options = support::options(std::slice::from_ref(&snapshot));
     let mut kernel = Kernel::build_with_options(
         "reentrant-process",
         [snapshot],
@@ -525,7 +571,7 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
                 Arc::new(Interface::new([], []).unwrap()),
                 Arc::new(move || Probe(kernel.clone(), result.clone())),
             ));
-            into.add(support::contribution(
+            support::contribution(
                 "probe",
                 NetworkPatch::new([
                     Edit::Add {
@@ -534,17 +580,26 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
                     },
                     Edit::AddSource("probe".into()),
                 ]),
-            ))
+            )
+            .register(into)
         }
     }
 
     let kernel_ref = Arc::new(Mutex::new(None));
     let result = Arc::new(Mutex::new(None));
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("session-lock-probe", "probe"),
+        [
+            Footprint::Component("probe".into()),
+            Footprint::Source("probe".into()),
+        ],
+    );
     let snapshot = support::snapshot(
         "session-lock-probe",
         Plugin(kernel_ref.clone(), result.clone()),
     );
-    let options = support::options(std::slice::from_ref(&snapshot));
     let mut kernel = Kernel::build_with_options(
         "session-lock-probe",
         [snapshot],
@@ -566,6 +621,8 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
 #[test]
 fn request_scopes_are_bounded_authenticated_and_reusable_after_release() {
     use phenix_graph::runtime::{RequestError, RequestStatus};
+    let mut options = fixture_options(true);
+    options.execution.max_requests = support::capacity();
     let snapshot = support::snapshot(
         "fixture",
         Fixture {
@@ -573,10 +630,9 @@ fn request_scopes_are_bounded_authenticated_and_reusable_after_release() {
             calls: Arc::default(),
             drops: Arc::default(),
             capture: true,
+            definition: None,
         },
     );
-    let mut options = support::options(std::slice::from_ref(&snapshot));
-    options.execution.max_requests = support::capacity();
     let mut kernel = Kernel::build_with_options(
         "requests",
         [snapshot],
@@ -637,7 +693,7 @@ fn blocking_driver_observes_native_process_wakes_and_external_shutdown() {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             let calls = self.0.clone();
             let done = self.1.clone();
-            into.add(support::contribution(
+            support::contribution(
                 "main",
                 NetworkPatch::new([
                     Edit::Add {
@@ -652,13 +708,22 @@ fn blocking_driver_observes_native_process_wakes_and_external_shutdown() {
                     },
                     Edit::AddSource("source".into()),
                 ]),
-            ))
+            )
+            .register(into)
         }
     }
     let calls = Arc::new(AtomicUsize::new(0));
     let (done, completed) = std::sync::mpsc::channel();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("fixture", "main"),
+        [
+            Footprint::Component("source".into()),
+            Footprint::Source("source".into()),
+        ],
+    );
     let snapshot = support::snapshot("fixture", Plugin(calls.clone(), done));
-    let options = support::options(std::slice::from_ref(&snapshot));
     let mut kernel = Kernel::build_with_options(
         "wakes",
         [snapshot],
@@ -712,11 +777,9 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
     struct Plugin;
     impl PluginInstance for Plugin {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec!["input".into()],
-                patch: NetworkPatch::new([
+            Contribution::new(
+                "main",
+                NetworkPatch::new([
                     Edit::Add {
                         path: "worker".into(),
                         definition: support::sink(|_| {}),
@@ -727,19 +790,29 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
                         capacity: support::capacity(),
                     },
                 ]),
-                prepare: Some(Box::new(move |_| {
-                    let mut artifacts = CandidateArtifacts::default();
-                    artifacts.activate(|| Ok(Box::new(EventSource(false))))?;
-                    Ok(artifacts)
-                })),
+            )
+            .route(["input".into()])
+            .prepare(move |_| {
+                let mut artifacts = CandidateArtifacts::default();
+                artifacts.activate(|| Ok(Box::new(EventSource(false))))?;
+                Ok(artifacts)
             })
+            .register(into)
         }
     }
 
     let held = Arc::new(Mutex::new(None));
-    let snapshot = support::snapshot("timeout", Plugin);
-    let mut options = support::options(std::slice::from_ref(&snapshot));
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("timeout", "main"),
+        [
+            Footprint::Component("worker".into()),
+            Footprint::InputExport("input".into()),
+        ],
+    );
     options.execution.deferred_timeout = Some(std::time::Duration::from_millis(20));
+    let snapshot = support::snapshot("timeout", Plugin);
     let mut kernel = Kernel::build_with_options(
         "deferred-timeout",
         [snapshot],
@@ -782,6 +855,15 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
         .register("fixture", |plugin: Fixture| Ok(plugin))
         .unwrap();
     let mut host = KernelHost::new(catalog.instance());
+    let definition = support::function({
+        let calls = calls.clone();
+        move |value| {
+            calls.lock().unwrap().push(value);
+            value
+        }
+    });
+    let declaration = definition.definition_key();
+    let options = fixture_options(true);
     let stage = host
         .plugins()
         .prepare_load(
@@ -791,16 +873,10 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
                 calls: calls.clone(),
                 drops: Arc::default(),
                 capture: true,
+                definition: Some(definition),
             },
         )
         .unwrap();
-    let snapshot = stage.candidate().unwrap();
-    let options = support::options(std::slice::from_ref(&snapshot));
-    let contribution = snapshot.get::<Contribution>("main").unwrap();
-    let Edit::Add { definition, .. } = &contribution.patch.edits()[0] else {
-        unreachable!()
-    };
-    let declaration = definition.definition_key();
     let candidate = host
         .prepare(
             vec![stage],

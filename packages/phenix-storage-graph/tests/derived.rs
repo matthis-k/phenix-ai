@@ -1016,12 +1016,9 @@ fn unknown_producer_route_rejects_before_activation() {
     impl PluginInstance for Invalid {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
             let starts = self.0.clone();
-            registrar.add(Contribution {
-                id: "invalid".into(),
-                requires: vec![],
-                routes: vec!["missing".into()],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("invalid", NetworkPatch::new([]))
+                .route(["missing".into()])
+                .prepare(move |_| {
                     let starts = starts.clone();
                     let mut artifacts = CandidateArtifacts::default();
                     artifacts.activate(move || {
@@ -1029,8 +1026,8 @@ fn unknown_producer_route_rejects_before_activation() {
                         Err("must not activate".into())
                     })?;
                     Ok(artifacts)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
     let starts = Arc::new(AtomicUsize::new(0));

@@ -6,7 +6,7 @@ use phenix_graph::{
     contract::Contract,
     process::LocalProcessDispatcher,
 };
-use phenix_kernel::{ContractDefinition, ContractRequirement, Kernel, Key, NetworkOffer};
+use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::Arc;
 
@@ -60,30 +60,32 @@ impl PluginInstance for Fixture {
                 id: "y".into(),
                 contract: y.clone(),
             })?;
-            into.add(NetworkOffer {
-                id: "offer".into(),
-                producer: Key::new("provider", "compose"),
-                unit: "service".into(),
-                contract: Key::new("provider", "x"),
-            })?;
-            into.add(ContractRequirement {
-                id: "request".into(),
-                consumer: Key::new("provider", "consumer"),
-                contract: Key::new("provider", "y"),
-            })?;
-            into.add(support::contribution("consumer", NetworkPatch::new([])))?;
+            support::contribution("consumer", NetworkPatch::new([]))
+                .import("request", Key::new("provider", "y"))
+                .register(into)?;
             let definition = support::definition(false, true, 1, x.id());
             NetworkPatch::new([Edit::Add {
                 path: "service".into(),
                 definition: Arc::new((*definition).clone().claim(&y).unwrap()),
             }])
         };
-        into.add(support::contribution("compose", patch))
+        let mut contribution = support::contribution("compose", patch);
+        if !matches!(self.0, Case::UnofferedNetworkConflict) {
+            contribution = contribution.offer("offer", "service", Key::new("provider", "x"));
+        }
+        contribution.register(into)
     }
 }
 fn build(case: Case) -> Result<Kernel, String> {
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("provider", "compose"),
+        [phenix_graph::compose::Footprint::Component(
+            "service".into(),
+        )],
+    );
     let snapshot = support::snapshot("provider", Fixture(case));
-    let mut options = support::options(std::slice::from_ref(&snapshot));
     if !matches!(case, Case::UnofferedNetworkConflict) {
         options.imports.selections.insert(
             Key::new("provider", "request"),
@@ -131,29 +133,34 @@ fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
                 id: "x".into(),
                 contract: support::contract("example/x@1"),
             })?;
-            into.add(NetworkOffer {
-                id: "offer".into(),
-                producer: Key::new("provider", "main"),
-                unit: "service".into(),
-                contract: Key::new("provider", "x"),
-            })?;
-            into.add(support::contribution(
+            support::contribution(
                 "main",
                 support::patch("service", false, false, 1, "example/x@1"),
-            ))?;
-            let mut foreign = support::contribution(
+            )
+            .offer("offer", "service", Key::new("provider", "x"))
+            .register(into)?;
+            support::contribution(
                 "foreign",
                 NetworkPatch::new([Edit::Replace {
                     path: "service".into(),
                     definition: support::definition(false, true, 1, "example/x@1"),
                 }]),
-            );
-            foreign.requires.push(Key::new("provider", "main"));
-            into.add(foreign)
+            )
+            .after([Key::new("provider", "main")])
+            .register(into)
         }
     }
+    let mut options = BuildOptions::default();
+    for id in ["main", "foreign"] {
+        support::grant(
+            &mut options,
+            Key::new("provider", id),
+            [phenix_graph::compose::Footprint::Component(
+                "service".into(),
+            )],
+        );
+    }
     let snapshot = support::snapshot("provider", Honest);
-    let options = support::options(std::slice::from_ref(&snapshot));
     assert!(
         Kernel::build_with_options(
             "host",

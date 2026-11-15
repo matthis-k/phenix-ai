@@ -36,15 +36,19 @@ These are runnable entry points, not a claim that these commands were rerun here
 
 ## Composition API
 
-- Register `Contribution { id, requires, routes, patch, prepare }` using
-  `Registrar::add`. The immutable `NetworkPatch` carries edits, not write authority.
-  Trusted `BuildOptions.composition` supplies exact grants and priorities.
+- Author `Contribution::new(id, patch)` and attach dependencies with `.after(...)`,
+  producer routes with `.route(...)`, and scoped preparation with `.prepare(...)`.
+  Finish with consuming `.register(registrar)`, atomically admitting the composer
+  and all its offers/imports. Immutable patches carry edits, not write authority;
+  trusted `BuildOptions.composition` supplies exact grants and priorities.
 - Dependencies use owner-qualified `Key::new(owner, id)`. All contributions compose
   in topological order, with lexical owner/id tie-breaking. Duplicates, missing
   dependencies, cycles and duplicate snapshot owners fail before composition.
-- Register `ContractDefinition { id, contract }`, `NetworkOffer { id, producer,
-  unit, contract }`, and `ContractRequirement { id, consumer, contract }` as ordinary
-  typed contributions. Producer/consumer keys must belong to the registering plugin.
+- Register `ContractDefinition { id, contract }` as an ordinary typed contribution.
+  Add `.offer(id, unit, definition_key)` / `.import(id, definition_key)` to the
+  authoring composer. Registration derives producer/consumer keys from registrar
+  owner plus composer ID; standalone metadata authoring is removed. Metadata IDs
+  retain owner-wide per-kind namespaces and distinct provider identities.
 - `Kernel::build_with_options` applies `BuildOptions.imports`, the trusted
   `ImportPolicy` selections and optional
   allow/deny pairs. Denial wins. A unique eligible compatible offer is selected
@@ -70,8 +74,9 @@ Graph owns actual shape and semantic matching. Kernel does not copy purported
 implementation shapes into offers. Per-composer origin children distinguish
 contributions within the exact loaded plugin revision; PluginSnapshot binding
 checks revision ancestry, while Kernel offers check exact producer identity.
-Native composers retain low-level graph access: selected imports are not a sandbox
-or proof that every arbitrary closure wires the selected provider.
+Native preparation can author an owned replacement patch, but receives no mutable
+candidate graph. Declared imports restrict inspection; full topology inspection
+requires a separate host grant. These native callbacks are not a security sandbox.
 
 ## Producer Lifecycle
 

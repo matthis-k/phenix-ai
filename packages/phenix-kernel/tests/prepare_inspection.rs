@@ -8,12 +8,8 @@ struct InspectionProbe;
 impl PluginInstance for InspectionProbe {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         for id in ["a", "b"] {
-            into.add(Contribution {
-                id: id.into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(|context| {
+            Contribution::new(id, NetworkPatch::new([]))
+                .prepare(|context| {
                     assert!(context.bind_import("undeclared").is_err());
                     let visible = context
                         .inspect_network()
@@ -22,8 +18,8 @@ impl PluginInstance for InspectionProbe {
                     let mut artifacts = CandidateArtifacts::default();
                     artifacts.export(visible)?;
                     Ok(artifacts)
-                })),
-            })?;
+                })
+                .register(into)?;
         }
         Ok(())
     }

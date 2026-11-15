@@ -1,19 +1,37 @@
 # Native Network Kernel
 
 The kernel resolves plugin contributions, builds host-authorized native network
-patches, and owns a persistent `Mutex<NetworkSession>`. It adds no scheduler or
+patches, and leases a persistent `NetworkSession` without holding the ownership
+mutex through plugin callbacks. Contending Kernel session access fails fast.
+It adds no scheduler or
 legacy execution adapter. Native Rust plugins are not a sandbox or a dynamic ABI.
 
-## Contribution Schema
+## Composer Registration
+
+One authoring object registers its composer and offer/import metadata atomically.
+The destination registrar supplies the owner; authors never repeat producer or
+consumer keys. The private registered payload is not another public authoring API.
 
 ```rust,ignore
-pub struct Contribution {
-    pub id: String,
-    pub requires: Vec<Key>,
-    pub routes: Vec<String>, // Public inputs this producer may inject.
-    pub patch: NetworkPatch,
-    pub prepare: Option<Box<Prepare>>,
-}
+Contribution::new("service", static_patch)
+    .after([Key::new("dependency-plugin", "main")])
+    .route(["external-input".into()])
+    .prepare(|candidate| Ok(CandidateArtifacts::default()))
+    .offer("service-offer", "actual-service-path", definition_key)
+    .import("dependency", dependency_definition_key)
+    .register(registrar)?;
+```
+
+`after` and `route` append. Offers/imports accumulate; duplicate IDs reject the
+entire bundle without installing a composer, metadata or reserved names. A repeated
+`prepare` replaces the authoring callback. Offer/import IDs retain owner-wide,
+per-kind namespaces, so host `ImportPolicy` keys do not change. Distinct offer IDs
+remain distinct providers even if one composer creates both. No public standalone
+offer/requirement records or `Registrar::add(kernel::Contribution)` route remain.
+
+## Candidate Artifacts
+
+```rust,ignore
 pub type Prepare = dyn Fn(&CandidateContext<'_>)
     -> Result<CandidateArtifacts, CallbackError> + Send + Sync;
 pub struct CandidateArtifacts {
@@ -50,8 +68,9 @@ path and output; the kernel does not silently grant discard permission.
 ## Contracts
 
 - `ContractDefinition { id, contract: phenix_graph::contract::Contract }`.
-- `NetworkOffer { id, producer: Key, unit: String, contract: Key }`; `unit` is the actual component path and `component_path()` returns it.
-- `ContractRequirement { id, consumer: Key, contract: Key }` declares an import local to one contribution.
+- `.offer(id, unit, definition_key)` advertises an actual component path owned by
+  this composer; the internal producer key is derived during registration.
+- `.import(id, definition_key)` declares a local requirement for this composer.
 - `ImportPolicy { selections, allow, deny }` is host-owned; denial wins and unknown policy keys reject.
 
 Missing, ambiguous, incompatible, foreign-owner and sibling-producer offers fail
@@ -85,7 +104,9 @@ producers and permit retry without reconstructing candidate artifacts.
 - `inject(&self, input: &str, value: Value) -> Result<(), InjectionError>` admits exactly one value and returns its ownership on failure.
 - `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, String>` permits native requests, captures, completions and wakes only after start.
 - `run_steps(&self, budget: usize) -> Result<RunReport, String>` executes bounded native steps through the actual dispatcher and worker execution guards.
-- `drain(&self, max_polls: usize) -> Vec<ProducerEvent>` only polls/admit events; it never runs process code. `ProducerEvent.result` is `Result<(), ProducerError>`.
+- `drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError>` only
+  polls/admits events; it never runs process steps. A live blocking driver owns
+  polling exclusively. `ProducerEvent.result` is `Result<(), ProducerError>`.
 - `compiled()` exposes immutable native declarations; `export::<T>(&Key)` retrieves a candidate-owned artifact.
 
 Each producer retains at most one pending event on `Full` without repolling.

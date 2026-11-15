@@ -286,18 +286,132 @@ impl CandidateContext<'_> {
     }
 }
 
-/// Shared Rust type registered by plugins through the existing Registrar.
-/// Payloads never carry write grants or mutable candidate access.
+/// Declarative composer authoring. Register the composer and its offers/imports
+/// together; producer and consumer identities are derived from the registrar.
+/// This builder carries no write grants or mutable candidate access.
+///
+/// Stage an ordinary native patch with the same registration path used for
+/// composers with offers/imports. The host still grants writes and builds it:
+/// ```
+/// use phenix_graph::{ComponentDef, compose::{Edit, NetworkPatch}};
+/// use phenix_kernel::Contribution;
+/// use phenix_plugin::Registrar;
+/// use std::sync::Arc;
+/// let mut registrar = Registrar::new("example")?;
+/// Contribution::new("map", NetworkPatch::new([Edit::Add {
+///     path: "map".into(),
+///     definition: Arc::new(ComponentDef::map(|value: i64| value + 1)),
+/// }])).register(&mut registrar)?;
+/// assert_eq!(registrar.finish().keys().count(), 1);
+/// # Ok::<(), phenix_plugin::Failure>(())
+/// ```
+///
+/// The authoring builder is not a standalone plugin payload:
+/// ```compile_fail
+/// use phenix_graph::compose::NetworkPatch;
+/// use phenix_kernel::Contribution;
+/// use phenix_plugin::Registrar;
+/// let mut registrar = Registrar::new("plugin").unwrap();
+/// registrar.add(Contribution::new("service", NetworkPatch::new([]))).unwrap();
+/// ```
+/// Standalone ownership-bearing metadata is no longer a public authoring route:
+/// ```compile_fail
+/// use phenix_kernel::{NetworkOffer, ContractRequirement};
+/// ```
 pub struct Contribution {
-    pub id: String,
-    pub requires: Vec<Key>,
-    /// Public input names this contribution's producer may inject.
-    pub routes: Vec<String>,
-    pub patch: NetworkPatch,
-    pub prepare: Option<Box<Prepare>>,
+    inner: RegisteredContribution,
+    offers: Vec<(String, String, Key)>,
+    imports: Vec<(String, Key)>,
 }
 
-impl phenix_plugin::Contribution for Contribution {
+impl Contribution {
+    pub fn new(id: impl Into<String>, patch: NetworkPatch) -> Self {
+        Self {
+            inner: RegisteredContribution {
+                id: id.into(),
+                requires: Vec::new(),
+                routes: Vec::new(),
+                patch,
+                prepare: None,
+            },
+            offers: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+
+    /// Append explicit composer dependencies.
+    pub fn after(mut self, dependencies: impl IntoIterator<Item = Key>) -> Self {
+        self.inner.requires.extend(dependencies);
+        self
+    }
+
+    /// Append public input names this contribution's producer may inject.
+    pub fn route(mut self, inputs: impl IntoIterator<Item = String>) -> Self {
+        self.inner.routes.extend(inputs);
+        self
+    }
+
+    /// Set candidate preparation, replacing any previously authored callback.
+    pub fn prepare(
+        mut self,
+        prepare: impl Fn(&CandidateContext<'_>) -> Result<CandidateArtifacts, CallbackError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.inner.prepare = Some(Box::new(prepare));
+        self
+    }
+
+    /// Advertise an actual unit created by this composer. All offers are checked.
+    pub fn offer(mut self, id: impl Into<String>, unit: impl Into<String>, contract: Key) -> Self {
+        self.offers.push((id.into(), unit.into(), contract));
+        self
+    }
+
+    /// Declare an import whose provider is selected only by the trusted host.
+    pub fn import(mut self, id: impl Into<String>, contract: Key) -> Self {
+        self.imports.push((id.into(), contract));
+        self
+    }
+
+    /// Atomically admit this composer and its metadata in the existing owner-wide
+    /// namespaces. Failure installs no entries and reserves no names.
+    pub fn register(
+        self,
+        registrar: &mut phenix_plugin::Registrar,
+    ) -> Result<(), phenix_plugin::Failure> {
+        let key = Key::new(registrar.owner(), &self.inner.id);
+        let mut bundle = phenix_plugin::Registrar::new(registrar.owner())?;
+        bundle.add(self.inner)?;
+        for (id, unit, contract) in self.offers {
+            bundle.add(NetworkOffer {
+                id,
+                producer: key.clone(),
+                unit,
+                contract,
+            })?;
+        }
+        for (id, contract) in self.imports {
+            bundle.add(ContractRequirement {
+                id,
+                consumer: key.clone(),
+                contract,
+            })?;
+        }
+        registrar.merge(bundle.finish())
+    }
+}
+
+struct RegisteredContribution {
+    id: String,
+    requires: Vec<Key>,
+    routes: Vec<String>,
+    patch: NetworkPatch,
+    prepare: Option<Box<Prepare>>,
+}
+
+impl phenix_plugin::Contribution for RegisteredContribution {
     const KIND: &'static str = "kernel.contribution";
     fn id(&self) -> &str {
         &self.id
@@ -320,12 +434,12 @@ impl phenix_plugin::Contribution for ContractDefinition {
 
 /// An offer names an actual unit, never a purported implementation shape.
 /// Every offer is checked after all composition, including unused offers.
-pub struct NetworkOffer {
-    pub id: String,
+struct NetworkOffer {
+    id: String,
     /// Exact contribution responsible for creating the offered unit.
-    pub producer: Key,
-    pub unit: String,
-    pub contract: Key,
+    producer: Key,
+    unit: String,
+    contract: Key,
 }
 
 impl phenix_plugin::Contribution for NetworkOffer {
@@ -339,10 +453,10 @@ impl phenix_plugin::Contribution for NetworkOffer {
 }
 
 /// A local declarative import. Only the trusted host can select its provider.
-pub struct ContractRequirement {
-    pub id: String,
-    pub consumer: Key,
-    pub contract: Key,
+struct ContractRequirement {
+    id: String,
+    consumer: Key,
+    contract: Key,
 }
 
 /// Trusted host decisions, never plugin contributions. Denial wins over allowance.
@@ -775,7 +889,7 @@ pub struct Kernel {
     producer_ownership: AtomicUsize,
     driver_wake: Mutex<Option<WakeHandle>>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
-    _leases: Vec<ContributionHandle<Contribution>>,
+    _leases: Vec<ContributionHandle<RegisteredContribution>>,
     keys: Vec<Key>,
     started: bool,
     routes: BTreeMap<Key, BTreeSet<String>>,
@@ -861,11 +975,11 @@ impl Kernel {
                 collect!(ContractDefinition, definitions);
                 collect!(NetworkOffer, offers);
                 collect!(ContractRequirement, requirements);
-                if kind != <Contribution as phenix_plugin::Contribution>::KIND {
+                if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
                     continue;
                 }
                 let handle = snapshot
-                    .get::<Contribution>(id)
+                    .get::<RegisteredContribution>(id)
                     .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
                 if pending.insert(key.clone(), handle).is_some() {
                     return Err(format!("duplicate contribution: {key:?}").into());

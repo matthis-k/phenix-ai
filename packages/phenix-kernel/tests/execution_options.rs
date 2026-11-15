@@ -6,12 +6,17 @@ use phenix_graph::{
     process::LocalProcessDispatcher,
     runtime::SessionState,
 };
-use phenix_kernel::{Kernel, host::KernelHost};
+use phenix_kernel::{BuildOptions, Kernel, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 struct Dag(usize);
 impl PluginInstance for Dag {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+        support::contribution("dag", self.patch()).register(into)
+    }
+}
+impl Dag {
+    fn patch(&self) -> NetworkPatch {
         let mut edits = vec![
             Edit::Add {
                 path: "first".into(),
@@ -39,7 +44,7 @@ impl PluginInstance for Dag {
             name: "result".into(),
             from: support::path(&format!("step-{}", self.0 - 1), "value"),
         });
-        into.add(support::contribution("dag", NetworkPatch::new(edits)))
+        NetworkPatch::new(edits)
     }
 }
 #[test]
@@ -48,13 +53,23 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
     let mut catalog = PluginCatalog::new();
     let key = catalog.register("dag", |dag: Dag| Ok(dag)).unwrap();
     let mut plugins = catalog.instance();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("dag", "dag"),
+        Dag(length).patch().footprints(),
+    );
+    let mut host_options = BuildOptions::default();
+    support::grant(
+        &mut host_options,
+        Key::new("dag", "dag"),
+        Dag(length).patch().footprints(),
+    );
     let snapshot = plugins.load(&key, Dag(length)).unwrap();
-    let mut options = support::options(std::slice::from_ref(&snapshot));
     options
         .execution
         .discard_outputs
         .extend((1..length - 1).map(|index| (format!("step-{index}"), "value".into())));
-    let mut host_options = support::options(std::slice::from_ref(&snapshot));
     host_options.execution.discard_outputs = options.execution.discard_outputs.clone();
     let mut kernel = Kernel::build_with_options(
         "bounded",

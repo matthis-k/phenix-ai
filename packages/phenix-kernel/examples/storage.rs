@@ -104,12 +104,8 @@ impl PluginInstance for CounterPlugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let counter = self.counter.clone();
         let reads = self.reads.clone();
-        registrar.add(Contribution {
-            id: "module".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("module", NetworkPatch::new([]))
+            .prepare(move |_| {
                 let mut module = NetworkBuilder::new();
                 let writer = counter.clone();
                 let write = module.add(
@@ -149,8 +145,8 @@ impl PluginInstance for CounterPlugin {
                     )),
                     ..Default::default()
                 })
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 struct ObserverPlugin {
@@ -165,12 +161,10 @@ impl PluginInstance for ObserverPlugin {
         let session = self.session.clone();
         let scope = self.scope.clone();
         let capacity = self.capacity;
-        registrar.add(Contribution {
-            id: "observer".into(),
-            requires: vec![Key::new("counter", "module")],
-            routes: vec!["storage_changed".into()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("observer", NetworkPatch::new([]))
+            .after([Key::new("counter", "module")])
+            .route(["storage_changed".into()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 let log = observed.clone();
                 let sink = support::local_sink(move |notice: phenix_storage::Notice| {
@@ -186,8 +180,8 @@ impl PluginInstance for ObserverPlugin {
                     }))
                 })?;
                 Ok(context)
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 

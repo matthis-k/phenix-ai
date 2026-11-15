@@ -351,12 +351,8 @@ mod tests {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             self.0.fetch_add(1, Ordering::SeqCst);
             let calls = self.0.clone();
-            into.add(Contribution {
-                id: "source".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("source", NetworkPatch::new([]))
+                .prepare(move |_| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let calls = calls.clone();
                     let mut artifacts = CandidateArtifacts::default();
@@ -365,8 +361,8 @@ mod tests {
                         Ok(Box::new(Source))
                     })?;
                     Ok(artifacts)
-                })),
-            })
+                })
+                .register(into)
         }
     }
 

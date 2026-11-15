@@ -85,13 +85,10 @@ pub struct Plugin {
 impl PluginInstance for Plugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let author = self.author.clone();
-        registrar.add(Contribution {
-            id: "derive".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| author())),
-        })
+        Contribution::new("derive", NetworkPatch::new([]))
+            .route(self.routes.clone())
+            .prepare(move |_| author())
+            .register(registrar)
     }
 }
 pub fn options(plugin: &Plugin) -> BuildOptions {
