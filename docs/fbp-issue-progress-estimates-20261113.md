@@ -33,17 +33,18 @@ Subsequent implementation `51878d147e194a9f7aebf2020c2c550a10e50f9f` passed all
 fifteen workflows, including [six-job Flake CI 43702741898][E]. Its additional
 resolver-cause and invalid-emission diagnostic fixes leave all scores unchanged.
 The [design, review and evidence](fbp-error-context-20261115.md) also records a
-separately reproduced, still-unfixed Q3 selection defect.
+separately reproduced Q3 selection defect, unfixed at that revision and subsequently
+corrected at `006b2e9cc` as recorded below.
 
 Earlier implementation `979572eb9e08462adddac07d35625bd7f2cb940e` passed all
 fifteen workflows, including [six-job Flake CI 43705906267][K]. It fixes public
 tuple snapshot cardinality, query declaration-cause loss and continuation wait-lane
 attribution; [design/review/evidence](fbp-quick-boundaries-20261115.md) records their
-bounded acceptance and the separate, unresolved request-terminal precedence gap.
+bounded acceptance and the separate, then-unresolved request-terminal precedence gap.
 Scores and classifications below are unchanged by this batch; C1 verification is
 the inherited session-level scope, not a claim about every request transition.
 
-Latest implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
+Earlier implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
 workflows, including [six-job Flake CI 43727271982][N]. Independent original-scope
 and assembled integration reviews accept [A3 resource separation](fbp-resource-boundary-20261115.md),
 [native WIP #1258](fbp-published-host-wake-20261115.md), and the user-approved
@@ -51,6 +52,14 @@ and assembled integration reviews accept [A3 resource separation](fbp-resource-b
 #1258 is closed as superseded, not merged. The [work map](fbp-remaining-work-20261115.md)
 retains concrete acceptance/dependency requirements for all 22 starting findings,
 of which 21 remain. Q3 and the C3/C6/C7 policy/architecture work remain open.
+
+Latest implementation `006b2e9ccda6b06739571e5bef3b6d94a74fb220` passed all fifteen
+workflows, including [six-job Flake CI 43770741835][S]. Its [selection correction](fbp-selection-correctness-20261115.md)
+fixes the reproduced dependency-defeat bug, requires global uniqueness and exposes
+finite host-controlled work limits. Independent truth-table/model tests, public
+allowance/scaling tests and both Kernel composer paths are verified. Q3's broader
+planning/recomposition scaling acceptance remains open; no new score or closure
+credit follows from the bounded correctness slice.
 
 The unweighted issue mean is **59.8%**, previously 57.4%. Formal classifications are
 **12 scoped verified / 7 partial / 14 open**. This mean is not a substitute for issue
@@ -101,7 +110,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
-| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Atomic incoming-name preflight retained; [transient dependency-defeat defect reproduced](fbp-error-context-20261115.md#separate-q3-reproduction), not fixed |
+| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Exact unique selection and global host work limits](fbp-selection-correctness-20261115.md), [exact-head][S]; defect fixed, broader ancestor/footprint planning and recomposition scaling remain |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
 | Q6 | Diagnostic quality | 22.0% | 22.0% | +0.0 | Open | Passive request blockers, emission context and [exact-head][K] owned-continuation input wait lanes; general readiness/liveness explanations remain |
@@ -114,12 +123,13 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 [E]: https://github.com/matthis-k/phenix-ai/actions/runs/43702741898
 [K]: https://github.com/matthis-k/phenix-ai/actions/runs/43705906267
 [N]: https://github.com/matthis-k/phenix-ai/actions/runs/43727271982
+[S]: https://github.com/matthis-k/phenix-ai/actions/runs/43770741835
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `026cfbe05`, not an older commit's passing
+implementation acceptance is exact-head `006b2e9cc`, not an older commit's passing
 run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
@@ -143,6 +153,7 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | A3 external resource authority | Graph owned a concrete Store, locks and read/write permission interpretation | Opaque exact-type capabilities and validated sets; operations/authority stay external | Attenuation compile tests, identity/default deny, sources/continuations, duplicate rejection and independent capability leases/hostile cleanup; [exact-head][N] |
 | Request terminal/cleanup | Late explicit cleanup rewrote inherited outcomes; cleanup errors could mask original query failure and inventory | Approved Dispose, Keep Failed, original-first typed Cleanup plus outer exact-job inventory | Both queue/failure policies, scoped capture retention versus explicit disposal, destructor/recovery failure and late jobs; [exact-head][N] |
 | WIP #1258 native hosting | Published host lacked source/publication wake registration and sleep tokens | Existing wake handle gains versioned hints; private candidate registration and post-publication signaling; guarded DerivedHost forwarding | Actual sleeping/reload/source/shutdown reactor, partial sweeps/backpressure and real observer reload with offloaded guards; [exact-head][N] |
+| Q3 selection correctness | Transient prerequisite defeat permanently suppressed an eligible dependent | Sound propagation and exact globally budgeted feedback search; unique selection required before replay/publication | Original/cyclic/zero/multiple/global-model cases, 19,683 signed systems, exact budgets/atomicity, bounded scale families and host previews; [exact-head][S]; whole planning scale remains open |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,

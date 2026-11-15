@@ -6,12 +6,18 @@ remains authoritative. This map supplies concrete work and acceptance dependenci
 not new completion percentages or a promise that every finding is independently
 implementable without a policy decision.
 
-Current accepted implementation: `026cfbe05`, with all fifteen exact-head hosted
+Resource/lifecycle acceptance: `026cfbe05`, with all fifteen exact-head hosted
 workflows passing. A3 is now scoped verified, leaving **21 findings: 7 partial and
 14 open**, with twelve scoped verified overall. Native WIP #1258 is closed as
 superseded, and the approved terminal/cleanup protocol is implemented and verified.
 The table retains all 22 starting findings so no remaining work disappears from
 the map; only A3 has received new whole-finding closure credit.
+
+Subsequent accepted implementation `006b2e9cc` fixes Q3's demonstrated selection
+defect with exact unique-model selection and finite host-owned work limits. All
+fifteen workflows passed. This is material correctness and bounded-selector
+evidence, not whole Q3 planning/recomposition scaling acceptance; the 21 remaining
+findings and scores do not change. See [selection design/evidence](fbp-selection-correctness-20261115.md).
 
 ## Current Implementation Tracks
 
@@ -28,8 +34,10 @@ the map; only A3 has received new whole-finding closure credit.
 
 These tracks passed hosted acceptance at the exact revision above. The scorecard,
 not this map, records the A3 increase and unchanged scores of the other findings.
-Q3 selection correctness is the next executable correctness unit; C3/C6/C7 decisions
-remain outstanding and must not be silently converted into implementation claims.
+Q3's correctness unit is now accepted; remaining Q3 work is complete planning and
+recomposition scale measurement/acceptance, not another provisional-defeat patch.
+C3/C6/C7 decisions remain outstanding and must not be silently converted into
+implementation claims.
 
 ## All 22 Findings
 
@@ -52,7 +60,7 @@ remain outstanding and must not be silently converted into implementation claims
 | A5 physical paths | Open | Cover required compilation/binding/execution operations with coherent bound handles and stale/foreign rejection | Typed InputKey is a name, not generation authority; retain necessary validated dynamic paths |
 | Q1 responsibility concentration | Open | Extract cohesive tested ownership boundaries without duplicated state or protocol authorities | Stabilize terminal/selection seams before competing refactors |
 | Q2 incremental compilation | Open | Define dependency-aware invalidation/cache identity; compare reused candidates against full fresh compilation and measure benefit | Q3 correctness and stable authoring/replacement semantics first |
-| Q3 selection/scaling | Open | Correct transient dependency defeat with termination, zero/multiple-solution handling and adversarial scale evidence | Reproduced expected `{P,R,p}` versus actual `{R,p}`; blind exclusion resets or unbounded subset search are not accepted |
+| Q3 selection/scaling | Open | Exact global selection, explicit zero/multiple/exhaustion handling and bounded-selector scale evidence accepted at `006b2e9cc`; complete planning/recomposition scale acceptance remains | Allowance excludes ancestor/footprint planning and replay/compile; no whole-finding closure |
 | Q4 static liveness | Open | Define an analyzable subset with sound reject/unknown/progress results and explicit environment assumptions | Arbitrary callbacks and every SCC cannot receive a universal progress claim |
 | Q5 concurrency evidence | Open | Cover supported drain/retirement/driver and handoff/wake compositions with actual-source bounded models plus deterministic threads | H3b; more repetitions alone are not exhaustive verification |
 | Q6 diagnostic completeness | Open | Structured passive explanations for why a process/request cannot run/settle, including readiness, closure, jobs, wake, continuation and publication | Distinguish unknown conditions from proven blockage; preserve exact request/lane attribution |

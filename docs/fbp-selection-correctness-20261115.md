@@ -1,8 +1,8 @@
 # Dependency And Priority Selection Correctness
 
-Status: implemented, independently reviewed and locally verified with full locked
-workspace/default/no-default, formatting and strict Clippy checks. Exact-head hosted
-acceptance remains pending.
+Status: implemented, independently reviewed and exact-head verified at
+`006b2e9ccda6b06739571e5bef3b6d94a74fb220`. Full locked workspace/default/no-default,
+formatting and strict Clippy checks also pass locally.
 Based on verified `bd397a757`.
 
 ## Defect And Contract
@@ -115,3 +115,25 @@ end-to-end recomposition costs remain outside the allowance and require separate
 measurement/acceptance. Do not manufacture a whole-finding closure or percentage
 increase from this correction. Existing runtime, request, lifecycle and lease
 contracts are unchanged and still require assembled exact-head checks.
+
+## Exact-Head Acceptance
+
+Implementation `006b2e9ccda6b06739571e5bef3b6d94a74fb220` passed all fifteen
+hosted workflows, including:
+
+- [Full six-job Flake matrix 43770741835](https://github.com/matthis-k/phenix-ai/actions/runs/43770741835).
+- [Actual-source wake Loom 43770741345](https://github.com/matthis-k/phenix-ai/actions/runs/43770741345).
+- [Session ownership Loom 43770741355](https://github.com/matthis-k/phenix-ai/actions/runs/43770741355).
+- [Eight-repeat native notifier/plugin-lock gate 43770749070](https://github.com/matthis-k/phenix-ai/actions/runs/43770749070).
+- [Twelve-repeat in-flight worker recovery 43770749243](https://github.com/matthis-k/phenix-ai/actions/runs/43770749243).
+
+Independent preimplementation, production and assembled public-limit/Kernel reviews
+found no unresolved actionable defects. The budget-failure public regression also
+attempts removal of a present registration, preserving that registry and binding
+before a larger allowance permits the retry.
+
+The demonstrated selection defect is resolved. Q3 remains open with its existing
+score because complete planning/recomposition scaling acceptance is not delivered.
+Counts remain twelve scoped verified / seven partial / fourteen open. Benchmark
+workflow success is not blanket performance acceptance. This evidence-only
+follow-up requires its own committed-head checks, separate from the source above.

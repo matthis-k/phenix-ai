@@ -82,6 +82,11 @@ success is not blanket performance acceptance. Q6/Q7 scores remain unchanged.
 
 ## Separate Q3 Reproduction
 
+This section records the earlier failing case. Its production selection defect is
+now corrected and exact-head verified at `006b2e9cc`; see the [selection design and
+acceptance](fbp-selection-correctness-20261115.md). The broader Q3 scaling finding
+remains open, not the reproduced wrong-selection behavior itself.
+
 A detached worktree at `/tmp/opencode/fbp-q3-reproduction-51878d14`, based on the
 same implementation commit, reproduces a selection-correctness defect. Its single
 added regression uses the existing production Composer and exhaustive test oracle:

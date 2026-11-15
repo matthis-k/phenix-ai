@@ -2,6 +2,23 @@
 
 ## Current Accepted Batch
 
+Implementation `006b2e9cc` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43770741835](https://github.com/matthis-k/phenix-ai/actions/runs/43770741835).
+The [Q3 selection correction](fbp-selection-correctness-20261115.md) replaces
+permanent provisional defeat with sound propagation and exact globally bounded
+search. Zero/multiple consistent models or work exhaustion reject atomically;
+one model is not published without proving uniqueness. Host limits govern both
+Kernel composer paths. Independent critique/review, truth-table/model coverage,
+public allowance/scaling tests and full local workspace gates pass.
+
+The demonstrated correctness bug is fixed, but full ancestor/footprint planning
+and end-to-end recomposition scaling are not covered by the selection allowance.
+Q3 remains open; counts stay twelve scoped verified / seven partial / fourteen
+open, mean 59.8%, with 21 findings remaining. This evidence-only revision needs
+its own checks. Passing benchmark execution is not performance acceptance.
+
+## Previous Resource And Lifecycle Batch
+
 Implementation `026cfbe05` passed all fifteen exact-head workflows, including
 [six-job Flake CI 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
 Independent original-scope and assembled integration reviews found no actionable
