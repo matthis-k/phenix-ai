@@ -79,6 +79,55 @@ codec identity. Structural compatibility never establishes a semantic `Contract`
 claim. Values carrying plugin/resource leases reject bare owned extraction;
 `borrow`, `leased_shared` and `decoded` preserve the ownership boundary.
 
+## Resource Capabilities
+
+Graph resolves opaque capabilities supplied by the host. It provides no store,
+resource locks, read/write callbacks, or permission engine. A capability's public
+API defines its authority: an application-private read facade must not expose its
+inner mutable handle or a conversion to a writer. A write facade may expose both
+read and write operations. Real Storage handles and their authorization remain
+outside Graph; no Graph-specific storage dependency is required.
+
+```rust
+use phenix_graph::{ProcessContext, ResourceError, ResourceGrant, ValidatedResourceSet};
+use std::sync::Arc;
+let capability = Arc::new(String::from("application-owned capability"));
+let resources = ValidatedResourceSet::try_new(vec![
+    ResourceGrant::new("service", capability.clone()),
+])?;
+let context = ProcessContext::default().with_resources(resources);
+assert!(Arc::ptr_eq(context.resource::<Arc<String>>("service")?, &capability));
+assert!(matches!(context.resource::<String>("service"), Err(ResourceError::WrongType("service"))));
+assert!(matches!(context.resource::<String>("absent"), Err(ResourceError::NotGranted("absent"))));
+# Ok::<(), ResourceError>(())
+```
+
+`ResourceGrant::new(key, capability)` preserves the exact Rust `Any` type, including
+an explicit `Arc<C>` wrapper. Lookup returns `&C` and performs no capability
+operation. `ValidatedResourceSet::try_new` rejects duplicate keys regardless of
+type or order, before a set can be used in a context or session. Rejection consumes
+the input and may execute application destructors. Empty/default sets are valid;
+clones preserve validation and share the granted capabilities. The same key is
+valid in different processes, without implying shared state. Configure each
+physical path through `SessionOptions::resources`; auto-started sources, explicit
+request sources, and ordinary reservations receive clones of that process's set.
+Recovery replaces process-private state, not these external capabilities or effects.
+
+`with_lease` appends a capability-specific code/resource lease. Each grant keeps
+all its leases alive through capability destruction and destruction of a caught
+panic payload, then attempts each lease drop separately. Direct grant/set drops,
+rejected sets, and retained session sets use the same cleanup. Managed context
+cleanup reports caught destructor panics through the existing handoff failure
+path; ordinary `Drop` cannot report them. This is not a sandbox or a guarantee
+against all in-process aborts, non-yielding destructors, or double panics inside
+one application's own destructor. Resources do not schedule work or roll back
+committed external effects.
+
+The executable `resource_capabilities` example keeps the facade's lock private.
+Its exact source is compile-checked from outside the facade module: a reader
+cannot call `write`, access the inner lock, or convert into a writer. The writer
+can both read and write the same external state.
+
 ## Executable Examples
 
 ### Independent Request Queues
@@ -149,6 +198,8 @@ proves deadlock or progress. `blocked_queues()` remains the session-wide view.
   Node/Module replacement, dependency-ordered splices, conflicts and revocation.
 - `cargo run -p phenix-graph --example owned_dispatch --locked`: bounded worker
   handoff, delayed completion and publication gating.
+- `cargo run -p phenix-graph --example resource_capabilities --locked`: private
+  application read/write facades and exact-type capability grants.
 
 Kernel owns producer lifecycle and selection policy. StorageGraph observes
 authorized subscriptions and uses native request scopes; neither owns another

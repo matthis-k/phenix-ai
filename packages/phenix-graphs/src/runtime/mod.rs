@@ -12,9 +12,9 @@ use crate::network::CompiledNetwork;
 use crate::process::{
     ActivationJob, CancelledProcess, CompletedStep, DispatchResult, HandoffError, HandoffState,
     LocalProcessDispatcher, ProcessContext, ProcessDispatcher, ProcessExecutionGuard,
-    ProcessHandoff, ResourceGrant, Step, StepTicket,
+    ProcessHandoff, Step, StepTicket,
 };
-use crate::{GraphOrigin, Value};
+use crate::{GraphOrigin, ValidatedResourceSet, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::Ordering};
@@ -94,7 +94,8 @@ pub struct SessionOptions {
     /// Explicit permission to discard emissions with no connection or capture.
     /// Entries are (physical process path, declared output name).
     pub discard_outputs: BTreeSet<(String, String)>,
-    pub resources: BTreeMap<String, Vec<ResourceGrant>>,
+    /// Validated host capabilities for each physical process path.
+    pub resources: BTreeMap<String, ValidatedResourceSet>,
     pub max_requests: NonZeroUsize,
     pub request_failure_policy: RequestFailurePolicy,
     /// Queue-level isolation for request traffic; does not isolate process state.
@@ -263,7 +264,7 @@ struct RuntimeProcess {
     source: bool,
     wake: Arc<WakeSlot>,
     request: Option<RequestId>,
-    resources: Vec<ResourceGrant>,
+    resources: ValidatedResourceSet,
     closed_in_activation: BTreeSet<usize>,
 }
 

@@ -102,7 +102,7 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     let mut invalid_resource = SessionOptions::default();
     invalid_resource
         .resources
-        .insert("unknown".to_owned(), vec![]);
+        .insert("unknown".to_owned(), Default::default());
     let failed = compiled.start_with_options(invalid_resource);
     assert_eq!(failed.state(), SessionState::Failed);
     assert_eq!(spawned.load(Ordering::SeqCst), 0);

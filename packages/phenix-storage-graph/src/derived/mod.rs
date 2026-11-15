@@ -71,6 +71,14 @@ pub enum Error {
     InvalidPublication,
     Request(phenix_graph::runtime::RequestError),
     Unsettled,
+    /// Cleanup never replaces the initiating error. If release failed, `request`
+    /// still identifies the scope for caller inspection and a release retry.
+    Cleanup {
+        cause: Box<Error>,
+        request: phenix_graph::runtime::RequestId,
+        termination: Option<phenix_graph::runtime::RequestError>,
+        release: Option<phenix_graph::runtime::RequestError>,
+    },
     RequestInterrupted {
         cause: Box<Error>,
         cancelled_jobs: Vec<phenix_graph::process::StepTicket>,
@@ -90,7 +98,9 @@ impl std::error::Error for Error {
             Self::Kernel(e) => Some(e.as_ref()),
             Self::Storage(e) => Some(e),
             Self::Request(e) => Some(e),
-            Self::RequestInterrupted { cause, .. } => Some(cause.as_ref()),
+            Self::Cleanup { cause, .. } | Self::RequestInterrupted { cause, .. } => {
+                Some(cause.as_ref())
+            }
             _ => None,
         }
     }

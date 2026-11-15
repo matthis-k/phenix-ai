@@ -833,8 +833,7 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
 #[test]
 fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease() {
     use phenix_graph::{
-        ComponentDef, Store,
-        process::{ProcessExecutionGuard, ResourceGrant},
+        ComponentDef, ResourceGrant, ValidatedResourceSet, process::ProcessExecutionGuard,
     };
     use std::{any::Any, collections::BTreeMap, sync::Weak};
 
@@ -900,12 +899,10 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
     impl Process for Worker {
         fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
             if self.hostile {
-                let grants = ["resource-left", "resource-right"].map(|name| {
-                    let mut store = Store::new();
-                    store.insert("resource", self.probes.probe(name, true));
-                    ResourceGrant::read(Arc::new(store), "resource")
-                });
-                *cx = std::mem::take(cx).with_resources(grants.into());
+                let grants = ["resource-left", "resource-right"]
+                    .map(|name| ResourceGrant::new(name, self.probes.probe(name, true)));
+                *cx = std::mem::take(cx)
+                    .with_resources(ValidatedResourceSet::try_new(grants.into()).unwrap());
                 // Leave both inputs and resource grants owned by the returned job.
                 return Ok(Step::Emit(ProcessEmission::new(
                     "out",

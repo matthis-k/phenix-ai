@@ -164,3 +164,36 @@ sandboxed or rolled back. Typed callback errors preserve their exact source.
 
 Run `cargo test -p phenix-plugin -p phenix-kernel`. Storage integration targets also
 require the independently migrated StorageGraph adapter.
+
+## Host Wake Hints
+
+`KernelHost::with_wake(plugins, wake.clone())` opts into producer/publication
+notifications; `new` remains manual. Preparation builds, binds, and starts before
+registering producer wakers, with shutdown checks on either side of registration.
+It never polls or runs candidate process steps or installs a session notifier.
+Unsupported/panicking registration and shutdown return `LifecycleError::Driver`.
+Activation/subscription may perform I/O, and failed candidates may signal hints;
+these external effects and wake versions are not rolled back. Shutdown checks
+are not atomic publication revocation of an already prepared candidate.
+
+`WakeHandle::version()` snapshots a wrapping change hint. Snapshot before work
+inspection, then `wait_since(version)` waits for a different version or sticky
+shutdown, looping through spurious wakes. `is_shutdown()` must also be checked
+during busy iterations. Wakes notify all waiters before forwarding to the native
+driver notifier, without holding the epoch mutex during forwarding. Versions
+are neither event counts nor generation IDs. Publication signals after the new
+active pointer is visible and the old drain gate is released, before old producer
+destructors, including on first publication.
+
+This is **source/publication-driven only**, not a general scheduler. An empty
+bounded drain is not idle: finish a sweep using an application-known producer
+bound, execute bounded steps, drain captures/backpressure, and retry after
+progress or exhausted budgets. Graph process wakes, worker completion, deadlines,
+explicit injection, and session-lease release do not automatically advance the
+host version. Keep native `run_until` or coordinate those sources independently.
+Never hold a host mutex while processing or waiting. Mixing host-reactor and
+static-driver modes with different wake handles, including handover back to the
+host after static registration, is unsupported: producer wakers are not restored.
+
+`DerivedHost::with_wake` forwards this opt-in without changing mandatory storage
+guards. See [the bounded design and reactor contract](../../docs/fbp-published-host-wake-20261115.md).

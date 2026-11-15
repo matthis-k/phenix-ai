@@ -34,6 +34,68 @@ fn assert_lookup_error(error: &Error, expected: &NetworkError) {
 }
 
 #[test]
+fn cleanup_keeps_both_typed_stages_and_chains_original_error_inside_job_inventory() {
+    use phenix_graph::{
+        connection::ConnectionError,
+        runtime::{RequestDisposal, RequestError},
+    };
+    // Keep a live input so an authenticated request can be allocated.
+    let mut graph = NetworkBuilder::new();
+    let sink = graph
+        .add("sink", Arc::new(ComponentDef::sink(|_: &i64| {})))
+        .unwrap();
+    graph
+        .expose_input(
+            "input",
+            sink.input::<i64>("input").unwrap(),
+            std::num::NonZeroUsize::new(1).unwrap(),
+        )
+        .unwrap();
+    let mut session = graph.build().unwrap().compile().unwrap().start();
+    let request = session.begin_request(None).unwrap();
+    let error = Error::RequestInterrupted {
+        cause: Box::new(Error::Cleanup {
+            cause: Box::new(Error::Request(RequestError::Transport(
+                ConnectionError::Full,
+            ))),
+            request,
+            termination: Some(RequestError::PacketDestructorPanicked),
+            release: Some(RequestError::NotSettled),
+        }),
+        cancelled_jobs: vec![],
+        disposal: RequestDisposal::default(),
+    };
+    let cleanup = error.source().unwrap().downcast_ref::<Error>().unwrap();
+    let Error::Cleanup {
+        request: stored,
+        termination,
+        release,
+        ..
+    } = cleanup
+    else {
+        panic!("{cleanup}");
+    };
+    assert_eq!(*stored, request);
+    assert_eq!(*termination, Some(RequestError::PacketDestructorPanicked));
+    assert_eq!(*release, Some(RequestError::NotSettled));
+    let original = cleanup.source().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(
+        original,
+        Error::Request(RequestError::Transport(ConnectionError::Full))
+    ));
+    let typed = original
+        .source()
+        .unwrap()
+        .downcast_ref::<RequestError>()
+        .unwrap();
+    assert_eq!(*typed, RequestError::Transport(ConnectionError::Full));
+    assert_eq!(
+        typed.source().unwrap().downcast_ref::<ConnectionError>(),
+        Some(&ConnectionError::Full)
+    );
+}
+
+#[test]
 fn derived_authoring_preserves_duplicate_and_foreign_scope_errors() {
     let fixture = Fixture::new(false);
     let mut graph = NetworkBuilder::new();

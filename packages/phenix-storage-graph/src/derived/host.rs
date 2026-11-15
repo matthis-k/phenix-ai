@@ -22,6 +22,13 @@ impl DerivedHost {
         }
     }
 
+    /// Forward source/publication wake hints without changing mandatory guards.
+    pub fn with_wake(plugins: PluginSet, wake: phenix_kernel::WakeHandle) -> Self {
+        Self {
+            host: KernelHost::with_wake(plugins, wake),
+        }
+    }
+
     pub fn plugins(&self) -> &PluginSet {
         self.host.plugins()
     }

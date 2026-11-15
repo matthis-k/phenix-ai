@@ -1573,19 +1573,15 @@ fn request_source_wake_preserves_scope_and_activation_without_spinning() {
 struct ResourceUser;
 impl Process for ResourceUser {
     fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        assert_eq!(cx.read::<i64, _>("value", |v| *v)?, 7);
-        assert!(cx.write::<i64, _>("value", |v| *v = 8).is_err());
-        assert!(cx.read::<i64, _>("secret", |v| *v).is_err());
+        assert_eq!(*cx.resource::<i64>("value").map_err(|e| e.to_string())?, 7);
+        assert!(cx.resource::<Arc<AtomicUsize>>("value").is_err());
+        assert!(cx.resource::<i64>("secret").is_err());
         Ok(Step::Finished)
     }
 }
 #[test]
-fn resources_reference_existing_store_and_require_explicit_per_process_grants() {
-    use phenix_graph::{Store, process::ResourceGrant};
-    let mut store = Store::new();
-    store.insert("value", 7_i64);
-    store.insert("secret", 9_i64);
-    let store = Arc::new(store);
+fn resources_require_explicit_per_process_capabilities() {
+    use phenix_graph::{ResourceGrant, ValidatedResourceSet};
     let mut b = NetworkBuilder::new();
     let p = b
         .node(
@@ -1599,17 +1595,21 @@ fn resources_reference_existing_store_and_require_explicit_per_process_grants() 
     let mut opts = options();
     opts.resources.insert(
         "user".into(),
-        vec![ResourceGrant::read(store.clone(), "value")],
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("value", 7_i64)]).unwrap(),
     );
     assert_eq!(
         c.start_with_options(opts).run_until_idle(10).state,
         SessionState::Completed
     );
     assert_eq!(c.start().run_until_idle(10).state, SessionState::Failed);
-    let cx = ProcessContext::default()
-        .with_resources(vec![ResourceGrant::write(store.clone(), "value")]);
-    cx.write::<i64, _>("value", |v| *v = 10).unwrap();
-    assert_eq!(cx.read::<i64, _>("value", |v| *v).unwrap(), 10);
+    let state = Arc::new(AtomicUsize::new(7));
+    let cx = ProcessContext::default().with_resources(
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("value", state.clone())]).unwrap(),
+    );
+    cx.resource::<Arc<AtomicUsize>>("value")
+        .unwrap()
+        .store(10, Ordering::SeqCst);
+    assert_eq!(state.load(Ordering::SeqCst), 10);
 }
 
 struct NativeLease(Arc<AtomicUsize>);

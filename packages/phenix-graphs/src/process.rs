@@ -4,7 +4,7 @@
 //! Returning an emission does not complete the logical activation. A caller must
 //! commit that emission before resuming its continuation, and must explicitly
 //! settle `Complete` before admitting another reservation.
-use crate::{Store, Value};
+use crate::{ResourceError, ValidatedResourceSet, Value};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -154,43 +154,12 @@ pub enum Step {
 
 /// Owned inputs for exactly one logical reservation. Processes may remove an
 /// input but cannot dequeue from, or retain a borrow into, session queues.
-#[derive(Clone)]
-pub struct ResourceGrant {
-    store: Arc<Store>,
-    key: &'static str,
-    writable: bool,
-}
-impl ResourceGrant {
-    pub fn read(store: Arc<Store>, key: &'static str) -> Self {
-        Self {
-            store,
-            key,
-            writable: false,
-        }
-    }
-    pub fn write(store: Arc<Store>, key: &'static str) -> Self {
-        Self {
-            store,
-            key,
-            writable: true,
-        }
-    }
-}
-impl fmt::Debug for ResourceGrant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ResourceGrant")
-            .field("key", &self.key)
-            .field("writable", &self.writable)
-            .finish_non_exhaustive()
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct ProcessContext {
     inputs: BTreeMap<String, Value>,
     closed: Vec<String>,
     request_closed: Vec<String>,
-    grants: Vec<ResourceGrant>,
+    grants: ValidatedResourceSet,
     correlation_lane: Option<usize>,
 }
 impl ProcessContext {
@@ -199,7 +168,7 @@ impl ProcessContext {
             inputs,
             closed,
             request_closed: vec![],
-            grants: vec![],
+            grants: ValidatedResourceSet::default(),
             correlation_lane: None,
         }
     }
@@ -219,7 +188,7 @@ impl ProcessContext {
             *name = rename(name);
         }
     }
-    pub fn with_resources(mut self, grants: Vec<ResourceGrant>) -> Self {
+    pub fn with_resources(mut self, grants: ValidatedResourceSet) -> Self {
         self.grants = grants;
         self
     }
@@ -234,39 +203,12 @@ impl ProcessContext {
     pub fn is_request_closed(&self, name: &str) -> bool {
         self.request_closed.iter().any(|port| port == name)
     }
-    pub fn read<T: Send + Sync + 'static, R>(
+    /// Resolve exactly the host-granted capability type without invoking it.
+    pub fn resource<C: Send + Sync + 'static>(
         &self,
         key: &'static str,
-        f: impl FnOnce(&T) -> R,
-    ) -> Result<R, String> {
-        let grant = self
-            .grants
-            .iter()
-            .find(|g| g.key == key)
-            .ok_or_else(|| format!("read of {key} not granted"))?;
-        let guard = grant
-            .store
-            .get::<T>(key)?
-            .read()
-            .map_err(|e| e.to_string())?;
-        Ok(f(&guard))
-    }
-    pub fn write<T: Send + Sync + 'static, R>(
-        &self,
-        key: &'static str,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> Result<R, String> {
-        let grant = self
-            .grants
-            .iter()
-            .find(|g| g.key == key && g.writable)
-            .ok_or_else(|| format!("write of {key} not granted"))?;
-        let mut guard = grant
-            .store
-            .get::<T>(key)?
-            .write()
-            .map_err(|e| e.to_string())?;
-        Ok(f(&mut guard))
+    ) -> Result<&C, ResourceError> {
+        self.grants.resource(key)
     }
     pub fn input(&self, name: &str) -> Option<&Value> {
         self.inputs.get(name)
@@ -285,7 +227,7 @@ impl ProcessContext {
             .map(|(name, value)| (name.as_str(), value))
     }
 
-    fn into_cleanup_parts(self) -> (Vec<Value>, Vec<ResourceGrant>) {
+    fn into_cleanup_parts(self) -> (Vec<Value>, ValidatedResourceSet) {
         let Self { inputs, grants, .. } = self;
         (inputs.into_values().collect(), grants)
     }
@@ -296,9 +238,7 @@ impl ProcessContext {
         for value in values {
             panicked |= drop_catching(value);
         }
-        for grant in grants {
-            panicked |= drop_catching(grant);
-        }
+        panicked |= grants.dispose_catching();
         panicked
     }
 }

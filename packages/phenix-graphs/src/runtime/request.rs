@@ -386,15 +386,11 @@ impl NetworkSession {
     /// operation, not by this shared-reference query.
     pub fn request_status(&self, id: RequestId) -> Result<RequestStatus, RequestError> {
         let request = self.check_request(id)?;
-        if let Some(status) = request.terminal {
+        if let Some(status) = request
+            .terminal
+            .or_else(|| self.inherited_request_terminal())
+        {
             return Ok(status);
-        }
-        if self.terminal.is_some() {
-            return Ok(if self.terminal == Some(SessionState::Failed) {
-                RequestStatus::Failed
-            } else {
-                RequestStatus::Cancelled
-            });
         }
         if request.invalid {
             return Err(RequestError::InvalidCapture);
@@ -413,6 +409,13 @@ impl NetworkSession {
         Ok(RequestStatus::Settled {
             captures: request.captures,
         })
+    }
+    pub(super) fn inherited_request_terminal(&self) -> Option<RequestStatus> {
+        match self.terminal {
+            Some(SessionState::Failed) => Some(RequestStatus::Failed),
+            Some(SessionState::Cancelled) => Some(RequestStatus::Cancelled),
+            _ => None,
+        }
     }
     pub fn release_request(&mut self, id: RequestId) -> Result<(), RequestError> {
         self.supervise_configured_deferred();

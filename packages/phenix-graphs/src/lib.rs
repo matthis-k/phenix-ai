@@ -41,9 +41,9 @@ pub use network::{
 };
 pub use phenix_schema::Schema;
 pub use port_keys::{InputGroup, InputKey, InputRecord, OutputKey};
-pub use process::{Process, ProcessContext, ProcessEmission, ProcessFactory, ResourceGrant, Step};
+pub use process::{Process, ProcessContext, ProcessEmission, ProcessFactory, Step};
 pub use provenance::GraphOrigin;
-pub use resource::Store;
+pub use resource::{ResourceError, ResourceGrant, ValidatedResourceSet};
 pub use runtime::{NetworkSession, SessionOptions};
 pub use value::{ContractValue, Leased, TypeIdentity, Value};
 

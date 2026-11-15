@@ -68,6 +68,11 @@ impl NetworkSession {
         if scope.terminal.is_some() {
             return Ok(scope.cancelled_jobs.clone());
         }
+        // Inherited termination fixes the outcome, not ownership disposal. A
+        // late caller may release its own retained work but cannot replace cause.
+        let inherited = self.inherited_request_terminal();
+        let status = inherited.unwrap_or(status);
+        let error = if inherited.is_some() { None } else { error };
         // Request termination clears reachability below; detach only watches
         // that were registered by an earlier close_request before clearing it.
         if scope.sealed {
@@ -158,8 +163,18 @@ impl NetworkSession {
                                 "process factory panicked during request recovery: {}",
                                 self.compiled.processes()[index].path()
                             );
-                            self.requests.get_mut(&id).unwrap().failure = Some(diagnostic.clone());
-                            self.fail(diagnostic);
+                            let failure = self
+                                .requests
+                                .get_mut(&id)
+                                .unwrap()
+                                .failure
+                                .get_or_insert_with(String::new);
+                            if !failure.is_empty() {
+                                failure.push_str("; ");
+                            }
+                            failure.push_str(&diagnostic);
+                            let failure = failure.clone();
+                            self.fail(failure);
                             recovery_failed = true;
                             break;
                         }

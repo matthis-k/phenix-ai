@@ -325,10 +325,20 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                 // Scope release destroys this inventory, so transfer it to the caller.
                 let cancelled_jobs = session.request_cancelled_jobs(request)?.to_vec();
                 let disposal = session.request_disposal(request)?;
-                session.release_request(request)?;
-                let result = match termination_error {
-                    Some(error) => Err(Error::Request(error)),
-                    None => result,
+                let release_error = session.release_request(request).err();
+                let result = match (result, termination_error, release_error) {
+                    (Err(cause), termination, release)
+                        if termination.is_some() || release.is_some() =>
+                    {
+                        Err(Error::Cleanup {
+                            cause: Box::new(cause),
+                            request,
+                            termination,
+                            release,
+                        })
+                    }
+                    (Ok(_), _, Some(error)) => Err(Error::Request(error)),
+                    (result, _, _) => result,
                 };
                 result.map_err(|cause| {
                     if cancelled_jobs.is_empty() {

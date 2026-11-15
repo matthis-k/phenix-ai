@@ -19,7 +19,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -191,16 +191,25 @@ pub trait Producer: Send {
 
 #[derive(Default)]
 struct WakeState {
-    shutdown: Mutex<bool>,
+    epoch: Mutex<(u64, bool)>,
+    changed: Condvar,
     notifier: Mutex<Option<phenix_graph::runtime::SessionNotifier>>,
 }
 
-/// Cloneable notification and shutdown handle for the optional blocking driver.
+/// Cloneable source/publication hint and sticky shutdown handle.
+/// Versions are wrapping change hints, not event counts or generation identities.
+/// Native session notifications are forwarded for the blocking driver, but are
+/// not automatically reflected in this handle's version.
 #[derive(Clone, Default)]
 pub struct WakeHandle(Arc<WakeState>);
 
 impl WakeHandle {
     pub fn wake(&self) {
+        {
+            let mut state = self.0.epoch.lock().unwrap();
+            state.0 = state.0.wrapping_add(1);
+            self.0.changed.notify_all();
+        }
         if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
             notifier.notify();
         }
@@ -208,10 +217,34 @@ impl WakeHandle {
 
     /// Shutdown is sticky. Use a new handle for a subsequent driver run.
     pub fn shutdown(&self) {
-        *self.0.shutdown.lock().unwrap() = true;
+        {
+            let mut state = self.0.epoch.lock().unwrap();
+            state.0 = state.0.wrapping_add(1);
+            state.1 = true;
+            self.0.changed.notify_all();
+        }
         if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
             notifier.notify();
         }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.0.epoch.lock().unwrap().0
+    }
+
+    /// Wait until a hint differs from `observed` or shutdown is requested.
+    /// Snapshot before inspecting work to avoid losing a concurrent wake.
+    /// This does not establish that all application work sources are idle.
+    pub fn wait_since(&self, observed: u64) -> u64 {
+        let mut state = self.0.epoch.lock().unwrap();
+        while state.0 == observed && !state.1 {
+            state = self.0.changed.wait(state).unwrap();
+        }
+        state.0
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.0.epoch.lock().unwrap().1
     }
 }
 
@@ -708,6 +741,7 @@ pub enum DriverError {
     AlreadyRunning,
     DrainInProgress,
     Retired,
+    WakeShutdown,
     UnsupportedWake {
         producer: Key,
     },
@@ -735,6 +769,7 @@ impl std::fmt::Display for DriverError {
                 f.write_str("producer drain already admitted while starting driver")
             }
             Self::Retired => f.write_str("generation producers retired while driver was active"),
+            Self::WakeShutdown => f.write_str("host wake handle is shut down"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -1720,6 +1755,77 @@ impl Kernel {
         events
     }
 
+    // Registration only: no session lease, notifier attachment, polling, or steps.
+    // The caller owns either a private candidate or the static driver's lease.
+    fn register_producer_wakers(&self, wake: &WakeHandle) -> Result<(), DriverError> {
+        let registration_scope =
+            KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
+        let drain = self
+            .producer_drain
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let count = self
+            .producers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .producers
+            .len();
+        let mut registration_error = None;
+        for index in 0..count {
+            let (key, mut producer) = {
+                let mut state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                // Host destruction inside the previous callback retired this
+                // generation. Never register another callback after that.
+                if state.retired {
+                    break;
+                }
+                let (key, producer, _) = &mut state.producers[index];
+                (
+                    key.clone(),
+                    producer
+                        .take()
+                        .expect("exclusive producer wake registration"),
+                )
+            };
+            // Producer callbacks never run under inventory locks.
+            let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                producer.set_waker(wake.clone())
+            }));
+            self.producers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .producers[index]
+                .1 = Some(producer);
+            match registered {
+                Ok(true) => {}
+                Ok(false) => {
+                    registration_error = Some(DriverError::UnsupportedWake { producer: key });
+                    break;
+                }
+                Err(payload) => {
+                    discard_panic_payload(payload);
+                    registration_error =
+                        Some(DriverError::WakeRegistrationPanicked { producer: key });
+                    break;
+                }
+            }
+        }
+        let retired = self.take_retired_producers();
+        drop(drain);
+        drop(registration_scope);
+        drop(retired);
+        if let Some(error) = registration_error {
+            return Err(error);
+        }
+        if self.producers_retired() {
+            return Err(DriverError::Retired);
+        }
+        Ok(())
+    }
+
     /// Drive a started kernel until shutdown or normal network completion,
     /// delivering events without retaining reports. Failed and cancelled
     /// sessions return `SessionStopped`, including if terminal on entry.
@@ -1775,78 +1881,11 @@ impl Kernel {
         }
         // Enter producer-drain scope only after the nonblocking session
         // preflight. Callback session access uses the same exclusive lease.
-        let registration_scope =
-            KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
         *wake.0.notifier.lock().unwrap() = Some(notifier);
-        let drain = self
-            .producer_drain
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let count = self
-            .producers
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .producers
-            .len();
-        let mut registration_error = None;
-        for index in 0..count {
-            let (key, mut producer) = {
-                let mut state = self
-                    .producers
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                // Host destruction inside the previous callback retired this
-                // generation. Never register another callback after that.
-                if state.retired {
-                    break;
-                }
-                let (key, producer, _) = &mut state.producers[index];
-                (
-                    key.clone(),
-                    producer
-                        .take()
-                        .expect("exclusive producer wake registration"),
-                )
-            };
-            // Producer callbacks never run under inventory locks, including
-            // during initial driver wake registration.
-            let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                producer.set_waker(wake.clone())
-            }));
-            self.producers
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .producers[index]
-                .1 = Some(producer);
-            match registered {
-                Ok(true) => {}
-                Ok(false) => {
-                    registration_error = Some(DriverError::UnsupportedWake { producer: key });
-                    break;
-                }
-                Err(payload) => {
-                    discard_panic_payload(payload);
-                    registration_error =
-                        Some(DriverError::WakeRegistrationPanicked { producer: key });
-                    break;
-                }
-            }
-        }
-        let retired = self.take_retired_producers();
-        drop(drain);
-        drop(registration_scope);
-        drop(retired);
-        if let Some(error) = registration_error {
-            return Err(error);
-        }
-        if self.producers_retired() {
-            return Err(DriverError::Retired);
-        }
+        self.register_producer_wakers(wake)?;
         loop {
-            {
-                if *wake.0.shutdown.lock().unwrap() {
-                    return Ok(());
-                }
+            if wake.is_shutdown() {
+                return Ok(());
             }
             if self.producers_retired() {
                 return Err(DriverError::Retired);
@@ -1860,7 +1899,7 @@ impl Kernel {
                 state.producers.len()
             };
             for _ in 0..count {
-                if *wake.0.shutdown.lock().unwrap() {
+                if wake.is_shutdown() {
                     return Ok(());
                 }
                 if self.producers_retired() {

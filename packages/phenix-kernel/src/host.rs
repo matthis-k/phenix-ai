@@ -4,8 +4,8 @@
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
 use crate::{
-    BuildOptions, CallbackError, Kernel, KernelLockScope, Key, ProducerEvent, ResolutionError,
-    StartError,
+    BuildOptions, CallbackError, DriverError, Kernel, KernelLockScope, Key, ProducerEvent,
+    ResolutionError, StartError, WakeHandle,
 };
 use phenix_graph::{
     Value,
@@ -23,6 +23,7 @@ pub enum LifecycleError {
     Build(Box<ResolutionError>),
     Start(StartError),
     Binding(CallbackError),
+    Driver(DriverError),
     StaleCandidate,
     EpochExhausted,
     ReentrantDrain,
@@ -35,6 +36,7 @@ impl std::fmt::Display for LifecycleError {
             Self::Build(error) => write!(f, "generation build: {error}"),
             Self::Start(error) => write!(f, "producer start: {error}"),
             Self::Binding(error) => write!(f, "generation binding: {error}"),
+            Self::Driver(error) => write!(f, "generation wake registration: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
             Self::ReentrantDrain => {
@@ -51,6 +53,7 @@ impl std::error::Error for LifecycleError {
             Self::Build(error) => Some(error.as_ref()),
             Self::Start(error) => Some(error),
             Self::Binding(error) => Some(error.as_ref()),
+            Self::Driver(error) => Some(error),
             _ => None,
         }
     }
@@ -179,6 +182,7 @@ pub struct KernelHost {
     epoch: u64,
     plugins: PluginSet,
     active: Option<Arc<Generation>>,
+    wake: Option<WakeHandle>,
 }
 
 impl KernelHost {
@@ -188,7 +192,16 @@ impl KernelHost {
             epoch: 0,
             plugins,
             active: None,
+            wake: None,
         }
+    }
+
+    /// Opt in to source and publication hints for an application-owned reactor.
+    /// This does not install a native session notifier or drive a candidate.
+    pub fn with_wake(plugins: PluginSet, wake: WakeHandle) -> Self {
+        let mut host = Self::new(plugins);
+        host.wake = Some(wake);
+        host
     }
 
     /// Shared access permits staging, never committing the host's inventory.
@@ -235,6 +248,17 @@ impl KernelHost {
             ))
         })?;
         kernel.start().map_err(LifecycleError::Start)?;
+        if let Some(wake) = &self.wake {
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
+            kernel
+                .register_producer_wakers(wake)
+                .map_err(LifecycleError::Driver)?;
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
+        }
         Ok(Candidate {
             host: self.identity.clone(),
             expected_epoch: self.epoch,
@@ -291,6 +315,9 @@ impl KernelHost {
         let previous = self.active.replace(candidate.generation.clone());
         drop(drain);
         drop(drain_scope);
+        if let Some(wake) = &self.wake {
+            wake.wake();
+        }
         if let Some(generation) = &retiring {
             generation.kernel.notify_driver_retirement();
         }
