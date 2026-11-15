@@ -176,9 +176,10 @@ impl NetworkSession {
             .find(|lane| self.requests.values().all(|scope| scope.lane != *lane))
             .expect("request credit reserves a free lane");
         let mut closure_ports = BTreeMap::new();
-        for (index, process) in self.processes.iter().enumerate() {
+        for &index in &self.custom_readiness {
+            let process = &self.processes[index];
             let Readiness::Custom(policy) = &process.policy else {
-                continue;
+                unreachable!("indexed base readiness policy is immutable");
             };
             let ports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 policy.closure_ports(lane)

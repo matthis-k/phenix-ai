@@ -46,6 +46,27 @@ accepted as evidence that the hosted timing regression is closed. Raw profiling
 files remain under `/tmp/opencode/h5-a2-diagnosis` on the development host; final
 paired CI artifacts must supply durable same-head timing evidence.
 
+## Hosted Counterevidence And Admission Scan
+
+At `f608a3fc91abbcee67d928067c276c33f13feae0`, hosted correctness gates passed,
+but [closure timing 43670026282](https://github.com/matthis-k/phenix-ai/actions/runs/43670026282)
+still measured approximately +7.8% / +8.2% for chain64/128 against `516e088` on
+EPYC 7763. Separate EPYC 9V74 controls were near parity. The instruction reduction
+therefore does not establish removal of the architecture-dependent timing
+regression, and H5/H6 performance acceptance remains open.
+
+The admission audit also found a concrete new full-inventory scan: `begin_request`
+visited every process just to discover Custom closure declarations. A private
+construction-time index now contains only base Custom process IDs, including both
+polled and notification-driven policies. Base policy and physical IDs are immutable
+for the session; staged `waiting_policy` and process-state recovery do not change
+that index. Callback results are not cached across requests: `closure_ports(lane)`
+still runs, validates and caches once per admitted scope. With no Custom policy,
+the empty index allocates nothing and no declaration-discovery inventory scan runs.
+This removes known unnecessary work, not a claimed measured speedup. The
+`fbp_custom_closure_admission` test covers zero-packet closure across repeated scopes
+under both queue modes and Custom notification contracts.
+
 ## Verification
 
 Focused closure, staged Custom, optional/multi-root, lane, obligation-dedup and

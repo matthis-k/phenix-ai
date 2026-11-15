@@ -282,6 +282,8 @@ pub struct NetworkSession {
     downstream: Vec<Vec<usize>>,
     transport: ConnectionSet,
     processes: Vec<RuntimeProcess>,
+    // Process IDs and base policies are fixed at construction; staged waits use waiting_policy.
+    custom_readiness: Vec<usize>,
     ingress: BTreeMap<String, Vec<usize>>,
     captures: BTreeMap<String, usize>,
     request_lanes: BTreeMap<usize, RequestLane>,
@@ -614,8 +616,10 @@ impl NetworkSession {
         // notifications for external selection changes. The default stays
         // polled. Query once and contain plugin panics as session failure.
         let mut always_poll = BTreeSet::new();
+        let mut custom_readiness = Vec::new();
         for (index, process) in processes.iter_mut().enumerate() {
             if let Readiness::Custom(policy) = &process.policy {
+                custom_readiness.push(index);
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     policy.notification_driven()
                 })) {
@@ -641,6 +645,7 @@ impl NetworkSession {
             downstream,
             transport: ConnectionSet::new(queues),
             processes,
+            custom_readiness,
             ingress,
             captures,
             request_lanes: BTreeMap::new(),
