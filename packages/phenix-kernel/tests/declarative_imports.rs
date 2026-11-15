@@ -2,14 +2,16 @@ mod support;
 use phenix_graph::{
     compose::{Edit, Footprint, NetworkPatch},
     contract::Contract,
+    interface::InterfaceError,
     process::LocalProcessDispatcher,
 };
 use phenix_kernel::{
-    BuildOptions, CandidateArtifacts, ContractDefinition, Contribution, ImportPolicy, Kernel, Key,
-    ResolutionError,
+    BuildOptions, CandidateArtifacts, ContractDefinition, Contribution, ImportPolicy,
+    IneligibleReason, Kernel, Key, ResolutionError,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::BTreeSet;
+use std::error::Error;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -241,7 +243,13 @@ fn every_policy_table_rejects_unknown_requirement_and_offer_keys() {
             let error = build(plugins.snapshots().collect(), &policy, &granted)
                 .err()
                 .expect("stale policy must fail closed");
-            assert!(error.to_string().contains("unknown"), "{error}");
+            assert!(matches!(&error, ResolutionError::Invalid(_)), "{error:?}");
+            let context = if unknown_requirement {
+                "host policy names unknown requirement"
+            } else {
+                "host policy names unknown offer"
+            };
+            assert!(error.to_string().contains(context), "{error}");
             assert_eq!(count.load(Ordering::SeqCst), 0);
         }
     }
@@ -358,14 +366,38 @@ fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
     let mut unrelated = Provider::new("second", true, 20, &count);
     unrelated.semantic = "unrelated@1";
     plugins.load(&y, unrelated).unwrap();
-    assert!(matches!(
-        build(
-            plugins.snapshots().collect(),
-            &selected("y-provider"),
-            &granted
-        ),
-        Err(ResolutionError::Ineligible { .. })
-    ));
+    for denied in [false, true] {
+        let mut policy = selected("y-provider");
+        if denied {
+            policy.deny.insert((requirement(), offer("y-provider")));
+        }
+        let error = build(plugins.snapshots().collect(), &policy, &granted)
+            .err()
+            .unwrap();
+        let ResolutionError::Ineligible {
+            requirement: key,
+            offer: selected,
+            reason: IneligibleReason::IncompatibleContract(cause),
+        } = &error
+        else {
+            panic!("expected incompatibility even when denied: {error:?}");
+        };
+        assert_eq!(*key, requirement());
+        assert_eq!(*selected, offer("y-provider"));
+        let source = error.source().unwrap();
+        assert!(std::ptr::eq(
+            source.downcast_ref::<InterfaceError>().unwrap(),
+            cause.as_ref()
+        ));
+        assert!(source.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ineligible selection for requirement {key:?}, offer {selected:?}: offer advertising an incompatible contract: {cause}"
+            )
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
     let pair = (requirement(), offer("z-provider"));
     let mut policy = ImportPolicy {
         allow: Some(BTreeSet::new()),
@@ -382,11 +414,34 @@ fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
         Err(ResolutionError::Missing { .. })
     ));
     policy.selections.insert(requirement(), offer("z-provider"));
-    assert!(matches!(
-        build(plugins.snapshots().collect(), &policy, &granted),
-        Err(ResolutionError::Ineligible { .. })
-    ));
-    assert_eq!(count.load(Ordering::SeqCst), 0);
+    for explicit_deny in [true, false] {
+        let mut policy = policy.clone();
+        if !explicit_deny {
+            policy.deny.clear();
+            policy.allow.as_mut().unwrap().remove(&pair);
+        }
+        let error = build(plugins.snapshots().collect(), &policy, &granted)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&error, ResolutionError::Ineligible {
+                requirement: key,
+                offer: selected,
+                reason: IneligibleReason::DeniedByPolicy,
+            } if *key == requirement() && *selected == offer("z-provider")),
+            "{error:?}"
+        );
+        assert!(error.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ineligible selection for requirement {:?}, offer {:?}: offer denied by host eligibility policy",
+                requirement(),
+                offer("z-provider")
+            )
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
     policy.deny.clear();
     policy.selections.clear();
     build(plugins.snapshots().collect(), &policy, &granted).unwrap();

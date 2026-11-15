@@ -517,6 +517,24 @@ pub struct CompositionPolicy {
     pub priority: i64,
 }
 
+/// Why a host-selected offer is not eligible for an import.
+#[derive(Debug)]
+pub enum IneligibleReason {
+    IncompatibleContract(Box<phenix_graph::interface::InterfaceError>),
+    DeniedByPolicy,
+}
+
+impl std::fmt::Display for IneligibleReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncompatibleContract(cause) => {
+                write!(f, "offer advertising an incompatible contract: {cause}")
+            }
+            Self::DeniedByPolicy => f.write_str("offer denied by host eligibility policy"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ResolutionError {
     DuplicateOwner(String),
@@ -557,7 +575,7 @@ pub enum ResolutionError {
     Ineligible {
         requirement: Key,
         offer: Key,
-        reason: Box<str>,
+        reason: IneligibleReason,
     },
     Cycle(Vec<Key>),
 }
@@ -624,6 +642,10 @@ impl std::error::Error for ResolutionError {
             Self::Compilation { cause } => Some(cause),
             Self::Interface { cause, .. } => Some(cause.as_ref()),
             Self::Composition { cause, .. } => Some(cause.as_ref()),
+            Self::Ineligible {
+                reason: IneligibleReason::IncompatibleContract(cause),
+                ..
+            } => Some(cause.as_ref()),
             _ => None,
         }
     }
@@ -1106,21 +1128,16 @@ impl Kernel {
                 .collect();
             let selected = if let Some(selected) = policy.selections.get(key) {
                 if !candidates.contains(selected) {
-                    let reason = match offers.get(selected) {
-                        None => "missing selected offer".into(),
-                        Some(offer) => match requested
-                            .check_definition(&definitions[&offer.contract].contract)
-                        {
-                            Err(error) => {
-                                format!("offer advertising an incompatible contract: {error}")
-                            }
-                            Ok(()) => "offer denied by host eligibility policy".into(),
-                        },
-                    };
+                    let offer = &offers[selected];
+                    let reason =
+                        match requested.check_definition(&definitions[&offer.contract].contract) {
+                            Err(error) => IneligibleReason::IncompatibleContract(Box::new(error)),
+                            Ok(()) => IneligibleReason::DeniedByPolicy,
+                        };
                     return Err(ResolutionError::Ineligible {
                         requirement: key.clone(),
                         offer: selected.clone(),
-                        reason: reason.into(),
+                        reason,
                     });
                 }
                 selected.clone()

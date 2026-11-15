@@ -4,10 +4,14 @@ use phenix_graph::{
     component::ComponentDef,
     compose::{Edit, NetworkPatch},
     contract::Contract,
+    interface::InterfaceError,
     process::LocalProcessDispatcher,
 };
-use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key};
+use phenix_kernel::{
+    BuildOptions, ContractDefinition, IneligibleReason, Kernel, Key, ResolutionError,
+};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
+use std::error::Error;
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
@@ -76,7 +80,7 @@ impl PluginInstance for Fixture {
         contribution.register(into)
     }
 }
-fn build(case: Case) -> Result<Kernel, String> {
+fn build(case: Case) -> Result<Kernel, ResolutionError> {
     let mut options = BuildOptions::default();
     support::grant(
         &mut options,
@@ -98,15 +102,35 @@ fn build(case: Case) -> Result<Kernel, String> {
         Arc::new(LocalProcessDispatcher),
         options,
     )
-    .map_err(|error| error.to_string())
 }
 #[test]
 fn a_requirement_cannot_reinterpret_an_offer_advertising_another_contract() {
-    assert!(
-        build(Case::DifferentAdvertisedContract)
-            .err()
-            .unwrap()
-            .contains("advertising an incompatible contract")
+    let error = build(Case::DifferentAdvertisedContract).err().unwrap();
+    let ResolutionError::Ineligible {
+        requirement,
+        offer,
+        reason: IneligibleReason::IncompatibleContract(cause),
+    } = &error
+    else {
+        panic!("expected an incompatible selected offer: {error:?}");
+    };
+    assert_eq!(*requirement, Key::new("provider", "request"));
+    assert_eq!(*offer, Key::new("provider", "offer"));
+    let source = error.source().unwrap();
+    assert!(std::ptr::eq(
+        source.downcast_ref::<InterfaceError>().unwrap(),
+        cause.as_ref()
+    ));
+    assert!(source.source().is_none());
+    assert_eq!(
+        cause.message.as_ref(),
+        "different contract identity or definition"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "ineligible selection for requirement {requirement:?}, offer {offer:?}: offer advertising an incompatible contract: {cause}"
+        )
     );
 }
 #[test]
@@ -119,6 +143,7 @@ fn conflicting_registered_contract_and_unoffered_network_claim_fail_closed() {
         build(Case::UnofferedNetworkConflict)
             .err()
             .unwrap()
+            .to_string()
             .contains("catalog conflict")
     );
 }

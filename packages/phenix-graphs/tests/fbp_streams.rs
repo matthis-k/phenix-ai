@@ -714,26 +714,79 @@ fn capture_and_step_metadata_use_actual_compiled_producer_origin() {
     assert_eq!(s.take_output("out").unwrap().unwrap().origin, Some(origin));
 }
 
-struct BadEmission;
+struct BadEmission {
+    output: &'static str,
+    value: Value,
+}
 impl Process for BadEmission {
     fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
-        Ok(Step::Emit(ProcessEmission::new("out", Value::of(42_i64))))
+        Ok(Step::Emit(ProcessEmission::new(
+            self.output,
+            self.value.clone(),
+        )))
     }
 }
 #[test]
 fn wrong_emitted_schema_fails_even_with_no_output_consumers() {
-    let mut b = NetworkBuilder::new();
-    let p = b
-        .node(
-            "bad",
-            Arc::new(Interface::new([], [PortDef::local::<i64>("out")]).unwrap()),
-            Arc::new(|| BadEmission),
-        )
-        .unwrap();
-    b.start(&p).unwrap();
-    let mut s = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(s.run_until_idle(10).state, SessionState::Failed);
-    assert!(s.failure().unwrap().contains("invalid emission"));
+    struct Undebuggable;
+    for (port, value) in [
+        (PortDef::local::<i64>("out"), Value::of(42_i64)),
+        (PortDef::local::<i64>("out"), Value::local(Undebuggable)),
+        (PortDef::wire::<i64>("out").unwrap(), Value::local(42_i64)),
+        (
+            PortDef::wire::<i64>("out").unwrap(),
+            Value::from_wire_parts(
+                <String as phenix_graph::ContractValue>::wire_schema(),
+                vec![0xff],
+            ),
+        ),
+    ] {
+        for output in ["out", "missing"] {
+            for discard in [false, true] {
+                let expected = format!("expected {:?}, actual {:?}", port.value, value.identity());
+                let emitted = value.clone();
+                let mut b = NetworkBuilder::new();
+                let p = b
+                    .node(
+                        "bad",
+                        Arc::new(Interface::new([], [port.clone()]).unwrap()),
+                        Arc::new(move || BadEmission {
+                            output,
+                            value: emitted.clone(),
+                        }),
+                    )
+                    .unwrap();
+                b.start(&p).unwrap();
+                let mut opts = options();
+                if discard {
+                    opts.discard_outputs.insert(("bad".into(), "out".into()));
+                }
+                let mut s = b
+                    .build()
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+                    .start_with_options(opts);
+                let report = s.run_until_idle(10);
+                assert_eq!(report.state, SessionState::Failed);
+                assert_eq!(report.publications, 0);
+                let failure = s.failure().unwrap();
+                assert!(
+                    failure.contains(&format!(
+                        "invalid emission from process 0 (bad) output {output:?}"
+                    )),
+                    "{failure}"
+                );
+                if output == "missing" {
+                    assert!(failure.contains("unknown output"), "{failure}");
+                    assert!(!failure.contains("expected"), "{failure}");
+                } else {
+                    assert!(failure.contains("incompatible value identity"), "{failure}");
+                    assert!(failure.contains(&expected), "{failure}");
+                }
+            }
+        }
+    }
 }
 
 struct FairInput(Arc<std::sync::Mutex<Vec<String>>>);
@@ -3779,13 +3832,25 @@ impl Process for FaultyCounter {
         if value == -2 {
             return Err("request process rejected input after mutation".into());
         }
+        if value == -3 {
+            return Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::local(self.sum),
+            )));
+        }
+        if value == -4 {
+            return Ok(Step::Emit(ProcessEmission::new(
+                "missing",
+                Value::of(self.sum),
+            )));
+        }
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(self.sum))))
     }
 }
 #[test]
 fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_instance() {
-    use phenix_graph::runtime::RequestStatus;
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
     let spawns = Arc::new(AtomicUsize::new(0));
     let shared = spawns.clone();
     let mut b = NetworkBuilder::new();
@@ -3830,63 +3895,87 @@ fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_i
         b.expose_output(name, p.wire_output::<i64>("out").unwrap())
             .unwrap();
     }
-    let mut opts = restarting_options();
-    opts.capture_capacity = NonZeroUsize::new(4).unwrap();
-    let mut s = b
-        .build()
-        .unwrap()
-        .compile()
-        .unwrap()
-        .start_with_options(opts);
-    s.inject("stable", Value::of(10_i64)).unwrap();
-    s.run_until_idle(30);
-    s.take_output("stable").unwrap().unwrap();
-    for (iteration, value) in [-1_i64, -2].into_iter().enumerate() {
-        let failed = s.begin_request(Some("faulty")).unwrap();
-        let good = s.begin_request(Some("stable")).unwrap();
-        s.inject_request(failed, "faulty", Value::of(value))
-            .unwrap();
-        s.inject_request(good, "stable", Value::of(3_i64)).unwrap();
-        s.close_request(failed).unwrap();
-        s.close_request(good).unwrap();
-        assert_ne!(s.run_until_idle(50).state, SessionState::Failed);
-        assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
-        assert!(
-            s.request_failure(failed)
-                .unwrap()
-                .unwrap()
-                .contains(if value == -1 { "panicked" } else { "rejected" })
-        );
-        assert_eq!(s.request_disposal(failed).unwrap().activations, 1);
-        assert_eq!(spawns.load(Ordering::SeqCst), 3 + iteration);
-        assert_eq!(
-            s.take_request_output(good, "stable")
-                .unwrap()
-                .unwrap()
-                .value()
-                .get::<i64>()
-                .unwrap(),
-            13 + iteration as i64 * 3
-        );
-        let next = s.begin_request(Some("faulty")).unwrap();
-        s.inject_request(next, "faulty", Value::of(7_i64)).unwrap();
-        s.close_request(next).unwrap();
+    let compiled = b.build().unwrap().compile().unwrap();
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        spawns.store(0, Ordering::SeqCst);
+        let mut opts = restarting_options();
+        opts.capture_capacity = NonZeroUsize::new(4).unwrap();
+        opts.request_queue_policy = policy;
+        let mut s = compiled.start_with_options(opts);
+        s.inject("stable", Value::of(10_i64)).unwrap();
         s.run_until_idle(30);
-        assert_eq!(
-            s.take_request_output(next, "faulty")
-                .unwrap()
-                .unwrap()
-                .value()
-                .get::<i64>()
-                .unwrap(),
-            7
-        );
-        for id in [failed, good, next] {
-            s.release_request(id).unwrap();
+        s.take_output("stable").unwrap().unwrap();
+        for (iteration, value) in [-1_i64, -2, -3, -4].into_iter().enumerate() {
+            let failed = s.begin_request(Some("faulty")).unwrap();
+            let good = s.begin_request(Some("stable")).unwrap();
+            s.inject_request(failed, "faulty", Value::of(value))
+                .unwrap();
+            s.inject_request(good, "stable", Value::of(3_i64)).unwrap();
+            s.close_request(failed).unwrap();
+            s.close_request(good).unwrap();
+            let report = s.run_until_idle(50);
+            assert_ne!(report.state, SessionState::Failed);
+            assert_eq!(report.publications, 1);
+            assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
+            assert!(
+                s.request_failure(failed)
+                    .unwrap()
+                    .unwrap()
+                    .contains(match value {
+                        -1 => "panicked",
+                        -2 => "rejected",
+                        -3 => "incompatible value identity",
+                        _ => "unknown output",
+                    })
+            );
+            if value <= -3 {
+                let failure = s.request_failure(failed).unwrap().unwrap();
+                assert!(failure.contains("process 0 (faulty)"), "{failure}");
+                if value == -3 {
+                    let expected = format!(
+                        "expected {:?}, actual {:?}",
+                        PortDef::wire::<i64>("out").unwrap().value,
+                        Value::local(0_i64).identity()
+                    );
+                    assert!(failure.contains(&expected), "{failure}");
+                }
+            }
+            assert_eq!(s.request_disposal(failed).unwrap().activations, 1);
+            assert_eq!(s.request_disposal(failed).unwrap().prepared_packets, 0);
+            assert_eq!(s.request_disposal(failed).unwrap().queued_packets, 0);
+            assert_eq!(spawns.load(Ordering::SeqCst), 3 + iteration);
+            assert_eq!(
+                s.take_request_output(good, "stable")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                13 + iteration as i64 * 3
+            );
+            let next = s.begin_request(Some("faulty")).unwrap();
+            s.inject_request(next, "faulty", Value::of(7_i64)).unwrap();
+            s.close_request(next).unwrap();
+            s.run_until_idle(30);
+            assert_eq!(
+                s.take_request_output(next, "faulty")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                7
+            );
+            for id in [failed, good, next] {
+                s.release_request(id).unwrap();
+            }
         }
+        s.inject("faulty", Value::of(-1_i64)).unwrap();
+        assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
     }
-    s.inject("faulty", Value::of(-1_i64)).unwrap();
-    assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
 }
 
 #[test]

@@ -1469,16 +1469,24 @@ impl NetworkSession {
         });
         match result {
             Ok(Step::Emit(emission)) => {
-                let valid = self.compiled.processes()[index]
-                    .interface()
-                    .outputs()
-                    .get(&emission.output)
-                    .is_some_and(|p| p.value == emission.value.identity());
-                if !valid {
-                    self.fail_process(
-                        index,
-                        format!("invalid emission from process {index}: {}", emission.output),
-                    );
+                let process = &self.compiled.processes()[index];
+                let actual = emission.value.identity();
+                let error = match process.interface().output(&emission.output) {
+                    None => Some(format!(
+                        "invalid emission from process {index} ({}) output {:?}: unknown output",
+                        process.path(),
+                        emission.output
+                    )),
+                    Some(port) if port.value != actual => Some(format!(
+                        "invalid emission from process {index} ({}) output {:?}: incompatible value identity (expected {:?}, actual {actual:?})",
+                        process.path(),
+                        emission.output,
+                        port.value
+                    )),
+                    Some(_) => None,
+                };
+                if let Some(error) = error {
+                    self.fail_process(index, error);
                     return Ok(());
                 }
                 let outgoing = match (self.processes[index].request, self.request_queue_policy) {
