@@ -73,6 +73,14 @@ performance acceptance. This evidence-only follow-up requires its own head's che
 
 ## Deferred Findings
 
+The request-terminal findings below describe the earlier reproduction. They are
+now resolved at `026cfbe05` under the explicitly approved [Dispose, Keep Failed
+contract](fbp-terminal-cleanup-20261115.md). Explicit request disposal is allowed to
+remove its own retained captures while preserving the inherited Failed outcome;
+session-level cancellation after failure remains nondestructive. The old isolated
+test expecting capture preservation after explicit request cancellation is not the
+approved policy. Q3 remains unresolved.
+
 The separately reproduced Q3 dependency-defeat bug still needs a termination and
 ambiguity design; see [its reproduction](fbp-error-context-20261115.md#separate-q3-reproduction).
 

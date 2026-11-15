@@ -1,10 +1,8 @@
 # A3 Graph Resource Boundary
 
-Status: implemented and independently reviewed bounded whole-finding closure
-candidate for A3's graph-local store coupling. Full workspace/default/no-default,
-formatting and strict Clippy pass locally; exact-head hosted CI remains an
-acceptance gate. This note does not change the campaign scorecard or certify
-any other finding, milestone, or concurrent change.
+Status: A3's bounded graph-local store finding is scoped verified at
+`026cfbe05e9b078f891233a2fc65bcada3fbfea0`, after independent review and exact-head
+hosted acceptance. This does not certify any other finding or milestone.
 
 ## Defect And Constraints
 
@@ -140,7 +138,22 @@ workspace gates. No compatibility adapter bypasses the type boundary.
 
 Independent adversarial source review and a separate assembled lifecycle/resource/
 wake integration review found no actionable defects. Both support the original
-bounded A3 closure candidate, conditional on exact committed-head hosted acceptance.
-Hosted exact-head CI remains unrun and unclaimed. Arbitrary native-code honesty,
+bounded A3 closure. Arbitrary native-code honesty,
 revocation, abort containment, and rollback of external effects are not acceptance
 claims of this boundary correction.
+
+## Exact-Head Acceptance
+
+Implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
+hosted workflows, including:
+
+- [Full six-job Flake matrix 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
+- [Actual-source wake Loom 43727271595](https://github.com/matthis-k/phenix-ai/actions/runs/43727271595).
+- [Session ownership Loom 43727271584](https://github.com/matthis-k/phenix-ai/actions/runs/43727271584).
+- [Eight-repeat native notifier/plugin-lock gate 43727312497](https://github.com/matthis-k/phenix-ai/actions/runs/43727312497).
+- [Twelve-repeat in-flight worker recovery 43727312638](https://github.com/matthis-k/phenix-ai/actions/runs/43727312638).
+
+The authoritative scorecard records A3 20.0% to 100.0%, +80.0 pp, making twelve
+scoped verified / seven partial / fourteen open. This is one whole-finding closure,
+not completion of the other twenty-one. Benchmark workflow success is not blanket
+performance acceptance. This evidence-only follow-up requires its own head's checks.

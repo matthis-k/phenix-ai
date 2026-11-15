@@ -2,6 +2,19 @@
 
 ## Current Campaign
 
+Implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
+exact-head workflows, including [six-job Flake CI 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
+The authoritative [33-issue tracker](fbp-issue-progress-estimates-20261113.md) now
+records **12 scoped verified / 7 partial / 14 open**, mean **59.8%**. A6 and A3 are
+scoped verified; native WIPs #1257, #1259 and #1258 are closed as superseded by
+#1302, not merged to main. The approved request-terminal/cleanup defect is fixed.
+The [work map](fbp-remaining-work-20261115.md) covers all 22 starting findings,
+21 of which remain. Q3, broader architecture/verification/performance work and
+C3/C6/C7 policy decisions are not closed. M7/M8 production acceptance remains
+incomplete. This evidence-only revision requires its own head's checks.
+
+## Historical Campaign Reconciliation
+
 The sections below are the historical native-engine cutover report, not acceptance
 evidence for the 2026-11-14 lifecycle/request-lane merged head. The campaign
 incorrectly relied on stale local remote-tracking
@@ -200,7 +213,7 @@ allocator/RSS or production-agent throughput. H5 remains Partial.
 | M7 | **INCOMPLETE** — performance, liveness, concurrency evidence and policy decisions outstanding |
 | M8 | **INCOMPLETE**: agent-loop composition proof, **not a production agent product** |
 
-**33-finding status: 10 verified, 7 partial, 16 open**.
+**Historical 33-finding status: 10 verified, 7 partial, 16 open**.
 These categories are not a weighted completion percentage. In
 particular H3b and H7 are still partial despite substantial verified
 subproblem closures.

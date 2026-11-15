@@ -1,7 +1,7 @@
 # Terminal Request Cleanup
 
-Status: implemented, independently reviewed and locally verified in the assembled
-workspace; exact committed-head hosted acceptance pending.
+Status: implemented, independently reviewed and exact-head verified at
+`026cfbe05e9b078f891233a2fc65bcada3fbfea0` in the assembled workspace.
 
 Policy: **Dispose, Keep Failed**. Explicit request termination after a global
 terminal transition disposes only that authenticated request's retained work.
@@ -106,3 +106,12 @@ accounting remain with the integrating track. Full assembled workspace tests wit
 default/no-default features, formatting and strict all-target Clippy now pass.
 Independent terminal-track and assembled integration reviews found no actionable
 defects. This is scoped terminal/cleanup acceptance, not whole Q7 completion.
+
+All fifteen hosted workflows passed on that implementation, including the full
+six-job Flake matrix and both Loom/native concurrency gates. Their exact links are
+recorded in [the shared acceptance evidence](fbp-resource-boundary-20261115.md#exact-head-acceptance).
+The request-level inherited-outcome defect is resolved under the approved policy;
+the old isolated reproduction's capture-preservation expectation after explicit
+request cancellation is not that policy. Nondisposal controls still preserve
+captures, while authenticated explicit disposal retains the original Failed status.
+This evidence-only follow-up requires its own committed-head checks.

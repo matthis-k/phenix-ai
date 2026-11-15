@@ -35,7 +35,7 @@ resolver-cause and invalid-emission diagnostic fixes leave all scores unchanged.
 The [design, review and evidence](fbp-error-context-20261115.md) also records a
 separately reproduced, still-unfixed Q3 selection defect.
 
-Latest implementation `979572eb9e08462adddac07d35625bd7f2cb940e` passed all
+Earlier implementation `979572eb9e08462adddac07d35625bd7f2cb940e` passed all
 fifteen workflows, including [six-job Flake CI 43705906267][K]. It fixes public
 tuple snapshot cardinality, query declaration-cause loss and continuation wait-lane
 attribution; [design/review/evidence](fbp-quick-boundaries-20261115.md) records their
@@ -43,8 +43,17 @@ bounded acceptance and the separate, unresolved request-terminal precedence gap.
 Scores and classifications below are unchanged by this batch; C1 verification is
 the inherited session-level scope, not a claim about every request transition.
 
-The unweighted issue mean is **57.4%**, previously 55.3%. Formal classifications are
-**11 scoped verified / 7 partial / 15 open**. This mean is not a substitute for issue
+Latest implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
+workflows, including [six-job Flake CI 43727271982][N]. Independent original-scope
+and assembled integration reviews accept [A3 resource separation](fbp-resource-boundary-20261115.md),
+[native WIP #1258](fbp-published-host-wake-20261115.md), and the user-approved
+[terminal/cleanup correction](fbp-terminal-cleanup-20261115.md). A3 is scoped verified;
+#1258 is closed as superseded, not merged. The [work map](fbp-remaining-work-20261115.md)
+retains concrete acceptance/dependency requirements for all 22 starting findings,
+of which 21 remain. Q3 and the C3/C6/C7 policy/architecture work remain open.
+
+The unweighted issue mean is **59.8%**, previously 57.4%. Formal classifications are
+**12 scoped verified / 7 partial / 14 open**. This mean is not a substitute for issue
 closure or milestone completion.
 
 ## Verified Baseline Evidence
@@ -73,7 +82,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Profiled closure correction](fbp-closure-overhead-20261114.md); same-head timing required |
 | H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | Exact paired baseline and regression evidence retained; no production acceptance |
 | H7 | Request isolation and fairness | 56.0% | 56.0% | +0.0 | Partial | [Baseline][B]; candidate `fbp_request_lanes`, bounded RR |
-| C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] session-level precedence retained; [request-level inherited-outcome gap reproduced](fbp-quick-boundaries-20261115.md#deferred-findings), unresolved |
+| C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | Session-level precedence retained; [approved request disposal preserves inherited outcomes and original causes](fbp-terminal-cleanup-20261115.md), [exact-head][N] |
 | C2 | Obligation deduplication | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate closure-only fairness test |
 | C3 | Retired-generation revocation | 20.0% | 20.0% | +0.0 | Open | **Decision required:** [archival/revocation alternatives][C] |
 | C4 | Preparation authority | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate binding compile-fail tests |
@@ -85,7 +94,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | C10 | Redundant execution API | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; API removal retained by merge |
 | A1 | Private composite extension | 18.0% | 18.0% | +0.0 | Open | [Baseline][B]; general extension API missing |
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
-| A3 | Graph/store separation | 20.0% | 20.0% | +0.0 | Open | [Storage capability correction](fbp-storage-capabilities-20261114.md); graph-local Store separation still open |
+| A3 | Graph/store separation | 20.0% | 100.0% | +80.0 | Scoped verified | [Opaque external capability boundary](fbp-resource-boundary-20261115.md); Graph Store, locks and read/write policy removed; independent review and [exact-head][N] |
 | A4 | Typed authoring consolidation | 30.0% | 30.0% | +0.0 | Open | [Composer-owned registration](fbp-composer-registration-20261114.md); native registration verified, broader authoring consolidation remains |
 | A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | Producer/consumer keys derived during atomic registration; physical graph paths still exposed |
 | A6 | Admission API ergonomics | 30.0% | 100.0% | +70.0 | Scoped verified | [Typed key admission design/review](fbp-typed-admission-20261115.md); [exact-head acceptance][A]; keys are names, not generation authority |
@@ -104,12 +113,13 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 [A]: https://github.com/matthis-k/phenix-ai/actions/runs/43696623155
 [E]: https://github.com/matthis-k/phenix-ai/actions/runs/43702741898
 [K]: https://github.com/matthis-k/phenix-ai/actions/runs/43705906267
+[N]: https://github.com/matthis-k/phenix-ai/actions/runs/43727271982
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `979572eb9`, not an older commit's passing
+implementation acceptance is exact-head `026cfbe05`, not an older commit's passing
 run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
@@ -130,6 +140,9 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | Snapshot tuple cardinality | Public tuple decoding panicked on short input and ignored extras | Exact macro-counted arity check before any decoder; typed SnapshotEntryMismatch | Arity one through four, zero custom callbacks and real-cell source identity; [exact-head][K] |
 | Q7 query binding | Missing/ambiguous tap or root lookup was flattened to WrongGeneration | Preserve actual NetworkError in runtime and preparation binding; remove unused variant | Typed source identity, all four lookup failure paths, read-free valid binding and no activation on failure; [exact-head][K] |
 | Q6 continuation input waits | Owned continuations reported canonical and unrelated request-lane queues | Filter bounded waits by actual owner, retaining idle/shared behavior | Scoped/unscoped WaitInput/WaitInputs, queue IDs/endpoints, unrelated traffic, lane reuse and passivity; [exact-head][K] |
+| A3 external resource authority | Graph owned a concrete Store, locks and read/write permission interpretation | Opaque exact-type capabilities and validated sets; operations/authority stay external | Attenuation compile tests, identity/default deny, sources/continuations, duplicate rejection and independent capability leases/hostile cleanup; [exact-head][N] |
+| Request terminal/cleanup | Late explicit cleanup rewrote inherited outcomes; cleanup errors could mask original query failure and inventory | Approved Dispose, Keep Failed, original-first typed Cleanup plus outer exact-job inventory | Both queue/failure policies, scoped capture retention versus explicit disposal, destructor/recovery failure and late jobs; [exact-head][N] |
+| WIP #1258 native hosting | Published host lacked source/publication wake registration and sleep tokens | Existing wake handle gains versioned hints; private candidate registration and post-publication signaling; guarded DerivedHost forwarding | Actual sleeping/reload/source/shutdown reactor, partial sweeps/backpressure and real observer reload with offloaded guards; [exact-head][N] |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
@@ -139,9 +152,10 @@ pass. WIP #1257 passed hosted acceptance at `f608a3fc` and is closed as supersed
 by its native adaptation in #1302, not merged to main. WIP #1259's bounded native
 implementation/migration passed at `90591a12` and it is also closed as superseded,
 not merged to main. Neither WIP alone closes all of A1/A3/A4/A5/A6/Q7 or M7/M8.
-The subsequent independently accepted typed-admission batch closes only A6.
-WIP #1258 and broad production-agent integration remain
-independent follow-up work, not silently marked complete.
+The independently accepted typed-admission batch closes A6; the later opaque
+capability boundary closes A3. WIP #1258's bounded native adaptation passed at
+`026cfbe05` and is also closed as superseded, not merged. Broad production-agent
+integration and the other 21 findings remain independent follow-up work.
 
 ## Historical Candidate Evidence
 
@@ -213,7 +227,8 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 | H4, H5, H6 | Verified optimization stack retained; exact paired timing/RSS exposed regressions, leading to a profiled correction | Same-head comparison must verify correction; production-representative acceptance remains outstanding |
 | A6 | Existing typed input keys now feed actual session/request/Kernel/Generation and producer admission; independent review and `08ab8fd23` exact-head acceptance | Bounded finding closed; runtime validation still applies and generation authority belongs to A5 |
 | A1, A2, A4, A5, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension, authoring consolidation, physical-path exposure, incremental compilation and dependency scaling remain |
-| A3, Q1, Q6, Q7 | Ownership primitive, typed closure/deadline diagnostics, independent storage capabilities and retained error causes | Broader graph/store authority separation, module concentration and runtime error provenance remain |
+| A3 | Graph Store/locking/permission authority removed in favor of explicit opaque capabilities, with independent lease-safe cleanup | Original bounded finding closed at `026cfbe05`; external authority honesty/revocation and native sandboxing are separate scopes |
+| Q1, Q6, Q7 | Ownership primitive, typed closure/deadline diagnostics, external capabilities and retained error causes | Module concentration, general readiness explanations and typed process/runtime provenance remain |
 | Q4 | Intentional blocking and finite FIFO limitations documented/tested | Static liveness analysis and sound progress diagnostics remain |
 | H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained and exercised at `a2d7b4d3`; newer changes require their own same-head gates | No permission to weaken existing guarantees or substitute earlier CI for current acceptance |
 
@@ -233,8 +248,8 @@ passed. This is historical provenance, not the current table's comparison head.
 The [incoming historical tracker](https://github.com/matthis-k/phenix-ai/blob/516e0883875d5ec483e3595d50b77b3d5e8979c4/docs/fbp-issue-progress-estimates-20261113.md)
 records the earlier H3b 76.0% to 78.0% and Q5 73.0% to 74.0% increases, with
 the mean moving from 55.2% to 55.3%. Those historical deltas are not repeated in
-the authoritative current table: only the newly accepted A6 delta is +70.0 pp;
-the other 32 current deltas remain +0.0 pp.
+the authoritative current table: A6 is +70.0 pp and A3 is +80.0 pp;
+the other 31 current deltas remain +0.0 pp.
 The accepted stack evidence includes the actual `wake.rs` Loom verifier, all
 13,440 serialized wake-operation orders,
 real notification/retirement races, delegated-worker cancellation/replacement,

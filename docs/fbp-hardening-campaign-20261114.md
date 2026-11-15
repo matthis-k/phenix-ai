@@ -2,6 +2,26 @@
 
 ## Current Accepted Batch
 
+Implementation `026cfbe05` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
+Independent original-scope and assembled integration reviews found no actionable
+defects. [A3's concrete Graph Store boundary](fbp-resource-boundary-20261115.md) is
+replaced by explicitly granted opaque external capabilities; A3 moves 20.0% to
+100.0%, +80.0 pp. Counts are now **12 scoped verified / 7 partial / 14 open**,
+mean 59.8%, leaving **21** of the 22 starting findings. The [complete work map](fbp-remaining-work-20261115.md)
+states their actual closure requirements and policy dependencies.
+
+[Native WIP #1258](fbp-published-host-wake-20261115.md) is implemented, accepted and
+closed as superseded, not merged to main. It remains source/publication-driven
+application hosting, not a general scheduler. The [terminal/cleanup defect](fbp-terminal-cleanup-20261115.md)
+is corrected under the user-approved Dispose, Keep Failed policy: explicit
+authenticated disposal preserves inherited outcome and cause; query cleanup keeps
+typed cleanup failures and exact job inventory. Q3 and broader Q7 remain open;
+C3/C6/C7 decisions are not silently resolved. This evidence-only revision needs
+its own exact-head checks; benchmark execution is not performance acceptance.
+
+## Previous Quick Boundary Batch
+
 The [quick boundary corrections](fbp-quick-boundaries-20261115.md) passed all
 fifteen exact-head workflows at `979572eb9`: public snapshot tuples reject malformed
 lengths before any decoder, query binding preserves missing/ambiguous declaration

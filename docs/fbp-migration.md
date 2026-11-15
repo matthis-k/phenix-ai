@@ -9,7 +9,20 @@ milestone status. The final outcome section and [report](fbp-report.md) supersed
 their pending labels. See [design](fbp-design.md), [critique](fbp-critique.md),
 [regression mapping](fbp-regression-ledger.md), and [measurements](fbp-measurements.md).
 
-## Verified-Stack Reconciliation
+## Current Accepted State
+
+Implementation `026cfbe05` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
+The [tracker](fbp-issue-progress-estimates-20261113.md) records A3 and A6 scoped
+verified, twelve scoped verified / seven partial / fourteen open, mean 59.8%.
+Native WIPs #1257/#1259/#1258 are closed as superseded by #1302, not merged.
+See [resource API migration](fbp-resource-boundary-20261115.md), [approved terminal
+cleanup](fbp-terminal-cleanup-20261115.md) and [native host wake limits](fbp-published-host-wake-20261115.md).
+The 21 remaining findings and policy dependencies are explicit in the
+[work map](fbp-remaining-work-20261115.md). This documentation revision needs its own
+checks; the pending labels and counts in the reconciliation below are historical.
+
+## Historical Verified-Stack Reconciliation
 
 The 2026-11-14 campaign incorrectly relied on stale local remote-tracking
 `origin/impl/graph-consolidation-20261110` at `16e77f6c6`, with inherited

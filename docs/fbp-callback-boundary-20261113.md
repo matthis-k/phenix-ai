@@ -1,13 +1,12 @@
 # FBP Callback Boundary Hardening
 
-Status: reconciled callback contract for the verified-stack merge on
-`fix/fbp-lifecycle-request-lanes-20261114` (PR #1302). The initial `0d145f3`
-candidate incorrectly relied on stale local remote-tracking impl head `16e77f6c6`;
-actual remote impl `89e00d0` already had later foundations. After fetching, exact
-verified PR #1300 head `516e0883875d5ec483e3595d50b77b3d5e8979c4` is now
-being merged, preserving all scoped gates. See the
-[campaign record](fbp-hardening-campaign-20261114.md) for provenance, guard
-composition, timeout, lane lifecycle and pending new-head acceptance. The
+Status: reconciled native callback contract on PR #1302. Implementation `026cfbe05`
+passed all fifteen exact-head workflows, retaining the complete verified-stack
+gates. Graph resource locks/read-write closures have been removed in favor of
+[opaque external capabilities](fbp-resource-boundary-20261115.md); capability-owned
+operations and locks remain application code. See the
+[campaign record](fbp-hardening-campaign-20261114.md) for current evidence, guard
+composition, timeout and lane lifecycle. This documentation revision needs its own checks. The
 [tracker](fbp-issue-progress-estimates-20261113.md) alone owns current scores.
 
 ## Contract And Lock Order
@@ -23,7 +22,7 @@ The separate verified whole-drain gate still spans polling and eager admission:
 | Factory readiness/correlation declarations and request `closure_ports` | Factory methods were called during runtime construction/accounting | Factory declarations are panic-contained at construction; per-request closure ports are evaluated once, cached, and rejected before scope admission on panic |
 | Re-entry through the same `Kernel` on the owning thread | Self-deadlock on the session mutex | Return a reentrant-session error before waiting |
 | Process callback running on a dispatcher worker | Caller-thread-only re-entry tracking missed synchronous worker callbacks | Kernel identity is first in ordered `execution_guards`; `with_guard` appends, reverse teardown keeps identity active through application-token and panic-payload cleanup |
-| Resource `Store` read/write closure | Store's resource lock held | Remains a plugin/resource-owned critical section; callers must not re-enter the same resource from its closure |
+| External capability operation | Graph Store and context read/write closures held resource locks | Graph only resolves the granted exact Rust type; capability-owned synchronization is external, with no generic Graph read/write policy |
 
 Lock-order graph after the change:
 
@@ -143,10 +142,10 @@ the whole-drain gate, including typed driver/re-entry rejection.
   effects are not revocable, but the returned packet cannot enter the retired graph.
   External publication instead waits for the admitted whole drain to finish.
 - Arbitrary plugin-vs-plugin lock cycles remain possible, including inside
-  `ProcessContext::read/write` resource closures. Kernel lock freedom is not a
+  externally supplied capability operations. Kernel lock freedom is not a
   claim of universal callback deadlock freedom.
 
-## Acceptance Evidence
+## Historical Merge Acceptance Requirements
 
 Regression coverage must prove poll/set-waker callbacks can re-enter without
 holding the producer mutex, process callbacks can attempt same-kernel session

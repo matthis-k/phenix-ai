@@ -6,11 +6,18 @@ remains authoritative. This map supplies concrete work and acceptance dependenci
 not new completion percentages or a promise that every finding is independently
 implementable without a policy decision.
 
+Current accepted implementation: `026cfbe05`, with all fifteen exact-head hosted
+workflows passing. A3 is now scoped verified, leaving **21 findings: 7 partial and
+14 open**, with twelve scoped verified overall. Native WIP #1258 is closed as
+superseded, and the approved terminal/cleanup protocol is implemented and verified.
+The table retains all 22 starting findings so no remaining work disappears from
+the map; only A3 has received new whole-finding closure credit.
+
 ## Current Implementation Tracks
 
 - A3: remove graph-owned Store, locks and read/write policy in favor of explicitly
-  granted opaque application capabilities. Whole-finding closure candidate, subject
-  to independent review and exact-head acceptance. See [boundary design/review](fbp-resource-boundary-20261115.md).
+  granted opaque application capabilities. Whole-finding scoped verification after
+  independent review and exact-head acceptance. See [boundary design/review](fbp-resource-boundary-20261115.md).
 - Terminal cleanup: preserve inherited outcomes and original causes while explicit
   authenticated request termination disposes its remaining work. The user approved
   **Dispose, Keep Failed**. Preserve typed query cleanup failures and job inventory.
@@ -19,9 +26,10 @@ implementable without a policy decision.
   static-driver and derived guard contracts. No old Engine or new scheduler.
   See [native design and limits](fbp-published-host-wake-20261115.md).
 
-These tracks are implemented locally; hosted acceptance and final issue/WIP
-disposition must identify their exact committed revision. No score changes are
-credited by this map itself.
+These tracks passed hosted acceptance at the exact revision above. The scorecard,
+not this map, records the A3 increase and unchanged scores of the other findings.
+Q3 selection correctness is the next executable correctness unit; C3/C6/C7 decisions
+remain outstanding and must not be silently converted into implementation claims.
 
 ## All 22 Findings
 
@@ -39,7 +47,7 @@ credited by this map itself.
 | C7 plugin isolation | Open | Implement an executable process-isolation capability boundary with crash, cancellation and resource limits, or approve exclusion | Untrusted native Rust cannot be sandboxed in-process by typed grants |
 | A1 private extension | Open | Add a concrete author-approved nested Add/Connect/export seam, exact host grants, conflicts, provenance and failure atomicity | Existing nested replacement seams are not general extension authority |
 | A2 compatibility | Open | Define the safe compatibility relation with positive/negative examples, then validate adapters/replacement and inherited obligations | Shape agreement alone cannot manufacture semantic contract membership |
-| A3 graph/store separation | Open | Remove concrete storage/permission/synchronization authority from Graph; preserve capabilities, identity, attenuation and cleanup/leases | Current closure candidate; no Graph-to-Storage dependency or relocated duplicate Store |
+| A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
 | A4 typed authoring | Open | Inventory actual surviving representations, eliminate redundant authoring routes and prove manual/derived primitive/composite equivalence | Do not reintroduce removed Engine authoring conveniences as compatibility shims |
 | A5 physical paths | Open | Cover required compilation/binding/execution operations with coherent bound handles and stale/foreign rejection | Typed InputKey is a name, not generation authority; retain necessary validated dynamic paths |
 | Q1 responsibility concentration | Open | Extract cohesive tested ownership boundaries without duplicated state or protocol authorities | Stabilize terminal/selection seams before competing refactors |
@@ -60,8 +68,9 @@ implement these findings and is not part of this task.
   superseded by #1302, not merged into main.
 - #1259 composer-owned atomic registration: completed native adaptation, closed as
   superseded by #1302, not merged into main.
-- #1258 published-generation wake hosting: native adaptation in the current batch;
-  close as superseded only after independent original-scope acceptance and exact-head CI.
+- #1258 published-generation wake hosting: native adaptation passed independent
+  original-scope acceptance and exact-head CI at `026cfbe05`; closed as superseded,
+  not merged into main.
 - #1301 coordinated CI builders: separate CI proposal, not an FBP correctness
   finding or authority to replace this branch's verified gates.
 - #1302 remains the assembled native campaign. No merge into main is authorized.

@@ -1,14 +1,15 @@
 # Phenix Native FBP Design
 
-Status: the native engine replaced the old graph engine at `16e77f6c6`; Kernel,
-Plugin and StorageGraph use native networks. The current lifecycle/request-lane
-candidate is on `fix/fbp-lifecycle-request-lanes-20261114` (PR #1302), initially
-committed as `0d145f3` after incorrectly relying on stale local remote-tracking
-impl head `16e77f6c6`. Actual remote impl `89e00d0` includes later foundations.
-After fetching, exact verified PR #1300 head
-`516e0883875d5ec483e3595d50b77b3d5e8979c4` is now being merged to preserve
-the complete stack and scoped gates; full new-head acceptance is pending. See its
-[design/evidence record](fbp-hardening-campaign-20261114.md). The historical cutover
+Status: Kernel, Plugin and StorageGraph use native networks. PR #1302 integrated
+the complete verified `516e088` stack and retains all scoped gates. Subsequent
+implementation `026cfbe05` passed all fifteen exact-head workflows. The current
+[resource boundary](fbp-resource-boundary-20261115.md) grants opaque application
+capabilities; Graph no longer owns Store, resource locks or read/write policy.
+[Published-host hints](fbp-published-host-wake-20261115.md) remain application-owned
+source/publication integration, not another scheduler. See the current
+[design/evidence record](fbp-hardening-campaign-20261114.md), authoritative
+[scorecard](fbp-issue-progress-estimates-20261113.md) and [remaining work map](fbp-remaining-work-20261115.md).
+This evidence-only revision needs its own checks. The historical cutover
 verification and immutable Nix snapshot checks are recorded in the report. See
 [migration](fbp-migration.md), [review](fbp-critique.md), and the executable
 [API examples](../packages/phenix-graphs/API-EXAMPLES.md).
@@ -265,6 +266,8 @@ native tests, including independent randomized composition models. Final counts
 belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
 and final verification status are recorded in the migration/review documents.
 The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative:
-all scores stay at verified `516e088`, with no new increases or closures. M7/M8
+A6 and A3 have accepted scoped closure; the other 31 scores remain unchanged from
+verified `516e088`. Current classifications are twelve scoped verified, seven
+partial and fourteen open. M7/M8
 and missing production-agent, live-migration and OS-isolation adapters remain
 incomplete; queue isolation is not independent process state or universal fairness.

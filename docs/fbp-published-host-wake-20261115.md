@@ -1,6 +1,7 @@
 # Published Host Wake Hints
 
-Status: bounded WIP1258 native implementation, acceptance pending CI. This is not
+Status: bounded WIP1258 native adaptation verified at `026cfbe05`; #1258 is closed
+as superseded by #1302, not merged to main. This is not
 a general reactor, a replacement for native `Kernel::run_until`, or a new
 generation-authority API. It adapts the current native kernel rather than
 restoring an earlier Engine implementation.
@@ -187,7 +188,8 @@ closure.
 After the end-to-end acceptance addition, the focused test and
 `cargo test -p phenix-kernel --test wake_host -p phenix-storage-graph --test host_derived`
 passed: 10 kernel wake-host tests and 7 storage host tests. The owned test file's
-rustfmt check and `git diff --check` also passed. CI acceptance remains pending.
+rustfmt check and `git diff --check` also passed. Those local results were followed
+by the exact-head hosted acceptance below.
 
 Independent final review identified the missing sleeping/reload acceptance case;
 the regression above was added and separately re-reviewed. That finding is closed.
@@ -195,3 +197,10 @@ A subsequent assembled resource/terminal/wake review found no actionable integra
 defects and supports bounded original #1258 acceptance, conditional on exact-head
 hosted checks. Full assembled workspace/default/no-default, formatting and strict
 all-target Clippy now pass locally. This does not expand the reactor contract.
+
+Implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen hosted
+workflows, including full six-job Flake CI, both Loom and both native concurrency
+gates. See [the shared exact-head evidence](fbp-resource-boundary-20261115.md#exact-head-acceptance).
+The old WIP was closed as superseded after that acceptance; its historical Engine
+implementation was neither cherry-picked nor merged to main. This evidence-only
+follow-up requires its own head's checks.
