@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/49c60b4f55216649e3251b64458504a49a4acaf3";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/845e1e23420fb661c3d4a8e0f713b740c3ec2b2f";
   inputs.crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
 
   outputs =
@@ -176,6 +176,16 @@
         groups = {
           storage = cargoGroup storagePackages;
           graph = cargoGroup graphPackages;
+          # cargo test --all-targets does not run rustdoc tests.
+          # Keep native graph doctest coverage on the same default-feature
+          # dependency corpus, without an extra shared-prebuild profile.
+          "graph-doc" = (cargoGroup [ "phenix-graph" ]) // {
+            targets = [ "--doc" ];
+          };
+          "graph-no-default-doc" = (cargoGroup [ "phenix-graph" ]) // {
+            profile = "no-default";
+            targets = [ "--doc" ];
+          };
           kernel = cargoGroup kernelPackages;
           derived = cargoGroup derivedPackages;
           integration = cargoGroup integrationPackages;
