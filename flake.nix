@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/7c10595dbbbd7a586dad51ce620a2f9891cc2f27";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/49c60b4f55216649e3251b64458504a49a4acaf3";
   inputs.crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
 
   outputs =
@@ -152,7 +152,9 @@
               ++ map (path: ./. + "/${path}") paths
             );
           };
-          postUnpack = ''cp ${scopedWorkspaceManifest paths} "$sourceRoot/Cargo.toml"'';
+          # Keep complete workspace membership and Cargo.lock; the helper
+          # overlays these real members onto Crane's full dummy workspace.
+
         };
       # Dependency-only prebuild shares registry artifacts between independently
       # failing real package test checks. This is a benchmark pilot; the
