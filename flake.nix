@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/e83c6029afc0140a242ae8240dbff6efe5979725";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/a8177632e578629da0de551d248079b7c99ed245";
 
   outputs =
     {
@@ -105,41 +105,113 @@
         };
       test =
         name: packages: flags:
+        let
+          packageArgs = lib.concatMapStringsSep " " (p: "-p ${lib.escapeShellArg p}") packages;
+        in
         mkRust {
           inherit name packages;
-          command = "cargo test --locked --offline ${
-            lib.concatMapStringsSep " " (p: "-p ${p}") packages
-          } ${flags}";
+          command = ''
+            # Fast path: compile and test once, running every test binary even
+            # after failures. On any failure, Cargo's keep-going build collects
+            # independent compilation errors; probe packages only when that
+            # compilation also fails. Other Nix roots continue independently.
+            if cargo test --no-fail-fast --locked --offline ${packageArgs} ${flags}; then
+              :
+            else
+              echo "Suite failed; attempting every independent compilation" >&2
+              if cargo build --keep-going --locked --offline ${packageArgs} ${flags}; then
+                echo "Compilation passed; failing test binaries were already run" >&2
+              else
+                echo "Compilation failed; probing packages independently" >&2
+                for package in ${lib.escapeShellArgs packages}; do
+                  if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
+                    printf 'PASS %s\n' "$package"
+                  else
+                    printf 'FAIL %s\n' "$package" >&2
+                  fi
+                done
+              fi
+              exit 1
+            fi
+          '';
         };
       allPackages = map (path: manifests.${path}.package.name) members;
-      integrationPackages = lib.filter (
-        name:
-        lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
-      ) allPackages;
+      # Default-feature suites are a disjoint partition: no test executable
+      # should run in two Nix checks with identical Cargo feature settings.
+      # The no-default profile is intentionally separate.
+      storagePackages = [
+        "phenix-schema"
+        "phenix-storage"
+      ];
+      graphPackages = [
+        "phenix-graph"
+        "phenix-plugin"
+        "phenix_port_args_derive"
+      ];
+      kernelPackages = [ "phenix-kernel" ];
+      derivedPackages = [ "phenix-storage-graph" ];
+      integrationPackages = [ "phenix-storage-plugin" ];
+      defaultPackages = lib.concatLists [
+        storagePackages
+        graphPackages
+        kernelPackages
+        derivedPackages
+        integrationPackages
+      ];
+      completeDefaultCoverage =
+        (lib.sort builtins.lessThan defaultPackages) == (lib.sort builtins.lessThan allPackages);
+      # The runtime pilot intentionally reuses the existing kernel-smoke
+      # package and leaves its original build-time check in place.
+      # No second Cargo compilation or test inventory is introduced.
+      runtimeSuite = phenix-flake-ci.lib.mkSuite {
+        inherit pkgs;
+        tests.kernel-smoke = {
+          command.program = lib.getExe' self.packages.${system}.kernel-smoke "kernel-smoke";
+          expect.exitCode = 0;
+        };
+      };
       checkConfig = import ./ci/flake-check-config.nix;
     in
     {
-      lib.flakeCiWorkflow = phenix-flake-ci.lib.mkFlakeCiWorkflow {
+      lib.flakeCiWorkflows = phenix-flake-ci.lib.mkFlakeCiWorkflows {
         ci = checkConfig.ci;
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
       };
-      packages.${system}.kernel-smoke = mkRust {
-        name = "kernel-smoke";
-        packages = [ "phenix-kernel" ];
-        release = true;
-        command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
-        installPhase = ''
-          mkdir -p "$out/bin"
-          install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
-          "$out/bin/kernel-smoke"
-        '';
+      # Local execution reuses the same pinned DAG planner, runtime runner,
+      # and exact-head evidence contract as the GitHub workflows.
+      apps.${system}.ci = {
+        type = "app";
+        program = toString (
+          pkgs.writeShellScript "phenix-ci-local" ''
+            exec ${lib.getExe pkgs.python3} ${phenix-flake-ci.outPath}/lib/flake-ci-local.py "$@"
+          ''
+        );
+      };
+      packages.${system} = {
+        kernel-smoke = mkRust {
+          name = "kernel-smoke";
+          packages = [ "phenix-kernel" ];
+          release = true;
+          command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
+          installPhase = ''
+            mkdir -p "$out/bin"
+            install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
+            # The prebuilt runtime test package executes the binary once,
+            # after all builds reach the synchronization barrier.
+          '';
+        };
+        "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       };
       checks.${system} = {
-        workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
-          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
-          touch $out
-        '';
+        # A new workspace member must belong to exactly one default test suite.
+        workflow =
+          assert completeDefaultCoverage;
+          pkgs.runCommand "phenix-workflow-sync" { } ''
+            diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
+            diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
+            touch $out
+          '';
         kernel-smoke = self.packages.${system}.kernel-smoke;
         format =
           pkgs.runCommand "phenix-format"
@@ -156,7 +228,14 @@
               cp ${./Cargo.toml} source/Cargo.toml
               cd source
               cargo fmt --all --check
-              nixfmt --check ${./flake.nix} ${./ci/flake-check-config.nix}
+              # Print a real patch on formatting failure so CI is actionable.
+              for file in ${./flake.nix} ${./ci/flake-check-config.nix}; do
+                expected="$(mktemp --suffix=.nix)"
+                cp "$file" "$expected"
+                chmod u+w "$expected"
+                nixfmt "$expected"
+                diff -u --label "$file" "$file" --label "nixfmt expected" "$expected"
+              done
               touch $out
             '';
         clippy = mkRust {
@@ -164,16 +243,12 @@
           packages = allPackages;
           command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
         };
-        storage = test "storage" [ "phenix-storage" "phenix-schema" ] "--all-targets";
-        graph = test "graph" [ "phenix-graph" "phenix-plugin" ] "--all-targets";
-        kernel = test "kernel" [ "phenix-kernel" ] "--all-targets";
-        derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";
+        storage = test "storage" storagePackages "--all-targets";
+        graph = test "graph" graphPackages "--all-targets";
+        kernel = test "kernel" kernelPackages "--all-targets";
+        derived = test "derived" derivedPackages "--all-targets";
         no-default = test "no-default" allPackages "--no-default-features --lib --tests";
-        integration =
-          if integrationPackages == [ ] then
-            test "integration" [ "phenix-kernel" ] "--test storage"
-          else
-            test "integration" ([ "phenix-kernel" ] ++ integrationPackages) "--all-targets";
+        integration = test "integration" integrationPackages "--all-targets";
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [
