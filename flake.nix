@@ -226,7 +226,8 @@
           '';
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
-      } // cargoDependencyChecks.packages;
+      }
+      // cargoDependencyChecks.packages;
       checks.${system} = {
         # A new workspace member must belong to exactly one default test suite.
         workflow =
@@ -268,7 +269,8 @@
           command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
         };
 
-      } // cargoDependencyChecks.checks;
+      }
+      // cargoDependencyChecks.checks;
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo
