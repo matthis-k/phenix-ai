@@ -182,9 +182,11 @@
       # and exact-head evidence contract as the GitHub workflows.
       apps.${system}.ci = {
         type = "app";
-        program = toString (pkgs.writeShellScript "phenix-ci-local" ''
-          exec ${lib.getExe pkgs.python3} ${phenix-flake-ci.outPath}/lib/flake-ci-local.py "$@"
-        '');
+        program = toString (
+          pkgs.writeShellScript "phenix-ci-local" ''
+            exec ${lib.getExe pkgs.python3} ${phenix-flake-ci.outPath}/lib/flake-ci-local.py "$@"
+          ''
+        );
       };
       packages.${system} = {
         kernel-smoke = mkRust {
