@@ -163,9 +163,11 @@
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       };
-      # A new Cargo workspace member must be assigned to one default suite.
-      checks.${system} = assert completeDefaultCoverage; {
-        workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
+      checks.${system} = {
+        # A new workspace member must belong to exactly one default test suite.
+        workflow =
+          assert completeDefaultCoverage;
+          pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
           diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
           touch $out
