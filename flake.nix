@@ -111,20 +111,26 @@
         mkRust {
           inherit name packages;
           command = ''
-            # Cargo test --no-fail-fast continues test binaries, but not
-            # independent compilation failures. Build every possible test
-            # target first; Nix --keep-going handles other derivations.
-            if cargo build --keep-going --locked --offline ${packageArgs} ${flags}; then
-              cargo test --no-fail-fast --locked --offline ${packageArgs} ${flags}
+            # Fast path: compile and test once, running every test binary even
+            # after failures. On any failure, Cargo's keep-going build collects
+            # independent compilation errors; probe packages only when that
+            # compilation also fails. Other Nix roots continue independently.
+            if cargo test --no-fail-fast --locked --offline ${packageArgs} ${flags}; then
+              :
             else
-              echo "Compilation failed; attempting every package independently" >&2
-              for package in ${lib.escapeShellArgs packages}; do
-                if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
-                  printf 'PASS %s\n' "$package"
-                else
-                  printf 'FAIL %s\n' "$package" >&2
-                fi
-              done
+              echo "Suite failed; attempting every independent compilation" >&2
+              if cargo build --keep-going --locked --offline ${packageArgs} ${flags}; then
+                echo "Compilation passed; failing test binaries were already run" >&2
+              else
+                echo "Compilation failed; probing packages independently" >&2
+                for package in ${lib.escapeShellArgs packages}; do
+                  if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
+                    printf 'PASS %s\n' "$package"
+                  else
+                    printf 'FAIL %s\n' "$package" >&2
+                  fi
+                done
+              fi
               exit 1
             fi
           '';
