@@ -105,13 +105,29 @@
         };
       test =
         name: packages: flags:
+        let
+          packageArgs = lib.concatMapStringsSep " " (p: "-p ${lib.escapeShellArg p}") packages;
+        in
         mkRust {
           inherit name packages;
-          # Continue independent Cargo test binaries after a failure inside one Nix root.
-          # Nix --keep-going handles failures across independent derivations.
-          command = "cargo test --no-fail-fast --locked --offline ${
-            lib.concatMapStringsSep " " (p: "-p ${p}") packages
-          } ${flags}";
+          command = ''
+            # Cargo test --no-fail-fast continues test binaries, but not
+            # independent compilation failures. Build every possible test
+            # target first; Nix --keep-going handles other derivations.
+            if cargo build --keep-going --locked --offline ${packageArgs} ${flags}; then
+              cargo test --no-fail-fast --locked --offline ${packageArgs} ${flags}
+            else
+              echo "Compilation failed; attempting every package independently" >&2
+              for package in ${lib.escapeShellArgs packages}; do
+                if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
+                  printf 'PASS %s\\n' "$package"
+                else
+                  printf 'FAIL %s\\n' "$package" >&2
+                fi
+              done
+              exit 1
+            fi
+          '';
         };
       allPackages = map (path: manifests.${path}.package.name) members;
       # Default-feature suites are a disjoint partition: no test executable
