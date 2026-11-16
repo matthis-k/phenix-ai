@@ -134,18 +134,20 @@
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
       };
-      packages.${system}.kernel-smoke = mkRust {
-        name = "kernel-smoke";
-        packages = [ "phenix-kernel" ];
-        release = true;
-        command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
-        installPhase = ''
-          mkdir -p "$out/bin"
-          install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
-          "$out/bin/kernel-smoke"
-        '';
+      packages.${system} = {
+        kernel-smoke = mkRust {
+          name = "kernel-smoke";
+          packages = [ "phenix-kernel" ];
+          release = true;
+          command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
+          installPhase = ''
+            mkdir -p "$out/bin"
+            install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
+            "$out/bin/kernel-smoke"
+          '';
+        };
+        "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       };
-      packages.${system}."test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       checks.${system} = {
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
