@@ -82,6 +82,7 @@ impl NetworkSession {
         let scope = self.requests.get_mut(&id).unwrap();
         scope.sealed = true;
         scope.terminal = Some(status);
+        scope.inherited_terminal = inherited.is_some();
         scope.failure = error;
         scope.reachable.clear();
         scope.observed_inputs.clear();

@@ -28,7 +28,7 @@ mod request;
 // Production builds retain std types and the unchanged public runtime API.
 #[allow(unexpected_cfgs)]
 mod wake;
-pub use diagnostics::{BlockedCycle, CorrelationBlock};
+pub use diagnostics::*;
 pub(crate) use readiness::validate_policy;
 pub use readiness::{InputHead, Readiness, ReadinessPolicy, ReadinessSnapshot};
 pub use request::{
@@ -1028,10 +1028,20 @@ impl NetworkSession {
     }
 
     fn closed(&self, index: usize, port: usize) -> bool {
+        self.first_non_eos_queue(index, port).is_none()
+    }
+    fn first_non_eos_queue(&self, index: usize, port: usize) -> Option<usize> {
         self.processes[index].inputs[port]
             .queues
             .iter()
-            .all(|q| self.transport.queues()[*q].is_eos())
+            .copied()
+            .find(|q| !self.transport.queues()[*q].is_eos())
+    }
+    fn idle_completion_after_empty_selection(&self, index: usize) -> bool {
+        let p = &self.processes[index];
+        p.handoff.state() == HandoffState::Idle
+            && !p.source
+            && p.inputs.iter().all(|port| port.eos_delivered)
     }
     fn finish(&mut self, index: usize) {
         if self.processes[index]
@@ -1233,10 +1243,7 @@ impl NetworkSession {
                 }
                 self.processes[index].waiting = None;
                 self.processes[index].waiting_policy = None;
-            } else if state == HandoffState::Idle
-                && !self.processes[index].source
-                && self.processes[index].inputs.iter().all(|p| p.eos_delivered)
-            {
+            } else if self.idle_completion_after_empty_selection(index) {
                 self.finish(index);
                 if self.terminal.is_some() {
                     return None;

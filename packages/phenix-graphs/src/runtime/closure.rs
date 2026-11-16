@@ -1,5 +1,22 @@
 use super::*;
 
+/// A proof of current input closure, independent of whether it was observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClosureProof {
+    GlobalEos,
+    ScopedRequestAbsent,
+    NotProven(ClosureWitness),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClosureWitness {
+    OpenGlobalWriter { queue: usize },
+    BufferedGlobalInput { queue: usize },
+    UnsealedRequest { request: RequestId },
+    RequestPacket { queue: usize, count: usize },
+    UpstreamOwner { process: usize },
+    ClosureObligation { process: usize },
+}
+
 impl NetworkSession {
     pub(super) fn stranded_at_eos(&self, index: usize) -> bool {
         let p = &self.processes[index];
@@ -95,15 +112,10 @@ impl NetworkSession {
         })
     }
 
-    pub(super) fn request_input_closed(
-        &self,
-        index: usize,
-        port: usize,
-        request: RequestId,
-    ) -> bool {
+    fn scoped_closure_proof(&self, index: usize, port: usize, request: RequestId) -> ClosureProof {
         let scope = &self.requests[&request];
         if !scope.sealed {
-            return false;
+            return ClosureProof::NotProven(ClosureWitness::UnsealedRequest { request });
         }
         // Request roots register their entire downstream reachability. An
         // upstream process outside this scope cannot own or publish packets
@@ -119,11 +131,11 @@ impl NetworkSession {
                 }
         };
         let queues = &self.processes[index].inputs[port].queues;
-        if queues
-            .iter()
-            .any(|q| relevant(*q) && self.transport.queues()[*q].request_count(request) != 0)
-        {
-            return false;
+        for queue in queues.iter().copied().filter(|q| relevant(*q)) {
+            let count = self.transport.queues()[queue].request_count(request);
+            if count != 0 {
+                return ClosureProof::NotProven(ClosureWitness::RequestPacket { queue, count });
+            }
         }
         let mut visited = BTreeSet::new();
         let mut stack = vec![];
@@ -139,22 +151,52 @@ impl NetworkSession {
                 continue;
             }
             let p = &self.processes[producer];
-            if p.request == Some(request) || self.closure_obligation(producer, request) {
-                return false;
+            if p.request == Some(request) {
+                return ClosureProof::NotProven(ClosureWitness::UpstreamOwner {
+                    process: producer,
+                });
+            }
+            if self.closure_obligation(producer, request) {
+                return ClosureProof::NotProven(ClosureWitness::ClosureObligation {
+                    process: producer,
+                });
             }
             for queue in p.inputs.iter().flat_map(|port| &port.queues) {
                 if !relevant(*queue) {
                     continue;
                 }
-                if self.transport.queues()[*queue].request_count(request) != 0 {
-                    return false;
+                let count = self.transport.queues()[*queue].request_count(request);
+                if count != 0 {
+                    return ClosureProof::NotProven(ClosureWitness::RequestPacket {
+                        queue: *queue,
+                        count,
+                    });
                 }
                 if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0 {
                     stack.push(*index);
                 }
             }
         }
-        true
+        ClosureProof::ScopedRequestAbsent
+    }
+
+    pub(super) fn input_closure_proof(
+        &self,
+        index: usize,
+        port: usize,
+        request: Option<RequestId>,
+    ) -> ClosureProof {
+        let Some(queue) = self.first_non_eos_queue(index, port) else {
+            return ClosureProof::GlobalEos;
+        };
+        if let Some(request) = request {
+            return self.scoped_closure_proof(index, port, request);
+        }
+        ClosureProof::NotProven(if !self.transport.queues()[queue].is_empty() {
+            ClosureWitness::BufferedGlobalInput { queue }
+        } else {
+            ClosureWitness::OpenGlobalWriter { queue }
+        })
     }
 
     pub(super) fn input_closed_for(
@@ -163,8 +205,10 @@ impl NetworkSession {
         port: usize,
         request: Option<RequestId>,
     ) -> bool {
-        self.closed(index, port)
-            || request.is_some_and(|request| self.request_input_closed(index, port, request))
+        !matches!(
+            self.input_closure_proof(index, port, request),
+            ClosureProof::NotProven(_)
+        )
     }
 
     pub(super) fn closure_fresh(

@@ -165,10 +165,31 @@
           command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
         };
         storage = test "storage" [ "phenix-storage" "phenix-schema" ] "--all-targets";
-        graph = test "graph" [ "phenix-graph" "phenix-plugin" ] "--all-targets";
+        graph = mkRust {
+          name = "graph";
+          packages = [
+            "phenix-graph"
+            "phenix-plugin"
+          ];
+          command = ''
+            cargo test --locked --offline -p phenix-graph -p phenix-plugin --all-targets
+            cargo test --locked --offline -p phenix-graph --doc
+          '';
+        };
         kernel = test "kernel" [ "phenix-kernel" ] "--all-targets";
         derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";
-        no-default = test "no-default" allPackages "--no-default-features --lib --tests";
+        no-default = mkRust {
+          name = "no-default";
+          packages = allPackages;
+          command = ''
+            cargo test --locked --offline ${
+              lib.concatMapStringsSep " " (p: "-p ${p}") allPackages
+            } --no-default-features --lib --tests
+            # Workspace dependents can re-enable graph's default features.
+            cargo test --locked --offline -p phenix-graph --no-default-features --lib --tests
+            cargo test --locked --offline -p phenix-graph --no-default-features --doc
+          '';
+        };
         integration =
           if integrationPackages == [ ] then
             test "integration" [ "phenix-kernel" ] "--test storage"

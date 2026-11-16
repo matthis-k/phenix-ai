@@ -1,4 +1,7 @@
 use super::*;
+mod explanation;
+pub use super::closure::{ClosureProof, ClosureWitness};
+pub use explanation::*;
 
 #[derive(Clone, Debug)]
 pub struct BlockedCycle {

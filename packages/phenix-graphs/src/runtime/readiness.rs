@@ -72,7 +72,7 @@ pub trait ReadinessPolicy: Send + Sync {
 }
 pub(super) struct Reservation {
     pub ports: Vec<(usize, Option<(usize, usize)>)>,
-    request: Option<RequestId>,
+    pub(super) request: Option<RequestId>,
 }
 
 /// Validate only declarations. Never inspect application code or spawn a factory.
@@ -108,7 +108,7 @@ impl NetworkSession {
             policy,
         )
     }
-    fn packet_for(
+    pub(super) fn packet_for(
         &self,
         index: usize,
         port: usize,
@@ -151,10 +151,8 @@ impl NetworkSession {
         }
         None
     }
-    pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
+    pub(super) fn exact_wait_selection(&self, index: usize) -> Result<Reservation, String> {
         let p = &self.processes[index];
-        let count = p.inputs.len();
-        self.validate_policy(index, p.waiting_policy.as_ref().unwrap_or(&p.policy))?;
         if let Some(waiting) = &p.waiting {
             let port = p
                 .inputs
@@ -177,13 +175,25 @@ impl NetworkSession {
                 request: p.request,
             });
         }
-        let order: Vec<_> = (0..count)
+        unreachable!("exact wait requires a port");
+    }
+    pub(super) fn selection_order(&self, index: usize) -> Vec<usize> {
+        let p = &self.processes[index];
+        let count = p.inputs.len();
+        (0..count)
             .map(|offset| (p.cursor + offset) % count)
-            .collect();
+            .collect()
+    }
+    pub(super) fn selection_candidates(
+        &self,
+        index: usize,
+        order: &[usize],
+    ) -> Vec<Option<RequestId>> {
+        let p = &self.processes[index];
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
         let correlated = matches!(policy, Readiness::CorrelatedAll);
         let mut candidates = vec![];
-        for port in &order {
+        for port in order {
             let input = &p.inputs[*port];
             for offset in 0..input.queues.len() {
                 let queue = input.queues[(input.cursor + offset) % input.queues.len()];
@@ -225,93 +235,193 @@ impl NetworkSession {
                 candidates.rotate_left(next % candidate_count);
             }
         }
-        for request in candidates {
-            let mut snapshot = ReadinessSnapshot {
-                request,
-                correlation_lane: None,
-                heads: order
-                    .iter()
-                    .map(|port| InputHead {
-                        port: p.inputs[*port].name.clone(),
-                        available: self.packet_for(index, *port, request, correlated).is_some(),
-                        closed: self.input_closed_for(index, *port, request),
-                    })
-                    .collect(),
-            };
-            let available: Vec<_> = snapshot
-                .heads
+        candidates
+    }
+    pub(super) fn selection_snapshot(
+        &self,
+        index: usize,
+        order: &[usize],
+        request: Option<RequestId>,
+    ) -> ReadinessSnapshot {
+        let p = &self.processes[index];
+        let correlated = matches!(
+            p.waiting_policy.as_ref().unwrap_or(&p.policy),
+            Readiness::CorrelatedAll
+        );
+        ReadinessSnapshot {
+            request,
+            correlation_lane: None,
+            heads: order
                 .iter()
-                .filter(|h| h.available)
-                .map(|h| h.port.clone())
-                .collect();
-            let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-            if p.handoff.state() == HandoffState::WaitingInput {
-                let missing = |name: &String| {
-                    snapshot
+                .map(|port| InputHead {
+                    port: p.inputs[*port].name.clone(),
+                    available: self.packet_for(index, *port, request, correlated).is_some(),
+                    closed: self.input_closed_for(index, *port, request),
+                })
+                .collect(),
+        }
+    }
+    pub(super) fn staged_selection_error(
+        &self,
+        index: usize,
+        snapshot: &ReadinessSnapshot,
+    ) -> Option<String> {
+        let p = &self.processes[index];
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        if p.handoff.state() == HandoffState::WaitingInput {
+            let missing = |name: &String| {
+                snapshot
+                    .heads
+                    .iter()
+                    .find(|h| &h.port == name)
+                    .is_some_and(|h| !h.available && h.closed)
+            };
+            let impossible = match policy {
+                Readiness::Optional { required, .. } => {
+                    required.iter().find(|name| missing(name)).map(|name| {
+                        format!("required input {name} closed before its staged reservation")
+                    })
+                }
+                Readiness::All | Readiness::CorrelatedAll => snapshot
+                    .heads
+                    .iter()
+                    .find(|h| !h.available && h.closed)
+                    .map(|h| {
+                        format!(
+                            "required input {} closed before its staged reservation",
+                            h.port
+                        )
+                    }),
+                Readiness::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
+                    Some("staged Any group exhausted without input".into())
+                }
+                Readiness::AtLeast(n)
+                    if snapshot
                         .heads
                         .iter()
-                        .find(|h| &h.port == name)
-                        .is_some_and(|h| !h.available && h.closed)
-                };
-                let impossible = match policy {
-                    Readiness::Optional { required, .. } => {
-                        required.iter().find(|name| missing(name)).map(|name| {
-                            format!("required input {name} closed before its staged reservation")
-                        })
-                    }
-                    Readiness::All | Readiness::CorrelatedAll => snapshot
-                        .heads
+                        .filter(|h| h.available || !h.closed)
+                        .count()
+                        < n.get() =>
+                {
+                    Some(format!(
+                        "staged input group cannot supply {} required inputs",
+                        n.get()
+                    ))
+                }
+                _ => None,
+            };
+            return impossible;
+        }
+        None
+    }
+    /// None is opaque application readiness, never an invitation to call it.
+    pub(super) fn builtin_selection_names(
+        &self,
+        index: usize,
+        snapshot: &ReadinessSnapshot,
+    ) -> Option<Vec<String>> {
+        let p = &self.processes[index];
+        let count = p.inputs.len();
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        let available: Vec<_> = snapshot
+            .heads
+            .iter()
+            .filter(|h| h.available)
+            .map(|h| h.port.clone())
+            .collect();
+        Some(match policy {
+            Readiness::Any => available.into_iter().take(1).collect(),
+            Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
+            Readiness::AtLeast(n) if available.len() >= n.get() => {
+                available.into_iter().take(n.get()).collect()
+            }
+            Readiness::Optional { required, optional } => {
+                let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
+                if required
+                    .iter()
+                    .all(|n| found(n).is_some_and(|h| h.available))
+                    && optional
                         .iter()
-                        .find(|h| !h.available && h.closed)
-                        .map(|h| {
-                            format!(
-                                "required input {} closed before its staged reservation",
-                                h.port
-                            )
-                        }),
-                    Readiness::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
-                        Some("staged Any group exhausted without input".into())
-                    }
-                    Readiness::AtLeast(n)
-                        if snapshot
-                            .heads
-                            .iter()
-                            .filter(|h| h.available || !h.closed)
-                            .count()
-                            < n.get() =>
-                    {
-                        Some(format!(
-                            "staged input group cannot supply {} required inputs",
-                            n.get()
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(error) = impossible {
-                    return Err(error);
+                        .all(|n| found(n).is_some_and(|h| h.available || h.closed))
+                {
+                    required.iter().chain(optional).cloned().collect()
+                } else {
+                    vec![]
                 }
             }
-            let names = match policy {
-                Readiness::Any => available.into_iter().take(1).collect(),
-                Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
-                Readiness::AtLeast(n) if available.len() >= n.get() => {
-                    available.into_iter().take(n.get()).collect()
-                }
-                Readiness::Optional { required, optional } => {
-                    let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
-                    if required
-                        .iter()
-                        .all(|n| found(n).is_some_and(|h| h.available))
-                        && optional
-                            .iter()
-                            .all(|n| found(n).is_some_and(|h| h.available || h.closed))
-                    {
-                        required.iter().chain(optional).cloned().collect()
-                    } else {
-                        vec![]
-                    }
-                }
-                Readiness::Custom(policy) => {
+            Readiness::Custom(_) => return None,
+            _ => vec![],
+        })
+    }
+    pub(super) fn selected_ports(
+        &self,
+        index: usize,
+        snapshot: &ReadinessSnapshot,
+        names: Vec<String>,
+    ) -> Result<Reservation, String> {
+        let p = &self.processes[index];
+        let request = snapshot.request;
+        let correlated = matches!(
+            p.waiting_policy.as_ref().unwrap_or(&p.policy),
+            Readiness::CorrelatedAll
+        );
+        let mut ports = vec![];
+        for name in names {
+            let port = p
+                .inputs
+                .iter()
+                .position(|port| port.name == name)
+                .ok_or_else(|| format!("unknown readiness port {name}"))?;
+            let queue = self.packet_for(index, port, request, correlated);
+            let closed = snapshot
+                .heads
+                .iter()
+                .find(|head| head.port == name)
+                .is_some_and(|head| head.closed);
+            if ports.iter().any(|(selected, _)| *selected == port) || (queue.is_none() && !closed) {
+                return Err(format!("invalid readiness selection for {name}"));
+            }
+            ports.push((port, queue));
+        }
+        if !ports
+            .iter()
+            .any(|(port, queue)| queue.is_some() || self.closure_fresh(index, *port, request))
+        {
+            ports.clear();
+        }
+        Ok(Reservation { ports, request })
+    }
+    pub(super) fn global_eos_selection(&self, index: usize) -> Reservation {
+        let count = self.processes[index].inputs.len();
+        let request = None;
+        let ports = (0..count)
+            .filter(|port| {
+                self.closure_fresh(index, *port, request)
+                    && self.input_closed_for(index, *port, request)
+            })
+            .map(|port| (port, None))
+            .collect();
+        Reservation { ports, request }
+    }
+    pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
+        let p = &self.processes[index];
+        self.validate_policy(index, p.waiting_policy.as_ref().unwrap_or(&p.policy))?;
+        if p.waiting.is_some() {
+            return self.exact_wait_selection(index);
+        }
+        let order = self.selection_order(index);
+        for request in self.selection_candidates(index, &order) {
+            let mut snapshot = self.selection_snapshot(index, &order, request);
+            if let Some(error) = self.staged_selection_error(index, &snapshot) {
+                return Err(error);
+            }
+            let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+            let names = match self.builtin_selection_names(index, &snapshot) {
+                Some(names) => names,
+                None => {
+                    let Readiness::Custom(policy) = policy else {
+                        unreachable!()
+                    };
                     snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         policy.select(&snapshot)
@@ -321,7 +431,6 @@ impl NetworkSession {
                         "readiness policy panicked".to_owned()
                     })?
                 }
-                _ => vec![],
             };
             if names.is_empty() {
                 if p.handoff.state() == HandoffState::WaitingInput
@@ -334,36 +443,11 @@ impl NetworkSession {
                 }
                 continue;
             }
-            let mut ports = vec![];
-            for name in names {
-                let port = p
-                    .inputs
-                    .iter()
-                    .position(|port| port.name == name)
-                    .ok_or_else(|| format!("unknown readiness port {name}"))?;
-                let queue = self.packet_for(index, port, request, correlated);
-                // The immutable snapshot already proved closure for this
-                // candidate/port. A second proof would rewalk its upstream
-                // graph without any intervening session mutation.
-                let closed = snapshot
-                    .heads
-                    .iter()
-                    .find(|head| head.port == name)
-                    .is_some_and(|head| head.closed);
-                if ports.iter().any(|(selected, _)| *selected == port)
-                    || (queue.is_none() && !closed)
-                {
-                    return Err(format!("invalid readiness selection for {name}"));
-                }
-                ports.push((port, queue));
-            }
-            if !ports
-                .iter()
-                .any(|(port, queue)| queue.is_some() || self.closure_fresh(index, *port, request))
-            {
+            let selected = self.selected_ports(index, &snapshot, names)?;
+            if selected.ports.is_empty() {
                 continue;
             }
-            return Ok(Reservation { ports, request });
+            return Ok(selected);
         }
         if p.handoff.state() == HandoffState::WaitingInput {
             // A staged policy must select its own group. Closure on an unrelated
@@ -373,17 +457,9 @@ impl NetworkSession {
                 request: p.request,
             });
         }
-        let request = None;
         // Idle global EOS notifications remain uncorrelated. Exact WaitInput
         // closure is handled above; WaitInputs has no implicit EOS fallback.
-        let ports = (0..count)
-            .filter(|port| {
-                self.closure_fresh(index, *port, request)
-                    && self.input_closed_for(index, *port, request)
-            })
-            .map(|port| (port, None))
-            .collect();
-        Ok(Reservation { ports, request })
+        Ok(self.global_eos_selection(index))
     }
     pub(super) fn reserve(&mut self, index: usize, selected: Reservation) -> ProcessContext {
         if self.processes[index].handoff.state() == HandoffState::Idle {
