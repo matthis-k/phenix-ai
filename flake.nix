@@ -129,7 +129,8 @@
         derivedPackages
         integrationPackages
       ];
-      completeDefaultCoverage = (lib.sort builtins.lessThan defaultPackages) == (lib.sort builtins.lessThan allPackages);
+      completeDefaultCoverage =
+        (lib.sort builtins.lessThan defaultPackages) == (lib.sort builtins.lessThan allPackages);
       # The runtime pilot intentionally reuses the existing kernel-smoke
       # package and leaves its original build-time check in place.
       # No second Cargo compilation or test inventory is introduced.
