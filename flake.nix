@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/e83c6029afc0140a242ae8240dbff6efe5979725";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/5eec1787ca2b61f4ce8182b1b24e55e4594b2954";
 
   outputs =
     {
@@ -116,6 +116,16 @@
         name:
         lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
       ) allPackages;
+      # The runtime pilot intentionally reuses the existing kernel-smoke
+      # package and leaves its original build-time check in place.
+      # No second Cargo compilation or test inventory is introduced.
+      runtimeSuite = phenix-flake-ci.lib.mkSuite {
+        inherit pkgs;
+        tests.kernel-smoke = {
+          command.program = lib.getExe' self.packages.${system}.kernel-smoke "kernel-smoke";
+          expect.exitCode = 0;
+        };
+      };
       checkConfig = import ./ci/flake-check-config.nix;
     in
     {
@@ -135,6 +145,7 @@
           "$out/bin/kernel-smoke"
         '';
       };
+      packages.${system}."test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       checks.${system} = {
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
