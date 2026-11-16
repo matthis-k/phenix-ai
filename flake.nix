@@ -117,8 +117,15 @@
       # Default-feature suites are a disjoint partition: no test executable
       # should run in two Nix checks with identical Cargo feature settings.
       # The no-default profile is intentionally separate.
-      storagePackages = [ "phenix-schema" "phenix-storage" ];
-      graphPackages = [ "phenix-graph" "phenix-plugin" "phenix_port_args_derive" ];
+      storagePackages = [
+        "phenix-schema"
+        "phenix-storage"
+      ];
+      graphPackages = [
+        "phenix-graph"
+        "phenix-plugin"
+        "phenix_port_args_derive"
+      ];
       kernelPackages = [ "phenix-kernel" ];
       derivedPackages = [ "phenix-storage-graph" ];
       integrationPackages = [ "phenix-storage-plugin" ];
@@ -169,10 +176,10 @@
         workflow =
           assert completeDefaultCoverage;
           pkgs.runCommand "phenix-workflow-sync" { } ''
-          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
-          diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
-          touch $out
-        '';
+            diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
+            diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
+            touch $out
+          '';
         kernel-smoke = self.packages.${system}.kernel-smoke;
         format =
           pkgs.runCommand "phenix-format"
