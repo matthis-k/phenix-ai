@@ -157,7 +157,8 @@
           installPhase = ''
             mkdir -p "$out/bin"
             install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
-            "$out/bin/kernel-smoke"
+            # The prebuilt runtime test package executes the binary once,
+            # after all builds reach the synchronization barrier.
           '';
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
