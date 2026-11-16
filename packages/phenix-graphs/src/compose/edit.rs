@@ -1,0 +1,191 @@
+//! Context-free edit payloads, footprints, and payload validation.
+
+use super::ComposeError;
+use crate::GraphOrigin;
+use crate::component::{Body, ComponentDef};
+use crate::network::{ConnectionDef, NetworkError, PortPath};
+use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConnectionKey {
+    pub from: PortPath,
+    pub to: PortPath,
+}
+impl ConnectionKey {
+    pub fn new(from: PortPath, to: PortPath) -> Self {
+        Self { from, to }
+    }
+}
+
+/// Replacement writes only `Component`, never its incident connections.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Footprint {
+    Component(String),
+    Connection(ConnectionKey),
+    InputExport(String),
+    OutputExport(String),
+    Source(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum Edit {
+    Add {
+        path: String,
+        definition: Arc<ComponentDef>,
+    },
+    Replace {
+        path: String,
+        definition: Arc<ComponentDef>,
+    },
+    Connect(ConnectionDef),
+    Disconnect(ConnectionKey),
+    ExposeInput {
+        name: String,
+        targets: Vec<PortPath>,
+        capacity: NonZeroUsize,
+    },
+    ExposeOutput {
+        name: String,
+        from: PortPath,
+    },
+    AddSource(String),
+    /// Insert an existing component between the original edge's endpoints.
+    /// Dependent splices append in dependency order, retaining the original key.
+    Splice {
+        anchor: ConnectionKey,
+        input: PortPath,
+        output: PortPath,
+    },
+}
+impl Edit {
+    pub(super) fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
+        match self {
+            Self::Add { path, definition } => {
+                public_path(path)?;
+                definition_origin(definition, origin, path)?;
+            }
+            Self::Replace { path, definition } => {
+                for part in path.split('/') {
+                    public_path(part)?;
+                }
+                definition_origin(definition, origin, path)?;
+            }
+            Self::Connect(edge) => {
+                public_path(&edge.from.process)?;
+                public_path(&edge.to.process)?;
+            }
+            Self::Disconnect(key) => {
+                public_path(&key.from.process)?;
+                public_path(&key.to.process)?;
+            }
+            Self::ExposeInput { targets, .. } => {
+                for target in targets {
+                    public_path(&target.process)?;
+                }
+            }
+            Self::ExposeOutput { from, .. } => public_path(&from.process)?,
+            Self::AddSource(path) => public_path(path)?,
+            Self::Splice {
+                anchor,
+                input,
+                output,
+            } => {
+                for path in [&anchor.from, &anchor.to, input, output] {
+                    public_path(&path.process)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn footprints(&self) -> BTreeSet<Footprint> {
+        use Footprint::*;
+        match self {
+            Self::Add { path, .. } | Self::Replace { path, .. } => [Component(path.clone())].into(),
+            Self::Connect(edge) => [Connection(ConnectionKey::new(
+                edge.from.clone(),
+                edge.to.clone(),
+            ))]
+            .into(),
+            Self::Disconnect(key) => [Connection(key.clone())].into(),
+            Self::ExposeInput { name, .. } => [InputExport(name.clone())].into(),
+            Self::ExposeOutput { name, .. } => [OutputExport(name.clone())].into(),
+            Self::AddSource(path) => [Source(path.clone())].into(),
+            // The planner adds the context-dependent predecessor edges.
+            Self::Splice { anchor, output, .. } => [
+                Connection(anchor.clone()),
+                Connection(ConnectionKey::new(output.clone(), anchor.to.clone())),
+            ]
+            .into(),
+        }
+    }
+}
+
+/// Immutable owned payload. It contains no host authority or replay callbacks.
+#[derive(Clone, Debug)]
+pub struct NetworkPatch {
+    edits: Arc<[Edit]>,
+}
+impl NetworkPatch {
+    pub fn new(edits: impl IntoIterator<Item = Edit>) -> Self {
+        Self {
+            edits: edits.into_iter().collect(),
+        }
+    }
+    pub fn edits(&self) -> &[Edit] {
+        &self.edits
+    }
+    pub fn footprints(&self) -> BTreeSet<Footprint> {
+        self.edits.iter().flat_map(Edit::footprints).collect()
+    }
+}
+
+fn public_path(path: &str) -> Result<(), ComposeError> {
+    if path.is_empty()
+        || path.len() > crate::MAX_IDENTIFIER_BYTES
+        || path.contains('/')
+        || matches!(path, "." | "..")
+        || path.chars().any(char::is_control)
+    {
+        Err(ComposeError::PrivateEditScope(path.into()))
+    } else {
+        Ok(())
+    }
+}
+fn definition_origin(
+    definition: &ComponentDef,
+    origin: &GraphOrigin,
+    path: &str,
+) -> Result<(), ComposeError> {
+    let limits = crate::CompileLimits::default();
+    let mut remaining = limits.max_instances;
+    let mut pending = vec![(definition, path.to_owned(), 0)];
+    while let Some((definition, path, depth)) = pending.pop() {
+        if remaining == 0 || depth >= limits.max_depth {
+            return Err(NetworkError::LimitExceeded {
+                limit: "composition origin scan",
+                path,
+            }
+            .into());
+        }
+        remaining -= 1;
+        if definition.origin().is_some_and(|actual| actual != origin) {
+            return Err(ComposeError::ForgedOrigin(path));
+        }
+        if let Body::Composite(child) = definition.body() {
+            if child.instances().len() as u64 > remaining {
+                return Err(NetworkError::LimitExceeded {
+                    limit: "composition origin scan",
+                    path,
+                }
+                .into());
+            }
+            for (name, child) in child.instances() {
+                pending.push((child, format!("{path}/{name}"), depth + 1));
+            }
+        }
+    }
+    Ok(())
+}

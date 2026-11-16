@@ -2,6 +2,28 @@
 
 ## Current Accepted Batch
 
+Implementation `89171a843` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43804652273](https://github.com/matthis-k/phenix-ai/actions/runs/43804652273).
+Independent whole-scope reviews accept A4 canonical authoring equivalence, Q6
+bounded passive process/request explanations, and the user-approved C3
+LeasedArchival, C5 Cooperative and C6 Restart And Persist contracts. The actual
+proofs include generated/manual execution equivalence and isolated feature/doc
+gates, every request-live term and callback-free explanation, archival job/clone
+authentication, exact deadline/policy matrices, and independently reopened SQLite
+state with schema/CAS and rejected-candidate controls.
+
+Counts are **17 scoped verified / 6 partial / 9 open / 1 excluded**, with fifteen
+in-scope findings remaining. C7 TrustedNativeScope is an explicit user-approved
+exclusion, not a sandbox implementation or numerical implementation credit. The
+33-row mean is 70.8%, including C7's unchanged historical 12.0% for comparability.
+See [whole lifecycle policy acceptance](fbp-lifecycle-acceptance-20261116.md),
+[restart continuity](fbp-restart-persistence-20261116.md), [A4](fbp-authoring-acceptance-20261116.md)
+and [Q6](fbp-explanations-20261116.md). Q1's [ownership decomposition](fbp-owned-boundaries-20261116.md)
+is the next candidate, not yet closure credit. This follow-up revision needs its
+own checks; no M7/M8 or performance acceptance is inferred.
+
+## Previous Selection Batch
+
 Implementation `006b2e9cc` passed all fifteen exact-head workflows, including
 [six-job Flake CI 43770741835](https://github.com/matthis-k/phenix-ai/actions/runs/43770741835).
 The [Q3 selection correction](fbp-selection-correctness-20261115.md) replaces
@@ -254,7 +276,12 @@ current source/test obligations, not new-head acceptance inferred from initial
 
 ## Lifecycle Policy Decisions
 
-### C3: retired generation authority (decision required)
+### C3: retired generation authority (archival approved)
+
+The owner subsequently selected LeasedArchival, verified at `89171a843` in
+[the whole-contract acceptance](fbp-lifecycle-acceptance-20261116.md). The
+alternatives below retain the original design rationale, not an outstanding
+request to choose strict revocation.
 
 Current tested behavior distinguishes host ownership from explicit capabilities:
 
@@ -573,6 +600,8 @@ main reconciliation: a manual drain encountering a live driver returns
 
 Any stronger no-wait publication or arbitrary plugin-thread/lock deadlock-freedom
 guarantee would need a separately approved policy/API change and new acceptance,
-not a documentation claim. C3 strict revocation versus leased archival still
-requires owner decision;
-automatic C6 live-state migration and a C7 OS isolation adapter remain unimplemented.
+not a documentation claim. The owner approved C3 LeasedArchival, C5 Cooperative,
+C6 Restart And Persist and C7 TrustedNativeScope. Strict revocation, autonomous
+abandoned-host supervision, automatic live-state migration and an untrusted OS
+isolation adapter remain unimplemented and are not acceptance claims. C7 is an
+approved scope exclusion, not a sandbox-verified feature.

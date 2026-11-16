@@ -7,17 +7,26 @@ not new completion percentages or a promise that every finding is independently
 implementable without a policy decision.
 
 Resource/lifecycle acceptance: `026cfbe05`, with all fifteen exact-head hosted
-workflows passing. A3 is now scoped verified, leaving **21 findings: 7 partial and
+workflows passing. At that stage A3 became scoped verified, leaving **21 findings: 7 partial and
 14 open**, with twelve scoped verified overall. Native WIP #1258 is closed as
 superseded, and the approved terminal/cleanup protocol is implemented and verified.
 The table retains all 22 starting findings so no remaining work disappears from
-the map; only A3 has received new whole-finding closure credit.
+the map; only A3 had received new whole-finding closure credit at that stage.
 
 Subsequent accepted implementation `006b2e9cc` fixes Q3's demonstrated selection
 defect with exact unique-model selection and finite host-owned work limits. All
 fifteen workflows passed. This is material correctness and bounded-selector
 evidence, not whole Q3 planning/recomposition scaling acceptance; the 21 remaining
 findings and scores do not change. See [selection design/evidence](fbp-selection-correctness-20261115.md).
+
+Later implementation `89171a843` passed all fifteen exact-head workflows. Whole-
+scope reviews accept A4 canonical authoring equivalence, Q6 bounded passive
+explanations and the user-approved C3 LeasedArchival, C5 Cooperative and C6 Restart
+And Persist contracts. C7 TrustedNativeScope is separately **excluded**, not an
+implemented or verified sandbox. Current classifications are **17 scoped verified /
+6 partial / 9 open / 1 excluded**, with **15 remaining in-scope findings**.
+The [scorecard](fbp-issue-progress-estimates-20261113.md) owns numerical accounting;
+C7's old estimate remains unchanged and receives no implementation credit.
 
 ## Current Implementation Tracks
 
@@ -32,12 +41,14 @@ findings and scores do not change. See [selection design/evidence](fbp-selection
   static-driver and derived guard contracts. No old Engine or new scheduler.
   See [native design and limits](fbp-published-host-wake-20261115.md).
 
-These tracks passed hosted acceptance at the exact revision above. The scorecard,
-not this map, records the A3 increase and unchanged scores of the other findings.
+Those resource/lifecycle tracks passed hosted acceptance at `026cfbe05`. The
+scorecard, not this map, records that A3 increase and the five later acceptances
+at `89171a843`; all other finding scores, including excluded C7, are unchanged.
 Q3's correctness unit is now accepted; remaining Q3 work is complete planning and
 recomposition scale measurement/acceptance, not another provisional-defeat patch.
-C3/C6/C7 decisions remain outstanding and must not be silently converted into
-implementation claims.
+The later explicit C3/C5/C6/C7 approvals above supersede the pending-policy labels
+from that earlier stage. Q1's three-root ownership decomposition is the next
+assembled closure candidate, not yet credited by this map.
 
 ## All 22 Findings
 
@@ -49,21 +60,21 @@ implementation claims.
 | H5 closure analysis | Partial | Meet agreed closure cost/scaling budgets while preserving absence, cycles, observation and deduplication | H6; exact paired current-head measurements before further optimization |
 | H6 profiling acceptance | Partial | Representative latency/throughput, allocation/live-memory and concurrency budgets with exact comparable sources | Runtime acceptance is distinct from missing production model/tool integration |
 | H7 isolation/fairness | Partial | Specify stalled-continuation/shared-state behavior, resource/byte bounds and progress assumptions; demonstrate supported independent progress | Queue lanes alone do not isolate mutable process state or external effects |
-| C5 deferred watchdog | Partial | Accept cooperative host-driven supervision or specify autonomous lifetime requirements, then close demonstrated detection/recovery gaps | Cannot preempt arbitrary worker code; keep state queries passive |
-| C3 retired-generation revocation | Open | Select archival, drain-only or strict revocation semantics across retained generations, compiled sessions and jobs | Owner policy decision; no silent revocation of shipped archival behavior |
-| C6 migration/restart | Open | Accept restart-only with versioned durable-state continuity, or design export/import/quiescence and atomic migration | Owner policy decision; fresh state and failure atomicity are already tested |
-| C7 plugin isolation | Open | Implement an executable process-isolation capability boundary with crash, cancellation and resource limits, or approve exclusion | Untrusted native Rust cannot be sandboxed in-process by typed grants |
+| C5 deferred watchdog | Partial, now scoped verified | User-approved cooperative supervision plus full ticket/deadline/policy acceptance at `89171a843` | No autonomous abandoned-host service, callback preemption or worker/effect reclamation |
+| C3 retired-generation policy | Open, now scoped verified | User-approved LeasedArchival, with integrated retained request/clone/job authentication and exact leases | Retirement stops host-owned producers, not explicit archived execution; strict revocation not claimed |
+| C6 migration/restart | Open, now scoped verified | User-approved Restart And Persist plus real independent SQLite reopen/CAS/schema/candidate-failure and archived-job proof | Fresh process-private successor state; durable continuity is explicit and no live migration or exclusive writer is claimed |
+| C7 plugin isolation | Open, now excluded | User-approved TrustedNativeScope excludes untrusted native isolation | No OS sandbox was implemented or verified; exclusion earns no numerical implementation credit |
 | A1 private extension | Open | Add a concrete author-approved nested Add/Connect/export seam, exact host grants, conflicts, provenance and failure atomicity | Existing nested replacement seams are not general extension authority |
 | A2 compatibility | Open | Define the safe compatibility relation with positive/negative examples, then validate adapters/replacement and inherited obligations | Shape agreement alone cannot manufacture semantic contract membership |
 | A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
-| A4 typed authoring | Open | Inventory actual surviving representations, eliminate redundant authoring routes and prove manual/derived primitive/composite equivalence | Do not reintroduce removed Engine authoring conveniences as compatibility shims |
+| A4 typed authoring | Open, now scoped verified | Canonical authority audit and paired real manual/key/derived executions accepted at `89171a843` | Necessary validated views/convenience APIs retained; no second authoring model or Engine shim introduced |
 | A5 physical paths | Open | Cover required compilation/binding/execution operations with coherent bound handles and stale/foreign rejection | Typed InputKey is a name, not generation authority; retain necessary validated dynamic paths |
 | Q1 responsibility concentration | Open | Extract cohesive tested ownership boundaries without duplicated state or protocol authorities | Stabilize terminal/selection seams before competing refactors |
 | Q2 incremental compilation | Open | Define dependency-aware invalidation/cache identity; compare reused candidates against full fresh compilation and measure benefit | Q3 correctness and stable authoring/replacement semantics first |
 | Q3 selection/scaling | Open | Exact global selection, explicit zero/multiple/exhaustion handling and bounded-selector scale evidence accepted at `006b2e9cc`; complete planning/recomposition scale acceptance remains | Allowance excludes ancestor/footprint planning and replay/compile; no whole-finding closure |
 | Q4 static liveness | Open | Define an analyzable subset with sound reject/unknown/progress results and explicit environment assumptions | Arbitrary callbacks and every SCC cannot receive a universal progress claim |
 | Q5 concurrency evidence | Open | Cover supported drain/retirement/driver and handoff/wake compositions with actual-source bounded models plus deterministic threads | H3b; more repetitions alone are not exhaustive verification |
-| Q6 diagnostic completeness | Open | Structured passive explanations for why a process/request cannot run/settle, including readiness, closure, jobs, wake, continuation and publication | Distinguish unknown conditions from proven blockage; preserve exact request/lane attribution |
+| Q6 diagnostic completeness | Open, now scoped verified | Complete bounded passive process/request explanations accepted at `89171a843`, sharing actual selector and closure predicates | Custom/future behavior remains explicitly unknown; current-state explanation is not Q4 liveness |
 | Q7 typed failures | Open | Migrate a coherent process-to-handoff-to-session/request-to-Kernel/StorageGraph failure slice with original causes and code leases | Current source forwarding and Cleanup envelopes are material but not a complete typed process protocol |
 
 ## GitHub WIP Disposition

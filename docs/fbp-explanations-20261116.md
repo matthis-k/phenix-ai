@@ -1,7 +1,7 @@
 # Q6: Bounded Current-State Explanations
 
-Status: implemented, independently reviewed and locally verified. Exact committed-
-head hosted acceptance is still required before whole-finding closure.
+Status: the original bounded Q6 scope is implemented, independently reviewed and
+exact-head verified at `89171a843`.
 
 ## Scope
 
@@ -291,3 +291,9 @@ also passed full assembled default/no-default workspace tests, isolated graph
 no-default tests/doctests, formatting and strict workspace Clippy. These findings
 do not extend the stated liveness, callback or concurrent-snapshot limits, and do
 not replace exact committed-head hosted acceptance.
+
+That gate subsequently passed at implementation
+`89171a8437c6fc2aebcd9029eb119d8c7505d389`: all fifteen workflows are successful,
+including the [shared exact-head acceptance gates](fbp-lifecycle-acceptance-20261116.md#exact-head-acceptance).
+Q6 is scoped verified for bounded current-state explanation, not future execution
+or Q4 static liveness. This evidence-only follow-up needs its own head's checks.

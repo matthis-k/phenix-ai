@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - "packages/phenix-graphs/src/runtime/request.rs"
       - "packages/phenix-graphs/src/runtime/recovery.rs"
       - "packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs"

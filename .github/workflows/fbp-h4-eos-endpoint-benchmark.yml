@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - "packages/phenix-graphs/tests/fbp_packet_dirty.rs"
       - "packages/phenix-graphs/examples/fbp_targeted_eos_benchmark.rs"
       - ".github/workflows/fbp-h4-eos-endpoint-benchmark.yml"

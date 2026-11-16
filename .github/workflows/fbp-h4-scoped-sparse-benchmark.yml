@@ -4,6 +4,7 @@ on:
     paths:
       - "packages/phenix-graphs/examples/fbp_scoped_sparse_benchmark.rs"
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - ".github/workflows/fbp-h4-scoped-sparse-benchmark.yml"
   workflow_dispatch:
 

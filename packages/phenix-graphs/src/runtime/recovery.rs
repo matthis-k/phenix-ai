@@ -225,3 +225,164 @@ impl NetworkSession {
         Ok(tickets)
     }
 }
+
+impl NetworkSession {
+    pub(super) fn finish(&mut self, index: usize) {
+        if self.processes[index]
+            .inputs
+            .iter()
+            .flat_map(|p| &p.queues)
+            .any(|q| !self.transport.queues()[*q].is_empty())
+        {
+            self.fail_input(index, "abandoned accepted input on Finished");
+            return;
+        }
+        let mut destructor_panicked = false;
+        let (writers, readers, retired_wake) = {
+            let p = &mut self.processes[index];
+            if p.handoff.state() == HandoffState::Idle {
+                destructor_panicked = p.handoff.finish_idle().is_err();
+            }
+            p.done = true;
+            p.request = None;
+            (
+                p.outputs.values().flatten().copied().collect::<Vec<_>>(),
+                p.inputs
+                    .iter()
+                    .flat_map(|port| port.queues.iter().copied())
+                    .collect::<Vec<_>>(),
+                p.wake.clone(),
+            )
+        };
+        // Retire before transport closure can dispatch unrelated successors.
+        // The notifier check and target removal share the WakeSignal lock.
+        self.signal.retire_target(index, &retired_wake);
+        // The queue itself remains authoritative for EOS and retained
+        // packets. Both endpoints change scheduling conditions on writer
+        // closure or reader disposal, including upstream pending fanout.
+        for queue in writers {
+            self.transport.close_writer(queue).unwrap();
+            self.dirty_queue(queue);
+        }
+        let lane_writers: Vec<_> = self
+            .request_lanes
+            .values()
+            .flat_map(|lane| lane.outputs.iter())
+            .filter(|((producer, _), _)| *producer == index)
+            .flat_map(|(_, queues)| queues.iter().copied())
+            .collect();
+        for queue in lane_writers {
+            self.transport.close_writer(queue).unwrap();
+            self.dirty_queue(queue);
+        }
+        for queue in readers {
+            let packets = self.transport.close_reader(queue).unwrap();
+            debug_assert!(packets.is_empty());
+            self.dirty_queue(queue);
+        }
+        if destructor_panicked {
+            self.fail(format!(
+                "owned destructor panicked while finishing {}",
+                self.compiled.processes()[index].path()
+            ));
+        }
+    }
+    pub(super) fn fail(&mut self, error: String) {
+        // Failure is not rollback: retain committed captures for host draining.
+        let (cancelled, pending) = self.stop_processes();
+        let mut disposed = Vec::new();
+        for index in 0..self.transport.queues().len() {
+            self.transport.close_writer(index).unwrap();
+            if !matches!(self.endpoints[index].1, QueueEndpoint::Capture(_)) {
+                for packet in self.transport.queues()[index].packets() {
+                    if let Some(request) = packet.metadata().and_then(|m| m.request())
+                        && let Some(scope) = self.requests.get_mut(&request)
+                    {
+                        scope.disposal.queued_packets =
+                            scope.disposal.queued_packets.saturating_add(1);
+                    }
+                }
+                let packets = self.transport.close_reader(index).unwrap();
+                self.disposed_packets = self.disposed_packets.saturating_add(packets.len());
+                disposed.extend(packets);
+            }
+        }
+        self.failure = Some(error);
+        self.terminal = Some(SessionState::Failed);
+        let mut destructor_panicked = false;
+        for process in cancelled {
+            destructor_panicked |= process.dispose().is_err();
+        }
+        destructor_panicked |= drop_prepared_catching(pending);
+        destructor_panicked |= drop_packets_catching(disposed);
+        if destructor_panicked {
+            let diagnostic = self.failure.take().unwrap_or_default();
+            self.failure = Some(format!(
+                "{diagnostic}; destructor panicked during failure cleanup"
+            ));
+        }
+    }
+    fn stop_processes(&mut self) -> (Vec<CancelledProcess>, Vec<PreparedFanout>) {
+        self.dispatched_at.clear();
+        let mut cancelled = Vec::new();
+        let mut pending = Vec::new();
+        for p in &mut self.processes {
+            let request = p.request;
+            let retired = p.handoff.cancel_detach();
+            let ticket = retired.ticket();
+            if let Some(request) = p.request
+                && let Some(scope) = self.requests.get_mut(&request)
+            {
+                scope.disposal.activations += 1;
+                if let Some(ticket) = ticket {
+                    scope.cancelled_jobs.push(ticket);
+                    scope.disposal.handed_jobs += 1;
+                }
+            }
+            if let Some(prepared) = p.pending.take() {
+                if let Some(request) = request
+                    && let Some(scope) = self.requests.get_mut(&request)
+                {
+                    scope.disposal.prepared_packets += prepared.retained_packets();
+                }
+                pending.push(prepared);
+            }
+            cancelled.push(retired);
+            p.pending_targets.clear();
+            p.wake.active.store(false, Ordering::Release);
+            p.request = None;
+        }
+        self.ready.clear();
+        self.signal.invalidate();
+        (cancelled, pending)
+    }
+    pub fn cancel(&mut self) {
+        // A terminal result is final. In particular, do not turn a failure
+        // into cancellation or dispose captures intentionally retained by fail.
+        if self.terminal.is_some() || self.is_completed() {
+            return;
+        }
+        let (cancelled, pending) = self.stop_processes();
+        for queue in self.transport.queues() {
+            for packet in queue.packets() {
+                if let Some(request) = packet.metadata().and_then(|m| m.request())
+                    && let Some(scope) = self.requests.get_mut(&request)
+                {
+                    scope.disposal.queued_packets = scope.disposal.queued_packets.saturating_add(1);
+                }
+            }
+        }
+        let packets = self.transport.cancel();
+        self.disposed_packets = self.disposed_packets.saturating_add(packets.len());
+        self.terminal = Some(SessionState::Cancelled);
+        let mut destructor_panicked = false;
+        for process in cancelled {
+            destructor_panicked |= process.dispose().is_err();
+        }
+        destructor_panicked |= drop_prepared_catching(pending);
+        destructor_panicked |= drop_packets_catching(packets);
+        if destructor_panicked {
+            self.failure = Some("destructor panicked during session cancellation cleanup".into());
+        }
+    }
+}

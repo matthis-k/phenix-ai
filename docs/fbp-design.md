@@ -277,8 +277,10 @@ native tests, including independent randomized composition models. Final counts
 belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
 and final verification status are recorded in the migration/review documents.
 The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative:
-A6 and A3 have accepted scoped closure; the other 31 scores remain unchanged from
-verified `516e088`. Current classifications are twelve scoped verified, seven
-partial and fourteen open. M7/M8
-and missing production-agent, live-migration and OS-isolation adapters remain
+A6, A3, A4 and Q6 have accepted scoped closure, along with the explicitly approved
+C3 archival, C5 cooperative and C6 restart-and-persist contracts. Current
+classifications are seventeen scoped verified, six partial, nine open and one
+user-approved exclusion. C7 exclusion is not sandbox implementation credit.
+Q1's private ownership decomposition is a candidate awaiting its own acceptance.
+M7/M8 and missing production-agent, live-migration and OS-isolation adapters remain
 incomplete; queue isolation is not independent process state or universal fairness.

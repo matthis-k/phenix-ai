@@ -7,6 +7,7 @@ on:
       - "packages/phenix-graphs/src/runtime/readiness.rs"
       - "packages/phenix-graphs/src/runtime/request.rs"
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - ".github/workflows/fbp-h5-closure-benchmark.yml"
   workflow_dispatch:
 

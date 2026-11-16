@@ -2,15 +2,20 @@
 
 ## Current Campaign
 
-Implementation `026cfbe05e9b078f891233a2fc65bcada3fbfea0` passed all fifteen
-exact-head workflows, including [six-job Flake CI 43727271982](https://github.com/matthis-k/phenix-ai/actions/runs/43727271982).
+Implementation `89171a8437c6fc2aebcd9029eb119d8c7505d389` passed all fifteen
+exact-head workflows, including [six-job Flake CI 43804652273](https://github.com/matthis-k/phenix-ai/actions/runs/43804652273).
 The authoritative [33-issue tracker](fbp-issue-progress-estimates-20261113.md) now
-records **12 scoped verified / 7 partial / 14 open**, mean **59.8%**. A6 and A3 are
-scoped verified; native WIPs #1257, #1259 and #1258 are closed as superseded by
+records **17 scoped verified / 6 partial / 9 open / 1 excluded**, mean **70.8%**.
+A6, A3, A4 and Q6 are scoped verified, as are the explicitly approved C3 archival,
+C5 cooperative and C6 restart-and-persist contracts. C7 trusted-native exclusion
+is not sandbox verification or implementation credit. The mean retains all 33
+historical rows, including C7's unchanged 12.0%. Native WIPs #1257, #1259 and #1258
+are closed as superseded by
 #1302, not merged to main. The approved request-terminal/cleanup defect is fixed.
 The [work map](fbp-remaining-work-20261115.md) covers all 22 starting findings,
-21 of which remain. Q3, broader architecture/verification/performance work and
-C3/C6/C7 policy decisions are not closed. M7/M8 production acceptance remains
+fifteen of which remain in scope after those acceptances and the approved C7
+exclusion. Q1 decomposition is a candidate pending its own acceptance; Q3 and
+broader architecture/verification/performance work remain. M7/M8 production acceptance remains
 incomplete. This evidence-only revision requires its own head's checks.
 
 ## Historical Campaign Reconciliation

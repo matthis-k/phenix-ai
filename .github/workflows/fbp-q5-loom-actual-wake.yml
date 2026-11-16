@@ -4,6 +4,7 @@ on:
     paths:
       - "packages/phenix-graphs/src/runtime/wake.rs"
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - "verification/fbp-wake-loom/**"
       - "docs/fbp-q5-loom-wake-20261113.md"
       - "docs/fbp-issue-progress-estimates-20261113.md"

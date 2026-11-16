@@ -4,6 +4,7 @@ on:
     paths:
       - "packages/phenix-graphs/src/runtime/wake.rs"
       - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/src/runtime/**"
       - "packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs"
       - ".github/workflows/fbp-h4-targeted-wake-benchmark.yml"
   workflow_dispatch:

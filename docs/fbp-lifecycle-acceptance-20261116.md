@@ -2,8 +2,8 @@
 
 Date: 2026-11-16. Audited production baseline:
 `0c0bbb1a57c9f8c0a98de2a0b8a1a0a26d70ef6e`.
-Disposition: **C3 LeasedArchival and C5 Cooperative are local acceptance
-candidates, not hosted/exact-new-head acceptance. C7 TrustedNativeScope is an
+Disposition: **C3 LeasedArchival and C5 Cooperative are scoped verified at
+`89171a843`. C7 TrustedNativeScope is an
 approved scope exclusion, not an implemented or verified sandbox.**
 
 ## Approval And Original Requirements
@@ -253,7 +253,10 @@ Nix reported transient ignored evaluation-cache contention during parallel runs;
 the final commands completed successfully. These are local `nix develop` test
 runs, not sandboxed flake-check derivation builds or hosted workflow runs.
 
-## Disposition And Gaps
+## Local Audit Disposition
+
+The following candidate judgments record the local audit before the hosted
+acceptance documented in the next section.
 
 **C3 acceptance candidate:** the entire approved archival authority split has
 source and executed evidence, including the newly filled integrated
@@ -286,3 +289,19 @@ security boundary. Those are not blockers to the explicitly approved C3/C5 scope
 they must not disappear from comparisons with the original requirements. No whole
 C7 sandbox closure or numerical closure credit is warranted. C6, A4, Q6, all
 unrelated ledgers, and production acceptance remain outside this work.
+
+## Exact-Head Acceptance
+
+Implementation `89171a8437c6fc2aebcd9029eb119d8c7505d389` passed all fifteen
+hosted workflows, including:
+
+- [Full six-job Flake matrix 43804652273](https://github.com/matthis-k/phenix-ai/actions/runs/43804652273).
+- [Actual-source wake Loom 43804651650](https://github.com/matthis-k/phenix-ai/actions/runs/43804651650).
+- [Session ownership Loom 43804651581](https://github.com/matthis-k/phenix-ai/actions/runs/43804651581).
+- [Eight-repeat native notifier/plugin-lock gate 43804995462](https://github.com/matthis-k/phenix-ai/actions/runs/43804995462).
+- [Twelve-repeat in-flight worker recovery 43804995157](https://github.com/matthis-k/phenix-ai/actions/runs/43804995157).
+
+Independent final source/evidence review accepted the whole approved C3/C5 scope,
+along with C6's separately recorded durable-restart proof. C7 is classified as an
+approved exclusion, not a verified implementation; its prior numerical estimate
+is unchanged. This documentation follow-up requires its own exact-head checks.

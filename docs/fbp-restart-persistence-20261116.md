@@ -1,8 +1,8 @@
 # C6 Restart And Persist
 
 Status: user-approved policy, public integration proof added on 2026-11-16.
-Independent final review supports the entire approved contract; exact-head hosted
-CI remains pending. No production code,
+Independent final review and exact-head hosted acceptance at `89171a843` verify
+the entire approved contract. No production code,
 public API, dependencies, or existing acceptance ledgers are changed by this slice.
 No demonstrated production bug was found in the exercised paths.
 
@@ -176,6 +176,12 @@ possible cancellation/activation/error path.
 
 Independent adversarial source/evidence review found no actionable defects and
 supports the whole approved C6 contract. Full assembled workspace/default/no-default,
-isolated graph no-default, formatting and strict Clippy checks pass. Final acceptance
-remains pending exact committed-head hosted CI; no global closure is inferred from
-local tests or the approved policy alone.
+isolated graph no-default, formatting and strict Clippy checks passed. At that local
+audit stage acceptance still required exact committed-head hosted CI; no closure
+was inferred from local tests or the approved policy alone.
+
+That hosted gate subsequently passed: implementation
+`89171a8437c6fc2aebcd9029eb119d8c7505d389` passed all fifteen workflows. See the
+[shared exact-head evidence](fbp-lifecycle-acceptance-20261116.md#exact-head-acceptance).
+C6 is scoped verified under Restart And Persist, not described as live migration.
+This evidence follow-up requires its own committed-head checks.

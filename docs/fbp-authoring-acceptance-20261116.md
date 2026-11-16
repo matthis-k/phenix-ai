@@ -1,9 +1,10 @@
 # FBP Authoring Acceptance
 
 Baseline: `0c0bbb1a57c9f8c0a98de2a0b8a1a0a26d70ef6e`, reviewed on
-2026-11-16. This is bounded evidence for the original A4 authoring/consolidation
-finding, not a score update or a declaration that independent review and CI are
-complete. No production graph API was changed or removed. The acceptance work
+2026-11-16. The original A4 authoring/consolidation scope subsequently passed
+independent review and exact-head CI at `89171a843`, as recorded below. This
+follow-up note does not itself assign scores or certify another head. No
+production graph API was changed or removed. The acceptance work
 owns only the new graph integration test, this note, and commands in the existing
 Nix `graph` and `no-default` checks. `fbp_port_keys.rs` needed no edits.
 
@@ -108,15 +109,21 @@ cargo test --locked --offline -p phenix-graph --no-default-features --doc
 
 ## Judgment And Limits
 
+The original A4 scope is scoped verified at implementation `89171a843`, after
+independent final review and all fifteen exact-head hosted workflows. Shared
+links are recorded in [the lifecycle acceptance evidence](fbp-lifecycle-acceptance-20261116.md#exact-head-acceptance).
+This follow-up documentation revision needs its own head's checks.
+
 Within this audited authoring boundary, retaining the current canonical model and
 its convenience APIs is supported by paired compiled execution, not just source
 similarity or shape comparison. No independently editable duplicate authority or
 production bug was demonstrated, so an API-breaking consolidation is not
 justified. Independent final source/evidence review found no actionable defects
-and supports the whole original A4 acceptance candidate. The integrating owner
+and supported the whole original A4 acceptance candidate. The integrating owner
 also passed the full assembled workspace/default/no-default, isolated graph
-no-default, formatting and strict Clippy gates. Exact committed-head hosted CI
-remains required; this note does not assign completion percentages.
+no-default, formatting and strict Clippy gates. The subsequent exact-head hosted
+acceptance above closes that gate; this documentation follow-up needs its own
+head's checks and does not assign completion percentages.
 
 Finite fixtures do not prove all user-written factories implement their claims,
 all hand-written `InputRecord` implementations use honest metadata, arbitrary
