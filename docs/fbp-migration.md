@@ -11,16 +11,18 @@ their pending labels. See [design](fbp-design.md), [critique](fbp-critique.md),
 
 ## Current Accepted State
 
-Implementation `89171a843` passed all fifteen exact-head workflows, including
-[six-job Flake CI 43804652273](https://github.com/matthis-k/phenix-ai/actions/runs/43804652273).
-The [tracker](fbp-issue-progress-estimates-20261113.md) records seventeen scoped
-verified / six partial / nine open / one excluded, mean 70.8%. A4 and Q6 acceptance
+Implementation `7c6119122` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43811659284](https://github.com/matthis-k/phenix-ai/actions/runs/43811659284).
+The [tracker](fbp-issue-progress-estimates-20261113.md) records eighteen scoped
+verified / six partial / eight open / one excluded, mean 73.2%. A4 and Q6 acceptance
 joins A3/A6, and the owner-approved C3/C5/C6 contracts are verified. C7 trusted-native
 scope is excluded, not an implemented sandbox; its old estimate is unchanged.
 Native WIPs #1257/#1259/#1258 are closed as superseded by #1302, not merged.
 See [resource API migration](fbp-resource-boundary-20261115.md), [approved terminal
 cleanup](fbp-terminal-cleanup-20261115.md) and [native host wake limits](fbp-published-host-wake-20261115.md).
-The fifteen remaining in-scope findings and dependencies are explicit in the
+Q1's original three graph roots are also decomposed and accepted, without claiming
+repository-wide elimination of responsibility concentrations. The fourteen
+remaining in-scope findings and dependencies are explicit in the
 [work map](fbp-remaining-work-20261115.md). This documentation revision needs its own
 checks; the pending labels and counts in the reconciliation below are historical.
 

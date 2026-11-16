@@ -279,8 +279,9 @@ and final verification status are recorded in the migration/review documents.
 The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative:
 A6, A3, A4 and Q6 have accepted scoped closure, along with the explicitly approved
 C3 archival, C5 cooperative and C6 restart-and-persist contracts. Current
-classifications are seventeen scoped verified, six partial, nine open and one
+classifications are eighteen scoped verified, six partial, eight open and one
 user-approved exclusion. C7 exclusion is not sandbox implementation credit.
-Q1's private ownership decomposition is a candidate awaiting its own acceptance.
+Q1's original three graph responsibility concentrations are decomposed and accepted
+at `7c6119122`; broader concentration in the Kernel root remains explicit residual work.
 M7/M8 and missing production-agent, live-migration and OS-isolation adapters remain
 incomplete; queue isolation is not independent process state or universal fairness.

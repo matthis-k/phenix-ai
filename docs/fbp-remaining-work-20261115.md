@@ -28,6 +28,12 @@ implemented or verified sandbox. Current classifications are **17 scoped verifie
 The [scorecard](fbp-issue-progress-estimates-20261113.md) owns numerical accounting;
 C7's old estimate remains unchanged and receives no implementation credit.
 
+Q1's original three graph responsibility concentrations are subsequently scoped
+verified at `7c6119122`, with all fifteen workflows passing. Counts are now
+**18 scoped verified / 6 partial / 8 open / 1 excluded**, leaving **14 in-scope
+findings**. The [ownership record](fbp-owned-boundaries-20261116.md) preserves the
+broader Kernel root concentration as an explicit residual, not a completed claim.
+
 ## Current Implementation Tracks
 
 - A3: remove graph-owned Store, locks and read/write policy in favor of explicitly
@@ -42,13 +48,15 @@ C7's old estimate remains unchanged and receives no implementation credit.
   See [native design and limits](fbp-published-host-wake-20261115.md).
 
 Those resource/lifecycle tracks passed hosted acceptance at `026cfbe05`. The
-scorecard, not this map, records that A3 increase and the five later acceptances
-at `89171a843`; all other finding scores, including excluded C7, are unchanged.
+scorecard, not this map, records that A3 increase, the five later acceptances
+at `89171a843`, and Q1's acceptance at `7c6119122`; all other finding scores,
+including excluded C7, are unchanged.
 Q3's correctness unit is now accepted; remaining Q3 work is complete planning and
 recomposition scale measurement/acceptance, not another provisional-defeat patch.
 The later explicit C3/C5/C6/C7 approvals above supersede the pending-policy labels
-from that earlier stage. Q1's three-root ownership decomposition is the next
-assembled closure candidate, not yet credited by this map.
+from that earlier stage. Q1's three-root ownership decomposition is accepted at
+`7c6119122`. Q7's complete typed-failure migration is now being developed in an
+isolated worktree; its core alone receives no closure credit.
 
 ## All 22 Findings
 
@@ -69,7 +77,7 @@ assembled closure candidate, not yet credited by this map.
 | A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
 | A4 typed authoring | Open, now scoped verified | Canonical authority audit and paired real manual/key/derived executions accepted at `89171a843` | Necessary validated views/convenience APIs retained; no second authoring model or Engine shim introduced |
 | A5 physical paths | Open | Cover required compilation/binding/execution operations with coherent bound handles and stale/foreign rejection | Typed InputKey is a name, not generation authority; retain necessary validated dynamic paths |
-| Q1 responsibility concentration | Open | Extract cohesive tested ownership boundaries without duplicated state or protocol authorities | Stabilize terminal/selection seams before competing refactors |
+| Q1 responsibility concentration | Open, now scoped verified | Original network/composition/runtime roots decomposed into cohesive private ownership modules at `7c6119122` | Canonical state/public paths/drop order and behavior preserved; broader Kernel root concentration is explicitly residual |
 | Q2 incremental compilation | Open | Define dependency-aware invalidation/cache identity; compare reused candidates against full fresh compilation and measure benefit | Q3 correctness and stable authoring/replacement semantics first |
 | Q3 selection/scaling | Open | Exact global selection, explicit zero/multiple/exhaustion handling and bounded-selector scale evidence accepted at `006b2e9cc`; complete planning/recomposition scale acceptance remains | Allowance excludes ancestor/footprint planning and replay/compile; no whole-finding closure |
 | Q4 static liveness | Open | Define an analyzable subset with sound reject/unknown/progress results and explicit environment assumptions | Arbitrary callbacks and every SCC cannot receive a universal progress claim |

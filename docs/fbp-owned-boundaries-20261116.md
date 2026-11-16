@@ -1,9 +1,8 @@
 # Q1 Canonical Ownership Boundaries
 
-Status: the three original graph responsibility concentrations are decomposed;
-independent structural review supports a whole-original-Q1 closure candidate.
-Full assembled workspace/default/no-default, isolated graph no-default/doctests,
-formatting and strict Clippy checks pass. Exact-head hosted acceptance is required.
+Status: Q1's original three-root responsibility scope is scoped verified at
+`7c61191222a19cefccde9c38adedbc9ad290bf01`, after independent structural review,
+full local gates and exact-head hosted acceptance.
 Reference behavior is verified `89171a843`.
 
 ## Scope And Constraints
@@ -108,3 +107,19 @@ concentration in the repository. Kernel `lib.rs` still has broader authoring,
 resolution and producer/driver/lifecycle concentrations; that residual is explicit.
 No Q2 incremental compilation, A2 compatibility, runtime speedup or universal
 deadlock-freedom claim follows from private module decomposition.
+
+## Exact-Head Acceptance
+
+The assembled implementation passed all fifteen hosted workflows, including:
+
+- [Full six-job Flake matrix 43811659284](https://github.com/matthis-k/phenix-ai/actions/runs/43811659284).
+- [Actual-source wake Loom 43811658724](https://github.com/matthis-k/phenix-ai/actions/runs/43811658724).
+- [Session ownership Loom 43811658772](https://github.com/matthis-k/phenix-ai/actions/runs/43811658772).
+- [Eight-repeat native notifier/plugin-lock gate 43811961753](https://github.com/matthis-k/phenix-ai/actions/runs/43811961753).
+- [Twelve-repeat in-flight worker recovery 43811961702](https://github.com/matthis-k/phenix-ai/actions/runs/43811961702).
+
+Q1 moves 22.0% to 100.0%, +78.0 pp. Counts are eighteen scoped verified, six
+partial, eight open and one approved exclusion; fourteen in-scope findings remain.
+This closes the original three graph concentrations, not the broader Kernel root.
+The evidence-only follow-up needs its own head's checks; no runtime performance,
+incremental compilation or repository-wide modularity perfection is inferred.

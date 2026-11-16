@@ -2,6 +2,23 @@
 
 ## Current Accepted Batch
 
+Implementation `7c6119122` passed all fifteen exact-head workflows, including
+[six-job Flake CI 43811659284](https://github.com/matthis-k/phenix-ai/actions/runs/43811659284).
+Independent structural review accepts [Q1's original three-root decomposition](fbp-owned-boundaries-20261116.md).
+The network, composition and runtime roots now delegate cohesive private
+authoring/compiler/resolution, planning/replay and runtime-control responsibilities
+without new owners, caches, schedulers or public wrapper types. Method bodies,
+canonical field/drop order and public paths are preserved. Child-only CI matches
+were explicitly audited and corrected where the old monolith was a trigger.
+
+Q1 moves 22.0% to 100.0%, +78.0 pp. Counts are **18 scoped verified / 6 partial /
+8 open / 1 excluded**, mean 73.2% over the historical 33 rows, with **14 remaining
+in-scope findings**. Kernel's broader root concentration is not claimed eliminated.
+Q7 is being developed as a full isolated typed-failure migration, not credited
+from its envelope core alone. This evidence follow-up requires its own checks.
+
+## Previous Authoring And Lifecycle Batch
+
 Implementation `89171a843` passed all fifteen exact-head workflows, including
 [six-job Flake CI 43804652273](https://github.com/matthis-k/phenix-ai/actions/runs/43804652273).
 Independent whole-scope reviews accept A4 canonical authoring equivalence, Q6

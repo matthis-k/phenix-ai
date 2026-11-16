@@ -62,7 +62,7 @@ allowance/scaling tests and both Kernel composer paths are verified. Q3's broade
 planning/recomposition scaling acceptance remains open; no new score or closure
 credit follows from the bounded correctness slice.
 
-Latest verified implementation `89171a8437c6fc2aebcd9029eb119d8c7505d389` passed
+Earlier verified implementation `89171a8437c6fc2aebcd9029eb119d8c7505d389` passed
 all fifteen hosted workflows, including [six-job Flake CI 43804652273][L]. Independent
 original-scope reviews accept [A4 canonical authoring equivalence](fbp-authoring-acceptance-20261116.md),
 [Q6 bounded passive explanations](fbp-explanations-20261116.md), and the explicitly
@@ -72,10 +72,18 @@ findings are scoped verified. The user separately approved C7 TrustedNativeScope
 untrusted isolation is **excluded**, not implemented or sandbox-verified. Its old
 12.0% estimate is unchanged and earns no numerical implementation credit.
 
-The unweighted issue mean is **70.8%**, previously 59.8%. Formal classifications are
-**17 scoped verified / 6 partial / 9 open / 1 excluded**. The historical 33-row mean
+Latest verified implementation `7c61191222a19cefccde9c38adedbc9ad290bf01` passed
+all fifteen workflows, including [six-job Flake CI 43811659284][O]. Independent
+structural review accepts [Q1's original three-root ownership decomposition](fbp-owned-boundaries-20261116.md):
+network authoring/validation/compiler/resolution, composition payload/planning/replay,
+and runtime admission/scheduling/execution/observation/recovery now have cohesive
+private boundaries with unchanged canonical owners, public paths and behavior.
+The broader Kernel root concentration remains explicitly outside this original scope.
+
+The unweighted issue mean is **73.2%**, previously 70.8%. Formal classifications are
+**18 scoped verified / 6 partial / 8 open / 1 excluded**. The historical 33-row mean
 continues to include C7's unchanged 12.0% for comparability, not sandbox credit.
-There are **15 remaining in-scope findings**. This mean is not a substitute for issue
+There are **14 remaining in-scope findings**. This mean is not a substitute for issue
 closure or milestone completion.
 
 ## Verified Baseline Evidence
@@ -121,7 +129,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | Producer/consumer keys derived during atomic registration; physical graph paths still exposed |
 | A6 | Admission API ergonomics | 30.0% | 100.0% | +70.0 | Scoped verified | [Typed key admission design/review](fbp-typed-admission-20261115.md); [exact-head acceptance][A]; keys are names, not generation authority |
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
-| Q1 | Responsibility concentration | 22.0% | 22.0% | +0.0 | Open | [Baseline][B]; candidate exclusive-ownership primitive |
+| Q1 | Responsibility concentration | 22.0% | 100.0% | +78.0 | Scoped verified | [Original three graph roots decomposed into cohesive private ownership seams](fbp-owned-boundaries-20261116.md), canonical state/drop order/public paths preserved; independent review and [exact-head][O]; broader Kernel concentration remains |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
 | Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Exact unique selection and global host work limits](fbp-selection-correctness-20261115.md), [exact-head][S]; defect fixed, broader ancestor/footprint planning and recomposition scaling remain |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
@@ -138,12 +146,13 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 [N]: https://github.com/matthis-k/phenix-ai/actions/runs/43727271982
 [S]: https://github.com/matthis-k/phenix-ai/actions/runs/43770741835
 [L]: https://github.com/matthis-k/phenix-ai/actions/runs/43804652273
+[O]: https://github.com/matthis-k/phenix-ai/actions/runs/43811659284
 
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `89171a843`, not an older commit's passing
+implementation acceptance is exact-head `7c6119122`, not an older commit's passing
 run. This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
@@ -171,6 +180,7 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | A4 whole original acceptance | Overlapping authoring layers lacked a complete equivalence/authority acceptance | Audit proves one canonical interface/installation path; independent manual/key/derive primitive/composite executions | Explicit boundaries/capacities/FIFO/wire vectors, move-only nested error/unwind leases and authority/replacement negatives; [exact-head][L] |
 | C3/C5/C6 approved contracts | Revocation, supervision lifetime and restart/continuity policies were unresolved | Explicit user approval plus integrated archival, cooperative deadline and SQLite restart-continuity proofs | Whole approved contract reviews, actual job/lease/schema/CAS/reopen controls; [exact-head][L]; no revocation, autonomous service or live migration claims |
 | Q6 whole original acceptance | Isolated diagnostics did not explain all runtime-owned run/settlement conditions | Shared callback-free selection/closure evidence and passive process/request explanation records | All built-ins, opaque Custom, tickets/deadlines/wakes, target precedence, every request-live term and no-callback/drop passivity; [exact-head][L] |
+| Q1 original responsibility scope | Network, composition and runtime roots mixed distinct tested responsibilities | Cohesive private compiler/authoring/resolution, planning/replay and runtime-control seams; same canonical owners and public type paths | Byte-preserved behavior blocks, independent structural review, full workspace/isolated-feature gates and child-only CI coverage; [exact-head][O] |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
@@ -184,7 +194,7 @@ The independently accepted typed-admission batch closes A6; the later opaque
 capability boundary closes A3. WIP #1258's bounded native adaptation passed at
 `026cfbe05` and is also closed as superseded, not merged. Broad production-agent
 integration remain independent follow-up work. After the five approved bounded
-acceptances above and the explicitly excluded C7 requirement, fifteen in-scope
+acceptances above, Q1 decomposition and the explicitly excluded C7 requirement, fourteen in-scope
 findings remain. Exclusion is not a sandbox implementation or verified closure.
 
 ## Historical Candidate Evidence
@@ -260,7 +270,8 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 | A1, A2, A5, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension/compatibility, physical-path exposure, incremental compilation and whole dependency scaling remain |
 | A3 | Graph Store/locking/permission authority removed in favor of explicit opaque capabilities, with independent lease-safe cleanup | Original bounded finding closed at `026cfbe05`; external authority honesty/revocation and native sandboxing are separate scopes |
 | Q6 | Shared callback-free selection/closure evidence and complete bounded passive process/request explanations | Original bounded finding scoped verified at `89171a843`; not static liveness, future Custom selection or globally atomic wake state |
-| Q1, Q7 | Ownership primitive, external capabilities and retained error causes | Module concentration and typed process/runtime provenance remain |
+| Q1 | Original network/composition/runtime responsibility concentrations decomposed at `7c6119122` with one canonical owner per state domain | Original bounded scope closed; broader Kernel root concentration is disclosed, not claimed eliminated |
+| Q7 | External capabilities and retained error causes | Coherent typed process/runtime provenance and lease-safe error ownership remain |
 | Q4 | Intentional blocking and finite FIFO limitations documented/tested | Static liveness analysis and sound progress diagnostics remain |
 | H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained and exercised at `a2d7b4d3`; newer changes require their own same-head gates | No permission to weaken existing guarantees or substitute earlier CI for current acceptance |
 
@@ -280,8 +291,8 @@ passed. This is historical provenance, not the current table's comparison head.
 The [incoming historical tracker](https://github.com/matthis-k/phenix-ai/blob/516e0883875d5ec483e3595d50b77b3d5e8979c4/docs/fbp-issue-progress-estimates-20261113.md)
 records the earlier H3b 76.0% to 78.0% and Q5 73.0% to 74.0% increases, with
 the mean moving from 55.2% to 55.3%. Those historical deltas are not repeated in
-the authoritative current table: A6, A3, C3, C5, C6, A4 and Q6 have new accepted
-scoped closure credit; the other 26 deltas, including excluded C7, remain +0.0 pp.
+the authoritative current table: A6, A3, C3, C5, C6, A4, Q6 and Q1 have new accepted
+scoped closure credit; the other 25 deltas, including excluded C7, remain +0.0 pp.
 The accepted stack evidence includes the actual `wake.rs` Loom verifier, all
 13,440 serialized wake-operation orders,
 real notification/retirement races, delegated-worker cancellation/replacement,
