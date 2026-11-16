@@ -189,7 +189,14 @@
               cp ${./Cargo.toml} source/Cargo.toml
               cd source
               cargo fmt --all --check
-              nixfmt --check ${./flake.nix} ${./ci/flake-check-config.nix}
+              # Print a real patch on formatting failure so CI is actionable.
+              for file in ${./flake.nix} ${./ci/flake-check-config.nix}; do
+                expected="$(mktemp --suffix=.nix)"
+                cp "$file" "$expected"
+                chmod u+w "$expected"
+                nixfmt "$expected"
+                diff -u --label "$file" "$file" --label "nixfmt expected" "$expected"
+              done
               touch $out
             '';
         clippy = mkRust {
