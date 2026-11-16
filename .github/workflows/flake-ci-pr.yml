@@ -1,0 +1,21 @@
+name: "Flake CI (pull request)"
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  flake-checks:
+    if: ${{ github.event_name == 'pull_request' && !(github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')) }}
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@39acf9aa98cd9cff011d39abc04d4610e96b7c0c
+    with:
+      config: "ci/flake-check-config.nix"
+      library_ref: "39acf9aa98cd9cff011d39abc04d4610e96b7c0c"
+      test_max_jobs: 32
+      tests_per_job: 4
+      test_timeout_seconds: 300
