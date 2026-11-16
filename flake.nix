@@ -2,13 +2,15 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/a8177632e578629da0de551d248079b7c99ed245";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/06d967f203a9e070eb3d8fd90f33481f4d83472f";
+  inputs.crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
 
   outputs =
     {
       self,
       nixpkgs,
       phenix-flake-ci,
+      crane,
       ...
     }:
     let
@@ -103,38 +105,6 @@
           '';
           doCheck = false;
         };
-      test =
-        name: packages: flags:
-        let
-          packageArgs = lib.concatMapStringsSep " " (p: "-p ${lib.escapeShellArg p}") packages;
-        in
-        mkRust {
-          inherit name packages;
-          command = ''
-            # Fast path: compile and test once, running every test binary even
-            # after failures. On any failure, Cargo's keep-going build collects
-            # independent compilation errors; probe packages only when that
-            # compilation also fails. Other Nix roots continue independently.
-            if cargo test --no-fail-fast --locked --offline ${packageArgs} ${flags}; then
-              :
-            else
-              echo "Suite failed; attempting every independent compilation" >&2
-              if cargo build --keep-going --locked --offline ${packageArgs} ${flags}; then
-                echo "Compilation passed; failing test binaries were already run" >&2
-              else
-                echo "Compilation failed; probing packages independently" >&2
-                for package in ${lib.escapeShellArgs packages}; do
-                  if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
-                    printf 'PASS %s\n' "$package"
-                  else
-                    printf 'FAIL %s\n' "$package" >&2
-                  fi
-                done
-              fi
-              exit 1
-            fi
-          '';
-        };
       allPackages = map (path: manifests.${path}.package.name) members;
       # Default-feature suites are a disjoint partition: no test executable
       # should run in two Nix checks with identical Cargo feature settings.
@@ -160,6 +130,35 @@
       ];
       completeDefaultCoverage =
         (lib.sort builtins.lessThan defaultPackages) == (lib.sort builtins.lessThan allPackages);
+      # Dependency-only prebuild shares registry artifacts between independently
+      # failing real package test checks. This is a benchmark pilot; the
+      # existing independent clippy and release smoke roots stay intact.
+      cargoDependencyChecks = phenix-flake-ci.lib.mkCargoDependencyChecks {
+        inherit pkgs;
+        craneLib = crane.mkLib pkgs;
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions (
+            [
+              ./Cargo.toml
+              ./Cargo.lock
+            ]
+            ++ map (path: ./. + "/${path}") members
+          );
+        };
+        lockFile = ./Cargo.lock;
+        groups = {
+          storage.packages = storagePackages;
+          graph.packages = graphPackages;
+          kernel.packages = kernelPackages;
+          derived.packages = derivedPackages;
+          integration.packages = integrationPackages;
+          no-default = {
+            profile = "no-default";
+            packages = allPackages;
+          };
+        };
+      };
       # The runtime pilot intentionally reuses the existing kernel-smoke
       # package and leaves its original build-time check in place.
       # No second Cargo compilation or test inventory is introduced.
@@ -202,7 +201,7 @@
           '';
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
-      };
+      } // cargoDependencyChecks.packages;
       checks.${system} = {
         # A new workspace member must belong to exactly one default test suite.
         workflow =
@@ -243,13 +242,8 @@
           packages = allPackages;
           command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
         };
-        storage = test "storage" storagePackages "--all-targets";
-        graph = test "graph" graphPackages "--all-targets";
-        kernel = test "kernel" kernelPackages "--all-targets";
-        derived = test "derived" derivedPackages "--all-targets";
-        no-default = test "no-default" allPackages "--no-default-features --lib --tests";
-        integration = test "integration" integrationPackages "--all-targets";
-      };
+
+      } // cargoDependencyChecks.checks;
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo
