@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/b854e5e86ca022879e41334dfd260083454078d9";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/464907a769fbb2e96e00d4a5a6f0dbcf7b4bfd45";
 
   outputs =
     {
@@ -177,6 +177,14 @@
         ci = checkConfig.ci;
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
+      };
+      # Local execution reuses the same pinned DAG planner, runtime runner,
+      # and exact-head evidence contract as the GitHub workflows.
+      apps.${system}.ci = {
+        type = "app";
+        program = toString (pkgs.writeShellScript "phenix-ci-local" ''
+          exec ${lib.getExe pkgs.python3} ${phenix-flake-ci.outPath}/lib/flake-ci-local.py "$@"
+        '');
       };
       packages.${system} = {
         kernel-smoke = mkRust {
