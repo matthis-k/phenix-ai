@@ -114,10 +114,22 @@
           } ${flags}";
         };
       allPackages = map (path: manifests.${path}.package.name) members;
-      integrationPackages = lib.filter (
-        name:
-        lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
-      ) allPackages;
+      # Default-feature suites are a disjoint partition: no test executable
+      # should run in two Nix checks with identical Cargo feature settings.
+      # The no-default profile is intentionally separate.
+      storagePackages = [ "phenix-schema" "phenix-storage" ];
+      graphPackages = [ "phenix-graph" "phenix-plugin" "phenix_port_args_derive" ];
+      kernelPackages = [ "phenix-kernel" ];
+      derivedPackages = [ "phenix-storage-graph" ];
+      integrationPackages = [ "phenix-storage-plugin" ];
+      defaultPackages = lib.concatLists [
+        storagePackages
+        graphPackages
+        kernelPackages
+        derivedPackages
+        integrationPackages
+      ];
+      completeDefaultCoverage = (lib.sort lib.lessThan defaultPackages) == (lib.sort lib.lessThan allPackages);
       # The runtime pilot intentionally reuses the existing kernel-smoke
       # package and leaves its original build-time check in place.
       # No second Cargo compilation or test inventory is introduced.
@@ -150,7 +162,8 @@
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       };
-      checks.${system} = {
+      # A new Cargo workspace member must be assigned to one default suite.
+      checks.${system} = assert completeDefaultCoverage; {
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
           diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
@@ -180,16 +193,12 @@
           packages = allPackages;
           command = "cargo clippy --locked --offline --workspace --all-targets -- -D warnings";
         };
-        storage = test "storage" [ "phenix-storage" "phenix-schema" ] "--all-targets";
-        graph = test "graph" [ "phenix-graph" "phenix-plugin" ] "--all-targets";
-        kernel = test "kernel" [ "phenix-kernel" ] "--all-targets";
-        derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";
+        storage = test "storage" storagePackages "--all-targets";
+        graph = test "graph" graphPackages "--all-targets";
+        kernel = test "kernel" kernelPackages "--all-targets";
+        derived = test "derived" derivedPackages "--all-targets";
         no-default = test "no-default" allPackages "--no-default-features --lib --tests";
-        integration =
-          if integrationPackages == [ ] then
-            test "integration" [ "phenix-kernel" ] "--test storage"
-          else
-            test "integration" ([ "phenix-kernel" ] ++ integrationPackages) "--all-targets";
+        integration = test "integration" integrationPackages "--all-targets";
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [
