@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/06d967f203a9e070eb3d8fd90f33481f4d83472f";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/7c10595dbbbd7a586dad51ce620a2f9891cc2f27";
   inputs.crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
 
   outputs =
@@ -68,6 +68,16 @@
               ".git"
             ]);
         };
+      scopedWorkspaceManifest =
+        paths:
+        (pkgs.formats.toml { }).generate "Cargo.toml" (
+          workspace
+          // {
+            workspace = workspace.workspace // {
+              members = paths;
+            };
+          }
+        );
       cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = ./Cargo.lock; };
       mkRust =
         {
@@ -79,14 +89,7 @@
         }:
         let
           paths = closure (map memberFor packages);
-          manifest = (pkgs.formats.toml { }).generate "Cargo.toml" (
-            workspace
-            // {
-              workspace = workspace.workspace // {
-                members = paths;
-              };
-            }
-          );
+          manifest = scopedWorkspaceManifest paths;
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "phenix-${name}";
@@ -130,6 +133,27 @@
       ];
       completeDefaultCoverage =
         (lib.sort builtins.lessThan defaultPackages) == (lib.sort builtins.lessThan allPackages);
+      # Keep each test check source-scoped to the packages it actually needs.
+      # A change to another plugin must not change this check's derivation.
+      cargoGroup =
+        packages:
+        let
+          paths = closure (map memberFor packages);
+        in
+        {
+          inherit packages;
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions (
+              [
+                ./Cargo.toml
+                ./Cargo.lock
+              ]
+              ++ map (path: ./. + "/${path}") paths
+            );
+          };
+          postUnpack = ''cp ${scopedWorkspaceManifest paths} "$sourceRoot/Cargo.toml"'';
+        };
       # Dependency-only prebuild shares registry artifacts between independently
       # failing real package test checks. This is a benchmark pilot; the
       # existing independent clippy and release smoke roots stay intact.
@@ -148,14 +172,13 @@
         };
         lockFile = ./Cargo.lock;
         groups = {
-          storage.packages = storagePackages;
-          graph.packages = graphPackages;
-          kernel.packages = kernelPackages;
-          derived.packages = derivedPackages;
-          integration.packages = integrationPackages;
-          no-default = {
+          storage = cargoGroup storagePackages;
+          graph = cargoGroup graphPackages;
+          kernel = cargoGroup kernelPackages;
+          derived = cargoGroup derivedPackages;
+          integration = cargoGroup integrationPackages;
+          no-default = (cargoGroup allPackages) // {
             profile = "no-default";
-            packages = allPackages;
           };
         };
       };
