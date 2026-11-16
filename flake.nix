@@ -107,7 +107,9 @@
         name: packages: flags:
         mkRust {
           inherit name packages;
-          command = "cargo test --locked --offline ${
+          # Continue independent Cargo test binaries after a failure inside one Nix root.
+          # Nix --keep-going handles failures across independent derivations.
+          command = "cargo test --no-fail-fast --locked --offline ${
             lib.concatMapStringsSep " " (p: "-p ${p}") packages
           } ${flags}";
         };
