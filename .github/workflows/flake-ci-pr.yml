@@ -18,3 +18,4 @@ jobs:
       library_ref: "39acf9aa98cd9cff011d39abc04d4610e96b7c0c"
       test_max_jobs: 32
       tests_per_job: 4
+      test_timeout_seconds: 300
