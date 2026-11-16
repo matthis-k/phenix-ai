@@ -120,9 +120,9 @@
               echo "Compilation failed; attempting every package independently" >&2
               for package in ${lib.escapeShellArgs packages}; do
                 if cargo test --no-fail-fast --locked --offline -p "$package" ${flags}; then
-                  printf 'PASS %s\\n' "$package"
+                  printf 'PASS %s\n' "$package"
                 else
-                  printf 'FAIL %s\\n' "$package" >&2
+                  printf 'FAIL %s\n' "$package" >&2
                 fi
               done
               exit 1
