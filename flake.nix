@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/845e1e23420fb661c3d4a8e0f713b740c3ec2b2f";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/e620244bca70adcd1d1c5f70b922672826856850";
   inputs.crane.url = "github:ipetkov/crane/79fd63528501446749c09f08cad486a58c7d173e";
 
   outputs =
@@ -205,23 +205,18 @@
         };
       };
       checkConfig = import ./ci/flake-check-config.nix;
-    in
-    {
-      lib.flakeCiWorkflows = phenix-flake-ci.lib.mkFlakeCiWorkflows {
-        ci = checkConfig.ci;
+      # The facade only generates Nix apps/packages and GitHub workflow files.
+      # Inventory, build scheduling, runtime tests, and evidence stay with the
+      # existing Flake CI machinery and native Nix.
+      ciFacade = phenix-flake-ci.lib.mkFlakeCI {
+        inherit pkgs;
+        config = checkConfig;
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
       };
-      # Local execution reuses the same pinned DAG planner, runtime runner,
-      # and exact-head evidence contract as the GitHub workflows.
-      apps.${system}.ci = {
-        type = "app";
-        program = toString (
-          pkgs.writeShellScript "phenix-ci-local" ''
-            exec ${lib.getExe pkgs.python3} ${phenix-flake-ci.outPath}/lib/flake-ci-local.py "$@"
-          ''
-        );
-      };
+    in
+    {
+      apps.${system} = ciFacade.apps;
       packages.${system} = {
         kernel-smoke = mkRust {
           name = "kernel-smoke";
@@ -237,14 +232,15 @@
         };
         "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       }
-      // cargoDependencyChecks.packages;
+      // cargoDependencyChecks.packages
+      // ciFacade.packages;
       checks.${system} = {
         # A new workspace member must belong to exactly one default test suite.
         workflow =
           assert completeDefaultCoverage;
           pkgs.runCommand "phenix-workflow-sync" { } ''
-            diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
-            diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
+            diff -u ${ciFacade.packages.ci-workflows}/.github/workflows/flake-ci.yml ${./.github/workflows/flake-ci.yml}
+            diff -u ${ciFacade.packages.ci-workflows}/.github/workflows/flake-ci-pr.yml ${./.github/workflows/flake-ci-pr.yml}
             touch $out
           '';
         kernel-smoke = self.packages.${system}.kernel-smoke;
