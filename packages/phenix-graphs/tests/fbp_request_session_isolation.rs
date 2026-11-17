@@ -25,13 +25,19 @@ struct Join {
     shared_effects: Arc<AtomicUsize>,
 }
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
         }
-        let a = cx.take("a").ok_or("join missing a")?.get::<i64>()?;
-        let b = cx.take("b").ok_or("join missing b")?.get::<i64>()?;
+        let a = cx
+            .take("a")
+            .ok_or_else(|| phenix_graph::Failure::application_message("join missing a"))?
+            .get::<i64>()?;
+        let b = cx
+            .take("b")
+            .ok_or_else(|| phenix_graph::Failure::application_message("join missing b"))?
+            .get::<i64>()?;
         self.shared_effects.fetch_add(1, Ordering::SeqCst);
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(a + b))))
@@ -125,7 +131,12 @@ fn independent_bounded_sessions_settle_crossed_request_arrivals_without_skipping
     for session in &mut active {
         let report = session.run_until_idle(64);
         assert!(!report.budget_exhausted);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
     let first = active[a].take_request_output(ra, "out").unwrap().unwrap();
     assert_eq!(first.value().get::<i64>().unwrap(), 3);
@@ -180,7 +191,12 @@ fn correlated_shared_session_keeps_crossed_request_pairs_isolated() {
 
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     let mut outputs = Vec::new();
     for _ in 0..2 {
         let packet = session.take_output("out").unwrap().unwrap();
@@ -237,7 +253,12 @@ fn cancelling_queued_shared_request_preserves_other_correlated_work() {
     session.close_request(survivor).unwrap();
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     let packet = session
         .take_request_output(survivor, "out")
         .unwrap()
@@ -282,7 +303,12 @@ fn request_scoped_capture_skips_unrelated_buffered_head_without_reordering_globa
     session.close_request(second).unwrap();
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
 
     // A is still the physical head. B's explicitly scoped read must not
     // consume A, and global reads must still see A in FIFO order.
@@ -333,7 +359,12 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
     session.close_request(own).unwrap();
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert!(matches!(
         session.take_request_output(foreign, "out"),
         Err(RequestError::Foreign)
@@ -375,7 +406,12 @@ fn saturated_shared_join() -> (
     }
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert_eq!(effects.load(Ordering::SeqCst), 2);
     (session, first, second, effects)
 }
@@ -445,7 +481,12 @@ fn cancelling_committed_head_capture_frees_capacity_for_unrelated_pending_reques
         RequestStatus::Cancelled
     );
     assert_eq!(session.request_disposal(first).unwrap().queued_packets, 1);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     session.run_until_idle(128);
     assert_eq!(
         session.request_work(second).unwrap().capture_backpressure,

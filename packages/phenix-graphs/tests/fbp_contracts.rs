@@ -1,5 +1,6 @@
 use phenix_graph::component::ComponentDef;
 use phenix_graph::contract::Contract;
+use phenix_graph::interface::{InterfacePhase, InterfaceReason, PortableSchemaField};
 use phenix_graph::network::{NetworkBuilder, NetworkDef, NetworkError};
 use phenix_graph::process::{Process, ProcessContext, ProcessFactory, Step};
 use phenix_graph::{ContractValue, GraphOrigin, Interface, PortDef, Schema};
@@ -9,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Noop;
 impl Process for Noop {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -59,7 +60,12 @@ fn definition_equality_is_exact_and_shape_never_infers_semantics() {
     let c = contract();
     assert_eq!(c, Contract::new("test/worker", io()).unwrap());
     c.check_shape(&io()).unwrap();
-    assert!(c.check_implementation(&leaf(false)).is_err());
+    assert_eq!(
+        *c.check_implementation(&leaf(false)).unwrap_err().reason,
+        InterfaceReason::MissingExplicitClaim {
+            contract: c.id().into(),
+        }
+    );
     c.check_implementation(&leaf(true)).unwrap();
     let extra = Arc::new(
         Interface::new(
@@ -74,7 +80,13 @@ fn definition_equality_is_exact_and_shape_never_infers_semantics() {
     assert!(c.check_shape(&extra).is_err());
     let other = Contract::new(c.id(), extra.clone()).unwrap();
     assert_ne!(c, other);
-    assert!(c.check_definition(&other).is_err());
+    assert_eq!(
+        *c.check_definition(&other).unwrap_err().reason,
+        InterfaceReason::DifferingContractDefinition {
+            expected: c.clone(),
+            actual: other.clone(),
+        }
+    );
     assert!(
         ComponentDef::primitive(io(), factory())
             .claim(&c)
@@ -86,6 +98,115 @@ fn definition_equality_is_exact_and_shape_never_infers_semantics() {
         ComponentDef::primitive(Arc::new(Interface::default()), factory())
             .claim(&c)
             .is_err()
+    );
+}
+
+#[test]
+fn definition_errors_own_invalid_data_and_preserve_validation_order() {
+    for (field, message) in [
+        (PortableSchemaField::Name, "invalid portable schema name"),
+        (
+            PortableSchemaField::Structure,
+            "invalid portable schema structure",
+        ),
+        (PortableSchemaField::Codec, "invalid portable schema codec"),
+    ] {
+        for invalid in ["", " \t", "bad\nvalue"] {
+            let mut schema = Wire::schema();
+            match field {
+                PortableSchemaField::Name => schema.name = invalid.into(),
+                PortableSchemaField::Structure => schema.structure = invalid.into(),
+                PortableSchemaField::Codec => schema.codec = invalid.into(),
+            }
+            // Schema checks precede the invalid port name check.
+            let error = PortDef::portable("", &schema).unwrap_err();
+            assert_eq!(
+                *error.reason,
+                InterfaceReason::InvalidPortableSchema {
+                    field,
+                    value: invalid.into(),
+                }
+            );
+            assert_eq!(error.phase, InterfacePhase::Definition);
+            assert_eq!(
+                error.to_string(),
+                format!("Definition interface at \"\": {message}")
+            );
+        }
+    }
+    let schema = Schema {
+        name: "".into(),
+        structure: "".into(),
+        codec: "".into(),
+        revision: 0,
+    };
+    assert!(matches!(
+        *PortDef::portable("", &schema).unwrap_err().reason,
+        InterfaceReason::InvalidPortableSchema {
+            field: PortableSchemaField::Name,
+            ..
+        }
+    ));
+    let mut schema = Wire::schema();
+    schema.revision = 0;
+    PortDef::portable("value", &schema).unwrap();
+
+    for name in [
+        String::new(),
+        "bad\nname".into(),
+        "x".repeat(phenix_graph::MAX_IDENTIFIER_BYTES + 1),
+    ] {
+        let error = Interface::new([PortDef::local::<i64>(&name)], []).unwrap_err();
+        assert_eq!(
+            *error.reason,
+            InterfaceReason::InvalidPortName {
+                name: name.clone().into()
+            }
+        );
+        assert_eq!(PortDef::portable(&name, &schema).unwrap_err(), error);
+    }
+    for output in [false, true] {
+        let ports = [
+            PortDef::local::<i64>("value"),
+            PortDef::local::<bool>("value"),
+        ];
+        let error = if output {
+            Interface::new([], ports)
+        } else {
+            Interface::new(ports, [])
+        }
+        .unwrap_err();
+        assert_eq!(
+            *error.reason,
+            InterfaceReason::DuplicatePort {
+                name: "value".into()
+            }
+        );
+        assert!(error.to_string().contains("duplicate port name \"value\""));
+    }
+    // Input validation still precedes output validation.
+    assert!(matches!(
+        *Interface::new([PortDef::local::<i64>("")], [PortDef::local::<i64>("bad\n")]).unwrap_err().reason,
+        InterfaceReason::InvalidPortName { name } if name.is_empty()
+    ));
+    for id in [
+        String::new(),
+        "bad//id".into(),
+        "bad id".into(),
+        "x".repeat(phenix_graph::MAX_IDENTIFIER_BYTES + 1),
+    ] {
+        let error = Contract::new(&id, io()).unwrap_err();
+        assert_eq!(
+            *error.reason,
+            InterfaceReason::InvalidContractIdentity { id: id.into() }
+        );
+        assert_eq!(error.reason.to_string(), "invalid contract identity");
+    }
+    let expected = contract();
+    let actual = Contract::new("test/other", io()).unwrap();
+    assert_eq!(
+        *expected.check_definition(&actual).unwrap_err().reason,
+        InterfaceReason::DifferingContractDefinition { expected, actual }
     );
 }
 
@@ -115,18 +236,27 @@ fn exact_shape_errors_preserve_direction_endpoint_and_type_context() {
         }
         .unwrap();
         let empty = Interface::default();
-        for (expected, actual, message, expected_type, actual_type) in [
+        for (expected, actual, reason, message, expected_type, actual_type) in [
             (
                 &shape,
                 &empty,
+                InterfaceReason::MissingPort,
                 "missing port",
                 Some(port.value.clone()),
                 None,
             ),
-            (&empty, &shape, "extra port", None, Some(port.value.clone())),
+            (
+                &empty,
+                &shape,
+                InterfaceReason::ExtraPort,
+                "extra port",
+                None,
+                Some(port.value.clone()),
+            ),
             (
                 &shape,
                 &mistyped,
+                InterfaceReason::IncompatibleType,
                 "incompatible port type",
                 Some(port.value.clone()),
                 Some(wrong_type.value),
@@ -134,6 +264,7 @@ fn exact_shape_errors_preserve_direction_endpoint_and_type_context() {
             (
                 &shape,
                 &reversed,
+                InterfaceReason::WrongDirection,
                 "port has wrong direction",
                 Some(port.value.clone()),
                 Some(port.value.clone()),
@@ -149,7 +280,9 @@ fn exact_shape_errors_preserve_direction_endpoint_and_type_context() {
                     "input value"
                 })
             );
-            assert_eq!(error.message.as_ref(), message);
+            assert_eq!(*error.reason, reason);
+            assert_eq!(error.reason.to_string(), message);
+            assert_eq!(error.phase, InterfacePhase::Definition);
             assert_eq!(error.expected, expected_type);
             assert_eq!(error.actual, actual_type);
             if expected == &shape {
@@ -465,7 +598,7 @@ impl ContractValue for Wire {
     fn encode(&self) -> Vec<u8> {
         vec![]
     }
-    fn decode(_: &[u8]) -> Result<Self, String> {
+    fn decode(_: &[u8]) -> Result<Self, phenix_graph::Failure> {
         Ok(Self)
     }
 }

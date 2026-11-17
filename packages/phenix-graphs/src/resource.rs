@@ -76,6 +76,10 @@ impl fmt::Debug for ResourceGrant {
 #[derive(Clone, Debug, Default)]
 pub struct ValidatedResourceSet(Vec<ResourceGrant>);
 impl ValidatedResourceSet {
+    pub(crate) fn known_leases(&self) -> impl Iterator<Item = &Arc<dyn Send + Sync>> {
+        self.0.iter().flat_map(|grant| &grant.leases)
+    }
+
     /// Reject duplicate keys before the set can reach a process or session.
     /// Rejection consumes the grants and can run application destructors.
     pub fn try_new(grants: Vec<ResourceGrant>) -> Result<Self, ResourceError> {

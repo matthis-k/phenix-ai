@@ -184,7 +184,14 @@ fn execute(generation: &Generation, input: i64) -> i64 {
     assert!(!report.budget_exhausted);
     generation
         .with_session(|session| {
-            assert!(session.failure().is_none(), "{:?}", session.failure());
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none(),
+                "{:?}",
+                session.failure().map(phenix_graph::Failure::summary)
+            );
             *session
                 .take_output("reply")
                 .unwrap()

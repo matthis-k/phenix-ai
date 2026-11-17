@@ -243,7 +243,10 @@ impl NetworkSession {
             generation: self.generation,
             state: self.state(),
             terminal: self.terminal,
-            failure: self.failure.clone(),
+            failure: self
+                .failure
+                .as_ref()
+                .map(|failure| failure.summary().to_owned()),
         }
     }
     fn explanation_queue(&self, index: usize) -> QueueExplanation {
@@ -356,12 +359,16 @@ impl NetworkSession {
                     }],
                 },
                 Ok(selected) => self.explanation_selection(selected),
-                Err(reason) => ReadyAssessment::Invalid { reason },
+                Err(reason) => ReadyAssessment::Invalid {
+                    reason: reason.summary().to_owned(),
+                },
             };
         }
         let snapshot = self.selection_snapshot(index, order, request);
         if let Some(reason) = self.staged_selection_error(index, &snapshot) {
-            return ReadyAssessment::Invalid { reason };
+            return ReadyAssessment::Invalid {
+                reason: reason.summary().to_owned(),
+            };
         }
         let Some(names) = self.builtin_selection_names(index, &snapshot) else {
             return ReadyAssessment::UnknownCustom;
@@ -369,7 +376,9 @@ impl NetworkSession {
         if !names.is_empty() {
             return match self.selected_ports(index, &snapshot, names) {
                 Ok(selected) => self.explanation_selection(selected),
-                Err(reason) => ReadyAssessment::Invalid { reason },
+                Err(reason) => ReadyAssessment::Invalid {
+                    reason: reason.summary().to_owned(),
+                },
             };
         }
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
@@ -473,7 +482,9 @@ impl NetworkSession {
                 })
         };
         let readiness = if let Err(reason) = self.validate_policy(index, policy) {
-            ReadyAssessment::Invalid { reason }
+            ReadyAssessment::Invalid {
+                reason: reason.summary().to_owned(),
+            }
         } else if let Some(candidate) = candidates
             .iter()
             .filter(|c| c.scheduler_candidate)
@@ -653,7 +664,9 @@ impl NetworkSession {
                 self.inherited_request_terminal()
                     .map(|_| TerminalOrigin::InheritedSession)
             },
-            failure: self.request_failure(id)?.map(str::to_owned),
+            failure: self
+                .request_failure(id)?
+                .map(|failure| failure.summary().to_owned()),
             work: self.request_work(id)?,
             disposal: scope.disposal,
             invalidated_tickets: scope.cancelled_jobs.clone(),

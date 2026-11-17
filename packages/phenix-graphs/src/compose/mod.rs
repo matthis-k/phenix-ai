@@ -116,6 +116,61 @@ impl Registration {
     }
 }
 
+/// Replay failures retain only the affected symbolic metadata, never an edit or factory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InvalidEditReason {
+    DuplicateComponent {
+        path: String,
+    },
+    MissingReplacement {
+        path: String,
+    },
+    DuplicateConnection {
+        connection: ConnectionKey,
+    },
+    MissingDisconnection {
+        connection: ConnectionKey,
+    },
+    DuplicateInputExport {
+        name: String,
+    },
+    EmptyInputProjection {
+        name: String,
+    },
+    MissingInputComponent {
+        name: String,
+        target: crate::network::PortPath,
+    },
+    MissingInputPort {
+        name: String,
+        target: crate::network::PortPath,
+    },
+    DuplicateOutputExport {
+        name: String,
+    },
+    MissingOutputComponent {
+        name: String,
+        target: crate::network::PortPath,
+    },
+    MissingOutputPort {
+        name: String,
+        target: crate::network::PortPath,
+    },
+    DuplicateSource {
+        path: String,
+    },
+    MissingSpliceConnection {
+        anchor: ConnectionKey,
+        connection: ConnectionKey,
+    },
+    UnknownComposite {
+        path: String,
+    },
+    UnknownNestedComponent {
+        path: String,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComposeError {
     DuplicateRegistration(String),
@@ -140,7 +195,10 @@ pub enum ComposeError {
     },
     PrivateEditScope(String),
     ForgedOrigin(String),
-    InvalidEdit(String),
+    InvalidEdit {
+        registration: String,
+        reason: Box<InvalidEditReason>,
+    },
     Network(NetworkError),
     Panicked,
 }

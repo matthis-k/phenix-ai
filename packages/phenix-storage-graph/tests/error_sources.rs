@@ -60,7 +60,9 @@ fn cleanup_keeps_both_typed_stages_and_chains_original_error_inside_job_inventor
             ))),
             request,
             termination: Some(RequestError::PacketDestructorPanicked),
+            termination_failure: None,
             release: Some(RequestError::NotSettled),
+            inventory: vec![],
         }),
         cancelled_jobs: vec![],
         disposal: RequestDisposal::default(),
@@ -180,11 +182,23 @@ fn real_query_binding_preserves_lookup_errors_but_string_failures_have_no_source
     assert_lookup_error(&error, &NetworkError::UnknownDefinition);
 
     let error = runtime.bind_query(&spec).unwrap().query().unwrap_err();
-    assert!(matches!(error, Error::Graph(_)));
-    assert!(error.source().is_none());
-    let error = Error::from("genuine string diagnostic".to_owned());
-    assert!(matches!(&error, Error::Graph(message) if message == "genuine string diagnostic"));
-    assert!(error.source().is_none());
+    assert!(matches!(
+        error,
+        Error::Access(phenix_kernel::SessionAccessError::NotStarted)
+    ));
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .is::<phenix_kernel::SessionAccessError>()
+    );
+    let error = Error::Execution(phenix_graph::Failure::application_message(
+        "genuine string diagnostic",
+    ));
+    assert!(
+        matches!(&error, Error::Execution(failure) if failure.summary() == "genuine string diagnostic")
+    );
+    assert!(error.source().unwrap().source().is_none());
 }
 
 #[test]

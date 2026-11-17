@@ -38,10 +38,10 @@ macro_rules! portable {
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
             }
-            fn decode(bytes: &[u8]) -> Result<Self, String> {
-                Ok(Self(i64::from_le_bytes(
-                    bytes.try_into().map_err(|_| "invalid i64")?,
-                )))
+            fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+                Ok(Self(i64::from_le_bytes(bytes.try_into().map_err(
+                    |cause| phenix_graph::Failure::external("invalid i64", cause),
+                )?)))
             }
         }
     };
@@ -100,7 +100,7 @@ mod provider {
         emitted: bool,
     }
     impl Process for Worker {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -108,10 +108,24 @@ mod provider {
             if context.is_closed("left") || context.is_closed("right") {
                 return Ok(Step::Finished);
             }
-            let left =
-                Request::decode(context.take("left").ok_or("missing left input")?.bytes())?.0;
-            let right =
-                Request::decode(context.take("right").ok_or("missing right input")?.bytes())?.0;
+            let left = Request::decode(
+                context
+                    .take("left")
+                    .ok_or_else(|| {
+                        phenix_graph::Failure::application_message("missing left input")
+                    })?
+                    .bytes(),
+            )?
+            .0;
+            let right = Request::decode(
+                context
+                    .take("right")
+                    .ok_or_else(|| {
+                        phenix_graph::Failure::application_message("missing right input")
+                    })?
+                    .bytes(),
+            )?
+            .0;
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "value",
@@ -245,7 +259,12 @@ fn execute(generation: &Generation, left: i64, right: i64) {
         .unwrap();
     generation.run_steps(100).unwrap();
     let failure = generation
-        .with_session(|session| session.failure().map(str::to_owned))
+        .with_session(|session| {
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .map(str::to_owned)
+        })
         .unwrap();
     assert!(failure.is_none(), "{failure:?}");
 }

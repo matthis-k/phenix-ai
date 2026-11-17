@@ -46,7 +46,10 @@ pub mod writer {
         fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<AgentConfig> {
             String::from_utf8(bytes.to_vec())
                 .map(|model| AgentConfig { model })
-                .map_err(|e| phenix_storage::Error::Codec(e.to_string()))
+                .map_err(|e| phenix_storage::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for AgentConfig {
@@ -125,7 +128,10 @@ pub mod observer {
         fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<ObservedConfig> {
             String::from_utf8(bytes.to_vec())
                 .map(ObservedConfig)
-                .map_err(|e| phenix_storage::Error::Codec(e.to_string()))
+                .map_err(|e| phenix_storage::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for ObservedConfig {
@@ -406,7 +412,7 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
     })
 }
 
-pub fn run() -> Result<(), String> {
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir().map_err(text)?;
     let demo = build(root.path(), "project-one")?;
     demo.kernel
@@ -447,6 +453,6 @@ pub fn run() -> Result<(), String> {
 }
 
 #[allow(dead_code)]
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     run()
 }

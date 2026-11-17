@@ -21,8 +21,10 @@ fn one() -> NonZeroUsize {
 
 struct Failure;
 impl Process for Failure {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
-        Err("initiating global failure".into())
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        Err(phenix_graph::Failure::application_message(
+            "initiating global failure",
+        ))
     }
 }
 
@@ -96,13 +98,20 @@ fn session_cancel_after_failure_does_not_dispose_retained_capture() {
             session.run_until_idle(16);
             session.inject_local("fail", ()).unwrap();
             assert_eq!(session.run_until_idle(16).state, SessionState::Failed);
-            let original = session.failure().unwrap().to_owned();
+            let original = session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .to_owned();
             let disposal = session.request_disposal(id).unwrap();
             let disposed = session.disposed_packets();
             session.cancel();
             session.cancel();
             assert_eq!(session.state(), SessionState::Failed);
-            assert_eq!(session.failure(), Some(original.as_str()));
+            assert_eq!(
+                session.failure().map(phenix_graph::Failure::summary),
+                Some(original.as_str())
+            );
             assert_eq!(session.request_status(id).unwrap(), RequestStatus::Failed);
             assert_eq!(session.request_work(id).unwrap().queued, 1);
             assert_eq!(session.request_disposal(id).unwrap(), disposal);
@@ -152,7 +161,11 @@ fn explicit_disposal_after_global_failure_keeps_failed_cause_and_exact_inventory
             let job = runner.jobs.lock().unwrap().pop().unwrap();
             session.inject_local("fail", ()).unwrap();
             assert_eq!(session.run_until_idle(16).state, SessionState::Failed);
-            let original = session.failure().unwrap().to_owned();
+            let original = session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .to_owned();
             assert!(original.contains("initiating global failure"));
             let peer_disposal = session.request_disposal(peer).unwrap();
             assert_eq!(peer_disposal.handed_jobs, 1);
@@ -179,41 +192,75 @@ fn explicit_disposal_after_global_failure_keeps_failed_cause_and_exact_inventory
 
             session.cancel_request(a).unwrap();
             assert_eq!(session.request_status(a).unwrap(), RequestStatus::Failed);
-            assert_eq!(session.request_failure(a).unwrap(), Some(original.as_str()));
+            assert_eq!(
+                session
+                    .request_failure(a)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap(),
+                Some(original.as_str())
+            );
             assert_eq!(session.request_work(a).unwrap().queued, 0);
             assert_eq!(session.request_work(b).unwrap().queued, 1);
             assert_eq!(session.request_disposal(a).unwrap().queued_packets, 1);
             assert_eq!(session.disposed_packets(), disposed + 1);
             let disposal = session.request_disposal(a).unwrap();
-            session.fail_request(a, "late diagnostic").unwrap();
+            session
+                .fail_request(
+                    a,
+                    phenix_graph::Failure::application_message("late diagnostic"),
+                )
+                .unwrap();
             session.cancel_request(a).unwrap();
             assert_eq!(session.request_disposal(a).unwrap(), disposal);
             assert_eq!(session.disposed_packets(), disposed + 1);
 
-            session.fail_request(b, "another late diagnostic").unwrap();
+            session
+                .fail_request(
+                    b,
+                    phenix_graph::Failure::application_message("another late diagnostic"),
+                )
+                .unwrap();
             assert_eq!(session.request_status(b).unwrap(), RequestStatus::Failed);
-            assert_eq!(session.request_failure(b).unwrap(), Some(original.as_str()));
+            assert_eq!(
+                session
+                    .request_failure(b)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap(),
+                Some(original.as_str())
+            );
             assert_eq!(session.request_disposal(b).unwrap().queued_packets, 1);
             assert_eq!(session.disposed_packets(), disposed + 2);
             assert_eq!(session.cancel_request(peer).unwrap(), [job.ticket()]);
-            assert_eq!(session.fail_request(peer, "late").unwrap(), [job.ticket()]);
+            assert_eq!(
+                session
+                    .fail_request(peer, phenix_graph::Failure::application_message("late"))
+                    .unwrap(),
+                [job.ticket()]
+            );
             assert_eq!(session.request_disposal(peer).unwrap(), peer_disposal);
             assert_eq!(session.request_status(peer).unwrap(), RequestStatus::Failed);
             assert!(session.complete_job(job.run()).is_err());
-            assert_eq!(session.failure(), Some(original.as_str()));
+            assert_eq!(
+                session.failure().map(phenix_graph::Failure::summary),
+                Some(original.as_str())
+            );
 
             let mut foreign = compiled.start();
             let foreign = foreign.begin_request(None).unwrap();
             assert_eq!(session.cancel_request(foreign), Err(RequestError::Foreign));
             assert_eq!(
-                session.fail_request(foreign, "foreign"),
+                session.fail_request(
+                    foreign,
+                    phenix_graph::Failure::application_message("foreign")
+                ),
                 Err(RequestError::Foreign)
             );
             for id in [a, b, local, peer] {
                 session.release_request(id).unwrap();
                 assert_eq!(session.cancel_request(id), Err(RequestError::Stale));
                 assert_eq!(
-                    session.fail_request(id, "released"),
+                    session
+                        .fail_request(id, phenix_graph::Failure::application_message("released")),
                     Err(RequestError::Stale)
                 );
             }
@@ -239,7 +286,10 @@ fn global_cancel_then_late_failure_keeps_cancelled_without_late_diagnostic() {
             let id = session.begin_request(None).unwrap();
             let local = session.begin_request(None).unwrap();
             session
-                .fail_request(local, "earlier local failure")
+                .fail_request(
+                    local,
+                    phenix_graph::Failure::application_message("earlier local failure"),
+                )
                 .unwrap();
             session.inject_request_local(id, "input", 1_i64).unwrap();
             session.run_until_idle(1);
@@ -248,7 +298,9 @@ fn global_cancel_then_late_failure_keeps_cancelled_without_late_diagnostic() {
             let disposal = session.request_disposal(id).unwrap();
             assert_eq!(disposal.handed_jobs, 1);
             assert_eq!(
-                session.fail_request(id, "too late").unwrap(),
+                session
+                    .fail_request(id, phenix_graph::Failure::application_message("too late"))
+                    .unwrap(),
                 [job.ticket()]
             );
             assert_eq!(session.cancel_request(id).unwrap(), [job.ticket()]);
@@ -256,8 +308,14 @@ fn global_cancel_then_late_failure_keeps_cancelled_without_late_diagnostic() {
                 session.request_status(id).unwrap(),
                 RequestStatus::Cancelled
             );
-            assert_eq!(session.request_failure(id).unwrap(), None);
-            assert_eq!(session.failure(), None);
+            assert_eq!(
+                session
+                    .request_failure(id)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap(),
+                None
+            );
+            assert_eq!(session.failure().map(phenix_graph::Failure::summary), None);
             assert_eq!(session.request_disposal(id).unwrap(), disposal);
             session.cancel_request(local).unwrap();
             assert_eq!(
@@ -265,7 +323,10 @@ fn global_cancel_then_late_failure_keeps_cancelled_without_late_diagnostic() {
                 RequestStatus::Failed
             );
             assert_eq!(
-                session.request_failure(local).unwrap(),
+                session
+                    .request_failure(local)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap(),
                 Some("earlier local failure")
             );
             assert!(session.complete_job(job.run()).is_err());
@@ -291,13 +352,25 @@ fn live_request_cancel_records_cancelled_before_fail_session_policy_runs() {
             session.request_status(id).unwrap(),
             RequestStatus::Cancelled
         );
-        let failure = session.failure().unwrap().to_owned();
-        session.fail_request(id, "late failure").unwrap();
+        let failure = session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .to_owned();
+        session
+            .fail_request(
+                id,
+                phenix_graph::Failure::application_message("late failure"),
+            )
+            .unwrap();
         assert_eq!(
             session.request_status(id).unwrap(),
             RequestStatus::Cancelled
         );
-        assert_eq!(session.failure(), Some(failure.as_str()));
+        assert_eq!(
+            session.failure().map(phenix_graph::Failure::summary),
+            Some(failure.as_str())
+        );
         session.release_request(id).unwrap();
     }
 }
@@ -336,7 +409,10 @@ fn recovery_panic_appends_context_without_replacing_initiating_failure_or_cancel
             let result = if cancel {
                 session.cancel_request(id)
             } else {
-                session.fail_request(id, "original request failure")
+                session.fail_request(
+                    id,
+                    phenix_graph::Failure::application_message("original request failure"),
+                )
             };
             assert_eq!(result, Err(RequestError::RecoveryFailed));
             assert_eq!(
@@ -347,17 +423,39 @@ fn recovery_panic_appends_context_without_replacing_initiating_failure_or_cancel
                     RequestStatus::Failed
                 }
             );
-            let diagnostic = session.request_failure(id).unwrap().unwrap().to_owned();
+            let failure = session.request_failure(id).unwrap().unwrap();
+            let panic = if cancel {
+                failure
+            } else {
+                &failure.cleanup()[0]
+            };
+            assert!(matches!(
+                std::error::Error::source(panic)
+                    .unwrap()
+                    .downcast_ref::<phenix_graph::process::CallbackPanicked>(),
+                Some(phenix_graph::process::CallbackPanicked {
+                    phase: phenix_graph::CallbackPhase::RecoveryConstruct,
+                    ..
+                })
+            ));
+            let diagnostic = failure.summary().to_owned();
             if !cancel {
-                assert!(diagnostic.starts_with("original request failure; "));
+                assert_eq!(diagnostic, "original request failure");
             }
-            assert!(diagnostic.contains("factory panicked during request recovery"));
-            assert_eq!(session.failure(), Some(diagnostic.as_str()));
+            assert_eq!(
+                session.failure().map(phenix_graph::Failure::summary),
+                Some(diagnostic.as_str())
+            );
             session.cancel_request(id).unwrap();
-            session.fail_request(id, "late").unwrap();
+            session
+                .fail_request(id, phenix_graph::Failure::application_message("late"))
+                .unwrap();
             assert_eq!(spawns.load(Ordering::SeqCst), 2);
             assert_eq!(
-                session.request_failure(id).unwrap(),
+                session
+                    .request_failure(id)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap(),
                 Some(diagnostic.as_str())
             );
             session.release_request(id).unwrap();

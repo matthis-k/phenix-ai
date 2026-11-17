@@ -156,11 +156,19 @@ fn interface_fields_and_missing_unit_remain_machine_readable() {
     let NetworkError::Interface(cause) = *cause else {
         unreachable!()
     };
-    assert!(cause.message.contains("claim"));
+    assert!(matches!(
+        cause.reason.as_ref(),
+        phenix_graph::interface::InterfaceReason::MissingExplicitClaim { contract }
+            if contract.as_ref() == "diagnostics/test@1"
+    ));
     let missing = ResolutionError::MissingUnit {
         offer: Key::new("plugin", "offer"),
         unit: "service".into(),
+        cause: Box::new(NetworkError::UnknownProcess("service".into())),
     };
     assert!(missing.to_string().contains("service"));
-    assert!(missing.source().is_none());
+    assert!(matches!(
+        missing.source().unwrap().downcast_ref::<NetworkError>(),
+        Some(NetworkError::UnknownProcess(path)) if path == "service"
+    ));
 }

@@ -14,24 +14,26 @@ impl NetworkSession {
     pub fn fail_request(
         &mut self,
         id: RequestId,
-        diagnostic: impl Into<String>,
+        diagnostic: Failure,
     ) -> Result<Vec<StepTicket>, RequestError> {
         self.supervise_configured_deferred();
-        self.fail_request_inner(id, diagnostic.into())
+        self.fail_request_inner(id, diagnostic)
     }
 
     fn fail_request_inner(
         &mut self,
         id: RequestId,
-        diagnostic: String,
+        diagnostic: Failure,
     ) -> Result<Vec<StepTicket>, RequestError> {
         self.terminate_request(id, RequestStatus::Failed, Some(diagnostic))
     }
 
-    pub fn request_failure(&self, id: RequestId) -> Result<Option<&str>, RequestError> {
+    pub fn request_failure(&self, id: RequestId) -> Result<Option<&Failure>, RequestError> {
         let scope = self.check_request(id)?;
-        Ok(scope.failure.as_deref().or_else(|| {
-            if self.terminal == Some(SessionState::Failed) {
+        Ok(scope.failure.as_ref().or_else(|| {
+            if self.terminal == Some(SessionState::Failed)
+                && (scope.terminal.is_none() || scope.inherited_terminal)
+            {
                 self.failure()
             } else {
                 None
@@ -49,7 +51,24 @@ impl NetworkSession {
         Ok(&self.check_request(id)?.cancelled_jobs)
     }
 
-    pub(super) fn fail_process(&mut self, index: usize, error: String) {
+    pub(super) fn enrich_failure(&self, index: Option<usize>, error: Failure) -> Failure {
+        let mut context = error.context().clone();
+        context.session = Some(self.session_id);
+        context.generation = Some(self.generation);
+        if let Some(index) = index {
+            context.process = Some(index);
+            context.path = Some(self.compiled.processes()[index].path().into());
+            context.request = self.processes[index].request;
+        }
+        let mut error = error.with_context(context);
+        if let Some(lease) = &self.lease {
+            error = error.retain_leases(std::slice::from_ref(lease));
+        }
+        error
+    }
+
+    pub(super) fn fail_process(&mut self, index: usize, error: Failure) {
+        let error = self.enrich_failure(Some(index), error);
         if let Some(request) = self.processes[index].request {
             // Recovery failure has already made the whole session terminal.
             let _ = self.fail_request_inner(request, error);
@@ -58,11 +77,48 @@ impl NetworkSession {
         }
     }
 
+    pub(super) fn append_failure_cleanup(
+        &mut self,
+        request: Option<RequestId>,
+        secondary: Failure,
+    ) -> bool {
+        let primary = request
+            .and_then(|id| self.requests.get(&id))
+            .and_then(|scope| scope.failure.as_ref())
+            .or(self.failure.as_ref())
+            .cloned();
+        let Some(primary) = primary else {
+            return false;
+        };
+        if let Some(failure) = request
+            .and_then(|id| self.requests.get_mut(&id))
+            .and_then(|scope| scope.failure.as_mut())
+        {
+            *failure = failure.clone().with_cleanup(secondary.clone());
+        }
+        if let Some(failure) = self.failure.as_mut().filter(|failure| {
+            failure.same_origin(&primary) && failure.context().request == primary.context().request
+        }) {
+            *failure = failure.clone().with_cleanup(secondary);
+            // Inherited cleanup can arrive through a peer request after escalation.
+            if let Some(request_failure) = failure
+                .context()
+                .request
+                .and_then(|id| self.requests.get_mut(&id))
+                .and_then(|scope| scope.failure.as_mut())
+                .filter(|request_failure| request_failure.same_origin(failure))
+            {
+                *request_failure = failure.clone();
+            }
+        }
+        true
+    }
+
     fn terminate_request(
         &mut self,
         id: RequestId,
         status: RequestStatus,
-        error: Option<String>,
+        error: Option<Failure>,
     ) -> Result<Vec<StepTicket>, RequestError> {
         let scope = self.check_request(id)?;
         if scope.terminal.is_some() {
@@ -79,6 +135,11 @@ impl NetworkSession {
             let reachable: Vec<_> = scope.reachable.iter().copied().collect();
             self.unwatch_scoped_readiness(&reachable);
         }
+        let error = error.map(|error| {
+            let mut context = error.context().clone();
+            context.request = Some(id);
+            self.enrich_failure(None, error.with_context(context))
+        });
         let scope = self.requests.get_mut(&id).unwrap();
         scope.sealed = true;
         scope.terminal = Some(status);
@@ -102,11 +163,21 @@ impl NetworkSession {
         self.ready.retain(|index| !affected.contains(index));
         let mut cancelled_processes = Vec::with_capacity(affected.len());
         let mut pending_disposals = Vec::new();
+        let mut recovery_tickets = BTreeMap::new();
         for index in &affected {
             self.dispatched_at.remove(index);
             let retired_wake = {
                 let p = &mut self.processes[*index];
                 let scope = self.requests.get_mut(&id).unwrap();
+                if let Some(ticket) = p.handoff.outstanding().or_else(|| {
+                    scope
+                        .failure
+                        .as_ref()
+                        .filter(|failure| failure.context().process == Some(*index))
+                        .and_then(|failure| failure.context().ticket)
+                }) {
+                    recovery_tickets.insert(*index, ticket);
+                }
                 scope.disposal.activations += 1;
                 if let Some(prepared) = p.pending.take() {
                     scope.disposal.prepared_packets += prepared.retained_packets();
@@ -137,13 +208,50 @@ impl NetworkSession {
         }
         let pending_destructor_panicked = drop_prepared_catching(pending_disposals);
         let packet_destructor_panicked = drop_packets_catching(disposed_packets);
+        // Attach local cleanup before escalation; escaped clones stay immutable.
+        let mut cleanup = Vec::new();
+        for (panicked, error) in [
+            (
+                process_destructor_panicked,
+                RequestError::ProcessDestructorPanicked,
+            ),
+            (
+                pending_destructor_panicked || packet_destructor_panicked,
+                RequestError::PacketDestructorPanicked,
+            ),
+        ] {
+            if panicked {
+                let secondary = self.enrich_failure(
+                    None,
+                    Failure::external("destructor panicked during request cleanup", error)
+                        .with_kind(FailureKind::Cleanup)
+                        .with_context(crate::FailureContext {
+                            request: Some(id),
+                            phase: Some(CallbackPhase::Cleanup),
+                            ..Default::default()
+                        }),
+                );
+                if !self.append_failure_cleanup(Some(id), secondary.clone()) {
+                    cleanup.push(secondary);
+                }
+            }
+        }
         let mut recovery_failed = false;
         if !affected.is_empty() && self.terminal.is_none() {
             if self.request_failure_policy == RequestFailurePolicy::FailSession {
+                let request_failed = self.requests[&id].failure.is_some();
                 let diagnostic = self.requests[&id].failure.clone().unwrap_or_else(|| {
-                    "active request cancelled without RestartAffectedProcess policy".into()
+                    let mut failure = RuntimeError::ActiveRequestCancelled.failure();
+                    for secondary in cleanup {
+                        failure = failure.with_cleanup(secondary);
+                    }
+                    failure
                 });
                 self.fail(diagnostic);
+                if request_failed {
+                    // Session stop may append peer cleanup to this same primary.
+                    self.requests.get_mut(&id).unwrap().failure = self.failure.clone();
+                }
             } else {
                 for index in affected {
                     let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -152,30 +260,27 @@ impl NetworkSession {
                     let process = match spawned {
                         Ok(process) => process,
                         Err(payload) => {
-                            if let Err(payload) =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    drop(payload)
-                                }))
-                            {
-                                process_destructor_panicked = true;
-                                crate::discard_panic_payload(payload);
-                            }
-                            let diagnostic = format!(
-                                "process factory panicked during request recovery: {}",
-                                self.compiled.processes()[index].path()
+                            let diagnostic = self.enrich_failure(
+                                Some(index),
+                                crate::process::callback_panicked(
+                                    CallbackPhase::RecoveryConstruct,
+                                    payload,
+                                ),
                             );
-                            let failure = self
-                                .requests
-                                .get_mut(&id)
-                                .unwrap()
-                                .failure
-                                .get_or_insert_with(String::new);
-                            if !failure.is_empty() {
-                                failure.push_str("; ");
+                            let mut context = diagnostic.context().clone();
+                            context.request = Some(id);
+                            context.ticket = recovery_tickets.get(&index).copied();
+                            let mut diagnostic = diagnostic.with_context(context);
+                            for secondary in cleanup {
+                                diagnostic = diagnostic.with_cleanup(secondary);
                             }
-                            failure.push_str(&diagnostic);
-                            let failure = failure.clone();
+                            let scope = self.requests.get_mut(&id).unwrap();
+                            let failure = match scope.failure.take() {
+                                Some(primary) => primary.with_cleanup(diagnostic),
+                                None => diagnostic,
+                            };
                             self.fail(failure);
+                            self.requests.get_mut(&id).unwrap().failure = self.failure.clone();
                             recovery_failed = true;
                             break;
                         }
@@ -203,16 +308,6 @@ impl NetworkSession {
         self.force_full_refresh = true;
         self.refresh();
         self.notifier().notify();
-        if (process_destructor_panicked
-            || pending_destructor_panicked
-            || packet_destructor_panicked)
-            && let Some(failure) = self
-                .requests
-                .get_mut(&id)
-                .and_then(|scope| scope.failure.as_mut())
-        {
-            failure.push_str("; destructor panicked during request cleanup");
-        }
         if recovery_failed {
             return Err(RequestError::RecoveryFailed);
         }
@@ -234,7 +329,7 @@ impl NetworkSession {
             .flat_map(|p| &p.queues)
             .any(|q| !self.transport.queues()[*q].is_empty())
         {
-            self.fail_input(index, "abandoned accepted input on Finished");
+            self.fail_input(index, InputFailureReason::Abandoned);
             return;
         }
         let mut destructor_panicked = false;
@@ -281,13 +376,20 @@ impl NetworkSession {
             self.dirty_queue(queue);
         }
         if destructor_panicked {
-            self.fail(format!(
-                "owned destructor panicked while finishing {}",
-                self.compiled.processes()[index].path()
-            ));
+            self.fail_process(
+                index,
+                RuntimeError::DestructorPanicked {
+                    stage: CleanupStage::Finish,
+                }
+                .failure(),
+            );
         }
     }
-    pub(super) fn fail(&mut self, error: String) {
+    pub(super) fn fail(&mut self, error: Failure) {
+        if self.terminal.is_some() {
+            return;
+        }
+        let error = self.enrich_failure(None, error);
         // Failure is not rollback: retain committed captures for host draining.
         let (cancelled, pending) = self.stop_processes();
         let mut disposed = Vec::new();
@@ -316,10 +418,17 @@ impl NetworkSession {
         destructor_panicked |= drop_prepared_catching(pending);
         destructor_panicked |= drop_packets_catching(disposed);
         if destructor_panicked {
-            let diagnostic = self.failure.take().unwrap_or_default();
-            self.failure = Some(format!(
-                "{diagnostic}; destructor panicked during failure cleanup"
-            ));
+            let secondary = self.enrich_failure(
+                None,
+                RuntimeError::DestructorPanicked {
+                    stage: CleanupStage::Failure,
+                }
+                .failure(),
+            );
+            self.failure = self
+                .failure
+                .take()
+                .map(|failure| failure.with_cleanup(secondary));
         }
     }
     fn stop_processes(&mut self) -> (Vec<CancelledProcess>, Vec<PreparedFanout>) {
@@ -382,7 +491,15 @@ impl NetworkSession {
         destructor_panicked |= drop_prepared_catching(pending);
         destructor_panicked |= drop_packets_catching(packets);
         if destructor_panicked {
-            self.failure = Some("destructor panicked during session cancellation cleanup".into());
+            self.failure = Some(
+                self.enrich_failure(
+                    None,
+                    RuntimeError::DestructorPanicked {
+                        stage: CleanupStage::Cancellation,
+                    }
+                    .failure(),
+                ),
+            );
         }
     }
 }

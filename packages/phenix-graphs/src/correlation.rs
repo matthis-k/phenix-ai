@@ -7,6 +7,20 @@ use crate::{
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvalidCorrelationBounds {
+    pub max_live: usize,
+    pub distinct_scope_skew: usize,
+    pub ingress_capacity: usize,
+    pub input_count: usize,
+}
+impl std::fmt::Display for InvalidCorrelationBounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("insufficient correlation bound: distinct-scope skew exceeds live lanes or ingress capacity, or no inputs")
+    }
+}
+impl std::error::Error for InvalidCorrelationBounds {}
+
 /// Explicit capacity envelope for fixed-lane request correlation.
 /// `max_live` must cover the application's maximum simultaneous correlations.
 /// `distinct_scope_skew` is the maximum number of different request identities the
@@ -37,12 +51,15 @@ pub fn bounded(
         || bounds.distinct_scope_skew > bounds.ingress_capacity
         || interface.inputs().is_empty()
     {
-        return Err(NetworkError::InvalidProjection(
-            "insufficient correlation bound: distinct-scope skew exceeds live lanes or ingress capacity, or no inputs".into(),
-        ));
+        return Err(NetworkError::CorrelationBounds(InvalidCorrelationBounds {
+            max_live: bounds.max_live.get(),
+            distinct_scope_skew: bounds.distinct_scope_skew.get(),
+            ingress_capacity: bounds.ingress_capacity.get(),
+            input_count: interface.inputs().len(),
+        }));
     }
     crate::runtime::validate_policy(&readiness, interface.inputs().keys().map(String::as_str))
-        .map_err(NetworkError::InvalidProjection)?;
+        .map_err(NetworkError::Readiness)?;
     let names: Vec<_> = interface.inputs().keys().cloned().collect();
     let ports = (0..bounds.max_live.get()).flat_map(|lane| {
         interface.inputs().values().map(move |port| PortDef {
@@ -112,7 +129,7 @@ struct Router {
     emitted: bool,
 }
 impl Process for Router {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, crate::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -124,9 +141,14 @@ impl Process for Router {
                 Step::Complete
             });
         };
-        let lane = context
-            .correlation_lane()
-            .ok_or("correlation adapter requires admitted request credit")?;
+        let lane = context.correlation_lane().ok_or_else(|| {
+            crate::Failure::external(
+                "correlation adapter requires admitted request credit",
+                MissingCorrelationCredit,
+            )
+            .with_kind(crate::FailureKind::Framework)
+            .retain_leases(value.known_leases())
+        })?;
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new(
             lane_name(lane, &self.name),
@@ -233,7 +255,7 @@ struct Join {
     names: Vec<String>,
 }
 impl Process for Join {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, crate::Failure> {
         let Some(lane) = context.correlation_lane() else {
             return Ok(Step::Complete);
         };
@@ -262,3 +284,12 @@ impl Process for Join {
         })
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MissingCorrelationCredit;
+impl std::fmt::Display for MissingCorrelationCredit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("correlation adapter requires admitted request credit")
+    }
+}
+impl std::error::Error for MissingCorrelationCredit {}

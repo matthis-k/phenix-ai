@@ -26,10 +26,10 @@ macro_rules! wire_value {
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
             }
-            fn decode(bytes: &[u8]) -> Result<Self, String> {
-                Ok(Self(i64::from_le_bytes(
-                    bytes.try_into().map_err(|_| "consumer: invalid i64")?,
-                )))
+            fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+                Ok(Self(i64::from_le_bytes(bytes.try_into().map_err(
+                    |cause| phenix_graph::Failure::external("consumer: invalid i64", cause),
+                )?)))
             }
         }
     };
@@ -41,7 +41,7 @@ pub struct Plugin(pub Arc<Mutex<Vec<i64>>>);
 
 struct Sink(Arc<Mutex<Vec<i64>>>);
 impl Process for Sink {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let Some(value) = context.take("value") else {
             return Ok(Step::Finished);
         };

@@ -179,9 +179,7 @@ pub(super) fn validate_network(network: &NetworkDef) -> Result<(), NetworkError>
             .keys()
             .eq(network.outputs.keys())
     {
-        return Err(NetworkError::InvalidProjection(
-            "incomplete public boundary".into(),
-        ));
+        return Err(NetworkError::IncompletePublicBoundary);
     }
     for (name, projection) in &network.inputs {
         if projection.targets.is_empty() {

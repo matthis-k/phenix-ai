@@ -54,7 +54,7 @@ separate checks. Plugin snapshots are Rust objects, not a dynamic-library ABI.
 ## Process And Publication
 
 `Process: Send` implements `step(&mut self, &mut ProcessContext) -> Result<Step,
-String>`; `Sync` is not required. `ProcessFactory: Send + Sync` spawns fresh process
+Failure>`; `Sync` is not required. `ProcessFactory: Send + Sync` spawns fresh process
 state per physical instance/session. Captured shared capabilities remain explicit
 application sharing; factories cannot prove their captures are isolated.
 
@@ -65,6 +65,32 @@ settles success. The process cannot resume while its emission is pending. No
 unbounded emission batch, context-owned output queue, alternate futures API or
 callback replay path is retained. Steps must return cooperatively; cancellation
 cannot preempt application code or undo external effects.
+
+`Failure` shares an original typed cause without cloning it, with a cached host
+summary, diagnostic owner context, independently owned code/resource leases, and
+typed secondary cleanup failures. External construction requires both an explicit
+host summary and the original error; it never formats or inspects external code.
+`application_message` is an explicit application String leaf, not a framework
+conversion shim. Worker guards preserve the first entry/step failure and append
+reverse-order teardown failures. Value access, input reconstruction, codecs and
+fanout preparation use the same failure protocol before a process step returns.
+`with_context` replaces metadata; framework attribution merges actual owner fields
+without discarding a known field, guard index or more-specific callback phase.
+
+Handoff ownership refusal is separate from execution failure. `complete` returns
+an outer refusal with an untouched completion or an inner `Result<Step, Failure>`.
+`reject` likewise returns an outer refusal with an untouched job or an inner
+`Result<(), Failure>` after accepting ownership and disposing guard objects. An
+accepted rejection whose cleanup fails settles the ticket and disposes its owned
+process/inputs, rather than returning a damaged job as if it were refused.
+
+Explicit managed disposal returns the actual contained cleanup report. Ordinary
+Drop contains cleanup but cannot update a session that no longer exists. A Value
+or Failure handle must acquire all known leases before independently escaping;
+later COW enrichment does not retroactively enrich earlier application clones.
+Additional dependencies that the framework cannot observe remain explicit
+application attachments. Q6 explanations copy cached host summaries and metadata,
+never Failure owners, and do not invoke external formatters or source callbacks.
 
 `ComponentDef::source`, `map` and `sink` use this same path. A source creates a
 fresh iterator and emits at most one item per step; `NetworkBuilder::start`

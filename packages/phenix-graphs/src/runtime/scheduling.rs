@@ -170,7 +170,7 @@ impl NetworkSession {
             let selected = match self.selection(index) {
                 Ok(selected) => selected,
                 Err(error) => {
-                    self.fail_process(index, format!("process {index}: {error}"));
+                    self.fail_process(index, error);
                     return None;
                 }
             };
@@ -188,7 +188,11 @@ impl NetworkSession {
                     self.processes[index].handoff.resume_input(context)
                 };
                 if let Err((error, _)) = result {
-                    self.fail_process(index, format!("process {index} reservation: {error}"));
+                    self.fail_process(
+                        index,
+                        Failure::external("process reservation failed", error)
+                            .with_kind(FailureKind::Framework),
+                    );
                     return None;
                 }
                 self.processes[index].waiting = None;
@@ -200,10 +204,7 @@ impl NetworkSession {
                 }
                 return Some(true);
             } else if self.stranded_at_eos(index) {
-                self.fail_input(
-                    index,
-                    "stranded input: all writers closed and no legal reservation",
-                );
+                self.fail_input(index, InputFailureReason::Stranded);
                 return None;
             }
         }

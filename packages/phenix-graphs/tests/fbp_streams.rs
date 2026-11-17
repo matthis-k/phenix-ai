@@ -29,7 +29,7 @@ struct Counter {
     effects: Arc<AtomicUsize>,
 }
 impl Process for Counter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -158,7 +158,13 @@ fn deferred_job_supervision_invalidates_ticket_without_reclaiming_owned_process(
     assert_eq!(session.state(), SessionState::Waiting);
     assert_eq!(session.supervise_deferred(deadline), overdue);
     assert_eq!(session.state(), SessionState::Failed);
-    assert!(session.failure().unwrap().contains("deferred job timeout"));
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("deferred job timeout")
+    );
     assert!(session.overdue_jobs(deadline).is_empty());
     let (reason, _returned) = session.complete_job(job.run()).unwrap_err();
     assert_eq!(reason, HandoffError::StaleCompletion);
@@ -295,7 +301,7 @@ struct Split {
     phase: usize,
 }
 impl Process for Split {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 0 {
             self.pending = cx.take("in").map(|v| v.get()).transpose()?;
             if self.pending.is_none() {
@@ -321,7 +327,7 @@ impl Process for Split {
 }
 struct Join;
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let (Some(a), Some(b)) = (cx.take("a"), cx.take("b")) {
             assert_eq!(b.get::<i64>()?, a.get::<i64>()? * 2);
             Ok(Step::Complete)
@@ -402,7 +408,7 @@ struct Source {
     emitted: bool,
 }
 impl Process for Source {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             Ok(Step::Complete)
@@ -490,7 +496,7 @@ struct Waiter {
     lane: Arc<Mutex<Option<usize>>>,
 }
 impl Process for Waiter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         *self.lane.lock().unwrap() = cx.correlation_lane();
         match self.phase {
             0 => {
@@ -504,7 +510,9 @@ impl Process for Waiter {
                 } else if cx.is_closed("b") {
                     return Ok(Step::Finished);
                 } else {
-                    return Err("resumed without data or EOS".into());
+                    return Err(phenix_graph::Failure::application_message(
+                        "resumed without data or EOS",
+                    ));
                 }
             }
         }
@@ -806,7 +814,7 @@ struct Inspect {
     seen: Arc<AtomicUsize>,
 }
 impl Process for Inspect {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert_eq!(cx.inputs().count(), self.expected);
         self.seen.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)
@@ -910,7 +918,7 @@ struct BadEmission {
     value: Value,
 }
 impl Process for BadEmission {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Emit(ProcessEmission::new(
             self.output,
             self.value.clone(),
@@ -961,7 +969,7 @@ fn wrong_emitted_schema_fails_even_with_no_output_consumers() {
                 let report = s.run_until_idle(10);
                 assert_eq!(report.state, SessionState::Failed);
                 assert_eq!(report.publications, 0);
-                let failure = s.failure().unwrap();
+                let failure = s.failure().map(phenix_graph::Failure::summary).unwrap();
                 assert!(
                     failure.contains(&format!(
                         "invalid emission from process 0 (bad) output {output:?}"
@@ -982,7 +990,7 @@ fn wrong_emitted_schema_fails_even_with_no_output_consumers() {
 
 struct FairInput(Arc<std::sync::Mutex<Vec<String>>>);
 impl Process for FairInput {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let names: Vec<_> = cx.inputs().map(|(name, _)| name.to_owned()).collect();
         assert_eq!(names.len(), 1);
         self.0.lock().unwrap().extend(names);
@@ -1031,7 +1039,7 @@ impl Drop for DropPayload {
 }
 struct Hold;
 impl Process for Hold {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Yield)
     }
 }
@@ -1132,7 +1140,7 @@ struct CorrelatedJoin {
     emitted: bool,
 }
 impl Process for CorrelatedJoin {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -1323,7 +1331,7 @@ struct Duplicate {
     phase: usize,
 }
 impl Process for Duplicate {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 2 {
             self.phase = 0;
             return Ok(Step::Complete);
@@ -1497,7 +1505,7 @@ struct WakeSource {
     phase: usize,
 }
 impl Process for WakeSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 self.phase = 1;
@@ -1572,8 +1580,12 @@ fn request_source_wake_preserves_scope_and_activation_without_spinning() {
 
 struct ResourceUser;
 impl Process for ResourceUser {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        assert_eq!(*cx.resource::<i64>("value").map_err(|e| e.to_string())?, 7);
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        assert_eq!(
+            *cx.resource::<i64>("value")
+                .map_err(|e| phenix_graph::Failure::external("resource access failed", e))?,
+            7
+        );
         assert!(cx.resource::<Arc<AtomicUsize>>("value").is_err());
         assert!(cx.resource::<i64>("secret").is_err());
         Ok(Step::Finished)
@@ -1642,7 +1654,7 @@ impl Drop for NativeSource {
     }
 }
 impl Process for NativeSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             Ok(Step::Finished)
         } else {
@@ -1707,7 +1719,7 @@ impl Drop for EnteredGuard {
     }
 }
 impl phenix_graph::process::ProcessExecutionGuard for WorkerGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
         assert!(!IN_NATIVE_GUARD.get());
         IN_NATIVE_GUARD.set(true);
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -1716,7 +1728,7 @@ impl phenix_graph::process::ProcessExecutionGuard for WorkerGuard {
 }
 struct Guarded;
 impl Process for Guarded {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(IN_NATIVE_GUARD.get());
         Ok(Step::Finished)
     }
@@ -1823,6 +1835,7 @@ fn deferred_timeout_invalidates_late_completion_and_preserves_runner_ownership()
     assert!(
         session
             .request_failure(request)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
             .unwrap()
             .unwrap()
             .contains("deferred job timeout")
@@ -1925,7 +1938,7 @@ struct Staged {
     total: Arc<AtomicUsize>,
 }
 impl Process for Staged {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 cx.take("start").unwrap();
@@ -2074,6 +2087,7 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("invalid readiness selection for missing")
     );
@@ -2081,7 +2095,7 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
 
 struct OptionalSink(Arc<AtomicUsize>);
 impl Process for OptionalSink {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(value) = cx.take("required") {
             assert!(cx.is_closed("optional"));
             self.0
@@ -2146,7 +2160,7 @@ struct ClosureJoin {
     emitted: bool,
 }
 impl Process for ClosureJoin {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -2223,10 +2237,16 @@ fn closure_finished_and_complete_report_undelivered_input_without_capture_rollba
         );
         assert!(
             s.failure()
+                .map(phenix_graph::Failure::summary)
                 .unwrap()
                 .contains(if finish { "abandoned" } else { "stranded" })
         );
-        assert!(s.failure().unwrap().contains("a=1"));
+        assert!(
+            s.failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains("a=1")
+        );
         assert_eq!(
             s.take_output("out")
                 .unwrap()
@@ -2260,7 +2280,7 @@ fn open_join_and_correlated_fifo_head_blocking_are_not_stranded_eos() {
     assert_eq!(s.run_until_idle(20).state, SessionState::Waiting);
     s.close_input("b").unwrap();
     assert_eq!(s.run_until_idle(20).state, SessionState::Waiting);
-    assert!(s.failure().is_none());
+    assert!(s.failure().map(phenix_graph::Failure::summary).is_none());
     assert_eq!(s.disposed_packets(), 0);
     let mut blocked = correlated_join();
     let a = blocked.begin_request(None).unwrap();
@@ -2273,12 +2293,17 @@ fn open_join_and_correlated_fifo_head_blocking_are_not_stranded_eos() {
     blocked.close_input("a").unwrap();
     blocked.close_input("b").unwrap();
     assert_eq!(blocked.run_until_idle(20).state, SessionState::Waiting);
-    assert!(blocked.failure().is_none());
+    assert!(
+        blocked
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
 }
 
 struct ObserveClosure(Arc<AtomicUsize>);
 impl Process for ObserveClosure {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.is_closed("opt"));
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)
@@ -2352,7 +2377,13 @@ fn unconnected_output_requires_explicit_physical_discard_permission() {
     assert_eq!(report.state, SessionState::Failed);
     assert_eq!(report.publications, 0);
     assert_eq!(report.discarded_emissions, 0);
-    assert!(rejected.failure().unwrap().contains("source.out"));
+    assert!(
+        rejected
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("source.out")
+    );
     let mut opts = options();
     opts.discard_outputs.insert(("source".into(), "out".into()));
     let mut allowed = compiled.start_with_options(opts);
@@ -2373,7 +2404,7 @@ struct DelayedOptional {
     value: i64,
 }
 impl Process for DelayedOptional {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 self.value = cx.take("in").unwrap().get()?;
@@ -2397,7 +2428,7 @@ impl Process for DelayedOptional {
 type OptionalValues = (i64, Option<i64>);
 struct ScopedOptional(Arc<std::sync::Mutex<Vec<OptionalValues>>>);
 impl Process for ScopedOptional {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let required = cx.take("required").unwrap().get::<i64>()?;
         let optional = cx.take("optional").map(|v| v.get::<i64>()).transpose()?;
         if optional.is_none() {
@@ -2543,20 +2574,18 @@ struct CorrelatedPair {
     emitted: bool,
 }
 impl Process for CorrelatedPair {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
         }
-        let a = *context
-            .take("a")
-            .unwrap()
-            .borrow::<i64>()
-            .ok_or("wrong correlated a input type")?;
+        let a = *context.take("a").unwrap().borrow::<i64>().ok_or_else(|| {
+            phenix_graph::Failure::application_message("wrong correlated a input type")
+        })?;
         let b = match context.take("b") {
-            Some(value) => *value
-                .borrow::<i64>()
-                .ok_or("wrong correlated b input type")?,
+            Some(value) => *value.borrow::<i64>().ok_or_else(|| {
+                phenix_graph::Failure::application_message("wrong correlated b input type")
+            })?,
             None => {
                 assert!(context.is_request_closed("b"));
                 0
@@ -2656,7 +2685,7 @@ fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane()
             report.state,
             SessionState::Failed,
             "correlated request failed: {:?}",
-            session.failure()
+            session.failure().map(phenix_graph::Failure::summary)
         );
         if runnable_output.is_none() {
             runnable_output = session.take_request_output(runnable, "out").unwrap();
@@ -2682,7 +2711,7 @@ fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane()
             report.state,
             SessionState::Failed,
             "correlated request failed: {:?}",
-            session.failure()
+            session.failure().map(phenix_graph::Failure::summary)
         );
         if waiting_output.is_none() {
             waiting_output = session.take_request_output(waiting, "out").unwrap();
@@ -2724,6 +2753,7 @@ fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane()
     assert!(
         failed
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("insufficient correlation bound")
     );
@@ -2956,13 +2986,15 @@ fn bounded_request_lanes_round_robin_ready_requests_at_a_shared_process() {
 
     struct Record(Arc<std::sync::Mutex<Vec<(usize, i64)>>>);
     impl Process for Record {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let Some(value) = context.take("in") else {
                 return Ok(Step::Finished);
             };
             self.0.lock().unwrap().push((
                 context.correlation_lane().unwrap(),
-                *value.borrow::<i64>().ok_or("wrong input")?,
+                *value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?,
             ));
             Ok(Step::Complete)
         }
@@ -3018,7 +3050,7 @@ fn bounded_request_capture_lanes_isolate_different_consumer_speeds() {
 
     struct Echo(bool);
     impl Process for Echo {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.0 {
                 self.0 = false;
                 return Ok(Step::Complete);
@@ -3104,7 +3136,7 @@ fn bounded_request_lanes_route_internal_edges_without_crossing_payloads() {
         emitted: bool,
     }
     impl Process for Add {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -3115,7 +3147,12 @@ fn bounded_request_lanes_route_internal_edges_without_crossing_payloads() {
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "out",
-                Value::local(*value.borrow::<i64>().ok_or("wrong input")? + self.amount),
+                Value::local(
+                    *value
+                        .borrow::<i64>()
+                        .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?
+                        + self.amount,
+                ),
             )))
         }
     }
@@ -3217,6 +3254,7 @@ fn bounded_request_lanes_reject_packet_capacity_overflow_before_start() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("request lane packet capacity overflows")
     );
@@ -3323,8 +3361,13 @@ fn bounded_correlation_rejects_skew_beyond_declared_ingress_credit() {
     };
     assert!(matches!(
         error,
-        phenix_graph::network::NetworkError::InvalidProjection(message)
-            if message.contains("distinct-scope skew")
+        phenix_graph::network::NetworkError::CorrelationBounds(
+            phenix_graph::correlation::InvalidCorrelationBounds {
+                distinct_scope_skew: 2,
+                ingress_capacity: 1,
+                ..
+            }
+        )
     ));
 }
 
@@ -3355,14 +3398,14 @@ fn bounded_correlation_validates_builtin_readiness_before_wrapping_it() {
         );
         assert!(matches!(
             result,
-            Err(phenix_graph::network::NetworkError::InvalidProjection(_))
+            Err(phenix_graph::network::NetworkError::Readiness(_))
         ));
     }
 }
 
 struct Omit;
 impl Process for Omit {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         cx.take("in").unwrap();
         Ok(Step::Complete)
     }
@@ -3454,7 +3497,7 @@ struct ClosureRelay {
     log: Arc<std::sync::Mutex<Vec<&'static str>>>,
 }
 impl Process for ClosureRelay {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.is_request_closed("opt"));
         assert!(!cx.is_eos("opt"));
         self.log.lock().unwrap().push(self.name);
@@ -3554,7 +3597,7 @@ struct ScopedStage {
     log: Arc<std::sync::Mutex<Vec<Option<i64>>>>,
 }
 impl Process for ScopedStage {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 0 {
             cx.take("start").unwrap();
             self.phase = 1;
@@ -3741,7 +3784,7 @@ fn optional_scope_cannot_settle_behind_another_requests_handed_job() {
 
 struct ObserveOptionalData(Arc<std::sync::Mutex<Vec<Option<i64>>>>);
 impl Process for ObserveOptionalData {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let value = cx.take("opt").map(|v| v.get::<i64>()).transpose()?;
         self.0.lock().unwrap().push(value);
         Ok(Step::Complete)
@@ -4010,7 +4053,7 @@ struct FaultyCounter {
     emitted: bool,
 }
 impl Process for FaultyCounter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -4021,7 +4064,9 @@ impl Process for FaultyCounter {
             panic!("request process panicked after mutating state");
         }
         if value == -2 {
-            return Err("request process rejected input after mutation".into());
+            return Err(phenix_graph::Failure::application_message(
+                "request process rejected input after mutation",
+            ));
         }
         if value == -3 {
             return Ok(Step::Emit(ProcessEmission::new(
@@ -4113,6 +4158,7 @@ fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_i
             assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
             assert!(
                 s.request_failure(failed)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
                     .unwrap()
                     .unwrap()
                     .contains(match value {
@@ -4123,7 +4169,11 @@ fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_i
                     })
             );
             if value <= -3 {
-                let failure = s.request_failure(failed).unwrap().unwrap();
+                let failure = s
+                    .request_failure(failed)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap()
+                    .unwrap();
                 assert!(failure.contains("process 0 (faulty)"), "{failure}");
                 if value == -3 {
                     let expected = format!(
@@ -4268,7 +4318,13 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
     .unwrap();
     let failed = b.build().unwrap().compile().unwrap().start();
     assert_eq!(failed.state(), SessionState::Failed);
-    assert!(failed.failure().unwrap().contains("factory panicked"));
+    assert!(
+        failed
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("factory panicked")
+    );
     let spawns = Arc::new(AtomicUsize::new(0));
     let shared = spawns.clone();
     let mut b = NetworkBuilder::new();
@@ -4309,11 +4365,17 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
     s.inject_request(id, "input", Value::of(-1_i64)).unwrap();
     s.close_request(id).unwrap();
     assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
-    assert!(
-        s.failure()
+    let failure = s.failure().unwrap();
+    assert_eq!(failure.kind(), phenix_graph::FailureKind::Panic);
+    assert!(matches!(
+        std::error::Error::source(&failure.cleanup()[0])
             .unwrap()
-            .contains("factory panicked during request recovery")
-    );
+            .downcast_ref::<phenix_graph::process::CallbackPanicked>(),
+        Some(phenix_graph::process::CallbackPanicked {
+            phase: phenix_graph::CallbackPhase::RecoveryConstruct,
+            ..
+        })
+    ));
     s.release_request(id).unwrap();
 }
 
@@ -4321,7 +4383,7 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
 fn factory_readiness_and_correlation_panics_fail_initialization_cleanly() {
     struct Empty;
     impl Process for Empty {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(Step::Finished)
         }
     }
@@ -4356,7 +4418,13 @@ fn factory_readiness_and_correlation_panics_fail_initialization_cleanly() {
             .unwrap();
         let session = builder.build().unwrap().compile().unwrap().start();
         assert_eq!(session.state(), SessionState::Failed);
-        assert!(session.failure().unwrap().contains(expected));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(expected)
+        );
     }
 }
 
@@ -4364,7 +4432,7 @@ fn factory_readiness_and_correlation_panics_fail_initialization_cleanly() {
 fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
     struct DropOnFinish(Arc<std::sync::atomic::AtomicBool>);
     impl Process for DropOnFinish {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if context.is_eos("in") {
                 return Ok(Step::Complete);
             }
@@ -4402,6 +4470,7 @@ fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("owned destructor panicked while finishing")
     );
@@ -4688,7 +4757,7 @@ fn panicking_disposed_payloads_cannot_skip_request_wake_and_process_retirement()
     }
     struct CancelWaiter(bool);
     impl Process for CancelWaiter {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if context.take("trigger").is_some() {
                 self.0 = true;
                 return Ok(Step::WaitWake);
@@ -4702,7 +4771,7 @@ fn panicking_disposed_payloads_cannot_skip_request_wake_and_process_retirement()
     }
     struct PayloadSink;
     impl Process for PayloadSink {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             context.take("payload");
             Ok(Step::Complete)
         }
@@ -4856,16 +4925,23 @@ fn active_cancellation_defaults_to_fail_session_and_host_failure_can_opt_into_re
     let failed = s.begin_request(None).unwrap();
     s.inject_request(failed, "input", Value::of(99_i64))
         .unwrap();
-    s.fail_request(failed, "host validation failed").unwrap();
+    s.fail_request(
+        failed,
+        phenix_graph::Failure::application_message("host validation failed"),
+    )
+    .unwrap();
     assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
     assert_eq!(
-        s.request_failure(failed).unwrap(),
+        s.request_failure(failed)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
+            .unwrap(),
         Some("host validation failed")
     );
     assert_eq!(s.state(), SessionState::Quiescent);
     s.release_request(failed).unwrap();
     assert_eq!(
-        s.fail_request(failed, "again").unwrap_err(),
+        s.fail_request(failed, phenix_graph::Failure::application_message("again"))
+            .unwrap_err(),
         RequestError::Stale
     );
     let next = s.begin_request(Some("output")).unwrap();
@@ -4916,6 +4992,7 @@ fn tagged_dispatcher_panic_invalidates_owned_job_and_allows_followup_under_resta
     assert_eq!(s.request_status(id).unwrap(), RequestStatus::Failed);
     assert!(
         s.request_failure(id)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
             .unwrap()
             .unwrap()
             .contains("dispatcher panicked")
@@ -4999,11 +5076,17 @@ fn driver_retains_foreign_completion_or_rejected_job_without_panic_publication_o
         assert_eq!(report.steps, 1);
         assert_eq!(report.publications, 0);
         assert_eq!(own_effects.load(Ordering::SeqCst), 0);
-        assert!(session.failure().unwrap().contains(if completed {
-            "invalid completion"
-        } else {
-            "invalid rejected job"
-        }));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(if completed {
+                    "invalid completion"
+                } else {
+                    "invalid rejected job"
+                })
+        );
         assert!(session.take_output("output").unwrap().is_none());
         assert_eq!(session.run_until_idle(20).steps, 0);
         assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 1);
@@ -5024,7 +5107,7 @@ fn driver_retains_foreign_completion_or_rejected_job_without_panic_publication_o
                 assert_eq!(error, HandoffError::ForeignCompletion);
                 assert_eq!(job.ticket(), ticket);
                 assert_eq!(foreign_effects.load(Ordering::SeqCst), 0);
-                foreign.reject(job).unwrap();
+                foreign.reject(job).unwrap().unwrap();
                 let job = foreign.next_job().unwrap();
                 assert_eq!(job.ticket().activation(), ticket.activation());
                 foreign.complete(job.run()).unwrap().unwrap()
@@ -5069,7 +5152,12 @@ fn driver_accepts_ordinary_rejection_without_retaining_a_protocol_error() {
     session.inject("input", Value::of(3_i64)).unwrap();
     assert_eq!(session.run_until_idle(20).state, SessionState::Runnable);
     assert!(session.take_dispatch_return().is_none());
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert_eq!(effects.load(Ordering::SeqCst), 0);
     session.run_until_idle(20);
     assert_eq!(
@@ -5104,7 +5192,7 @@ struct RequiredStage {
     scoped: bool,
 }
 impl Process for RequiredStage {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if !self.phase {
             if cx.take("a").is_none() {
                 assert!(cx.is_eos("a"));
@@ -5131,7 +5219,7 @@ impl Process for RequiredStage {
 }
 struct RequiredBSource(u8);
 impl Process for RequiredBSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0 += 1;
         Ok(match self.0 {
             1 => Step::WaitWake,
@@ -5263,6 +5351,7 @@ fn staged_missing_required_groups_fail_request_without_successful_continuation()
         assert!(
             session
                 .request_failure(request)
+                .map(|failure| failure.map(phenix_graph::Failure::summary))
                 .unwrap()
                 .unwrap()
                 .contains("required")
@@ -5285,7 +5374,12 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     session.inject("b", Value::of(22_i64)).unwrap();
     session.run_until_idle(20);
     assert_eq!(resumed.load(Ordering::SeqCst), 1);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     session.close_input("a").unwrap();
     session.close_input("b").unwrap();
     assert_eq!(session.run_until_idle(20).state, SessionState::Completed);
@@ -5298,7 +5392,13 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     missing.close_input("b").unwrap();
     assert_eq!(missing.state(), SessionState::Failed);
     assert_eq!(resumed.load(Ordering::SeqCst), 0);
-    assert!(missing.failure().unwrap().contains("required input b"));
+    assert!(
+        missing
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("required input b")
+    );
 }
 
 #[test]

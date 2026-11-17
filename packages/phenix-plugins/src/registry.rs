@@ -1,7 +1,61 @@
 //! Graph-independent, typed in-process contribution staging.
 //! Identity is host-supplied provenance, never a permission or ABI guarantee.
 use crate::{Code, Failure, identifier};
-use std::{any::Any, collections::BTreeSet};
+use std::{
+    any::{Any, TypeId},
+    collections::BTreeSet,
+};
+
+/// Captured registry validation data, available through [`Failure`]'s source chain.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegistryFault {
+    InvalidOwner {
+        owner: String,
+    },
+    InvalidContribution {
+        owner: String,
+        kind: &'static str,
+        id: String,
+    },
+    OwnerMismatch {
+        expected: String,
+        actual: String,
+    },
+    DuplicateContribution {
+        owner: String,
+        kind: &'static str,
+        id: String,
+    },
+    InvalidPlugin {
+        plugin: String,
+    },
+    DuplicatePlugin {
+        plugin: String,
+    },
+    ConfigurationTypeMismatch {
+        plugin: String,
+        expected: TypeId,
+        actual: TypeId,
+    },
+    MissingContribution {
+        owner: String,
+        kind: &'static str,
+        id: String,
+    },
+    ContributionTypeMismatch {
+        owner: String,
+        kind: &'static str,
+        id: String,
+        expected: TypeId,
+        actual: TypeId,
+    },
+}
+impl std::fmt::Display for RegistryFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for RegistryFault {}
 
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
@@ -31,7 +85,11 @@ impl Registrar {
     pub fn new(owner: impl Into<String>) -> Result<Self, Failure> {
         let owner = owner.into();
         if !identifier(&owner) {
-            return Err(Failure::new(Code::DescriptorInvalid, "invalid owner"));
+            return Err(Failure::with_source(
+                Code::DescriptorInvalid,
+                "invalid owner",
+                Box::new(RegistryFault::InvalidOwner { owner }),
+            ));
         }
         Ok(Self {
             owner,
@@ -45,15 +103,25 @@ impl Registrar {
     pub fn add<C: Contribution>(&mut self, value: C) -> Result<(), Failure> {
         let id = value.id().to_owned();
         if !identifier(C::KIND) || !identifier(&id) {
-            return Err(Failure::new(
+            return Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "invalid contribution identity",
+                Box::new(RegistryFault::InvalidContribution {
+                    owner: self.owner.clone(),
+                    kind: C::KIND,
+                    id,
+                }),
             ));
         }
         if !self.names.insert((C::KIND, id.clone())) {
-            return Err(Failure::new(
+            return Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "duplicate contribution",
+                Box::new(RegistryFault::DuplicateContribution {
+                    owner: self.owner.clone(),
+                    kind: C::KIND,
+                    id,
+                }),
             ));
         }
         self.entries.push(Entry {
@@ -70,16 +138,34 @@ impl Registrar {
         let mut names = BTreeSet::new();
         for entry in &batch.entries {
             if entry.owner != self.owner || !identifier(entry.kind) || !identifier(&entry.id) {
-                return Err(Failure::new(
+                let fault = if entry.owner != self.owner {
+                    RegistryFault::OwnerMismatch {
+                        expected: self.owner.clone(),
+                        actual: entry.owner.clone(),
+                    }
+                } else {
+                    RegistryFault::InvalidContribution {
+                        owner: entry.owner.clone(),
+                        kind: entry.kind,
+                        id: entry.id.clone(),
+                    }
+                };
+                return Err(Failure::with_source(
                     Code::DescriptorInvalid,
                     "invalid bundle contribution identity or owner",
+                    Box::new(fault),
                 ));
             }
             let name = (entry.kind, entry.id.clone());
             if self.names.contains(&name) || !names.insert(name) {
-                return Err(Failure::new(
+                return Err(Failure::with_source(
                     Code::DescriptorInvalid,
                     "duplicate contribution",
+                    Box::new(RegistryFault::DuplicateContribution {
+                        owner: entry.owner.clone(),
+                        kind: entry.kind,
+                        id: entry.id.clone(),
+                    }),
                 ));
             }
         }
@@ -111,9 +197,14 @@ impl Contributions {
             .collect();
         for e in &batch.entries {
             if !names.insert((&e.owner, e.kind, &e.id)) {
-                return Err(Failure::new(
+                return Err(Failure::with_source(
                     Code::DescriptorInvalid,
                     "duplicate selected contribution",
+                    Box::new(RegistryFault::DuplicateContribution {
+                        owner: e.owner.clone(),
+                        kind: e.kind,
+                        id: e.id.clone(),
+                    }),
                 ));
             }
         }
@@ -131,6 +222,32 @@ impl Contributions {
         self.entries
             .iter()
             .position(|entry| entry.kind == C::KIND && entry.id == id && entry.value.is::<C>())
+    }
+    pub(crate) fn binding_index<C: Contribution>(
+        &self,
+        owner: &str,
+        id: &str,
+    ) -> Result<usize, RegistryFault> {
+        let (index, entry) = self
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.kind == C::KIND && entry.id == id)
+            .ok_or_else(|| RegistryFault::MissingContribution {
+                owner: owner.into(),
+                kind: C::KIND,
+                id: id.into(),
+            })?;
+        if !entry.value.is::<C>() {
+            return Err(RegistryFault::ContributionTypeMismatch {
+                owner: entry.owner.clone(),
+                kind: entry.kind,
+                id: entry.id.clone(),
+                expected: TypeId::of::<C>(),
+                actual: entry.value.as_ref().type_id(),
+            });
+        }
+        Ok(index)
     }
     pub(crate) fn get_index<C: Contribution>(&self, index: usize) -> Option<&C> {
         self.entries.get(index)?.value.downcast_ref::<C>()
@@ -161,6 +278,86 @@ mod tests {
         fn id(&self) -> &str {
             self.0
         }
+    }
+    #[test]
+    fn registry_fault_sources_retain_captured_identity_owner_and_actual_type() {
+        use std::error::Error as _;
+        let error = Registrar::new("bad/owner").err().unwrap();
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<RegistryFault>(),
+            Some(&RegistryFault::InvalidOwner {
+                owner: "bad/owner".into()
+            })
+        );
+        let mut registrar = Registrar::new("alpha").unwrap();
+        for id in ["", "invalid/id"] {
+            let error = registrar.add(Patch(id)).unwrap_err();
+            assert_eq!(
+                error.source().unwrap().downcast_ref::<RegistryFault>(),
+                Some(&RegistryFault::InvalidContribution {
+                    owner: "alpha".into(),
+                    kind: Patch::KIND,
+                    id: id.into()
+                })
+            );
+        }
+        registrar.add(Patch("main")).unwrap();
+        let error = registrar.add(Patch("main")).unwrap_err();
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<RegistryFault>(),
+            Some(&RegistryFault::DuplicateContribution {
+                owner: "alpha".into(),
+                kind: Patch::KIND,
+                id: "main".into()
+            })
+        );
+        let mut foreign = Registrar::new("zeta").unwrap();
+        foreign.add(Resource("offer")).unwrap();
+        let error = registrar.merge(foreign.finish()).unwrap_err();
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<RegistryFault>(),
+            Some(&RegistryFault::OwnerMismatch {
+                expected: "alpha".into(),
+                actual: "zeta".into()
+            })
+        );
+        struct OtherPatch;
+        impl Contribution for OtherPatch {
+            const KIND: &'static str = Patch::KIND;
+            fn id(&self) -> &str {
+                "main"
+            }
+        }
+        let contributions = registrar.finish();
+        assert_eq!(
+            contributions.binding_index::<OtherPatch>("alpha", "main"),
+            Err(RegistryFault::ContributionTypeMismatch {
+                owner: "alpha".into(),
+                kind: Patch::KIND,
+                id: "main".into(),
+                expected: TypeId::of::<OtherPatch>(),
+                actual: TypeId::of::<Patch>(),
+            })
+        );
+        assert_eq!(
+            contributions.binding_index::<Resource>("alpha", "main"),
+            Err(RegistryFault::MissingContribution {
+                owner: "alpha".into(),
+                kind: Resource::KIND,
+                id: "main".into()
+            })
+        );
+    }
+
+    #[test]
+    fn identity_limits_remain_byte_bounded_and_application_failures_remain_leaves() {
+        use std::error::Error as _;
+        assert!(Registrar::new("x".repeat(256)).is_ok());
+        let error = Registrar::new("x".repeat(257)).err().unwrap();
+        assert_eq!(error.code, Code::DescriptorInvalid);
+        assert!(error.source().unwrap().is::<RegistryFault>());
+        let error = Failure::new(Code::PluginFailed, "application lifecycle failure");
+        assert!(error.source().is_none());
     }
     #[test]
     fn multiple_kinds_use_one_graph_agnostic_collector() {

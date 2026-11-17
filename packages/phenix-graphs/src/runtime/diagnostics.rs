@@ -85,7 +85,7 @@ impl NetworkSession {
         result
     }
 
-    pub(super) fn fail_input(&mut self, index: usize, reason: &str) {
+    pub(super) fn fail_input(&mut self, index: usize, reason: InputFailureReason) {
         self.input_failure = self.processes[index]
             .inputs
             .iter()
@@ -106,23 +106,25 @@ impl NetworkSession {
             .inputs
             .iter()
             .map(|port| {
-                format!(
-                    "{}={}",
-                    port.name,
+                (
+                    port.name.clone(),
                     port.queues
                         .iter()
                         .map(|q| self.transport.queues()[*q].len())
-                        .sum::<usize>()
+                        .sum::<usize>(),
                 )
             })
             .collect();
         self.fail_process(
             index,
-            format!(
-                "{reason} at {}: {packets} accepted undelivered packets ({})",
-                self.compiled.processes()[index].path(),
-                ports.join(", ")
-            ),
+            RuntimeError::Input {
+                process: index,
+                path: self.compiled.processes()[index].path().into(),
+                reason,
+                packets,
+                ports,
+            }
+            .failure(),
         );
     }
     /// Strongly connected components of actual full-queue publication waits.

@@ -8,7 +8,7 @@ use super::{
 use crate::component::Body;
 use crate::contract::{Contract, catalog};
 use crate::interface::InterfacePhase;
-use crate::{CompileLimits, GraphOrigin};
+use crate::{CompileLimit, CompileLimits, GraphOrigin, LimitKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -60,12 +60,17 @@ impl Compiler {
         }
     }
     fn charge(&mut self, amount: usize, path: &str) -> Result<(), NetworkError> {
-        self.work = self
-            .work
-            .checked_add(u64::try_from(amount).unwrap_or(u64::MAX))
+        let attempted = u64::try_from(amount)
+            .ok()
+            .and_then(|amount| self.work.checked_add(amount));
+        self.work = attempted
             .filter(|work| *work <= self.limits.max_work)
             .ok_or_else(|| NetworkError::LimitExceeded {
-                limit: "max_work",
+                limit: CompileLimit {
+                    kind: LimitKind::Work,
+                    configured: self.limits.max_work,
+                    attempted,
+                },
                 path: path.into(),
             })?;
         Ok(())
@@ -212,16 +217,25 @@ impl Compiler {
             };
             if depth >= self.limits.max_depth {
                 return Err(NetworkError::LimitExceeded {
-                    limit: "max_depth",
+                    limit: CompileLimit {
+                        kind: LimitKind::Depth,
+                        configured: self.limits.max_depth as u64,
+                        attempted: u64::try_from(depth)
+                            .ok()
+                            .and_then(|depth| depth.checked_add(1)),
+                    },
                     path,
                 });
             }
-            self.instances = self
-                .instances
-                .checked_add(1)
+            let attempted = self.instances.checked_add(1);
+            self.instances = attempted
                 .filter(|count| *count <= self.limits.max_instances)
                 .ok_or_else(|| NetworkError::LimitExceeded {
-                    limit: "max_instances",
+                    limit: CompileLimit {
+                        kind: LimitKind::Instances,
+                        configured: self.limits.max_instances,
+                        attempted,
+                    },
                     path: path.clone(),
                 })?;
             self.charge(component.interface.inputs().len(), &path)?;
@@ -333,6 +347,80 @@ mod tests {
     use crate::network::NetworkBuilder;
 
     #[test]
+    fn work_limit_reports_exact_attempts_and_overflow_without_changing_the_counter() {
+        for (work, maximum, amount, attempted) in [
+            (3, 5, 3, Some(6)),
+            (u64::MAX - 1, u64::MAX - 1, 1, Some(u64::MAX)),
+            (u64::MAX, u64::MAX, 1, None),
+        ] {
+            let mut compiler = Compiler::new(CompileLimits {
+                max_work: maximum,
+                ..CompileLimits::default()
+            });
+            compiler.work = work;
+            assert_eq!(
+                compiler.charge(amount, "module/leaf"),
+                Err(NetworkError::LimitExceeded {
+                    limit: CompileLimit {
+                        kind: LimitKind::Work,
+                        configured: maximum,
+                        attempted
+                    },
+                    path: "module/leaf".into(),
+                })
+            );
+            assert_eq!(compiler.work, work);
+        }
+        let mut compiler = Compiler::new(CompileLimits {
+            max_work: u64::MAX,
+            ..CompileLimits::default()
+        });
+        compiler.work = u64::MAX - 1;
+        compiler.charge(1, "").unwrap();
+        assert_eq!(compiler.work, u64::MAX);
+    }
+
+    #[test]
+    fn instance_overflow_is_not_reported_as_an_exact_count() {
+        let mut builder = NetworkBuilder::new();
+        builder
+            .module("empty", NetworkBuilder::new().build().unwrap())
+            .unwrap();
+        let network = builder.build().unwrap();
+        let mut compiler = Compiler::new(CompileLimits {
+            max_instances: u64::MAX,
+            ..CompileLimits::default()
+        });
+        compiler.instances = u64::MAX;
+        assert!(
+            matches!(compiler.expand(&network, "", 0, None), Err(NetworkError::LimitExceeded {
+            limit: CompileLimit { kind: LimitKind::Instances, configured: u64::MAX, attempted: None }, path
+        }) if path == "empty")
+        );
+        assert_eq!(compiler.instances, u64::MAX);
+    }
+
+    #[test]
+    fn declaration_work_is_charged_before_validation() {
+        let mut network = NetworkBuilder::new().build().unwrap();
+        network.instances.insert(
+            "invalid/name".into(),
+            Arc::new(ComponentDef::composite(
+                NetworkBuilder::new().build().unwrap(),
+            )),
+        );
+        assert!(
+            matches!(network.compile_with_limits(CompileLimits { max_work: 0, ..CompileLimits::default() }), Err(NetworkError::LimitExceeded {
+            limit: CompileLimit { kind: LimitKind::Work, configured: 0, attempted: Some(1) }, path
+        }) if path.is_empty())
+        );
+        assert_eq!(
+            network.compile().unwrap_err(),
+            NetworkError::InvalidName("invalid/name".into())
+        );
+    }
+
+    #[test]
     fn active_ancestor_identity_is_rejected_as_recursive_not_as_a_data_cycle() {
         // Safe public construction cannot form strong Arc definition cycles.
         // Exercise the defensive ancestor check used during nested expansion.
@@ -348,13 +436,25 @@ mod tests {
 
     #[test]
     fn final_validation_fails_closed_on_unprojected_ports_and_invalid_claims() {
-        let mut network = NetworkBuilder::new().build().unwrap();
-        network.interface =
-            Arc::new(Interface::new([PortDef::local::<i64>("missing")], []).unwrap());
-        assert!(matches!(
-            network.compile(),
-            Err(NetworkError::InvalidProjection(_))
-        ));
+        for interface in [
+            Interface::new([PortDef::local::<i64>("missing")], []).unwrap(),
+            Interface::new([], [PortDef::local::<i64>("missing")]).unwrap(),
+        ] {
+            let mut network = NetworkBuilder::new().build().unwrap();
+            network.interface = Arc::new(interface);
+            assert_eq!(
+                network.compile().unwrap_err(),
+                NetworkError::IncompletePublicBoundary
+            );
+            let mut outer = NetworkBuilder::new().build().unwrap();
+            outer
+                .instances
+                .insert("nested".into(), Arc::new(ComponentDef::composite(network)));
+            assert_eq!(
+                outer.compile().unwrap_err(),
+                NetworkError::IncompletePublicBoundary
+            );
+        }
 
         let mut definition = ComponentDef::composite(NetworkBuilder::new().build().unwrap());
         definition.claims.push(

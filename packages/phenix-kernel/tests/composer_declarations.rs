@@ -338,8 +338,8 @@ fn reserved_kind_spoofs_collide_atomically_and_noncolliding_spoofs_fail_before_p
             .err()
             .expect("reserved kind must retain its concrete payload type");
         assert!(
-            matches!(error, ResolutionError::Invalid(ref message)
-            if message.contains("contribution type mismatch") && message.contains("spoof")),
+            matches!(error, ResolutionError::Invalid(ref error)
+            if matches!(error.as_ref(), phenix_kernel::ConfigurationError::ContributionType { key, .. } if key.owner == "plugin" && key.id == "spoof")),
             "{error}"
         );
         assert!(!prepared.load(Ordering::SeqCst));

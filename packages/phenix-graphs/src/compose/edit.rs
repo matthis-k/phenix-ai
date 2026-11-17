@@ -1,9 +1,9 @@
 //! Context-free edit payloads, footprints, and payload validation.
 
 use super::ComposeError;
-use crate::GraphOrigin;
 use crate::component::{Body, ComponentDef};
 use crate::network::{ConnectionDef, NetworkError, PortPath};
+use crate::{CompileLimit, GraphOrigin, LimitKind};
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -165,7 +165,21 @@ fn definition_origin(
     while let Some((definition, path, depth)) = pending.pop() {
         if remaining == 0 || depth >= limits.max_depth {
             return Err(NetworkError::LimitExceeded {
-                limit: "composition origin scan",
+                limit: if remaining == 0 {
+                    CompileLimit {
+                        kind: LimitKind::Instances,
+                        configured: limits.max_instances,
+                        attempted: limits.max_instances.checked_add(1),
+                    }
+                } else {
+                    CompileLimit {
+                        kind: LimitKind::Depth,
+                        configured: limits.max_depth as u64,
+                        attempted: u64::try_from(depth)
+                            .ok()
+                            .and_then(|depth| depth.checked_add(1)),
+                    }
+                },
                 path,
             }
             .into());
@@ -177,7 +191,13 @@ fn definition_origin(
         if let Body::Composite(child) = definition.body() {
             if child.instances().len() as u64 > remaining {
                 return Err(NetworkError::LimitExceeded {
-                    limit: "composition origin scan",
+                    limit: CompileLimit {
+                        kind: LimitKind::Instances,
+                        configured: limits.max_instances,
+                        attempted: u64::try_from(child.instances().len()).ok().and_then(
+                            |children| (limits.max_instances - remaining).checked_add(children),
+                        ),
+                    },
                     path,
                 }
                 .into());

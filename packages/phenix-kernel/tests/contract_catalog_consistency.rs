@@ -4,7 +4,7 @@ use phenix_graph::{
     component::ComponentDef,
     compose::{Edit, NetworkPatch},
     contract::Contract,
-    interface::InterfaceError,
+    interface::{InterfaceError, InterfaceReason},
     process::LocalProcessDispatcher,
 };
 use phenix_kernel::{
@@ -122,10 +122,11 @@ fn a_requirement_cannot_reinterpret_an_offer_advertising_another_contract() {
         cause.as_ref()
     ));
     assert!(source.source().is_none());
-    assert_eq!(
-        cause.message.as_ref(),
-        "different contract identity or definition"
-    );
+    assert!(matches!(
+        cause.reason.as_ref(),
+        InterfaceReason::DifferingContractDefinition { expected, actual }
+            if expected.id() == "example/y@1" && actual.id() == "example/x@1"
+    ));
     assert_eq!(
         error.to_string(),
         format!(

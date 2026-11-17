@@ -41,7 +41,7 @@ struct Source {
     emitted: bool,
 }
 impl Process for Source {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(!self.probe.events.lock().unwrap().contains(&"lease"));
         if self.emitted {
             return Ok(Step::Finished);

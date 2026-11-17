@@ -1,5 +1,51 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadinessError {
+    Threshold { required: usize, ports: usize },
+    InvalidOptional { port: String },
+    EmptyOptional,
+    RepeatedClosure { port: String },
+    RequiredClosed { port: String },
+    AnyExhausted,
+    ThresholdExhausted { required: usize },
+    UnknownPort { port: String },
+    InvalidSelection { port: String },
+    CustomExhausted,
+}
+impl std::fmt::Display for ReadinessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Threshold { .. } => f.write_str("readiness threshold exceeds input port count"),
+            Self::InvalidOptional { port } => write!(f, "invalid optional readiness port {port}"),
+            Self::EmptyOptional => f.write_str("empty optional readiness policy"),
+            Self::RepeatedClosure { port } => {
+                write!(f, "WaitInput requested already observed closure: {port}")
+            }
+            Self::RequiredClosed { port } => write!(
+                f,
+                "required input {port} closed before its staged reservation"
+            ),
+            Self::AnyExhausted => f.write_str("staged Any group exhausted without input"),
+            Self::ThresholdExhausted { required } => write!(
+                f,
+                "staged input group cannot supply {required} required inputs"
+            ),
+            Self::UnknownPort { port } => write!(f, "unknown readiness port {port}"),
+            Self::InvalidSelection { port } => write!(f, "invalid readiness selection for {port}"),
+            Self::CustomExhausted => {
+                f.write_str("staged custom required group exhausted without a legal selection")
+            }
+        }
+    }
+}
+impl std::error::Error for ReadinessError {}
+impl ReadinessError {
+    pub(crate) fn failure(self) -> Failure {
+        Failure::external(format!("{self}"), self).with_kind(FailureKind::Framework)
+    }
+}
+
 #[derive(Clone, Default)]
 pub enum Readiness {
     #[default]
@@ -79,21 +125,24 @@ pub(super) struct Reservation {
 pub(super) fn validate_policy_ports<'a>(
     ports: impl Iterator<Item = &'a str>,
     policy: &Readiness,
-) -> Result<(), String> {
+) -> Result<(), ReadinessError> {
     let names: BTreeSet<&str> = ports.collect();
     match policy {
         Readiness::AtLeast(n) if n.get() > names.len() => {
-            return Err("readiness threshold exceeds input port count".into());
+            return Err(ReadinessError::Threshold {
+                required: n.get(),
+                ports: names.len(),
+            });
         }
         Readiness::Optional { required, optional } => {
             let mut seen = BTreeSet::new();
             for name in required.iter().chain(optional) {
                 if !names.contains(name.as_str()) || !seen.insert(name) {
-                    return Err(format!("invalid optional readiness port {name}"));
+                    return Err(ReadinessError::InvalidOptional { port: name.clone() });
                 }
             }
             if seen.is_empty() {
-                return Err("empty optional readiness policy".into());
+                return Err(ReadinessError::EmptyOptional);
             }
         }
         _ => {}
@@ -102,11 +151,12 @@ pub(super) fn validate_policy_ports<'a>(
 }
 
 impl NetworkSession {
-    pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), String> {
+    pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), Failure> {
         validate_policy_ports(
             self.processes[index].inputs.iter().map(|p| p.name.as_str()),
             policy,
         )
+        .map_err(ReadinessError::failure)
     }
     pub(super) fn packet_for(
         &self,
@@ -151,7 +201,7 @@ impl NetworkSession {
         }
         None
     }
-    pub(super) fn exact_wait_selection(&self, index: usize) -> Result<Reservation, String> {
+    pub(super) fn exact_wait_selection(&self, index: usize) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
         if let Some(waiting) = &p.waiting {
             let port = p
@@ -162,9 +212,10 @@ impl NetworkSession {
             let queue = self.packet_for(index, port, p.request, false);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
-                return Err(format!(
-                    "WaitInput requested already observed closure: {waiting}"
-                ));
+                return Err(ReadinessError::RepeatedClosure {
+                    port: waiting.clone(),
+                }
+                .failure());
             }
             return Ok(Reservation {
                 ports: if queue.is_some() || closed {
@@ -265,7 +316,7 @@ impl NetworkSession {
         &self,
         index: usize,
         snapshot: &ReadinessSnapshot,
-    ) -> Option<String> {
+    ) -> Option<Failure> {
         let p = &self.processes[index];
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
         if p.handoff.state() == HandoffState::WaitingInput {
@@ -277,23 +328,22 @@ impl NetworkSession {
                     .is_some_and(|h| !h.available && h.closed)
             };
             let impossible = match policy {
-                Readiness::Optional { required, .. } => {
-                    required.iter().find(|name| missing(name)).map(|name| {
-                        format!("required input {name} closed before its staged reservation")
-                    })
-                }
+                Readiness::Optional { required, .. } => required
+                    .iter()
+                    .find(|name| missing(name))
+                    .map(|name| ReadinessError::RequiredClosed { port: name.clone() }.failure()),
                 Readiness::All | Readiness::CorrelatedAll => snapshot
                     .heads
                     .iter()
                     .find(|h| !h.available && h.closed)
                     .map(|h| {
-                        format!(
-                            "required input {} closed before its staged reservation",
-                            h.port
-                        )
+                        ReadinessError::RequiredClosed {
+                            port: h.port.clone(),
+                        }
+                        .failure()
                     }),
                 Readiness::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
-                    Some("staged Any group exhausted without input".into())
+                    Some(ReadinessError::AnyExhausted.failure())
                 }
                 Readiness::AtLeast(n)
                     if snapshot
@@ -303,10 +353,7 @@ impl NetworkSession {
                         .count()
                         < n.get() =>
                 {
-                    Some(format!(
-                        "staged input group cannot supply {} required inputs",
-                        n.get()
-                    ))
+                    Some(ReadinessError::ThresholdExhausted { required: n.get() }.failure())
                 }
                 _ => None,
             };
@@ -358,7 +405,7 @@ impl NetworkSession {
         index: usize,
         snapshot: &ReadinessSnapshot,
         names: Vec<String>,
-    ) -> Result<Reservation, String> {
+    ) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
         let request = snapshot.request;
         let correlated = matches!(
@@ -371,7 +418,7 @@ impl NetworkSession {
                 .inputs
                 .iter()
                 .position(|port| port.name == name)
-                .ok_or_else(|| format!("unknown readiness port {name}"))?;
+                .ok_or_else(|| ReadinessError::UnknownPort { port: name.clone() }.failure())?;
             let queue = self.packet_for(index, port, request, correlated);
             let closed = snapshot
                 .heads
@@ -379,7 +426,7 @@ impl NetworkSession {
                 .find(|head| head.port == name)
                 .is_some_and(|head| head.closed);
             if ports.iter().any(|(selected, _)| *selected == port) || (queue.is_none() && !closed) {
-                return Err(format!("invalid readiness selection for {name}"));
+                return Err(ReadinessError::InvalidSelection { port: name }.failure());
             }
             ports.push((port, queue));
         }
@@ -403,7 +450,7 @@ impl NetworkSession {
             .collect();
         Reservation { ports, request }
     }
-    pub(super) fn selection(&self, index: usize) -> Result<Reservation, String> {
+    pub(super) fn selection(&self, index: usize) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
         self.validate_policy(index, p.waiting_policy.as_ref().unwrap_or(&p.policy))?;
         if p.waiting.is_some() {
@@ -427,8 +474,7 @@ impl NetworkSession {
                         policy.select(&snapshot)
                     }))
                     .map_err(|payload| {
-                        crate::discard_panic_payload(payload);
-                        "readiness policy panicked".to_owned()
+                        crate::process::callback_panicked(CallbackPhase::Readiness, payload)
                     })?
                 }
             };
@@ -437,9 +483,7 @@ impl NetworkSession {
                     && matches!(policy, Readiness::Custom(_))
                     && snapshot.heads.iter().all(|h| h.available || h.closed)
                 {
-                    return Err(
-                        "staged custom required group exhausted without a legal selection".into(),
-                    );
+                    return Err(ReadinessError::CustomExhausted.failure());
                 }
                 continue;
             }
@@ -515,6 +559,6 @@ impl NetworkSession {
 pub(crate) fn validate_policy<'a>(
     policy: &Readiness,
     input_names: impl IntoIterator<Item = &'a str>,
-) -> Result<(), String> {
+) -> Result<(), ReadinessError> {
     validate_policy_ports(input_names.into_iter(), policy)
 }

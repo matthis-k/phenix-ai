@@ -16,7 +16,10 @@ impl Codec for Text {
         Ok(value.as_bytes().to_vec())
     }
     fn decode(&self, bytes: &[u8]) -> Result<String> {
-        String::from_utf8(bytes.to_vec()).map_err(|e| Error::Codec(e.to_string()))
+        String::from_utf8(bytes.to_vec()).map_err(|e| Error::CodecCause {
+            summary: "invalid codec bytes",
+            cause: Box::new(e),
+        })
     }
 }
 fn address() -> Address {

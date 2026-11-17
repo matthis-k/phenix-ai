@@ -14,7 +14,7 @@ use crate::process::{
     LocalProcessDispatcher, ProcessContext, ProcessDispatcher, ProcessExecutionGuard,
     ProcessHandoff, Step, StepTicket,
 };
-use crate::{GraphOrigin, ValidatedResourceSet, Value};
+use crate::{CallbackPhase, Failure, FailureKind, GraphOrigin, ValidatedResourceSet, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::Ordering};
@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 mod admission;
 mod closure;
 mod diagnostics;
+mod errors;
 mod execution;
 mod observation;
 mod readiness;
@@ -33,8 +34,9 @@ mod scheduling;
 #[allow(unexpected_cfgs)]
 mod wake;
 pub use diagnostics::*;
+pub use errors::{CleanupStage, InputFailureReason, RuntimeError};
 pub(crate) use readiness::validate_policy;
-pub use readiness::{InputHead, Readiness, ReadinessPolicy, ReadinessSnapshot};
+pub use readiness::{InputHead, Readiness, ReadinessError, ReadinessPolicy, ReadinessSnapshot};
 pub use request::{
     CaptureMetadata, InvalidClosurePortNames, RequestDisposal, RequestError, RequestId,
     RequestInjectionError, RequestStatus, RequestWork,
@@ -45,12 +47,7 @@ use wake::{WakeSignal, WakeSlot};
 pub(super) fn drop_packets_catching(packets: impl IntoIterator<Item = Packet>) -> bool {
     let mut panicked = false;
     for packet in packets {
-        if let Err(payload) =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(packet)))
-        {
-            panicked = true;
-            crate::discard_panic_payload(payload);
-        }
+        panicked |= packet.dispose_catching();
     }
     panicked
 }
@@ -84,8 +81,8 @@ pub enum RequestQueuePolicy {
 
 struct UnavailableProcess;
 impl crate::process::Process for UnavailableProcess {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
-        Err("process factory unavailable".into())
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, Failure> {
+        Err(RuntimeError::UnavailableProcess.failure())
     }
 }
 
@@ -305,7 +302,7 @@ pub struct NetworkSession {
     force_full_refresh: bool,
     observed_global_wake_epoch: u64,
     terminal: Option<SessionState>,
-    failure: Option<String>,
+    failure: Option<Failure>,
     publications: usize,
     disposed_packets: usize,
     discarded_emissions: usize,
@@ -333,7 +330,7 @@ pub struct NetworkSession {
 fn request_lane_packet_bound(
     compiled: &CompiledNetwork,
     options: &SessionOptions,
-) -> Result<usize, String> {
+) -> Result<usize, Failure> {
     let connections = compiled
         .connections()
         .iter()
@@ -357,7 +354,7 @@ fn request_lane_packet_bound(
         .and_then(|connections| ingress.and_then(|ingress| connections.checked_add(ingress)))
         .and_then(|capacity| captures.and_then(|captures| capacity.checked_add(captures)))
         .and_then(|capacity| capacity.checked_mul(options.max_requests.get()))
-        .ok_or_else(|| "bounded request lane packet capacity overflows usize".into())
+        .ok_or_else(|| RuntimeError::LaneCapacityOverflow.failure())
 }
 
 impl CompiledNetwork {
@@ -388,7 +385,7 @@ impl NetworkSession {
         // Reject static configuration before invoking any plugin-owned factory.
         // Readiness policy callbacks are never evaluated during this preflight.
         let mut initial_failure = invalid_path
-            .map(|path| format!("unknown process configuration: {path}"))
+            .map(|path| RuntimeError::UnknownConfiguration { path }.failure())
             .or_else(|| {
                 options
                     .discard_outputs
@@ -398,7 +395,13 @@ impl NetworkSession {
                             p.path() == path && p.interface().outputs().contains_key(output)
                         })
                     })
-                    .map(|(path, output)| format!("invalid discard output: {path}.{output}"))
+                    .map(|(path, output)| {
+                        RuntimeError::InvalidDiscard {
+                            path: path.clone(),
+                            output: output.clone(),
+                        }
+                        .failure()
+                    })
             })
             .or_else(|| {
                 compiled.processes().iter().find_map(|process| {
@@ -408,7 +411,14 @@ impl NetworkSession {
                             policy,
                         )
                         .err()
-                        .map(|error| format!("process {}: {error}", process.path()))
+                        .map(|error| {
+                            Failure::external(format!("process {}: {error}", process.path()), error)
+                                .with_kind(FailureKind::Framework)
+                                .with_context(crate::FailureContext {
+                                    path: Some(process.path().into()),
+                                    ..Default::default()
+                                })
+                        })
                     })
                 })
             })
@@ -425,19 +435,24 @@ impl NetworkSession {
                 process.factory().correlation_lanes()
             })) {
                 Ok(Some(lanes)) if options.max_requests > lanes => {
-                    initial_failure = Some(format!(
-                        "insufficient correlation bound: {} has {} lanes for {} inflight requests; head blocking is not supported beyond this bound",
-                        process.path(),
-                        lanes,
-                        options.max_requests
-                    ));
+                    initial_failure = Some(
+                        RuntimeError::CorrelationBound {
+                            path: process.path().into(),
+                            lanes: lanes.get(),
+                            requests: options.max_requests.get(),
+                        }
+                        .failure(),
+                    );
                 }
                 Err(payload) => {
-                    crate::discard_panic_payload(payload);
-                    initial_failure = Some(format!(
-                        "process factory correlation bound panicked: {}",
-                        process.path()
-                    ));
+                    initial_failure = Some(
+                        crate::process::callback_panicked(CallbackPhase::CorrelationBound, payload)
+                            .with_context(crate::FailureContext {
+                                path: Some(process.path().into()),
+                                phase: Some(CallbackPhase::CorrelationBound),
+                                ..Default::default()
+                            }),
+                    );
                 }
                 _ => {}
             }
@@ -456,9 +471,20 @@ impl NetworkSession {
                         })) {
                             Ok(process) => process,
                             Err(payload) => {
-                                crate::discard_panic_payload(payload);
-                                initial_failure =
-                                    Some(format!("process factory panicked: {}", p.path()));
+                                initial_failure = Some(
+                                    crate::process::callback_panicked(
+                                        CallbackPhase::Construct,
+                                        payload,
+                                    )
+                                    .with_context(
+                                        crate::FailureContext {
+                                            process: Some(index),
+                                            path: Some(p.path().into()),
+                                            phase: Some(CallbackPhase::Construct),
+                                            ..Default::default()
+                                        },
+                                    ),
+                                );
                                 Box::new(UnavailableProcess)
                             }
                         }
@@ -477,9 +503,19 @@ impl NetworkSession {
                     })) {
                         Ok(policy) => policy,
                         Err(payload) => {
-                            crate::discard_panic_payload(payload);
                             initial_failure.get_or_insert_with(|| {
-                                format!("process factory readiness panicked: {}", p.path())
+                                crate::process::callback_panicked(
+                                    CallbackPhase::FactoryReadiness,
+                                    payload,
+                                )
+                                .with_context(
+                                    crate::FailureContext {
+                                        process: Some(index),
+                                        path: Some(p.path().into()),
+                                        phase: Some(CallbackPhase::FactoryReadiness),
+                                        ..Default::default()
+                                    },
+                                )
                             });
                             Readiness::default()
                         }
@@ -491,7 +527,15 @@ impl NetworkSession {
                         &policy,
                     )
                 {
-                    initial_failure = Some(format!("process {}: {error}", p.path()));
+                    initial_failure = Some(
+                        Failure::external(format!("process {}: {error}", p.path()), error)
+                            .with_kind(FailureKind::Framework)
+                            .with_context(crate::FailureContext {
+                                process: Some(index),
+                                path: Some(p.path().into()),
+                                ..Default::default()
+                            }),
+                    );
                 }
                 RuntimeProcess {
                     handoff,
@@ -630,11 +674,19 @@ impl NetworkSession {
                 })) {
                     Ok(value) => process.notification_driven = value,
                     Err(payload) => {
-                        crate::discard_panic_payload(payload);
-                        initial_failure = Some(format!(
-                            "readiness notification contract panicked: {}",
-                            compiled.processes()[index].path()
-                        ));
+                        let failure = crate::process::callback_panicked(
+                            CallbackPhase::ReadinessRegistration,
+                            payload,
+                        )
+                        .with_context(crate::FailureContext {
+                            process: Some(index),
+                            path: Some(compiled.processes()[index].path().into()),
+                            phase: Some(CallbackPhase::ReadinessRegistration),
+                            ..Default::default()
+                        });
+                        if initial_failure.is_none() {
+                            initial_failure = Some(failure);
+                        }
                     }
                 }
             }
@@ -707,5 +759,12 @@ impl NetworkSession {
 impl Drop for NetworkSession {
     fn drop(&mut self) {
         self.signal.invalidate();
+        for guard in std::mem::take(&mut self.execution_guards).into_iter().rev() {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(guard)))
+            {
+                crate::discard_panic_payload(payload);
+            }
+        }
     }
 }

@@ -33,9 +33,12 @@ impl Codec for Format {
                 hook();
             }
         });
-        Ok(Number(u64::from_be_bytes(b.try_into().map_err(|_| {
-            phenix_storage::Error::Codec("length".into())
-        })?)))
+        Ok(Number(u64::from_be_bytes(b.try_into().map_err(
+            |cause| phenix_storage::Error::CodecCause {
+                summary: "number codec expected eight bytes",
+                cause: Box::new(cause),
+            },
+        )?)))
     }
 }
 fn addr(mount: &str, dataset: &str) -> Address {
@@ -50,6 +53,26 @@ fn request<'a>(address: &'a Address, key: &'a str, schema: &'a Schema) -> ReadRe
         key,
         schema,
     }
+}
+
+#[test]
+fn number_codec_retains_actual_slice_conversion_error() {
+    use std::error::Error as _;
+    let error = Format.decode(&[1, 2, 3]).unwrap_err();
+    assert!(matches!(
+        &error,
+        phenix_storage::Error::CodecCause {
+            summary: "number codec expected eight bytes",
+            ..
+        }
+    ));
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .is::<std::array::TryFromSliceError>()
+    );
+    assert_eq!(Format.decode(&42_u64.to_be_bytes()).unwrap(), Number(42));
 }
 
 #[test]

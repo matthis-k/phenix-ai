@@ -7,7 +7,7 @@
 
 use crate::runtime::RequestId;
 pub use crate::value::Leased;
-use crate::{GraphOrigin, TypeIdentity, Value};
+use crate::{CallbackPhase, Failure, FailureKind, GraphOrigin, TypeIdentity, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -51,6 +51,9 @@ impl Packet {
     }
     pub fn metadata(&self) -> Option<&crate::runtime::CaptureMetadata> {
         self.metadata.as_deref()
+    }
+    pub fn dispose_catching(self) -> bool {
+        self.value.dispose_catching()
     }
 }
 impl fmt::Debug for Packet {
@@ -250,19 +253,19 @@ impl std::error::Error for ConnectionError {}
 /// Pure synchronous value preparation, never external delivery. The transport
 /// retains packet provenance; an adapter cannot relabel the accepted producer.
 pub trait EdgeAdapter: Send + Sync {
-    fn prepare(&self, value: &Value) -> Result<Value, String>;
+    fn prepare(&self, value: &Value) -> Result<Value, Failure>;
 }
 impl<F> EdgeAdapter for F
 where
-    F: Fn(&Value) -> Result<Value, String> + Send + Sync,
+    F: Fn(&Value) -> Result<Value, Failure> + Send + Sync,
 {
-    fn prepare(&self, value: &Value) -> Result<Value, String> {
+    fn prepare(&self, value: &Value) -> Result<Value, Failure> {
         self(value)
     }
 }
 pub struct IdentityEdgeAdapter;
 impl EdgeAdapter for IdentityEdgeAdapter {
-    fn prepare(&self, value: &Value) -> Result<Value, String> {
+    fn prepare(&self, value: &Value) -> Result<Value, Failure> {
         Ok(value.clone())
     }
 }
@@ -371,38 +374,82 @@ impl ConnectionSet {
                 return Err(PrepareError::Connection(ConnectionError::WriterClosed));
             }
         }
-        let mut prepared = Vec::with_capacity(targets.len());
-        for target in targets {
-            let mut value = match &target.preparation {
-                Some(preparation) => {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        preparation.prepare(&packet.value)
-                    }));
-                    match result {
-                        Ok(result) => result.map_err(PrepareError::Adapter)?,
-                        Err(payload) => {
-                            crate::discard_panic_payload(payload);
-                            return Err(PrepareError::Adapter(
-                                "packet preparation panicked".into(),
-                            ));
+        let mut prepared: Vec<(usize, Packet)> = Vec::with_capacity(targets.len());
+        let preparation = (|| {
+            for target in targets {
+                let mut value = match &target.preparation {
+                    Some(preparation) => {
+                        // Pin the exact immutable callback definition, not the input
+                        // payload or a process instance. Its causes may escape alone.
+                        let owner: Arc<dyn Send + Sync> = Arc::new(preparation.clone());
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            preparation.prepare(&packet.value)
+                        }));
+                        let result = match result {
+                            Ok(result) => result,
+                            Err(payload) => Err(crate::process::callback_panicked(
+                                CallbackPhase::Adapter,
+                                payload,
+                            )),
+                        };
+                        let mut value = result.map_err(|failure| {
+                            PrepareError::Adapter(
+                                failure
+                                    .retain_leases(packet.value.known_leases())
+                                    .retain_leases(std::slice::from_ref(&owner)),
+                            )
+                        })?;
+                        // Local payloads can have adapter-defined destructors. Wire
+                        // envelopes contain only host-owned schema/bytes, not code.
+                        if value.is_local() {
+                            value = value.with_lease(owner);
                         }
+                        value
                     }
+                    None => packet.value.clone(),
+                };
+                // New adapter payloads may still depend on the source's code/resources.
+                value.retain_leases_from(&packet.value);
+                if value.identity() != self.queues[target.connection].identity {
+                    let error = PrepareError::Connection(ConnectionError::WrongType);
+                    let failures =
+                        value.dispose_with_cleanup(|| packet_cleanup(target, &packet.value));
+                    return Err(if !failures.is_empty() {
+                        PrepareError::Cleanup {
+                            primary: Box::new(error),
+                            failures,
+                        }
+                    } else {
+                        error
+                    });
                 }
-                None => packet.value.clone(),
-            };
-            // New adapter payloads may still depend on the source's code/resources.
-            value.retain_leases_from(&packet.value);
-            if value.identity() != self.queues[target.connection].identity {
-                return Err(PrepareError::Connection(ConnectionError::WrongType));
+                prepared.push((
+                    target.connection,
+                    Packet {
+                        value,
+                        origin: packet.origin.clone(),
+                        metadata: packet.metadata.clone(),
+                    },
+                ));
             }
-            prepared.push((
-                target.connection,
-                Packet {
-                    value,
-                    origin: packet.origin.clone(),
-                    metadata: packet.metadata.clone(),
-                },
-            ));
+            Ok(())
+        })();
+        if let Err(mut error) = preparation {
+            let mut failures = Vec::new();
+            for ((_, prepared_packet), target) in prepared.into_iter().zip(targets) {
+                failures.extend(
+                    prepared_packet
+                        .value
+                        .dispose_with_cleanup(|| packet_cleanup(target, &packet.value)),
+                );
+            }
+            if !failures.is_empty() {
+                error = PrepareError::Cleanup {
+                    primary: Box::new(error),
+                    failures,
+                };
+            }
+            return Err(error);
         }
         Ok(PreparedFanout {
             owner: self.identity.clone(),
@@ -454,10 +501,26 @@ impl ConnectionSet {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum PrepareError {
     Connection(ConnectionError),
-    Adapter(String),
+    Adapter(Failure),
+    Cleanup {
+        primary: Box<PrepareError>,
+        failures: Vec<Failure>,
+    },
+}
+impl PrepareError {
+    pub fn into_failure(self) -> Failure {
+        match self {
+            Self::Connection(error) => Failure::external("fanout connection rejected", error)
+                .with_kind(FailureKind::Framework),
+            Self::Adapter(failure) => failure,
+            Self::Cleanup { primary, failures } => failures
+                .into_iter()
+                .fold(primary.into_failure(), Failure::with_cleanup),
+        }
+    }
 }
 impl fmt::Display for PrepareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -468,8 +531,38 @@ impl std::error::Error for PrepareError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Connection(error) => Some(error),
-            Self::Adapter(_) => None,
+            Self::Adapter(error) => Some(error),
+            Self::Cleanup { primary, .. } => Some(primary.as_ref()),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacketDestructorPanicked {
+    pub connection: usize,
+}
+impl fmt::Display for PacketDestructorPanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "packet destructor panicked at connection {}",
+            self.connection
+        )
+    }
+}
+impl std::error::Error for PacketDestructorPanicked {}
+fn packet_cleanup(target: &FanoutTarget, input: &Value) -> Failure {
+    let failure = Failure::external(
+        "packet destructor panicked",
+        PacketDestructorPanicked {
+            connection: target.connection,
+        },
+    )
+    .with_kind(FailureKind::Cleanup)
+    .retain_leases(input.known_leases());
+    match &target.preparation {
+        Some(adapter) => failure.retain_leases(&[Arc::new(adapter.clone())]),
+        None => failure,
     }
 }
 

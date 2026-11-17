@@ -1,6 +1,8 @@
 //! Optional integration between host-owned storage mounts and the existing
 //! in-process plugin Registrar. No second loader, database engine or kernel API.
-use phenix_plugin::{Contribution, ContributionHandle, PluginSnapshot};
+use phenix_plugin::{
+    CallbackError, Contribution, ContributionHandle, PluginSnapshot, lease_callback_error,
+};
 use phenix_storage::{
     Address, Backend, Capability, Codec, Error as StorageError, Grant, Observation, Operation,
     Registry, Schema, Scope, SqlBackend, TypedKv,
@@ -11,7 +13,7 @@ use phenix_storage::{
 };
 use std::collections::BTreeMap;
 
-pub type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, String> + Send + Sync;
+pub type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, CallbackError> + Send + Sync;
 
 /// A plugin *offers* a backend factory. Only the trusted host can choose a
 /// physical mount name, location, configuration and storage authority.
@@ -23,7 +25,7 @@ pub struct BackendOffer {
 impl BackendOffer {
     pub fn new(
         id: impl Into<String>,
-        open: impl Fn() -> Result<Box<dyn Backend>, String> + Send + Sync + 'static,
+        open: impl Fn() -> Result<Box<dyn Backend>, CallbackError> + Send + Sync + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -58,7 +60,7 @@ pub enum Error {
     UnsupportedCapability,
     Scoped(scoped::Error),
     Io(std::io::Error),
-    Open(String),
+    Open(CallbackError),
     Storage(StorageError),
 }
 impl std::fmt::Display for Error {
@@ -71,6 +73,7 @@ impl std::error::Error for Error {
         match self {
             Self::Scoped(cause) => Some(cause),
             Self::Io(cause) => Some(cause),
+            Self::Open(cause) => Some(cause.as_ref()),
             Self::Storage(cause) => Some(cause),
             _ => None,
         }
@@ -113,6 +116,17 @@ impl Backend for LeasedBackend {
     }
 }
 
+fn open_backend(lease: &ContributionHandle<BackendOffer>) -> Result<Box<dyn Backend>, Error> {
+    (lease.open)().map_err(|cause| {
+        // The opener's captures need not include its provider. Retain the exact
+        // resolved revision, including its immutable offer, before the cause escapes.
+        Error::Open(lease_callback_error(
+            cause,
+            std::sync::Arc::new(lease.clone()),
+        ))
+    })
+}
+
 /// Install one selected backend offer in a trusted host's Registry. The
 /// provider's exact revision is pinned by the installed backend. No graph
 /// activation, storage grant, or code unload occurs as part of this operation.
@@ -126,7 +140,7 @@ pub fn mount_offer(
         .get::<BackendOffer>(offer_id)
         .ok_or(Error::MissingOffer)?;
     registry.mount_with(mount_name, || -> Result<Box<dyn Backend>, Error> {
-        let backend = (lease.open)().map_err(Error::Open)?;
+        let backend = open_backend(&lease)?;
         Ok(Box::new(LeasedBackend {
             backend,
             _lease: lease,
@@ -839,7 +853,7 @@ impl PreparedStorage {
                     }
                 }
                 PreparedBackend::Offer(lease) => {
-                    let mut backend = (lease.open)().map_err(Error::Open)?;
+                    let mut backend = open_backend(&lease)?;
                     // Probe the provider before mounting it or issuing sessions.
                     // Built-in memory/SQLite capabilities are fixed.
                     let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
@@ -935,6 +949,168 @@ mod tests {
     use super::*;
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use phenix_storage::{Address, Codec, Grant, MemoryBackend, Operation, Schema, Scope};
+
+    #[derive(Clone, Debug, Default)]
+    struct CauseEvents(std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>);
+    impl CauseEvents {
+        fn live(&self) {
+            let events = self.0.lock().unwrap();
+            for owner in ["definition", "provider", "code"] {
+                assert!(
+                    !events.contains(&owner),
+                    "premature {owner} drop: {events:?}"
+                );
+            }
+        }
+        fn push(&self, event: &'static str) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+    struct CauseOwner(CauseEvents, &'static str);
+    impl Drop for CauseOwner {
+        fn drop(&mut self) {
+            self.0.push(self.1);
+        }
+    }
+    struct CauseProvider(CauseOwner, bool);
+    impl PluginInstance for CauseProvider {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let definition = CauseOwner(self.0.0.clone(), "definition");
+            let panic = self.1;
+            registrar.add(
+                BackendOffer::new("broken", move || {
+                    definition.0.live();
+                    Err(Box::new(StorageProviderErrorSource {
+                        events: definition.0.clone(),
+                        _field: SourceField(definition.0.clone()),
+                        panic,
+                    }))
+                })
+                .with_features(BackendFeatures::MEMORY),
+            )
+        }
+    }
+    struct SourceField(CauseEvents);
+    impl Drop for SourceField {
+        fn drop(&mut self) {
+            self.0.live();
+            self.0.push("source-field");
+        }
+    }
+    struct StorageProviderErrorSource {
+        events: CauseEvents,
+        _field: SourceField,
+        panic: bool,
+    }
+    impl std::fmt::Debug for StorageProviderErrorSource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.events.live();
+            f.write_str("StorageProviderErrorSource")
+        }
+    }
+    impl std::fmt::Display for StorageProviderErrorSource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.events.live();
+            f.write_str("provider opener failed")
+        }
+    }
+    impl std::error::Error for StorageProviderErrorSource {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.events.live();
+            None
+        }
+    }
+    impl Drop for StorageProviderErrorSource {
+        fn drop(&mut self) {
+            self.events.live();
+            self.events.push("source");
+            if self.panic {
+                std::panic::panic_any(SourcePayload(self.events.clone()));
+            }
+        }
+    }
+    struct SourcePayload(CauseEvents);
+    impl Drop for SourcePayload {
+        fn drop(&mut self) {
+            self.0.live();
+            self.0.push("payload");
+        }
+    }
+
+    #[test]
+    fn opener_causes_pin_only_the_selected_definition_provider_and_code_through_cleanup() {
+        use std::error::Error as _;
+        for prepared in [false, true] {
+            for panic in [false, true] {
+                let events = CauseEvents::default();
+                let unrelated = CauseEvents::default();
+                let code = CauseOwner(events.clone(), "code");
+                let mut catalog = PluginCatalog::new();
+                let key = catalog
+                    .register("provider", move |panic| {
+                        code.0.live();
+                        Ok(CauseProvider(CauseOwner(code.0.clone(), "provider"), panic))
+                    })
+                    .unwrap();
+                let other = catalog
+                    .register("unrelated", |events: CauseEvents| {
+                        Ok(CauseProvider(CauseOwner(events, "provider"), false))
+                    })
+                    .unwrap();
+                let mut plugins = catalog.instance();
+                let snapshot = plugins.load(&key, panic).unwrap();
+                drop(plugins.load(&other, unrelated.clone()).unwrap());
+                let registry = Registry::new();
+                let error = if prepared {
+                    let requirements = requirements(vec![("client", request([Operation::Read]))]);
+                    let policy = policy(
+                        &requirements,
+                        BackendPlacement::Offer {
+                            snapshot: snapshot.clone(),
+                            id: "broken".into(),
+                        },
+                    );
+                    PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                        .unwrap()
+                        .activate()
+                        .err()
+                        .unwrap()
+                } else {
+                    let error = mount_offer(&registry, &snapshot, "broken", "main").unwrap_err();
+                    registry.mount_memory("main").unwrap();
+                    error
+                };
+                plugins.unload(&key).unwrap();
+                drop(snapshot);
+                drop(plugins);
+                drop(catalog);
+                drop(key);
+                drop(other);
+                assert!(unrelated.0.lock().unwrap().contains(&"provider"));
+                events.live();
+                assert!(matches!(error, Error::Open(_)));
+                let root = error
+                    .source()
+                    .unwrap()
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<StorageProviderErrorSource>()
+                    .unwrap();
+                assert_eq!(root.to_string(), "provider opener failed");
+                assert!(root.source().is_none());
+                assert!(format!("{error:?}").contains("StorageProviderErrorSource"));
+                assert!(
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(error))).is_ok()
+                );
+                let mut expected = vec!["source", "source-field"];
+                if panic {
+                    expected.push("payload");
+                }
+                expected.extend(["definition", "provider", "code"]);
+                assert_eq!(*events.0.lock().unwrap(), expected);
+            }
+        }
+    }
 
     struct Requests(ResourceRequest);
     impl PluginInstance for Requests {
@@ -2641,8 +2817,10 @@ mod tests {
             Ok(value.as_bytes().to_vec())
         }
         fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<String> {
-            String::from_utf8(bytes.to_vec())
-                .map_err(|error| StorageError::Codec(error.to_string()))
+            String::from_utf8(bytes.to_vec()).map_err(|error| StorageError::CodecCause {
+                summary: "invalid codec bytes",
+                cause: Box::new(error),
+            })
         }
     }
 

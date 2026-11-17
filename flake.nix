@@ -107,9 +107,10 @@
         name: packages: flags:
         mkRust {
           inherit name packages;
-          command = "cargo test --locked --offline ${
-            lib.concatMapStringsSep " " (p: "-p ${p}") packages
-          } ${flags}";
+          command = ''
+            cargo test --locked --offline ${lib.concatMapStringsSep " " (p: "-p ${p}") packages} ${flags}
+            cargo test --locked --offline ${lib.concatMapStringsSep " " (p: "-p ${p}") packages} --doc
+          '';
         };
       allPackages = map (path: manifests.${path}.package.name) members;
       integrationPackages = lib.filter (
@@ -173,7 +174,7 @@
           ];
           command = ''
             cargo test --locked --offline -p phenix-graph -p phenix-plugin --all-targets
-            cargo test --locked --offline -p phenix-graph --doc
+            cargo test --locked --offline -p phenix-graph -p phenix-plugin -p phenix_port_args_derive --doc
           '';
         };
         kernel = test "kernel" [ "phenix-kernel" ] "--all-targets";
@@ -185,6 +186,7 @@
             cargo test --locked --offline ${
               lib.concatMapStringsSep " " (p: "-p ${p}") allPackages
             } --no-default-features --lib --tests
+            cargo test --locked --offline --workspace --no-default-features --doc
             # Workspace dependents can re-enable graph's default features.
             cargo test --locked --offline -p phenix-graph --no-default-features --lib --tests
             cargo test --locked --offline -p phenix-graph --no-default-features --doc

@@ -27,7 +27,7 @@ use std::{
     time::Duration,
 };
 
-type Attempts = Arc<Mutex<Vec<(ThreadId, Result<(), String>)>>>;
+type Attempts = Arc<Mutex<Vec<(ThreadId, Result<(), phenix_kernel::SessionAccessError>)>>>;
 
 #[derive(Clone, Default)]
 struct Probe {
@@ -66,7 +66,7 @@ struct Guard {
     reenter_on_drop: bool,
 }
 impl ProcessExecutionGuard for Guard {
-    fn enter(&self) -> Result<Box<dyn Any>, String> {
+    fn enter(&self) -> Result<Box<dyn Any>, phenix_graph::Failure> {
         self.probe
             .entries
             .lock()
@@ -112,7 +112,7 @@ struct Worker {
     mode: Mode,
 }
 impl Process for Worker {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.mode {
             Mode::Process => self.probe.attempt(),
             Mode::GuardDrop => (),
@@ -187,7 +187,12 @@ fn check_worker_reentry(mode: Mode) {
     let report = kernel.run_steps(1).unwrap();
     assert_eq!(report.steps, 1);
     let failure = kernel
-        .with_session(|session| session.failure().map(str::to_owned))
+        .with_session(|session| {
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .map(str::to_owned)
+        })
         .unwrap();
     if matches!(mode, Mode::PanicPayloadDrop) {
         assert_eq!(report.state, SessionState::Failed);
@@ -207,8 +212,8 @@ fn check_worker_reentry(mode: Mode) {
     let (worker, result) = &attempts[0];
     assert_ne!(*worker, driver);
     assert_eq!(
-        result.as_ref().map_err(String::as_str),
-        Err("reentrant access to the same kernel session")
+        result.as_ref().map_err(|error| *error),
+        Err(phenix_kernel::SessionAccessError::Reentrant)
     );
     assert_eq!(
         *probe.entries.lock().unwrap(),

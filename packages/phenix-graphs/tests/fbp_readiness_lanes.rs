@@ -43,7 +43,7 @@ struct StagedLane {
 }
 
 impl Process for StagedLane {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert_eq!(cx.correlation_lane(), self.lane);
         match self.steps.fetch_add(1, Ordering::Relaxed) {
             0 => {

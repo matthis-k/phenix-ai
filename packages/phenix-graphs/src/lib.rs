@@ -16,6 +16,7 @@ pub mod compose;
 pub mod connection;
 pub mod contract;
 pub mod correlation;
+mod failure;
 pub mod interface;
 mod limits;
 pub mod network;
@@ -29,23 +30,25 @@ mod value;
 
 pub use component::{Body, ComponentDef};
 pub use compose::{
-    ComposeError, Composer, Composition, Edit, Footprint, NetworkPatch, Registration,
+    ComposeError, Composer, Composition, Edit, Footprint, InvalidEditReason, NetworkPatch,
+    Registration,
 };
 pub use connection::{EdgeAdapter, IdentityEdgeAdapter};
 pub use contract::Contract;
+pub use failure::{CallbackPhase, Failure, FailureContext, FailureKind, WrongFailureValue};
 pub use interface::{Interface, InterfaceError, InterfacePhase, PortDef};
-pub use limits::{CompileLimits, MAX_IDENTIFIER_BYTES};
+pub use limits::{CompileLimit, CompileLimits, LimitKind, MAX_IDENTIFIER_BYTES};
 pub use network::{
     CompiledNetwork, ComponentRef, InputEndpoint, InputRef, NetworkBuilder, NetworkDef,
     NetworkError, OutputEndpoint, OutputRef, PortPath,
 };
 pub use phenix_schema::Schema;
-pub use port_keys::{InputGroup, InputKey, InputRecord, OutputKey};
+pub use port_keys::{InputError, InputGroup, InputKey, InputRecord, OutputKey};
 pub use process::{Process, ProcessContext, ProcessEmission, ProcessFactory, Step};
 pub use provenance::GraphOrigin;
 pub use resource::{ResourceError, ResourceGrant, ValidatedResourceSet};
 pub use runtime::{NetworkSession, SessionOptions};
-pub use value::{ContractValue, Leased, TypeIdentity, Value};
+pub use value::{CodecError, ContractValue, Leased, TypeIdentity, Value, ValueError};
 
 #[cfg(feature = "derive")]
 pub use phenix_port_args_derive::{ContractValue, Ports};

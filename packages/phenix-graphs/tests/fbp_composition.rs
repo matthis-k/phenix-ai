@@ -1,5 +1,6 @@
 use phenix_graph::compose::{
-    ComposeError, Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration,
+    ComposeError, Composer, ConnectionKey, Edit, Footprint, InvalidEditReason, NetworkPatch,
+    Registration,
 };
 use phenix_graph::contract::Contract;
 use phenix_graph::network::{ConnectionDef, NetworkBuilder, NetworkDef, PortPath};
@@ -10,7 +11,7 @@ use std::sync::Arc;
 
 struct Idle;
 impl Process for Idle {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -95,6 +96,298 @@ fn contract() -> Contract {
 }
 fn claimed() -> Arc<ComponentDef> {
     Arc::new((*primitive()).clone().claim(&contract()).unwrap())
+}
+
+#[test]
+fn invalid_edits_report_owned_reasons_and_leave_registry_and_compiled_scope_unchanged() {
+    use InvalidEditReason::*;
+    use std::error::Error;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let definition = Arc::new(
+        ComponentDef::primitive(
+            primitive().interface().clone(),
+            Arc::new(move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Idle
+            }),
+        )
+        .claim(&contract())
+        .unwrap(),
+    );
+    let observed = calls.clone();
+    let source = Arc::new(ComponentDef::primitive(
+        Arc::new(Interface::new([], [PortDef::local::<i64>("out")]).unwrap()),
+        Arc::new(move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Idle
+        }),
+    ));
+    let mut builder = NetworkBuilder::new();
+    let a = builder.add("a", definition.clone()).unwrap();
+    let b = builder.add("b", definition.clone()).unwrap();
+    let s = builder.add("source", source).unwrap();
+    builder
+        .connect(
+            a.output::<i64>("out").unwrap(),
+            b.input::<i64>("in").unwrap(),
+            cap(),
+        )
+        .unwrap();
+    builder
+        .expose_input("request", a.input::<i64>("in").unwrap(), cap())
+        .unwrap();
+    builder
+        .expose_output("result", b.output::<i64>("out").unwrap())
+        .unwrap();
+    builder.start(&s).unwrap();
+    let base = builder.build().unwrap();
+
+    for (edit, reason) in [
+        (
+            Edit::Add {
+                path: "a".into(),
+                definition: definition.clone(),
+            },
+            DuplicateComponent { path: "a".into() },
+        ),
+        (
+            Edit::Replace {
+                path: "missing".into(),
+                definition: definition.clone(),
+            },
+            MissingReplacement {
+                path: "missing".into(),
+            },
+        ),
+        (
+            Edit::Connect(edge("a", "b")),
+            DuplicateConnection {
+                connection: key("a", "b"),
+            },
+        ),
+        (
+            Edit::Disconnect(key("b", "a")),
+            MissingDisconnection {
+                connection: key("b", "a"),
+            },
+        ),
+        (
+            Edit::ExposeInput {
+                name: "request".into(),
+                targets: vec![],
+                capacity: cap(),
+            },
+            DuplicateInputExport {
+                name: "request".into(),
+            },
+        ),
+        (
+            Edit::ExposeInput {
+                name: "new".into(),
+                targets: vec![],
+                capacity: cap(),
+            },
+            EmptyInputProjection { name: "new".into() },
+        ),
+        (
+            Edit::ExposeInput {
+                name: "new".into(),
+                targets: vec![port("missing", "in")],
+                capacity: cap(),
+            },
+            MissingInputComponent {
+                name: "new".into(),
+                target: port("missing", "in"),
+            },
+        ),
+        (
+            Edit::ExposeInput {
+                name: "new".into(),
+                targets: vec![port("a", "absent")],
+                capacity: cap(),
+            },
+            MissingInputPort {
+                name: "new".into(),
+                target: port("a", "absent"),
+            },
+        ),
+        (
+            Edit::ExposeOutput {
+                name: "result".into(),
+                from: port("missing", "out"),
+            },
+            DuplicateOutputExport {
+                name: "result".into(),
+            },
+        ),
+        (
+            Edit::ExposeOutput {
+                name: "new".into(),
+                from: port("missing", "out"),
+            },
+            MissingOutputComponent {
+                name: "new".into(),
+                target: port("missing", "out"),
+            },
+        ),
+        (
+            Edit::ExposeOutput {
+                name: "new".into(),
+                from: port("a", "absent"),
+            },
+            MissingOutputPort {
+                name: "new".into(),
+                target: port("a", "absent"),
+            },
+        ),
+        (
+            Edit::AddSource("source".into()),
+            DuplicateSource {
+                path: "source".into(),
+            },
+        ),
+        (
+            Edit::Splice {
+                anchor: key("b", "a"),
+                input: port("scratch", "in"),
+                output: port("scratch", "out"),
+            },
+            MissingSpliceConnection {
+                anchor: key("b", "a"),
+                connection: key("b", "a"),
+            },
+        ),
+        (
+            Edit::Replace {
+                path: "missing/child".into(),
+                definition: definition.clone(),
+            },
+            UnknownComposite {
+                path: "missing".into(),
+            },
+        ),
+    ] {
+        let mut composer = Composer::new(base.clone()).unwrap();
+        composer.register([reg("keeper", &[], 0, vec![])]).unwrap();
+        let published = composer.current().clone();
+        let output = published
+            .compiled()
+            .bind("a", &contract())
+            .unwrap()
+            .output::<i64>("out")
+            .unwrap();
+        let patch = NetworkPatch::new([
+            Edit::Add {
+                path: "scratch".into(),
+                definition: definition.clone(),
+            },
+            edit,
+        ]);
+        let mut grants = patch.footprints();
+        grants.insert(Footprint::Connection(ConnectionKey::new(
+            port("b", "out"),
+            port("scratch", "in"),
+        )));
+        let error = composer
+            .register([Registration::new(
+                "bad",
+                ["keeper".into()],
+                0,
+                GraphOrigin::default(),
+                grants,
+                patch,
+            )])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ComposeError::InvalidEdit {
+                registration: "bad".into(),
+                reason: Box::new(reason)
+            }
+        );
+        assert!(error.source().is_none());
+        assert!(error.to_string().contains("bad"));
+        let failure = phenix_graph::Failure::external("composition replay rejected", error.clone());
+        let source = failure
+            .source()
+            .unwrap()
+            .downcast_ref::<ComposeError>()
+            .unwrap();
+        assert_eq!(source, &error);
+        assert!(source.source().is_none());
+        assert_eq!(composer.current().active(), published.active());
+        assert_eq!(composer.current().footprints(), published.footprints());
+        assert_eq!(
+            composer.current().network().connections(),
+            published.network().connections()
+        );
+        assert_eq!(
+            composer.current().network().input_projections(),
+            published.network().input_projections()
+        );
+        assert_eq!(
+            composer.current().network().output_projections(),
+            published.network().output_projections()
+        );
+        assert_eq!(
+            composer.current().network().source_starts(),
+            published.network().source_starts()
+        );
+        assert!(
+            !composer
+                .current()
+                .network()
+                .instances()
+                .contains_key("scratch")
+        );
+        for (path, before) in published.network().instances() {
+            assert_eq!(
+                composer.current().network().instances()[path].definition_key(),
+                before.definition_key()
+            );
+        }
+        assert_eq!(
+            output.resolve(composer.current().compiled()).unwrap(),
+            (0, "out")
+        );
+        assert_eq!(
+            composer
+                .register([reg("keeper", &[], 0, vec![])])
+                .unwrap_err(),
+            ComposeError::DuplicateRegistration("keeper".into())
+        );
+        assert!(composer.revoke("bad").unwrap().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn invalid_edit_does_not_retain_the_rejected_factory() {
+    let definition = primitive();
+    let weak = Arc::downgrade(&definition);
+    let mut composer = Composer::new(base()).unwrap();
+    let error = composer
+        .register([reg(
+            "bad",
+            &[],
+            0,
+            vec![Edit::Add {
+                path: "a".into(),
+                definition,
+            }],
+        )])
+        .unwrap_err();
+    assert!(weak.upgrade().is_none());
+    assert_eq!(
+        error,
+        ComposeError::InvalidEdit {
+            registration: "bad".into(),
+            reason: Box::new(InvalidEditReason::DuplicateComponent { path: "a".into() })
+        }
+    );
 }
 
 #[test]
@@ -656,6 +949,53 @@ fn splice_chains_keep_original_anchor_capacity_and_dependency_order() {
         composer.current().network().connections(),
         &[edge("a", "b")]
     );
+}
+
+#[test]
+fn missing_dependent_splice_reports_both_original_anchor_and_resolved_connection() {
+    let mut composer = Composer::new(base()).unwrap();
+    composer.register([splice("x", &[], "a")]).unwrap();
+    let published = composer.current().clone();
+    let patch = NetworkPatch::new([
+        add("z"),
+        Edit::Disconnect(key("x", "b")),
+        Edit::Splice {
+            anchor: key("a", "b"),
+            input: port("z", "in"),
+            output: port("z", "out"),
+        },
+    ]);
+    let mut grants = patch.footprints();
+    grants.insert(Footprint::Connection(key("x", "z")));
+    assert_eq!(
+        composer
+            .register([Registration::new(
+                "bad",
+                ["x".into()],
+                0,
+                GraphOrigin::default(),
+                grants,
+                patch
+            )])
+            .unwrap_err(),
+        ComposeError::InvalidEdit {
+            registration: "bad".into(),
+            reason: Box::new(InvalidEditReason::MissingSpliceConnection {
+                anchor: key("a", "b"),
+                connection: key("x", "b")
+            }),
+        }
+    );
+    assert_eq!(composer.current().active(), published.active());
+    assert_eq!(
+        composer.current().compiled().connections(),
+        published.compiled().connections()
+    );
+    assert_eq!(
+        composer.current().network().connections(),
+        published.network().connections()
+    );
+    assert!(composer.revoke("bad").unwrap().is_empty());
 }
 
 #[test]

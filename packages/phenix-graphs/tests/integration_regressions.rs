@@ -8,7 +8,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 struct Relay;
 impl Process for Relay {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match context.take("in") {
             Some(value) => Ok(Step::Emit(ProcessEmission::new(
                 "out",
@@ -124,7 +124,7 @@ fn malformed_wire_payload_fails_without_poisoning_an_independent_session() {
 fn option_and_result_remain_data() {
     struct Pass;
     impl Process for Pass {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(match context.take("in") {
                 Some(value) => Step::Emit(ProcessEmission::new("out", value)),
                 None => Step::Complete,
@@ -190,7 +190,7 @@ fn option_and_result_remain_data() {
 fn network_schema_metadata_and_captures_release_after_unload() {
     struct Echo;
     impl Process for Echo {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(match context.take("in") {
                 Some(value) => Step::Emit(ProcessEmission::new("out", value)),
                 None => Step::Complete,
@@ -268,7 +268,7 @@ fn generated_dags_and_contributor_orders_match_an_independent_reference() {
         bias: i64,
     }
     impl Process for Sum {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let names: Vec<_> = context.inputs().map(|(name, _)| name.to_owned()).collect();
             if names.is_empty() {
                 return Ok(Step::Complete);
@@ -601,7 +601,7 @@ fn typed_connections_and_required_schema_are_compile_checked() {
         ),
         (
             "schema",
-            "struct Nominal; impl ContractValue for Nominal { fn encode(&self)->Vec<u8>{vec![]} fn decode(_: &[u8])->Result<Self,String>{Ok(Self)} }",
+            "struct Nominal; impl ContractValue for Nominal { fn encode(&self)->Vec<u8>{vec![]} fn decode(_: &[u8])->Result<Self,phenix_graph::Failure>{Ok(Self)} }",
             false,
         ),
     ] {
@@ -633,7 +633,11 @@ fn typed_connections_and_required_schema_are_compile_checked() {
         }
         if name == "schema" {
             assert!(
-                stderr.contains("missing") && stderr.contains("schema"),
+                stderr.contains("E0046")
+                    && stderr.contains("missing: `schema`")
+                    && stderr.matches("error[").count() == 1
+                    && !stderr.contains("E0053")
+                    && !stderr.contains("E0277"),
                 "{stderr}"
             );
         }

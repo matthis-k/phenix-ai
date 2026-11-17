@@ -47,9 +47,10 @@ impl Codec for Format {
     }
 
     fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<Counter> {
-        let bytes = bytes
-            .try_into()
-            .map_err(|_| Error::Codec("expected i64".into()))?;
+        let bytes = bytes.try_into().map_err(|cause| Error::CodecCause {
+            summary: "expected i64",
+            cause: Box::new(cause),
+        })?;
         Ok(Counter(i64::from_le_bytes(bytes)))
     }
 }
@@ -181,12 +182,22 @@ struct CountingProcess {
     log: Log,
 }
 impl Process for CountingProcess {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let Some(value) = context.take("run") else {
             return Ok(Step::Finished);
         };
-        self.private += value.borrow::<i64>().ok_or("expected i64")?;
-        let found = self.cell.optional().get().map_err(|e| e.to_string())?;
+        self.private += value.borrow::<i64>().ok_or_else(|| {
+            phenix_graph::ValueError::LocalType {
+                expected: "i64",
+                actual: value.identity(),
+            }
+            .failure()
+        })?;
+        let found = self
+            .cell
+            .optional()
+            .get()
+            .map_err(|e| phenix_graph::Failure::external("counter read failed", e))?;
         let before = found.as_ref().map_or(0, |v| v.value.0);
         let after = before + self.private;
         self.kv
@@ -195,7 +206,7 @@ impl Process for CountingProcess {
                 found.as_ref().map(|v| &v.revision),
                 &Counter(after),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| phenix_graph::Failure::external("counter exchange failed", e))?;
         self.log.lock().unwrap().push(Event::Write {
             version: self.version,
             private: self.private,
@@ -293,7 +304,7 @@ fn fire(generation: &Generation) {
     generation.inject("increment", Value::local(1_i64)).unwrap();
     generation.run_steps(32).unwrap();
     generation
-        .with_session(|s| assert_eq!(s.failure(), None))
+        .with_session(|s| assert_eq!(s.failure().map(phenix_graph::Failure::summary), None))
         .unwrap();
 }
 

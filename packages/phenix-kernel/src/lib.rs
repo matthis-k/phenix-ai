@@ -1,6 +1,8 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
+mod config_error;
 mod exclusive;
 pub mod host;
+pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 
 use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
@@ -301,7 +303,7 @@ impl CandidateArtifacts {
         factory: impl Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync + 'static,
     ) -> Result<(), CallbackError> {
         if self.activate.is_some() {
-            return Err("candidate activation already registered".into());
+            return Err(CandidateError::ActivationAlreadyRegistered.into());
         }
         self.activate = Some(Box::new(factory));
         Ok(())
@@ -311,7 +313,7 @@ impl CandidateArtifacts {
     /// Bundle multiple values in a struct; retrieve it through Kernel::export.
     pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), CallbackError> {
         if self.export.is_some() {
-            return Err("candidate export already registered".into());
+            return Err(CandidateError::ExportAlreadyRegistered.into());
         }
         self.export = Some(Box::new(value));
         Ok(())
@@ -325,7 +327,7 @@ impl CandidateContext<'_> {
         self.imports
             .get(id)
             .cloned()
-            .ok_or_else(|| format!("undeclared import: {id}").into())
+            .ok_or_else(|| CandidateError::UndeclaredImport { id: id.into() }.into())
     }
 
     /// Project only a declared import using the graph's authoritative contract
@@ -334,7 +336,7 @@ impl CandidateContext<'_> {
         let imported = self
             .imports
             .get(id)
-            .ok_or_else(|| format!("undeclared import: {id}"))?;
+            .ok_or_else(|| CandidateError::UndeclaredImport { id: id.into() })?;
         imported.bind(self.compiled).map_err(Into::into)
     }
 
@@ -344,7 +346,7 @@ impl CandidateContext<'_> {
         if self.can_inspect_network {
             Ok(self.compiled)
         } else {
-            Err("full compiled network inspection not granted".into())
+            Err(CandidateError::InspectionNotGranted.into())
         }
     }
 }
@@ -572,8 +574,10 @@ impl std::fmt::Display for IneligibleReason {
 
 #[derive(Debug)]
 pub enum ResolutionError {
+    Session(phenix_graph::Failure),
+    CompositionSetup(Box<phenix_graph::ComposeError>),
     DuplicateOwner(String),
-    Invalid(String),
+    Invalid(Box<ConfigurationError>),
     ConflictingDefinition {
         definition: Key,
         contract: String,
@@ -588,6 +592,7 @@ pub enum ResolutionError {
     MissingUnit {
         offer: Key,
         unit: String,
+        cause: Box<NetworkError>,
     },
     WrongOrigin {
         offer: Key,
@@ -618,8 +623,10 @@ pub enum ResolutionError {
 impl std::fmt::Display for ResolutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Session(failure) => write!(f, "native session startup: {failure}"),
             Self::DuplicateOwner(owner) => write!(f, "duplicate snapshot owner: {owner}"),
-            Self::Invalid(message) => f.write_str(message),
+            Self::Invalid(error) => error.fmt(f),
+            Self::CompositionSetup(error) => error.fmt(f),
             Self::ConflictingDefinition {
                 definition,
                 contract,
@@ -632,7 +639,7 @@ impl std::fmt::Display for ResolutionError {
                 cause,
             } => write!(f, "composition of {contribution:?}: {cause}"),
             Self::Compilation { cause } => cause.fmt(f),
-            Self::MissingUnit { offer, unit } => {
+            Self::MissingUnit { offer, unit, .. } => {
                 write!(f, "compiled unit not found for offer {offer:?}: {unit}")
             }
             Self::WrongOrigin {
@@ -674,8 +681,12 @@ impl std::fmt::Display for ResolutionError {
 impl std::error::Error for ResolutionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Session(failure) => Some(failure),
+            Self::CompositionSetup(error) => Some(error.as_ref()),
+            Self::Invalid(error) => Some(error.as_ref()),
             Self::Compilation { cause } => Some(cause),
             Self::Interface { cause, .. } => Some(cause.as_ref()),
+            Self::MissingUnit { cause, .. } => Some(cause.as_ref()),
             Self::Composition { cause, .. } => Some(cause.as_ref()),
             Self::Ineligible {
                 reason: IneligibleReason::IncompatibleContract(cause),
@@ -686,9 +697,9 @@ impl std::error::Error for ResolutionError {
     }
 }
 
-impl From<String> for ResolutionError {
-    fn from(message: String) -> Self {
-        Self::Invalid(message)
+impl From<ConfigurationError> for ResolutionError {
+    fn from(error: ConfigurationError) -> Self {
+        Self::Invalid(Box::new(error))
     }
 }
 
@@ -734,7 +745,24 @@ impl std::error::Error for ProducerError {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionAccessError {
+    NotStarted,
+    Reentrant,
+    Busy,
+}
+impl std::fmt::Display for SessionAccessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotStarted => "kernel not started",
+            Self::Reentrant => "reentrant access to the same kernel session",
+            Self::Busy => "kernel session busy",
+        })
+    }
+}
+impl std::error::Error for SessionAccessError {}
+
+#[derive(Debug)]
 pub enum DriverError {
     NotStarted,
     ReentrantSession,
@@ -749,13 +777,15 @@ pub enum DriverError {
     },
     WakeRegistrationPanicked {
         producer: Key,
+        cause: phenix_graph::Failure,
     },
     EventCallbackPanicked {
         producer: Key,
+        cause: phenix_graph::Failure,
     },
     SessionStopped {
         state: SessionState,
-        cause: Option<String>,
+        cause: Option<phenix_graph::Failure>,
     },
 }
 
@@ -776,10 +806,10 @@ impl std::fmt::Display for DriverError {
                 f,
                 "producer does not support wake notifications: {producer:?}"
             ),
-            Self::WakeRegistrationPanicked { producer } => {
+            Self::WakeRegistrationPanicked { producer, .. } => {
                 write!(f, "producer wake registration panicked: {producer:?}")
             }
-            Self::EventCallbackPanicked { producer } => {
+            Self::EventCallbackPanicked { producer, .. } => {
                 write!(f, "event callback panicked for producer: {producer:?}")
             }
             Self::SessionStopped { state, cause } => {
@@ -789,7 +819,18 @@ impl std::fmt::Display for DriverError {
     }
 }
 
-impl std::error::Error for DriverError {}
+impl std::error::Error for DriverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SessionStopped {
+                cause: Some(cause), ..
+            } => Some(cause),
+            Self::WakeRegistrationPanicked { cause, .. }
+            | Self::EventCallbackPanicked { cause, .. } => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum StartError {
@@ -932,37 +973,9 @@ struct KernelExecutionGuard {
 }
 
 impl ProcessExecutionGuard for KernelExecutionGuard {
-    fn enter(&self) -> Result<Box<dyn Any>, String> {
+    fn enter(&self) -> Result<Box<dyn Any>, phenix_graph::Failure> {
         Ok(Box::new(ActiveSessionCall::inherit(self.identity)))
     }
-}
-
-fn discard_panic_payload(payload: Box<dyn Any + Send>) {
-    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(payload))) {
-        // A hostile panic payload can itself panic from Drop. Never let that bypass
-        // producer reconciliation or trigger a double panic while containing it.
-        std::mem::forget(payload);
-    }
-}
-
-fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
-    } else {
-        "non-string panic payload".into()
-    }
-}
-
-fn contained_panic_message(context: &str, payload: Box<dyn Any + Send>) -> String {
-    let message = format!("{context}: {}", panic_message(payload.as_ref()));
-    discard_panic_payload(payload);
-    message
-}
-
-fn poll_panic_error(payload: Box<dyn Any + Send>) -> CallbackError {
-    contained_panic_message("producer poll panicked", payload).into()
 }
 
 pub struct Kernel {
@@ -1028,9 +1041,11 @@ impl Kernel {
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
             if snapshot.name().len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                return Err(ResolutionError::Invalid(
-                    "plugin owner identifier exceeds size limit".into(),
-                ));
+                return Err(ConfigurationError::OwnerIdentifier {
+                    length: snapshot.name().len(),
+                    limit: phenix_graph::MAX_IDENTIFIER_BYTES,
+                }
+                .into());
             }
             if !owners.insert(snapshot.name()) {
                 return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
@@ -1043,19 +1058,28 @@ impl Kernel {
         for snapshot in &snapshots {
             for (_, kind, id) in snapshot.keys() {
                 if id.len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                    return Err(ResolutionError::Invalid(
-                        "plugin contribution identifier exceeds size limit".into(),
-                    ));
+                    return Err(ConfigurationError::ContributionIdentifier {
+                        owner: snapshot.name().into(),
+                        length: id.len(),
+                        limit: phenix_graph::MAX_IDENTIFIER_BYTES,
+                    }
+                    .into());
                 }
                 let key = Key::new(snapshot.name(), id);
                 macro_rules! collect {
                     ($ty:ty, $map:ident) => {
                         if kind == <$ty as phenix_plugin::Contribution>::KIND {
-                            let handle = snapshot
-                                .get::<$ty>(id)
-                                .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
+                            let handle = snapshot.get::<$ty>(id).ok_or_else(|| {
+                                ConfigurationError::ContributionType {
+                                    key: key.clone(),
+                                    expected: <$ty as phenix_plugin::Contribution>::KIND,
+                                }
+                            })?;
                             if $map.insert(key.clone(), handle).is_some() {
-                                return Err(format!("duplicate contribution: {key:?}").into());
+                                return Err(ConfigurationError::DuplicateContribution {
+                                    key: key.clone(),
+                                }
+                                .into());
                             }
                             continue;
                         }
@@ -1067,11 +1091,16 @@ impl Kernel {
                 if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
                     continue;
                 }
-                let handle = snapshot
-                    .get::<RegisteredContribution>(id)
-                    .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
+                let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
+                    ConfigurationError::ContributionType {
+                        key: key.clone(),
+                        expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
+                    }
+                })?;
                 if pending.insert(key.clone(), handle).is_some() {
-                    return Err(format!("duplicate contribution: {key:?}").into());
+                    return Err(
+                        ConfigurationError::DuplicateContribution { key: key.clone() }.into(),
+                    );
                 }
             }
         }
@@ -1089,10 +1118,11 @@ impl Kernel {
         }
         for (key, offer) in &offers {
             if !definitions.contains_key(&offer.contract) {
-                return Err(format!(
-                    "missing contract definition for offer {key:?}: {:?}",
-                    offer.contract
-                )
+                return Err(ConfigurationError::MissingDefinition {
+                    key: key.clone(),
+                    contract: offer.contract.clone(),
+                    role: DefinitionRole::Offer,
+                }
                 .into());
             }
             if offer.producer.owner != key.owner || !pending.contains_key(&offer.producer) {
@@ -1122,29 +1152,34 @@ impl Kernel {
             .chain(policy.deny.iter().map(|(r, o)| (r, o)))
         {
             if !requirements.contains_key(requirement) {
-                return Err(
-                    format!("host policy names unknown requirement: {requirement:?}").into(),
-                );
+                return Err(ConfigurationError::UnknownRequirement {
+                    requirement: requirement.clone(),
+                }
+                .into());
             }
             if !offers.contains_key(offer) {
-                return Err(format!("host policy names unknown offer: {offer:?}").into());
+                return Err(ConfigurationError::UnknownOffer {
+                    offer: offer.clone(),
+                }
+                .into());
             }
         }
         for (key, requirement) in &requirements {
             if !definitions.contains_key(&requirement.contract) {
-                return Err(format!(
-                    "missing contract definition for requirement {key:?}: {:?}",
-                    requirement.contract
-                )
+                return Err(ConfigurationError::MissingDefinition {
+                    key: key.clone(),
+                    contract: requirement.contract.clone(),
+                    role: DefinitionRole::Requirement,
+                }
                 .into());
             }
             if requirement.consumer.owner != key.owner
                 || !pending.contains_key(&requirement.consumer)
             {
-                return Err(format!(
-                    "requirement {key:?}: invalid consumer ownership: {:?}",
-                    requirement.consumer
-                )
+                return Err(ConfigurationError::InvalidConsumer {
+                    requirement: key.clone(),
+                    consumer: requirement.consumer.clone(),
+                }
                 .into());
             }
             let requested = &definitions[&requirement.contract].contract;
@@ -1220,10 +1255,18 @@ impl Kernel {
             let mut dependencies = BTreeSet::new();
             for dependency in &contribution.requires {
                 if !dependencies.insert(dependency) {
-                    return Err(format!("duplicate dependency for {key:?}: {dependency:?}").into());
+                    return Err(ConfigurationError::DuplicateDependency {
+                        contribution: key.clone(),
+                        dependency: dependency.clone(),
+                    }
+                    .into());
                 }
                 if !pending.contains_key(dependency) {
-                    return Err(format!("missing dependency for {key:?}: {dependency:?}").into());
+                    return Err(ConfigurationError::MissingDependency {
+                        contribution: key.clone(),
+                        dependency: dependency.clone(),
+                    }
+                    .into());
                 }
             }
         }
@@ -1250,8 +1293,8 @@ impl Kernel {
         let base = NetworkBuilder::new()
             .build()
             .map_err(|cause| ResolutionError::Compilation { cause })?;
-        let mut composer =
-            Composer::new(base).map_err(|cause| ResolutionError::Invalid(cause.to_string()))?;
+        let mut composer = Composer::new(base)
+            .map_err(|cause| ResolutionError::CompositionSetup(Box::new(cause)))?;
         composer.set_selection_limits(options.selection_limits);
         let registration_ids: BTreeMap<_, _> = keys
             .iter()
@@ -1308,7 +1351,12 @@ impl Kernel {
                     })
                 }))
                 .unwrap_or_else(|payload| {
-                    Err(contained_panic_message("plugin preparation panicked", payload).into())
+                    Err(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::Prepare,
+                        payload,
+                    )
+                    .with_lease(preparation_lease.clone())
+                    .into())
                 })
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
@@ -1373,12 +1421,14 @@ impl Kernel {
             })?;
         for (key, offer) in &offers {
             let contract = &definitions[&offer.contract].contract;
-            let unit = compiled
-                .inspect(&offer.unit)
-                .map_err(|_| ResolutionError::MissingUnit {
-                    offer: key.clone(),
-                    unit: offer.unit.clone(),
-                })?;
+            let unit =
+                compiled
+                    .inspect(&offer.unit)
+                    .map_err(|cause| ResolutionError::MissingUnit {
+                        offer: key.clone(),
+                        unit: offer.unit.clone(),
+                        cause: Box::new(cause),
+                    })?;
             if unit.origin.as_ref() != Some(&origins[&offer.producer]) {
                 return Err(ResolutionError::WrongOrigin {
                     offer: key.clone(),
@@ -1397,15 +1447,26 @@ impl Kernel {
         let mut routes = BTreeMap::new();
         for (key, contribution) in keys.iter().zip(&leases) {
             if artifacts[key].activate.is_none() && !contribution.routes.is_empty() {
-                return Err(format!("routes declared without producer: {key:?}").into());
+                return Err(ConfigurationError::RoutesWithoutProducer {
+                    contribution: key.clone(),
+                }
+                .into());
             }
             let mut selected = BTreeSet::new();
             for name in &contribution.routes {
                 if !compiled.inputs().contains_key(name) {
-                    return Err(format!("unknown producer route for {key:?}: {name:?}").into());
+                    return Err(ConfigurationError::UnknownRoute {
+                        contribution: key.clone(),
+                        route: name.clone(),
+                    }
+                    .into());
                 }
                 if !selected.insert(name.clone()) {
-                    return Err(format!("duplicate producer route for {key:?}: {name:?}").into());
+                    return Err(ConfigurationError::DuplicateRoute {
+                        contribution: key.clone(),
+                        route: name.clone(),
+                    }
+                    .into());
                 }
             }
             routes.insert(key.clone(), selected);
@@ -1423,7 +1484,7 @@ impl Kernel {
         );
         let session = compiled.start_with_options(options.execution);
         if let Some(failure) = session.failure() {
-            return Err(ResolutionError::Invalid(failure.into()));
+            return Err(ResolutionError::Session(failure.clone()));
         }
         Ok(Self {
             session: ExclusiveSlot::new(session),
@@ -1464,7 +1525,10 @@ impl Kernel {
                         }
                         Err(payload) => {
                             let cause =
-                                contained_panic_message("producer activation panicked", payload);
+                                self.lease_failure(phenix_graph::process::callback_panicked(
+                                    phenix_graph::CallbackPhase::ProducerActivate,
+                                    payload,
+                                ));
                             return Err(StartError::Activation {
                                 contribution: key.clone(),
                                 cause: lease_callback_error(cause.into(), self.code_lease.clone()),
@@ -1485,6 +1549,13 @@ impl Kernel {
     /// Immutable declaration inspection never admits work or exposes process state.
     pub fn compiled(&self) -> &CompiledNetwork {
         &self.compiled
+    }
+
+    /// Retain the same execution code ownership used by jobs and native packets,
+    /// including on independently escapable cleanup failures. Call before cloning
+    /// any handle that will escape this Kernel; earlier clones are not enriched.
+    pub fn lease_failure(&self, failure: phenix_graph::Failure) -> phenix_graph::Failure {
+        failure.with_lease(self.code_lease.clone())
     }
 
     /// Retrieve this candidate's composed export, never a shared snapshot slot.
@@ -1511,15 +1582,13 @@ impl Kernel {
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
-    ) -> Result<R, String> {
+    ) -> Result<R, SessionAccessError> {
         if !self.started {
-            return Err("kernel not started".into());
+            return Err(SessionAccessError::NotStarted);
         }
         let _active = ActiveSessionCall::enter(self.session_identity)
-            .map_err(|()| "reentrant access to the same kernel session".to_owned())?;
-        let mut session = self
-            .lease_session()
-            .ok_or_else(|| "kernel session busy".to_owned())?;
+            .map_err(|()| SessionAccessError::Reentrant)?;
+        let mut session = self.lease_session().ok_or(SessionAccessError::Busy)?;
         session.notify_on_drop();
         let result = use_session(&mut session);
         Ok(result)
@@ -1570,15 +1639,13 @@ impl Kernel {
 
     /// Drive a session budget with no kernel mutex held across dispatcher/process
     /// callbacks. Same-thread re-entry through this Kernel fails fast.
-    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, SessionAccessError> {
         if !self.started {
-            return Err("kernel not started".into());
+            return Err(SessionAccessError::NotStarted);
         }
         let _active = ActiveSessionCall::enter(self.session_identity)
-            .map_err(|()| "reentrant access to the same kernel session".to_owned())?;
-        let mut session = self
-            .lease_session()
-            .ok_or_else(|| "kernel session busy".to_owned())?;
+            .map_err(|()| SessionAccessError::Reentrant)?;
+        let mut session = self.lease_session().ok_or(SessionAccessError::Busy)?;
         Ok(session.run_until_idle(budget))
     }
 
@@ -1670,7 +1737,12 @@ impl Kernel {
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| producer.poll()))
                     {
                         Ok(result) => result,
-                        Err(payload) => Err(poll_panic_error(payload)),
+                        Err(payload) => Err(self
+                            .lease_failure(phenix_graph::process::callback_panicked(
+                                phenix_graph::CallbackPhase::ProducerPoll,
+                                payload,
+                            ))
+                            .into()),
                     }
                 }
             };
@@ -1810,9 +1882,14 @@ impl Kernel {
                     break;
                 }
                 Err(payload) => {
-                    discard_panic_payload(payload);
-                    registration_error =
-                        Some(DriverError::WakeRegistrationPanicked { producer: key });
+                    let cause = self.lease_failure(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::WakeRegistration,
+                        payload,
+                    ));
+                    registration_error = Some(DriverError::WakeRegistrationPanicked {
+                        producer: key,
+                        cause,
+                    });
                     break;
                 }
             }
@@ -1865,7 +1942,7 @@ impl Kernel {
                 session.wake_listener(),
                 session.notifier(),
                 session.state(),
-                session.failure().map(str::to_owned),
+                session.failure().cloned(),
             )
         };
         if initial_state == SessionState::Completed {
@@ -1915,8 +1992,11 @@ impl Kernel {
                     if let Err(payload) =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
                     {
-                        discard_panic_payload(payload);
-                        return Err(DriverError::EventCallbackPanicked { producer });
+                        let cause = self.lease_failure(phenix_graph::process::callback_panicked(
+                            phenix_graph::CallbackPhase::Event,
+                            payload,
+                        ));
+                        return Err(DriverError::EventCallbackPanicked { producer, cause });
                     }
                 }
             }
@@ -1925,7 +2005,7 @@ impl Kernel {
                     .map_err(|()| DriverError::ReentrantSession)?;
                 let mut session = self.try_lease_session().ok_or(DriverError::SessionBusy)?;
                 let report = session.run_until_idle(64);
-                (report, session.failure().map(str::to_owned))
+                (report, session.failure().cloned())
             };
             if report.state == SessionState::Completed {
                 return Ok(());
@@ -2001,7 +2081,7 @@ mod tests {
             None,
         ));
         // Producer does not support set_waker, but no work is possible.
-        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        assert!(kernel.run_until(&WakeHandle::default(), |_| {}).is_ok());
         assert_eq!(polls.load(Ordering::SeqCst), 0);
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
     }
@@ -2032,18 +2112,18 @@ mod tests {
             .with_session(|_| {
                 assert_eq!(
                     kernel.with_session(|_| ()).unwrap_err(),
-                    "reentrant access to the same kernel session"
+                    SessionAccessError::Reentrant
                 );
                 assert_eq!(
                     kernel.run_steps(1).unwrap_err(),
-                    "reentrant access to the same kernel session"
+                    SessionAccessError::Reentrant
                 );
-                assert_eq!(
+                assert!(matches!(
                     kernel
                         .run_until(&WakeHandle::default(), |_| {})
                         .unwrap_err(),
                     DriverError::ReentrantSession
-                );
+                ));
                 let error = kernel.inject("missing", Value::local(71_i64)).unwrap_err();
                 assert_eq!(
                     error.reason,
@@ -2093,7 +2173,7 @@ mod tests {
                 entered_tx.send(()).unwrap();
                 assert_eq!(
                     attempted_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-                    Err("kernel session busy".into())
+                    Err(SessionAccessError::Busy)
                 );
                 // The contender has released its external lock after its
                 // nonblocking session attempt, so this acquisition is safe.
@@ -2131,10 +2211,10 @@ mod tests {
         struct Recursive(Weak<Kernel>);
         impl Producer for Recursive {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
-                assert_eq!(
+                assert!(matches!(
                     self.0.upgrade().unwrap().drain(1).unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 Ok(None)
             }
         }
@@ -2166,10 +2246,10 @@ mod tests {
             }
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
-                assert_eq!(
+                assert!(matches!(
                     self.0.upgrade().unwrap().drain(1).unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 true
             }
         }
@@ -2187,7 +2267,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).unwrap().is_empty());
     }
@@ -2204,12 +2284,12 @@ mod tests {
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
                 let kernel = self.0.upgrade().unwrap();
-                assert_eq!(
+                assert!(matches!(
                     kernel
                         .run_until(&WakeHandle::default(), |_| {})
                         .unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 true
             }
         }
@@ -2226,7 +2306,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).unwrap().is_empty());
     }
@@ -2255,12 +2335,12 @@ mod tests {
             None,
         ));
 
-        assert_eq!(
+        assert!(matches!(
             kernel
                 .run_until(&WakeHandle::default(), |_| panic!("host callback panicked"))
                 .unwrap_err(),
-            DriverError::EventCallbackPanicked { producer: key }
-        );
+            DriverError::EventCallbackPanicked { producer, .. } if producer == key
+        ));
         assert!(kernel.drain(1).unwrap().is_empty());
         assert!(
             kernel
@@ -2620,7 +2700,10 @@ mod tests {
                 let kernel = self.0.upgrade().unwrap();
                 assert!(kernel.producers.try_lock().is_ok());
                 assert!(kernel.session.try_take().is_some());
-                assert_eq!(kernel.drain(1).unwrap_err(), DriverError::ReentrantDrain);
+                assert!(matches!(
+                    kernel.drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                ));
                 self.1.fetch_add(1, Ordering::SeqCst);
                 Ok(None)
             }
@@ -2629,7 +2712,10 @@ mod tests {
                 let kernel = self.0.upgrade().unwrap();
                 assert!(kernel.producers.try_lock().is_ok());
                 assert!(kernel.session.try_take().is_some());
-                assert_eq!(kernel.drain(1).unwrap_err(), DriverError::ReentrantDrain);
+                assert!(matches!(
+                    kernel.drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                ));
                 wake.shutdown();
                 true
             }
@@ -2782,7 +2868,7 @@ mod tests {
             })
             .unwrap()
             .unwrap_err();
-        assert!(nested.contains("reentrant access"));
+        assert_eq!(nested, SessionAccessError::Reentrant);
         let error = kernel
             .with_session(|_| kernel.inject("input", Value::local(41_i64)))
             .unwrap()
@@ -2818,16 +2904,16 @@ mod tests {
     fn rejected_second_driver_keeps_first_lease_active() {
         let owner = AtomicUsize::new(0);
         let first = DriverScope::enter(&owner).unwrap();
-        assert_eq!(
+        assert!(matches!(
             DriverScope::enter(&owner).err(),
             Some(DriverError::AlreadyRunning)
-        );
+        ));
         // A rejected attempt must not construct a guard whose Drop releases
         // the first driver's still-active lease.
-        assert_eq!(
+        assert!(matches!(
             DriverScope::enter(&owner).err(),
             Some(DriverError::AlreadyRunning)
-        );
+        ));
         drop(first);
         let next = DriverScope::enter(&owner).unwrap();
         drop(next);
@@ -2853,7 +2939,7 @@ mod tests {
                 self.entered.send(()).unwrap();
                 self.proceed.recv_timeout(Duration::from_secs(2)).unwrap();
                 let kernel = self.kernel.upgrade().unwrap();
-                let busy = "kernel session busy";
+                let busy = SessionAccessError::Busy;
                 assert_eq!(kernel.with_session(|_| ()).unwrap_err(), busy);
                 assert_eq!(kernel.run_steps(1).unwrap_err(), busy);
                 let rejected = kernel.inject("input", Value::local(13_i64)).unwrap_err();
@@ -2899,7 +2985,7 @@ mod tests {
                 completed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             })
             .unwrap();
-        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert!(driver.join().unwrap().is_ok());
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),
             SessionState::Quiescent
@@ -2937,7 +3023,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
     }
 
     #[test]
@@ -2987,17 +3073,17 @@ mod tests {
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
         let competing = WakeHandle::default();
-        assert_eq!(
+        assert!(matches!(
             kernel.run_until(&competing, |_| {}),
             Err(DriverError::AlreadyRunning)
-        );
+        ));
         assert!(competing.0.notifier.lock().unwrap().is_none());
         proceed_tx.send(()).unwrap();
-        assert_eq!(first.join().unwrap(), Ok(()));
+        assert!(first.join().unwrap().is_ok());
 
         let next = WakeHandle::default();
         next.shutdown();
-        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
     }
 
     #[test]
@@ -3048,14 +3134,20 @@ mod tests {
         let driver = std::thread::spawn(move || worker_kernel.run_until(&worker_wake, |_| {}));
         registered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         first_poll_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
-        assert_eq!(kernel.drain(1).unwrap_err(), DriverError::AlreadyRunning);
+        assert!(matches!(
+            kernel.drain(0).unwrap_err(),
+            DriverError::AlreadyRunning
+        ));
+        assert!(matches!(
+            kernel.drain(1).unwrap_err(),
+            DriverError::AlreadyRunning
+        ));
         assert_eq!(
             kernel.producer_ownership.load(Ordering::Acquire),
             DRIVER_OWNER
         );
         wake.shutdown();
-        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert!(driver.join().unwrap().is_ok());
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
         let before = polls.load(Ordering::SeqCst);
         assert!(kernel.drain(1).unwrap().is_empty());
@@ -3101,10 +3193,10 @@ mod tests {
         let manual = std::thread::spawn(move || worker_kernel.drain(1));
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let wake = WakeHandle::default();
-        assert_eq!(
+        assert!(matches!(
             kernel.run_until(&wake, |_| {}),
             Err(DriverError::DrainInProgress)
-        );
+        ));
         assert!(wake.0.notifier.lock().unwrap().is_none());
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
         resume.send(()).unwrap();
@@ -3112,7 +3204,7 @@ mod tests {
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
         let next = WakeHandle::default();
         next.shutdown();
-        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
     }
 
     #[test]
@@ -3126,7 +3218,7 @@ mod tests {
             Kernel::build("drain-to-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
         kernel.session = ExclusiveSlot::new(session);
-        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        assert!(kernel.run_until(&WakeHandle::default(), |_| {}).is_ok());
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),
             SessionState::Completed

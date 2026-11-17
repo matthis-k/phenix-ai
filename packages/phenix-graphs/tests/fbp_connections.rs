@@ -249,7 +249,9 @@ fn preparation_error_and_panic_cannot_partially_deliver() {
     for panics in [false, true] {
         let failing: Arc<dyn EdgeAdapter> = Arc::new(move |_: &Value| {
             assert!(!panics, "adapter panic");
-            Err("adapter rejected value".into())
+            Err(phenix_graph::Failure::application_message(
+                "adapter rejected value",
+            ))
         });
         let set = ConnectionSet::new(vec![queue(1), queue(1)]);
         let result = set.prepare(
@@ -292,7 +294,7 @@ fn duplicate_and_invalid_selection_reject_before_any_preparation() {
                 ],
             )
             .unwrap_err();
-        assert_eq!(error, PrepareError::Connection(expected));
+        assert!(matches!(error, PrepareError::Connection(actual) if actual == expected));
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
@@ -313,7 +315,10 @@ fn adapter_output_identity_is_validated_before_any_mutation() {
             ],
         )
         .unwrap_err();
-    assert_eq!(error, PrepareError::Connection(ConnectionError::WrongType));
+    assert!(matches!(
+        error,
+        PrepareError::Connection(ConnectionError::WrongType)
+    ));
     assert!(set.queues().iter().all(ConnectionQueue::is_empty));
 }
 
@@ -399,8 +404,8 @@ fn leased_values_block_all_bare_extraction_but_preserve_unleased_apis() {
             .get::<i64>()
             .unwrap_err(),
     ] {
-        assert!(error.contains("leased value"));
-        assert!(error.contains("leased_shared"));
+        assert!(error.summary().contains("leased value"));
+        assert!(error.summary().contains("leased_shared"));
     }
     assert_eq!(local.borrow::<i64>(), Some(&19));
     assert_eq!(*local.leased_shared::<i64>().unwrap(), 19);
@@ -435,7 +440,7 @@ fn captured_value_clone_outlives_packet_and_real_session() {
 
     struct Source(bool);
     impl Process for Source {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if std::mem::replace(&mut self.0, true) {
                 Ok(Step::Finished)
             } else {
@@ -625,10 +630,10 @@ fn cancellation_invalidates_empty_publication_and_future_preparation() {
     assert!(set.cancel().is_empty());
     assert_eq!(set.commit(&mut pending), Err(ConnectionError::Cancelled));
     assert!(!pending.is_committed());
-    assert_eq!(
+    assert!(matches!(
         set.prepare(&packet(2), &[]).unwrap_err(),
         PrepareError::Connection(ConnectionError::Cancelled)
-    );
+    ));
 }
 
 #[test]
@@ -660,7 +665,7 @@ fn known_closed_destinations_reject_before_running_adapters() {
                 ],
             )
             .unwrap_err();
-        assert_eq!(error, PrepareError::Connection(expected));
+        assert!(matches!(error, PrepareError::Connection(actual) if actual == expected));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(set.queues().iter().all(ConnectionQueue::is_empty));
     }
@@ -672,7 +677,11 @@ fn failed_preparation_drops_prior_prepared_values_exactly_once() {
     let adapter_drops = drops.clone();
     let first: Arc<dyn EdgeAdapter> =
         Arc::new(move |_: &Value| Ok(Value::local(DropProbe(adapter_drops.clone()))));
-    let fail: Arc<dyn EdgeAdapter> = Arc::new(|_: &Value| Err("later destination failed".into()));
+    let fail: Arc<dyn EdgeAdapter> = Arc::new(|_: &Value| {
+        Err(phenix_graph::Failure::application_message(
+            "later destination failed",
+        ))
+    });
     let identity = TypeIdentity::Local(TypeId::of::<DropProbe>());
     let set = ConnectionSet::new(vec![
         ConnectionQueue::new(NonZeroUsize::new(1).unwrap(), identity.clone()),

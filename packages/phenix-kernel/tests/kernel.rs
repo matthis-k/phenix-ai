@@ -340,8 +340,10 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
 struct FailingDispatcher;
 struct FailingGuard;
 impl ProcessExecutionGuard for FailingGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
-        Err("execution failed".into())
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
+        Err(phenix_graph::Failure::application_message(
+            "execution failed",
+        ))
     }
 }
 impl ProcessDispatcher for FailingDispatcher {

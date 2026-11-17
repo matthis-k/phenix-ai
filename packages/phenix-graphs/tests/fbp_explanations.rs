@@ -38,7 +38,7 @@ struct Script {
     inputs: Inputs,
 }
 impl Process for Script {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let names: Vec<_> = cx.inputs().map(|(name, _)| name.to_owned()).collect();
         let values = names
             .into_iter()
@@ -674,7 +674,11 @@ fn request_status_counts_authentication_release_reuse_and_materialized_terminal_
         Ok(RequestStatus::Pending)
     );
     s.run_until_idle(1);
-    s.fail_request(local, "initiating failure").unwrap();
+    s.fail_request(
+        local,
+        phenix_graph::Failure::application_message("initiating failure"),
+    )
+    .unwrap();
     let now = Instant::now();
     assert_eq!(
         s.explain_request(local, now).unwrap().terminal_origin,
@@ -1036,7 +1040,8 @@ fn terminal_retained_capture_head_can_have_released_id_without_lane_authority() 
     }
     s.inject_request(failing, "a", Value::of(1_i64)).unwrap();
     s.run_until_idle(1);
-    s.fail_request(failing, "stop").unwrap();
+    s.fail_request(failing, phenix_graph::Failure::application_message("stop"))
+        .unwrap();
     let now = Instant::now();
     assert_eq!(
         s.explain_request(b, now).unwrap().queues[0].queue.head,
@@ -1185,7 +1190,7 @@ impl Callbacks {
 }
 struct CallbackProcess(Arc<Callbacks>);
 impl Process for CallbackProcess {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0.call();
         Ok(Step::Complete)
     }
@@ -1212,7 +1217,7 @@ impl ProcessDispatcher for Callbacks {
     }
 }
 impl phenix_graph::process::ProcessExecutionGuard for Callbacks {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
         self.call();
         Ok(Box::new(()))
     }
@@ -1244,7 +1249,7 @@ impl phenix_graph::ContractValue for CallbackWire {
         CODEC_CALLS.fetch_add(1, Ordering::SeqCst);
         0_i64.to_le_bytes().to_vec()
     }
-    fn decode(_: &[u8]) -> Result<Self, String> {
+    fn decode(_: &[u8]) -> Result<Self, phenix_graph::Failure> {
         assert!(!CODEC_ARMED.load(Ordering::SeqCst));
         CODEC_CALLS.fetch_add(1, Ordering::SeqCst);
         Ok(Self)

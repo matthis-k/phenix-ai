@@ -49,7 +49,7 @@ struct Echo {
     seen: Arc<Mutex<Vec<i64>>>,
 }
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -220,7 +220,13 @@ fn zero_timeout_refuses_direct_reject_and_both_completion_apis_intact() {
         assert_eq!(*seen.lock().unwrap(), [73]);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         assert_eq!(session.state(), SessionState::Failed);
-        assert!(session.failure().unwrap().contains("deferred job timeout"));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains("deferred job timeout")
+        );
         assert!(session.take_output("output").unwrap().is_none());
         assert_eq!(session.run_until_idle(4).next_deferred_timeout, None);
         drop(session);
@@ -245,7 +251,12 @@ fn synchronous_completed_dispatch_is_not_timed_with_zero_timeout() {
     assert_eq!(report.publications, 1);
     assert!(!report.budget_exhausted);
     assert_eq!(report.next_deferred_timeout, None);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert!(session.take_dispatch_return().is_none());
     let packet = session.take_output("output").unwrap().unwrap();
     assert_eq!(packet.value().borrow::<Payload>().unwrap().id, 19);
@@ -284,7 +295,12 @@ fn synchronous_rejected_dispatch_is_not_timed_with_zero_timeout() {
     assert_eq!(report.publications, 0);
     assert_eq!(report.next_deferred_timeout, None);
     assert!(session.take_dispatch_return().is_none());
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert!(seen.lock().unwrap().is_empty());
     assert_eq!(drops.load(Ordering::SeqCst), 0);
     session.supervise_deferred(Instant::now());
@@ -390,7 +406,7 @@ fn timeout_restart_retains_external_job_and_lease_after_request_credit_reuse() {
         }
     }
     impl Process for NativeSource {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             assert_eq!(self.alive.load(Ordering::SeqCst), 1);
             if self.emitted {
                 return Ok(Step::Complete);
@@ -460,6 +476,7 @@ fn timeout_restart_retains_external_job_and_lease_after_request_credit_reuse() {
     assert!(
         session
             .request_failure(old)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
             .unwrap()
             .unwrap()
             .contains("deferred job timeout")
@@ -524,7 +541,7 @@ fn timeout_restart_retains_external_job_and_lease_after_request_credit_reuse() {
 fn zero_timeout_does_not_expire_wait_wake() {
     struct WakeSource(usize);
     impl Process for WakeSource {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             self.0 += 1;
             Ok(match self.0 {
                 1 => Step::WaitWake,
@@ -565,7 +582,12 @@ fn zero_timeout_does_not_expire_wait_wake() {
         assert_eq!(report.steps, 0);
         assert_eq!(report.state, SessionState::Waiting);
         assert_eq!(report.next_deferred_timeout, None);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
     assert!(wake.wake());
     let report = session.run_until_idle(8);
@@ -601,7 +623,12 @@ fn zero_timeout_does_not_expire_nondeferred_publication_backpressure() {
         assert_eq!(report.steps, 0);
         assert_eq!(report.state, SessionState::Waiting);
         assert_eq!(report.next_deferred_timeout, None);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
     let first = session.take_output("output").unwrap().unwrap();
     assert_eq!(first.value().borrow::<Payload>().unwrap().id, 101);
@@ -740,12 +767,19 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
                     SessionState::Quiescent
                 }
             );
-            assert!(session.failure().is_none(), "{mode}, queued={queued}");
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none(),
+                "{mode}, queued={queued}"
+            );
             assert!(session.take_dispatch_return().is_none());
             assert_eq!(session.request_status(a).unwrap(), RequestStatus::Failed);
             assert!(
                 session
                     .request_failure(a)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
                     .unwrap()
                     .unwrap()
                     .contains("deferred job timeout")
@@ -824,7 +858,12 @@ fn sibling_expiry_during_dispatch_does_not_fail_replacement_request() {
             );
             assert!(session.take_output("a").unwrap().is_none());
             assert!(session.take_output("b").unwrap().is_none());
-            assert!(session.failure().is_none());
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none()
+            );
             assert_eq!(session.state(), SessionState::Quiescent);
         }
     }
@@ -886,7 +925,7 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
     }
     struct Guard(Probe);
     impl ProcessExecutionGuard for Guard {
-        fn enter(&self) -> Result<Box<dyn Any>, String> {
+        fn enter(&self) -> Result<Box<dyn Any>, phenix_graph::Failure> {
             let _ = &self.0;
             Ok(Box::new(()))
         }
@@ -897,7 +936,7 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
         emitted: bool,
     }
     impl Process for Worker {
-        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.hostile {
                 let grants = ["resource-left", "resource-right"]
                     .map(|name| ResourceGrant::new(name, self.probes.probe(name, true)));
@@ -913,8 +952,12 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
                 self.emitted = false;
                 return Ok(Step::Complete);
             }
-            cx.take("left").ok_or("missing replacement left")?;
-            cx.take("right").ok_or("missing replacement right")?;
+            cx.take("left").ok_or_else(|| {
+                phenix_graph::Failure::application_message("missing replacement left")
+            })?;
+            cx.take("right").ok_or_else(|| {
+                phenix_graph::Failure::application_message("missing replacement right")
+            })?;
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "out",
@@ -1108,15 +1151,43 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
                     .1;
                 assert_eq!(
                     guard_leases,
-                    probes.lease.strong_count() + 1,
-                    "the exact job lease must be released after its last guard"
+                    probes.lease.strong_count(),
+                    "the returned job lease is replaced by the independently leased cleanup failure"
                 );
+                let assert_cleanup = |failure: &phenix_graph::Failure| {
+                    assert_eq!(failure.cleanup().len(), 1);
+                    assert!(matches!(
+                        std::error::Error::source(&failure.cleanup()[0])
+                            .unwrap()
+                            .downcast_ref::<phenix_graph::runtime::RuntimeError>(),
+                        Some(phenix_graph::runtime::RuntimeError::DestructorPanicked {
+                            stage: phenix_graph::runtime::CleanupStage::LateReturn
+                        })
+                    ));
+                };
                 let diagnostic = if let Some((old, next)) = requests {
                     assert_eq!(report.state, SessionState::Runnable);
-                    assert!(session.failure().is_none());
+                    assert!(
+                        session
+                            .failure()
+                            .map(phenix_graph::Failure::summary)
+                            .is_none()
+                    );
                     assert_eq!(session.request_status(old).unwrap(), RequestStatus::Failed);
-                    let diagnostic = session.request_failure(old).unwrap().unwrap().to_owned();
-                    assert_eq!(session.request_failure(next).unwrap(), None);
+                    assert_cleanup(session.request_failure(old).unwrap().unwrap());
+                    let diagnostic = session
+                        .request_failure(old)
+                        .map(|failure| failure.map(phenix_graph::Failure::summary))
+                        .unwrap()
+                        .unwrap()
+                        .to_owned();
+                    assert_eq!(
+                        session
+                            .request_failure(next)
+                            .map(|failure| failure.map(phenix_graph::Failure::summary))
+                            .unwrap(),
+                        None
+                    );
                     assert_eq!(session.run_until_idle(8).publications, 1);
                     let packet = session.take_request_output(next, "out").unwrap().unwrap();
                     assert_eq!(
@@ -1131,22 +1202,30 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
                     session.release_request(old).unwrap();
                     session.release_request(next).unwrap();
                     drop(packet);
-                    assert!(session.failure().is_none());
+                    assert!(
+                        session
+                            .failure()
+                            .map(phenix_graph::Failure::summary)
+                            .is_none()
+                    );
                     diagnostic
                 } else {
                     assert_eq!(report.state, SessionState::Failed);
-                    let diagnostic = session.failure().unwrap().to_owned();
+                    assert_cleanup(session.failure().unwrap());
+                    let diagnostic = session
+                        .failure()
+                        .map(phenix_graph::Failure::summary)
+                        .unwrap()
+                        .to_owned();
                     session.cancel();
-                    assert_eq!(session.failure(), Some(diagnostic.as_str()));
+                    assert_eq!(
+                        session.failure().map(phenix_graph::Failure::summary),
+                        Some(diagnostic.as_str())
+                    );
                     diagnostic
                 };
                 assert!(
                     diagnostic.contains("deferred job timeout for process 0 (a,"),
-                    "{diagnostic}"
-                );
-                assert!(
-                    diagnostic
-                        .ends_with("; destructor panicked during late dispatcher return cleanup"),
                     "{diagnostic}"
                 );
                 let held = dispatcher.held.lock().unwrap().take().unwrap();

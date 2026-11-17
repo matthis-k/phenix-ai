@@ -175,7 +175,7 @@ fn output(author: Authoring, node: &ComponentRef, wire: bool) -> OutputRef<i64> 
 
 struct Echo(bool);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
@@ -256,7 +256,14 @@ fn execute(compiled: &CompiledNetwork, wire: bool) -> Vec<(i64, Vec<u8>, String,
     }
     session.close_input("request").unwrap();
     session.run_until_idle(256);
-    assert!(session.failure().is_none(), "{:?}", session.failure());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none(),
+        "{:?}",
+        session.failure().map(phenix_graph::Failure::summary)
+    );
     let mut seen = Vec::new();
     let mut owner = None;
     while let Some(packet) = session.take_output("result").unwrap() {
@@ -397,7 +404,7 @@ struct Assemble {
     emitted: bool,
 }
 impl Process for Assemble {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -409,16 +416,17 @@ impl Process for Assemble {
             Authoring::Manual => {
                 let owned = cx
                     .take("body.renamed.owned.value")
-                    .ok_or("missing owned")?
+                    .ok_or_else(|| phenix_graph::Failure::application_message("missing owned"))?
                     .into_shared::<Owned>()?;
-                let owned = Arc::try_unwrap(owned).map_err(|_| "shared owned")?;
+                let owned = Arc::try_unwrap(owned)
+                    .map_err(|_| phenix_graph::Failure::application_message("shared owned"))?;
                 let wire = cx
                     .take("body.renamed.wire.value")
-                    .ok_or("missing wire")?
+                    .ok_or_else(|| phenix_graph::Failure::application_message("missing wire"))?
                     .get::<i64>()?;
                 let label = cx
                     .take("body.label")
-                    .ok_or("missing label")?
+                    .ok_or_else(|| phenix_graph::Failure::application_message("missing label"))?
                     .into_owned::<String>()?;
                 format!("{}:{wire}:{label}", owned.0)
             }
@@ -560,9 +568,12 @@ fn nested_renamed_flattened_records_execute_unique_move_only_local_and_wire_leav
         }
         session.run_until_idle(128);
         assert!(
-            session.failure().is_none(),
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none(),
             "{author:?}: {:?}",
-            session.failure()
+            session.failure().map(phenix_graph::Failure::summary)
         );
         let mut seen = Vec::new();
         while let Some(packet) = session.take_output("result").unwrap() {
@@ -599,9 +610,13 @@ fn all_record_authors_report_later_leaf_decode_failure_without_publishing_a_capt
             .unwrap();
         assert_eq!(session.run_until_idle(64).state, SessionState::Failed);
         assert!(
-            session.failure().unwrap().contains("bad i64 length"),
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains("bad i64 length"),
             "{author:?}: {:?}",
-            session.failure()
+            session.failure().map(phenix_graph::Failure::summary)
         );
         assert!(session.take_output("result").unwrap().is_none());
     }
@@ -609,14 +624,14 @@ fn all_record_authors_report_later_leaf_decode_failure_without_publishing_a_capt
 
 struct Count(Arc<Mutex<Vec<&'static str>>>, &'static str);
 impl Process for Count {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0.lock().unwrap().push(self.1);
         Ok(Step::Finished)
     }
 }
 struct Source(bool);
 impl Process for Source {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             return Ok(Step::Finished);
         }
@@ -629,7 +644,7 @@ impl Process for Source {
 }
 struct Sink(Arc<Mutex<Vec<i64>>>);
 impl Process for Sink {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(value) = cx.take("in") {
             self.0.lock().unwrap().push(*value.borrow::<i64>().unwrap());
             Ok(Step::Complete)
@@ -819,7 +834,12 @@ fn equal_public_shape_and_claim_do_not_erase_private_obligations() {
         let mut session = compiled.start();
         session.inject("request", Value::local(17_i64)).unwrap();
         session.run_until_idle(64);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
         assert_eq!(
             *session
                 .take_output("result")
@@ -874,11 +894,13 @@ mod reconstruction_failures {
         fn encode(&self) -> Vec<u8> {
             vec![u8::from(self.0)]
         }
-        fn decode(bytes: &[u8]) -> Result<Self, String> {
+        fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
             if bytes == [1] {
                 panic!("later decoder unwound")
             }
-            Err("later decoder failed".into())
+            Err(phenix_graph::Failure::application_message(
+                "later decoder failed",
+            ))
         }
     }
     #[derive(Ports)]
@@ -930,15 +952,18 @@ mod reconstruction_failures {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 cx.input_record::<Envelope>()
             }));
+            let failure = result.unwrap().unwrap_err();
             if panic {
-                assert!(result.is_err());
+                assert_eq!(failure.kind(), phenix_graph::FailureKind::Panic);
             } else {
-                assert_eq!(result.unwrap().unwrap_err(), "later decoder failed");
+                assert_eq!(failure.summary(), "later decoder failed");
             }
             assert!(
                 live.load(Ordering::SeqCst),
                 "payload destructor must observe a live code lease"
             );
+            assert_eq!(*events.lock().unwrap(), ["payload"]);
+            drop(failure);
             assert_eq!(*events.lock().unwrap(), ["payload", "lease"]);
             // Reconstruction is not transactional: earlier leaves were acquired.
             assert!(cx.input("request.first.owned").is_none());

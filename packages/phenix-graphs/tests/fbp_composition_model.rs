@@ -39,12 +39,15 @@ const B: Map = Map {
 
 struct IntegerMap(Map);
 impl Process for IntegerMap {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(match context.take("in") {
             Some(value) => Step::Emit(ProcessEmission::new(
                 "out",
                 Value::local(
-                    self.0.mul * *value.borrow::<i64>().ok_or("expected local integer")?
+                    self.0.mul
+                        * *value.borrow::<i64>().ok_or_else(|| {
+                            phenix_graph::Failure::application_message("expected local integer")
+                        })?
                         + self.0.add,
                 ),
             )),

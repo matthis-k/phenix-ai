@@ -11,7 +11,7 @@ fn one() -> NonZeroUsize {
 }
 struct Repeat;
 impl Process for Repeat {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(v) = cx.take("in") {
             Ok(Step::Emit(ProcessEmission::new("out", v)))
         } else {
@@ -70,7 +70,7 @@ struct Burst {
     remaining: usize,
 }
 impl Process for Burst {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.remaining == 0 {
             cx.take("in");
             self.remaining = 3;
@@ -156,7 +156,7 @@ fn full_self_feedback_is_a_single_process_scc() {
 
 struct OmitRoot;
 impl Process for OmitRoot {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         cx.take("in").unwrap();
         Ok(Step::Complete)
     }

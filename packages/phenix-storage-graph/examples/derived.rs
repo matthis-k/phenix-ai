@@ -75,11 +75,21 @@ pub fn sink<T: Clone + Send + Sync + 'static>(
         f: Arc<dyn Fn(T) + Send + Sync>,
     }
     impl<T: Clone + Send + Sync + 'static> Process for Sink<T> {
-        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let Some(value) = ctx.take("run") else {
                 return Ok(Step::Finished);
             };
-            (self.f)(value.borrow::<T>().ok_or("wrong sink input")?.clone());
+            let input = value
+                .borrow::<T>()
+                .ok_or_else(|| {
+                    phenix_graph::ValueError::LocalType {
+                        expected: std::any::type_name::<T>(),
+                        actual: value.identity(),
+                    }
+                    .failure()
+                })?
+                .clone();
+            (self.f)(input);
             Ok(Step::Complete)
         }
     }
@@ -178,7 +188,10 @@ impl Codec for AmountCodec {
     }
     fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<Amount> {
         Ok(Amount(i64::from_be_bytes(bytes.try_into().map_err(
-            |_| phenix_storage::Error::Codec("expected eight bytes".into()),
+            |cause| phenix_storage::Error::CodecCause {
+                summary: "expected eight bytes",
+                cause: Box::new(cause),
+            },
         )?)))
     }
 }
@@ -465,7 +478,7 @@ impl Demo {
                 }),
             )
             .map_err(text)?;
-        self.runtime.kernel().run_steps(128)?;
+        self.runtime.kernel().run_steps(128).map_err(text)?;
         self.writes
             .lock()
             .unwrap()
@@ -484,34 +497,41 @@ impl Demo {
             for event in events {
                 event.result.map_err(|e| format!("{e:?}"))?;
             }
-            self.runtime.kernel().with_session(|session| {
-                for _ in 0..128 {
-                    let report = session.run_until_idle(128);
-                    for name in ["derive", "subscriber"] {
-                        for q in [
-                            "qsum",
-                            "qdiff",
-                            "qboth",
-                            "qtwice",
-                            "values.snapshot",
-                            "values.errors",
-                        ] {
-                            while session
-                                .take_output(&format!("{name}.{q}"))
-                                .map_err(text)?
-                                .is_some()
-                            {}
+            self.runtime
+                .kernel()
+                .with_session(|session| {
+                    for _ in 0..128 {
+                        let report = session.run_until_idle(128);
+                        for name in ["derive", "subscriber"] {
+                            for q in [
+                                "qsum",
+                                "qdiff",
+                                "qboth",
+                                "qtwice",
+                                "values.snapshot",
+                                "values.errors",
+                            ] {
+                                while session
+                                    .take_output(&format!("{name}.{q}"))
+                                    .map_err(text)?
+                                    .is_some()
+                                {}
+                            }
+                        }
+                        if report.state == phenix_graph::runtime::SessionState::Failed {
+                            return Err(session
+                                .failure()
+                                .expect("failed session has a cause")
+                                .summary()
+                                .to_owned());
+                        }
+                        if report.steps == 0 {
+                            return Ok(());
                         }
                     }
-                    if report.state == phenix_graph::runtime::SessionState::Failed {
-                        return Err(session.failure().unwrap_or("failed").to_owned());
-                    }
-                    if report.steps == 0 {
-                        return Ok(());
-                    }
-                }
-                Err("drain budget exhausted".into())
-            })??;
+                    Err("drain budget exhausted".into())
+                })
+                .map_err(text)??;
         }
         Err("producer drain budget exhausted".into())
     }

@@ -83,6 +83,7 @@ fn timeout_recovery_and_late_returns_cover_both_queue_and_failure_policies() {
             assert!(session.overdue_jobs(now).is_empty());
             let diagnostic = session
                 .request_failure(expired)
+                .map(|failure| failure.map(phenix_graph::Failure::summary))
                 .unwrap()
                 .unwrap()
                 .to_owned();
@@ -100,11 +101,19 @@ fn timeout_recovery_and_late_returns_cover_both_queue_and_failure_policies() {
                 assert_eq!(session.state(), SessionState::Failed);
                 assert_eq!(session.request_status(survivor), Ok(RequestStatus::Failed));
                 session.cancel();
-                assert_eq!(session.failure(), Some(diagnostic.as_str()));
+                assert_eq!(
+                    session.failure().map(phenix_graph::Failure::summary),
+                    Some(diagnostic.as_str())
+                );
                 assert_eq!(session.run_until_idle(8).steps, 0);
             } else {
                 assert_eq!(error, HandoffError::ForeignCompletion);
-                assert!(session.failure().is_none());
+                assert!(
+                    session
+                        .failure()
+                        .map(phenix_graph::Failure::summary)
+                        .is_none()
+                );
                 assert_eq!(session.request_status(survivor), Ok(RequestStatus::Pending));
                 session.release_request(expired).unwrap();
                 assert_eq!(session.request_status(expired), Err(RequestError::Stale));
@@ -278,6 +287,11 @@ fn explicit_cancellation_before_supervision_wins_even_when_job_is_already_overdu
             session.request_status(request),
             Ok(RequestStatus::Cancelled)
         );
-        assert_eq!(session.request_failure(request), Ok(None));
+        assert_eq!(
+            session
+                .request_failure(request)
+                .map(|failure| failure.map(phenix_graph::Failure::summary)),
+            Ok(None)
+        );
     }
 }

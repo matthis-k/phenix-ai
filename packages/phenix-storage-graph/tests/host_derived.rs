@@ -147,7 +147,7 @@ impl ProcessDispatcher for Offload {
 }
 struct ApplicationGuard(Arc<AtomicUsize>);
 impl ProcessExecutionGuard for ApplicationGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(()))
     }
@@ -392,8 +392,11 @@ fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
                 .unwrap()
                 .clone()
         });
+        let error = generation.query(&spec).unwrap_err();
         assert!(
-            matches!(generation.query(&spec), Err(Error::Wave(e)) if e.join(" ").contains("panicked"))
+            support::failures(&error)
+                .iter()
+                .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic)
         );
         assert_eq!(effects.load(Ordering::SeqCst), 1);
         let value = generation.query(&spec).unwrap();
@@ -410,6 +413,11 @@ fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
         assert!(weak.upgrade().is_some());
         assert_eq!(*value, 8);
         drop(value);
+        assert!(
+            weak.upgrade().is_some(),
+            "the independently escaped failure also owns code"
+        );
+        drop(error);
         assert!(weak.upgrade().is_none());
     }
 }
@@ -555,7 +563,7 @@ fn wake_host_keeps_mandatory_guard_before_ordered_application_guards_on_actual_w
         check: Arc<dyn Fn() + Send + Sync>,
     }
     impl ProcessExecutionGuard for OrderedGuard {
-        fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+        fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
             (self.check)();
             self.trace.lock().unwrap().push(self.id);
             Ok(Box::new(Exit(self.id, self.trace.clone())))

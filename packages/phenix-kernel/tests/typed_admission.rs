@@ -42,14 +42,14 @@ impl ContractValue for Payload {
         }
         self.number.to_le_bytes().to_vec()
     }
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
         Ok(Self::new(i64::decode(bytes)?, &Arc::default()))
     }
 }
 
 struct Echo(bool);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
@@ -426,7 +426,10 @@ fn panicking_codec_is_not_contained_and_does_not_own_the_session() {
     assert_eq!(encodes.load(Ordering::SeqCst), 2);
     assert!(
         built
-            .with_session(|session| session.failure().is_none())
+            .with_session(|session| session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none())
             .unwrap()
     );
 }

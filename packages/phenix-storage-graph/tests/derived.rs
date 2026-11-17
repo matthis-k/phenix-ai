@@ -191,24 +191,32 @@ fn one_atomic_batch_per_query_no_build_or_binding_reads_and_denial_recovers() {
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     assert!(matches!(
         runtime.bind_query(&spec).unwrap().query(),
-        Err(Error::Graph(_))
+        Err(Error::Access(phenix_kernel::SessionAccessError::NotStarted))
     ));
     runtime.start().unwrap();
     let query = runtime.bind_query(&spec).unwrap();
     assert_eq!(*query.query().unwrap(), 8);
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     denied.store(true, Ordering::SeqCst);
-    assert!(
-        matches!(query.query(),Err(Error::Wave(e)) if e.join(" ").contains("source[Storage]: Denied"))
-    );
+    let error = query.query().unwrap_err();
+    assert!(matches!(
+        std::error::Error::source(&support::failures(&error)[0])
+            .unwrap()
+            .downcast_ref::<phenix_storage::Error>(),
+        Some(phenix_storage::Error::Denied)
+    ));
     denied.store(false, Ordering::SeqCst);
     f.put(&f.a, 4);
     assert_eq!(*query.query().unwrap(), 9);
     assert_eq!(reads.load(Ordering::SeqCst), 3);
     f.session.delete(f.a.source().address(), "value").unwrap();
-    assert!(
-        matches!(query.query(),Err(Error::Wave(e)) if e.join(" ").contains("source[MissingInput]"))
-    );
+    let error = query.query().unwrap_err();
+    assert!(matches!(
+        std::error::Error::source(&support::failures(&error)[0])
+            .unwrap()
+            .downcast_ref::<phenix_storage::Error>(),
+        Some(phenix_storage::Error::MissingInput { .. })
+    ));
     f.put(&f.a, 10);
     assert_eq!(*query.query().unwrap(), 15);
 }
@@ -267,9 +275,13 @@ fn optional_missing_and_codec_failures_recover_without_result_payloads() {
     f.session
         .put(f.b.source().address(), "value", &Number(0), &Bad)
         .unwrap();
-    assert!(
-        matches!(runtime.bind_query(&spec).unwrap().query(),Err(Error::Wave(e)) if e.join(" ").contains("Codec"))
-    );
+    let error = runtime.bind_query(&spec).unwrap().query().unwrap_err();
+    assert!(matches!(
+        std::error::Error::source(&support::failures(&error)[0])
+            .unwrap()
+            .downcast_ref::<phenix_storage::Error>(),
+        Some(phenix_storage::Error::CodecCause { .. })
+    ));
     f.put(&f.b, 9);
     assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 9);
     f.put(&f.a, 2);
@@ -893,12 +905,12 @@ fn multiple_terminal_activations_never_return_an_old_or_arbitrary_value() {
     runtime.start().unwrap();
     assert!(matches!(
         runtime.bind_query(&spec).unwrap().query(),
-        Err(Error::PublicationCount(2))
+        Err(Error::Execution(failure)) if matches!(std::error::Error::source(&failure).unwrap().downcast_ref::<Error>(), Some(Error::PublicationCount(2)))
     ));
     f.put(&f.a, 4);
     assert!(matches!(
         runtime.bind_query(&spec).unwrap().query(),
-        Err(Error::PublicationCount(2))
+        Err(Error::Execution(failure)) if matches!(std::error::Error::source(&failure).unwrap().downcast_ref::<Error>(), Some(Error::PublicationCount(2)))
     ));
 }
 
@@ -914,7 +926,7 @@ fn a_missing_terminal_never_reuses_a_previous_capture() {
     f.session.delete(f.a.source().address(), "value").unwrap();
     assert!(matches!(
         runtime.bind_query(&spec).unwrap().query(),
-        Err(Error::Wave(_))
+        Err(Error::Execution(failure)) if matches!(std::error::Error::source(&failure).unwrap().downcast_ref::<Error>(), Some(Error::Wave(_)))
     ));
     f.put(&f.a, 4);
     assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 9);
@@ -978,10 +990,13 @@ fn execution_guard_restores_after_process_panic_on_local_and_worker_threads() {
         };
         let mut failed = build(authored(g, spec.clone(), None), dispatcher);
         failed.start().unwrap();
-        assert!(matches!(
-            failed.bind_query(&spec).unwrap().query(),
-            Err(Error::Wave(_))
-        ));
+        let error = failed.bind_query(&spec).unwrap().query().unwrap_err();
+        assert!(
+            support::failures(&error)
+                .iter()
+                .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic),
+            "{error:?}"
+        );
         // Request-local failure must never leave the worker guard set.
         let (plugin, spec) = sum(&f, false);
         let mut healthy = local(plugin);
@@ -1046,7 +1061,7 @@ fn repeated_root_activations_are_rejected_even_when_the_values_agree() {
         emitted: bool,
     }
     impl Process for Again {
-        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -1099,7 +1114,7 @@ fn repeated_root_activations_are_rejected_even_when_the_values_agree() {
     runtime.start().unwrap();
     assert!(matches!(
         runtime.bind_query(&spec).unwrap().query(),
-        Err(Error::InvalidPublication)
+        Err(Error::Execution(failure)) if matches!(std::error::Error::source(&failure).unwrap().downcast_ref::<Error>(), Some(Error::InvalidPublication))
     ));
     assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 3);
 }
@@ -1176,7 +1191,7 @@ fn process_panic_fails_only_its_demand_and_subsequent_demand_recovers() {
         log: Arc<Mutex<Vec<usize>>>,
     }
     impl Process for Counter {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if context.take("run").is_none() {
                 return Ok(Step::Finished);
             }
@@ -1222,7 +1237,13 @@ fn process_panic_fails_only_its_demand_and_subsequent_demand_recovers() {
         .unwrap();
     runtime.kernel().run_steps(16).unwrap();
     let query = runtime.bind_query(&spec).unwrap();
-    assert!(matches!(query.query(), Err(Error::Wave(_))));
+    let error = query.query().unwrap_err();
+    assert!(
+        support::failures(&error)
+            .iter()
+            .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic),
+        "{error:?}"
+    );
     assert_eq!(effects.load(Ordering::SeqCst), 1);
     runtime
         .kernel()
@@ -1338,7 +1359,11 @@ fn automatic_failure_snapshots_cancelled_peer_jobs_before_releasing_the_request(
             cancelled_jobs,
             disposal,
         } => {
-            assert!(matches!(*cause, Error::Wave(e) if e.join(" ").contains("panicked")));
+            assert!(
+                support::failures(&cause)
+                    .iter()
+                    .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic)
+            );
             assert_eq!(cancelled_jobs, [job.ticket()]);
             assert_eq!(disposal.handed_jobs, 1);
         }

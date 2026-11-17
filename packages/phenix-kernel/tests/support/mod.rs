@@ -38,7 +38,7 @@ pub struct Transform {
     pub emitted: bool,
 }
 impl Process for Transform {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -49,7 +49,12 @@ impl Process for Transform {
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new(
             "value",
-            Value::local(value.borrow::<i64>().ok_or("wrong input")? + self.increment),
+            Value::local(
+                value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?
+                    + self.increment,
+            ),
         )))
     }
 }
@@ -102,7 +107,7 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
         emitted: bool,
     }
     impl Process for Function {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -113,7 +118,9 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "value",
-                Value::local((self.f)(*value.borrow::<i64>().ok_or("wrong type")?)),
+                Value::local((self.f)(*value.borrow::<i64>().ok_or_else(|| {
+                    phenix_graph::Failure::application_message("wrong type")
+                })?)),
             )))
         }
     }
@@ -129,11 +136,15 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
 pub fn sink(f: impl Fn(i64) + Send + Sync + 'static) -> Arc<ComponentDef> {
     struct Sink(Arc<dyn Fn(i64) + Send + Sync>);
     impl Process for Sink {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let Some(value) = context.take("run") else {
                 return Ok(Step::Finished);
             };
-            (self.0)(*value.borrow::<i64>().ok_or("wrong type")?);
+            (self.0)(
+                *value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong type"))?,
+            );
             Ok(Step::Complete)
         }
     }

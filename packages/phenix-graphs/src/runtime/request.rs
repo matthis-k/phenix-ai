@@ -16,6 +16,13 @@ pub struct RequestId {
     pub(super) sequence: u64,
 }
 impl RequestId {
+    /// Diagnostic identity only; these numbers cannot construct request authority.
+    pub fn session(self) -> u64 {
+        self.session
+    }
+    pub fn generation(self) -> u64 {
+        self.generation
+    }
     pub fn sequence(self) -> u64 {
         self.sequence
     }
@@ -72,7 +79,7 @@ pub(super) struct RequestScope {
     pub(super) closure_ports: BTreeMap<usize, Vec<String>>,
     pub(super) terminal: Option<RequestStatus>,
     pub(super) inherited_terminal: bool,
-    pub(super) failure: Option<String>,
+    pub(super) failure: Option<Failure>,
     pub(super) timed_out: bool,
     pub(super) disposal: RequestDisposal,
     pub(super) cancelled_jobs: Vec<StepTicket>,

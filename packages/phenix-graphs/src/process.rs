@@ -4,7 +4,7 @@
 //! Returning an emission does not complete the logical activation. A caller must
 //! commit that emission before resuming its continuation, and must explicitly
 //! settle `Complete` before admitting another reservation.
-use crate::{ResourceError, ValidatedResourceSet, Value};
+use crate::{CallbackPhase, Failure, FailureKind, ResourceError, ValidatedResourceSet, Value};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -15,7 +15,173 @@ static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 /// One process-private state machine. `Sync` is deliberately not required.
 /// Implementations must return from each step; cancellation cannot preempt code.
 pub trait Process: Send + 'static {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String>;
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, Failure>;
+
+    /// Managed cleanup may be specialized by wrappers that own code leases.
+    fn dispose_catching(self: Box<Self>) -> bool {
+        drop_catching(self)
+    }
+}
+
+fn dispose_process_catching(process: Box<dyn Process>) -> bool {
+    // Preserve specialized reports, but contain the callback before the caller
+    // releases its leases, including while disposing a caught panic payload.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process.dispose_catching())) {
+        Ok(panicked) => panicked,
+        Err(payload) => {
+            crate::discard_panic_payload(payload);
+            true
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PanicSummary {
+    String(String),
+    NonString,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallbackPanicked {
+    pub phase: CallbackPhase,
+    pub payload: PanicSummary,
+}
+impl fmt::Display for CallbackPanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "callback panicked during {:?}", self.phase)
+    }
+}
+impl std::error::Error for CallbackPanicked {}
+
+/// Convert and dispose a caught panic while the caller still holds every known
+/// code/resource lease. The arbitrary payload itself never enters the failure.
+pub fn callback_panicked(phase: CallbackPhase, payload: Box<dyn std::any::Any + Send>) -> Failure {
+    let summary = if let Some(message) = payload.downcast_ref::<String>() {
+        PanicSummary::String(message.clone())
+    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
+        PanicSummary::String((*message).into())
+    } else {
+        PanicSummary::NonString
+    };
+    let message = match phase {
+        CallbackPhase::Step => "process step panicked",
+        CallbackPhase::GuardEnter => "process execution guard entry panicked",
+        CallbackPhase::GuardExit => "process execution guard teardown panicked",
+        CallbackPhase::Construct => "process factory panicked",
+        CallbackPhase::RecoveryConstruct => "process factory panicked during request recovery",
+        CallbackPhase::FactoryReadiness => "process factory readiness panicked",
+        CallbackPhase::CorrelationBound => "process factory correlation bound panicked",
+        CallbackPhase::ReadinessRegistration => "readiness notification contract panicked",
+        CallbackPhase::Readiness => "readiness policy panicked",
+        CallbackPhase::Dispatch => "process dispatcher panicked",
+        CallbackPhase::Prepare => "plugin preparation panicked",
+        CallbackPhase::ProducerActivate => "producer activation panicked",
+        CallbackPhase::ProducerPoll => "producer poll panicked",
+        CallbackPhase::GenerationBind => "generation binding panicked",
+        CallbackPhase::WakeRegistration => "producer wake registration panicked",
+        CallbackPhase::Event => "event callback panicked",
+        CallbackPhase::Adapter => "packet preparation panicked",
+        _ => "callback panicked",
+    };
+    let failure = Failure::external(
+        message,
+        CallbackPanicked {
+            phase,
+            payload: summary,
+        },
+    )
+    .with_kind(FailureKind::Panic)
+    .with_context(crate::FailureContext {
+        phase: Some(phase),
+        ..Default::default()
+    });
+    crate::discard_panic_payload(payload);
+    failure
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessCleanupError {
+    GuardObject { guard_index: usize },
+    Emission,
+    OwnedState,
+}
+impl fmt::Display for ProcessCleanupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "process cleanup: {self:?}")
+    }
+}
+impl std::error::Error for ProcessCleanupError {}
+impl ProcessCleanupError {
+    fn failure(self) -> Failure {
+        let summary = match self {
+            Self::OwnedState => "owned destructor panicked during completion",
+            Self::Emission => "emission destructor panicked",
+            Self::GuardObject { .. } => "process execution guard object destructor panicked",
+        };
+        let guard_index = match self {
+            Self::GuardObject { guard_index } => Some(guard_index),
+            _ => None,
+        };
+        Failure::external(summary, self)
+            .with_kind(FailureKind::Cleanup)
+            .with_context(crate::FailureContext {
+                guard_index,
+                phase: Some(CallbackPhase::Cleanup),
+                ..Default::default()
+            })
+    }
+}
+
+fn dispose_step(result: Result<Step, Failure>) -> bool {
+    match result {
+        Ok(Step::Emit(emission)) => emission.value.dispose_catching(),
+        Err(failure) => failure.dispose_catching(),
+        Ok(step) => drop_catching(step),
+    }
+}
+
+fn enrich_identity(failure: Failure, identity: &crate::FailureContext) -> Failure {
+    let mut context = failure.context().clone();
+    context.ticket = identity.ticket;
+    context.session = identity.session;
+    context.generation = identity.generation;
+    context.request = identity.request;
+    context.process = identity.process;
+    context.path = identity.path.clone();
+    failure.with_context(context)
+}
+
+fn add_failure(result: Result<Step, Failure>, failure: Failure) -> Result<Step, Failure> {
+    Err(match result {
+        Err(primary) => primary.with_cleanup(failure),
+        Ok(step) => {
+            let mut leases = match &step {
+                Step::Emit(emission) => emission.value.known_leases().to_vec(),
+                _ => Vec::new(),
+            };
+            let identity = failure.context().clone();
+            let mut failure = failure;
+            if dispose_step(Ok(step)) {
+                failure = failure.with_cleanup(enrich_identity(
+                    ProcessCleanupError::Emission
+                        .failure()
+                        .retain_leases(&leases),
+                    &identity,
+                ));
+            }
+            // Keep the exact emission leases through payload cleanup, then catch
+            // each release too: an independent lease may now have its final owner.
+            while let Some(lease) = leases.pop() {
+                if drop_catching(lease) {
+                    failure = failure.with_cleanup(enrich_identity(
+                        ProcessCleanupError::Emission.failure(),
+                        &identity,
+                    ));
+                }
+            }
+            failure
+        }
+    })
 }
 
 /// Immutable construction code, invoked once per physical instance and session.
@@ -63,8 +229,8 @@ impl ProcessFactory for LeasedFactory {
     }
     fn spawn(&self) -> Box<dyn Process> {
         Box::new(LeasedProcess {
-            inner: self.inner.spawn(),
-            lease: self.lease.clone(),
+            inner: Some(self.inner.spawn()),
+            lease: Some(self.lease.clone()),
         })
     }
 }
@@ -84,18 +250,47 @@ impl crate::runtime::ReadinessPolicy for LeasedReadiness {
     }
 }
 struct LeasedProcess {
-    inner: Box<dyn Process>,
-    lease: Arc<dyn Send + Sync>,
+    inner: Option<Box<dyn Process>>,
+    lease: Option<Arc<dyn Send + Sync>>,
 }
 impl Process for LeasedProcess {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
-        Ok(match self.inner.step(context)? {
-            Step::Emit(mut emission) => {
-                emission.value = emission.value.with_lease(self.lease.clone());
-                Step::Emit(emission)
-            }
-            step => step,
-        })
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, Failure> {
+        let lease = self.lease.as_ref().expect("live leased process");
+        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.inner
+                .as_mut()
+                .expect("live leased process")
+                .step(context)
+        })) {
+            Ok(result) => result,
+            Err(payload) => Err(callback_panicked(CallbackPhase::Step, payload)),
+        };
+        Ok(
+            match result.map_err(|failure| failure.retain_leases(std::slice::from_ref(lease)))? {
+                Step::Emit(mut emission) => {
+                    emission.value = emission.value.with_lease(lease.clone());
+                    Step::Emit(emission)
+                }
+                step => step,
+            },
+        )
+    }
+    fn dispose_catching(mut self: Box<Self>) -> bool {
+        self.dispose_contents()
+    }
+}
+impl LeasedProcess {
+    fn dispose_contents(&mut self) -> bool {
+        let inner = self.inner.take();
+        let lease = self.lease.take();
+        let mut panicked = inner.is_some_and(dispose_process_catching);
+        panicked |= drop_catching(lease);
+        panicked
+    }
+}
+impl Drop for LeasedProcess {
+    fn drop(&mut self) {
+        let _ = self.dispose_contents();
     }
 }
 
@@ -227,6 +422,13 @@ impl ProcessContext {
             .map(|(name, value)| (name.as_str(), value))
     }
 
+    fn known_leases(&self) -> impl Iterator<Item = &Arc<dyn Send + Sync>> {
+        self.inputs
+            .values()
+            .flat_map(Value::known_leases)
+            .chain(self.grants.known_leases())
+    }
+
     fn into_cleanup_parts(self) -> (Vec<Value>, ValidatedResourceSet) {
         let Self { inputs, grants, .. } = self;
         (inputs.into_values().collect(), grants)
@@ -236,7 +438,7 @@ impl ProcessContext {
         let (values, grants) = self.into_cleanup_parts();
         let mut panicked = false;
         for value in values {
-            panicked |= drop_catching(value);
+            panicked |= value.dispose_catching();
         }
         panicked |= grants.dispose_catching();
         panicked
@@ -271,9 +473,21 @@ impl StepTicket {
 /// ```
 pub struct ActivationJob {
     ticket: StepTicket,
-    execution: Box<JobExecution>,
+    execution: OwnedExecution,
     // Keep native code/resources leased until the process and arguments drop.
     lease: Option<Arc<dyn Send + Sync>>,
+}
+struct OwnedExecution(Option<Box<JobExecution>>);
+impl std::ops::Deref for OwnedExecution {
+    type Target = JobExecution;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_deref().expect("live job execution")
+    }
+}
+impl std::ops::DerefMut for OwnedExecution {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_deref_mut().expect("live job execution")
+    }
 }
 struct JobExecution {
     process: Box<dyn Process>,
@@ -298,10 +512,14 @@ impl ActivationJob {
     pub fn ticket(&self) -> StepTicket {
         self.ticket
     }
-    pub(crate) fn dispose_catching(self) -> bool {
-        let Self {
-            execution, lease, ..
-        } = self;
+    pub(crate) fn dispose_catching(mut self) -> bool {
+        self.dispose_contents()
+    }
+    fn dispose_contents(&mut self) -> bool {
+        let Some(execution) = self.execution.0.take() else {
+            return false;
+        };
+        let lease = self.lease.take();
         let JobExecution {
             process,
             context,
@@ -309,7 +527,7 @@ impl ActivationJob {
             guards,
         } = *execution;
         let mut panicked = context.dispose_catching();
-        panicked |= drop_catching(process);
+        panicked |= dispose_process_catching(process);
         for guard in guards.into_iter().rev() {
             panicked |= drop_catching(guard);
         }
@@ -318,37 +536,107 @@ impl ActivationJob {
         panicked |= drop_catching(lease);
         panicked
     }
-    pub fn run(mut self) -> CompletedStep {
-        let mut entered = Vec::with_capacity(self.execution.guards.len());
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let execution = &mut self.execution;
-            for guard in &execution.guards {
-                entered.push(guard.enter()?);
-            }
-            execution.process.step(&mut execution.context)
-        }));
-        let mut result = match result {
-            Ok(result) => result,
-            Err(payload) => {
-                crate::discard_panic_payload(payload);
-                Err("process step panicked".into())
-            }
+    fn identity(&self) -> crate::FailureContext {
+        let mut context = crate::FailureContext {
+            ticket: Some(self.ticket),
+            ..Default::default()
         };
-        while let Some(guard) = entered.pop() {
+        if let Some(metadata) = self.metadata() {
+            context.session = Some(metadata.session);
+            context.generation = Some(metadata.generation);
+            context.request = metadata.request;
+            context.process = Some(metadata.process);
+            context.path = Some(metadata.path.clone());
+        }
+        context
+    }
+    fn enrich(&self, failure: Failure) -> Failure {
+        let mut failure = enrich_identity(failure, &self.identity());
+        if let Some(lease) = &self.lease {
+            failure = failure.retain_leases(std::slice::from_ref(lease));
+        }
+        for lease in self.execution.context.known_leases() {
+            failure = failure.retain_leases(std::slice::from_ref(lease));
+        }
+        failure
+    }
+    pub fn run(mut self) -> CompletedStep {
+        let input_leases: Vec<_> = self.execution.context.known_leases().cloned().collect();
+        let mut entered = Vec::with_capacity(self.execution.guards.len());
+        let mut result = Ok(Step::Complete);
+        for (index, guard) in self.execution.guards.iter().enumerate() {
+            let entry =
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| guard.enter())) {
+                    Ok(entry) => entry,
+                    Err(payload) => Err(callback_panicked(CallbackPhase::GuardEnter, payload)),
+                };
+            match entry {
+                Ok(token) => entered.push((index, token)),
+                Err(failure) => {
+                    let mut context = failure.context().clone();
+                    context.guard_index = Some(index);
+                    context.phase.get_or_insert(CallbackPhase::GuardEnter);
+                    result = Err(self.enrich(failure.with_context(context)));
+                    break;
+                }
+            }
+        }
+        if result.is_ok() {
+            result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let execution = &mut *self.execution;
+                execution.process.step(&mut execution.context)
+            })) {
+                Ok(result) => result,
+                Err(payload) => Err(callback_panicked(CallbackPhase::Step, payload)),
+            }
+            .map_err(|failure| {
+                let mut context = failure.context().clone();
+                context.phase.get_or_insert(CallbackPhase::Step);
+                self.enrich(failure.with_context(context))
+            });
+            if let Ok(Step::Emit(emission)) = &mut result
+                && let Some(lease) = &self.lease
+            {
+                emission
+                    .value
+                    .retain_known_leases(std::slice::from_ref(lease));
+            }
+        }
+        while let Some((index, guard)) = entered.pop() {
             if let Err(payload) =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(guard)))
             {
-                crate::discard_panic_payload(payload);
-                result = Err("process execution guard teardown panicked".into());
+                let failure = callback_panicked(CallbackPhase::GuardExit, payload);
+                let mut context = failure.context().clone();
+                context.guard_index = Some(index);
+                result = add_failure(result, self.enrich(failure.with_context(context)));
+            }
+        }
+        result = result.map_err(|failure| self.enrich(failure));
+        result = result.map_err(|failure| failure.retain_leases(&input_leases));
+        if let Ok(Step::Emit(emission)) = &mut result {
+            emission.value.retain_known_leases(&input_leases);
+        }
+        for lease in input_leases.into_iter().rev() {
+            if drop_catching(lease) {
+                result = add_failure(
+                    result,
+                    self.enrich(ProcessCleanupError::OwnedState.failure()),
+                );
             }
         }
         CompletedStep { job: self, result }
     }
 }
+impl Drop for ActivationJob {
+    fn drop(&mut self) {
+        let _ = self.dispose_contents();
+    }
+}
 
 /// Returned guards need not be Send: creation and destruction happen inside run.
 pub trait ProcessExecutionGuard: Send + Sync {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String>;
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, Failure>;
 }
 impl fmt::Debug for ActivationJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -368,7 +656,7 @@ impl fmt::Debug for ActivationJob {
 /// ```
 pub struct CompletedStep {
     // Drop an emitted application value before the job releases its code lease.
-    result: Result<Step, String>,
+    result: Result<Step, Failure>,
     job: ActivationJob,
 }
 impl CompletedStep {
@@ -378,11 +666,19 @@ impl CompletedStep {
     pub fn ticket(&self) -> StepTicket {
         self.job.ticket
     }
-    pub(crate) fn dispose_catching(self) -> bool {
-        let Self { result, job } = self;
-        let mut panicked = drop_catching(result);
-        panicked |= job.dispose_catching();
+    pub(crate) fn dispose_catching(mut self) -> bool {
+        self.dispose_contents()
+    }
+    fn dispose_contents(&mut self) -> bool {
+        let result = std::mem::replace(&mut self.result, Ok(Step::Finished));
+        let mut panicked = dispose_step(result);
+        panicked |= self.job.dispose_contents();
         panicked
+    }
+}
+impl Drop for CompletedStep {
+    fn drop(&mut self) {
+        let _ = self.dispose_contents();
     }
 }
 impl fmt::Debug for CompletedStep {
@@ -490,7 +786,7 @@ impl CancelledProcess {
             panicked |= context.dispose_catching();
         }
         if let Some(process) = process {
-            panicked |= drop_catching(process);
+            panicked |= dispose_process_catching(process);
         }
         if let Some(lease) = lease {
             panicked |= drop_catching(lease);
@@ -570,45 +866,85 @@ impl ProcessHandoff {
         self.state = HandoffState::Dispatched;
         Ok(ActivationJob {
             ticket,
-            execution: Box::new(JobExecution {
+            execution: OwnedExecution(Some(Box::new(JobExecution {
                 process: self.process.take().expect("ready process"),
                 context: self.context.take().expect("ready context"),
                 metadata: None,
                 guards: Vec::new(),
-            }),
+            }))),
             lease: self.lease.clone(),
         })
     }
     /// Rejecting an unexecuted job does not consume the reservation or mutate
     /// the process. The next dispatch receives a new step ticket.
-    pub fn reject(&mut self, job: ActivationJob) -> Result<(), (HandoffError, ActivationJob)> {
+    pub fn reject(
+        &mut self,
+        mut job: ActivationJob,
+    ) -> Result<Result<(), Failure>, (HandoffError, ActivationJob)> {
         if let Err(error) = self.validate(job.ticket) {
             return Err((error, job));
         }
-        self.restore(job);
-        self.state = HandoffState::Ready;
-        Ok(())
+        let identity = job.identity();
+        let cleanup = self.restore(&mut job);
+        if let Some(mut failure) = cleanup {
+            self.state = HandoffState::Failed;
+            let leases: Vec<_> = self
+                .lease
+                .iter()
+                .chain(self.context.iter().flat_map(ProcessContext::known_leases))
+                .cloned()
+                .collect();
+            let mut panicked = self
+                .context
+                .take()
+                .is_some_and(|context| context.dispose_catching());
+            panicked |= self.process.take().is_some_and(dispose_process_catching);
+            panicked |= drop_catching(self.lease.take());
+            if panicked {
+                failure = failure.with_cleanup(
+                    enrich_identity(ProcessCleanupError::OwnedState.failure(), &identity)
+                        .retain_leases(&leases),
+                );
+            }
+            Ok(Err(failure))
+        } else {
+            self.state = HandoffState::Ready;
+            Ok(Ok(()))
+        }
     }
     /// Foreign/stale completions are returned intact. In particular, probing a
     /// wrong owner cannot accidentally destroy another owner's running process.
     pub fn complete(
         &mut self,
-        completion: CompletedStep,
-    ) -> Result<Result<Step, String>, (HandoffError, Box<CompletedStep>)> {
+        mut completion: CompletedStep,
+    ) -> Result<Result<Step, Failure>, (HandoffError, Box<CompletedStep>)> {
         if let Err(error) = self.validate(completion.job.ticket) {
             return Err((error, Box::new(completion)));
         }
-        let CompletedStep { job, result } = completion;
-        let mut result = result.map(|step| match step {
-            Step::Emit(mut emission) => {
-                for lease in job.lease.iter().chain(self.lease.iter()) {
-                    emission.value = emission.value.with_lease(lease.clone());
+        let result = std::mem::replace(&mut completion.result, Ok(Step::Finished));
+        let job = &mut completion.job;
+        let identity = job.identity();
+        let leases: Vec<_> = job
+            .lease
+            .iter()
+            .chain(self.lease.iter())
+            .chain(job.execution.context.known_leases())
+            .cloned()
+            .collect();
+        let mut result = result
+            .map_err(|failure| job.enrich(failure))
+            .map(|step| match step {
+                Step::Emit(mut emission) => {
+                    for lease in job.lease.iter().chain(self.lease.iter()) {
+                        emission.value = emission.value.with_lease(lease.clone());
+                    }
+                    Step::Emit(emission)
                 }
-                Step::Emit(emission)
-            }
-            step => step,
-        });
-        self.restore(job);
+                step => step,
+            });
+        if let Some(failure) = self.restore(job) {
+            result = add_failure(result, failure);
+        }
         let mut cleanup_panicked = false;
         self.state = match &result {
             Ok(Step::Emit(_)) => HandoffState::PublicationPending,
@@ -630,7 +966,7 @@ impl ProcessHandoff {
         if (matches!(self.state, HandoffState::Finished | HandoffState::Failed) || cleanup_panicked)
             && let Some(process) = self.process.take()
         {
-            cleanup_panicked |= drop_catching(process);
+            cleanup_panicked |= dispose_process_catching(process);
         }
         if (matches!(self.state, HandoffState::Finished | HandoffState::Failed) || cleanup_panicked)
             && let Some(lease) = self.lease.take()
@@ -638,15 +974,27 @@ impl ProcessHandoff {
             cleanup_panicked |= drop_catching(lease);
         }
         if cleanup_panicked {
-            let error = match result {
-                Err(error) => format!("{error}; owned destructor panicked during completion"),
-                Ok(_) => "owned destructor panicked during completion".into(),
-            };
             self.state = HandoffState::Failed;
             if let Some(process) = self.process.take() {
-                let _ = drop_catching(process);
+                let _ = dispose_process_catching(process);
             }
-            result = Err(error);
+            result = add_failure(
+                result,
+                enrich_identity(ProcessCleanupError::OwnedState.failure(), &identity),
+            );
+        }
+        result = result.map_err(|failure| failure.retain_leases(&leases));
+        let mut lease_panicked = false;
+        for lease in leases.into_iter().rev() {
+            lease_panicked |= drop_catching(lease);
+        }
+        if lease_panicked {
+            self.state = HandoffState::Failed;
+            let mut failure = enrich_identity(ProcessCleanupError::OwnedState.failure(), &identity);
+            if let Some(lease) = &self.lease {
+                failure = failure.retain_leases(std::slice::from_ref(lease));
+            }
+            result = add_failure(result, failure);
         }
         Ok(result)
     }
@@ -669,7 +1017,7 @@ impl ProcessHandoff {
             .context
             .take()
             .is_some_and(|context| context.dispose_catching());
-        let process_panicked = self.process.take().is_some_and(drop_catching);
+        let process_panicked = self.process.take().is_some_and(dispose_process_catching);
         let lease_panicked = self.lease.take().is_some_and(drop_catching);
         if context_panicked || process_panicked || lease_panicked {
             Err(HandoffError::DestructorPanicked)
@@ -685,7 +1033,7 @@ impl ProcessHandoff {
             .context
             .take()
             .is_some_and(|context| context.dispose_catching());
-        let process_panicked = self.process.take().is_some_and(drop_catching);
+        let process_panicked = self.process.take().is_some_and(dispose_process_catching);
         let lease_panicked = self.lease.take().is_some_and(drop_catching);
         if context_panicked || process_panicked || lease_panicked {
             Err(HandoffError::DestructorPanicked)
@@ -760,19 +1108,38 @@ impl ProcessHandoff {
         }
         Ok(())
     }
-    fn restore(&mut self, job: ActivationJob) {
+    fn restore(&mut self, job: &mut ActivationJob) -> Option<Failure> {
+        let mut cleanup = None;
+        // Guard objects are executable owners too, and must be attempted separately.
+        let guards = std::mem::take(&mut job.execution.guards);
+        for (index, guard) in guards.into_iter().enumerate().rev() {
+            if drop_catching(guard) {
+                let failure =
+                    job.enrich(ProcessCleanupError::GuardObject { guard_index: index }.failure());
+                cleanup = Some(match cleanup {
+                    Some(primary) => Failure::with_cleanup(primary, failure),
+                    None => failure,
+                });
+            }
+        }
         let JobExecution {
             process,
             context,
             metadata: _,
             guards,
-        } = *job.execution;
+        } = *job.execution.0.take().expect("accepted job execution");
         self.outstanding = None;
         self.process = Some(process);
         self.context = Some(context);
         // The job's lease survives until after process/context transfer.
-        drop(guards);
-        drop(job.lease);
+        debug_assert!(guards.is_empty());
+        let _ = drop_catching(job.lease.take());
+        cleanup
+    }
+}
+impl Drop for ProcessHandoff {
+    fn drop(&mut self) {
+        let _ = self.cancel_detach().dispose();
     }
 }
 

@@ -157,21 +157,21 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
         options,
     )
     .unwrap();
-    assert_eq!(
+    assert!(matches!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
             .unwrap_err(),
         DriverError::NotStarted
-    );
+    ));
     kernel.start().unwrap();
-    assert_eq!(
+    assert!(matches!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
             .unwrap_err(),
         DriverError::UnsupportedWake {
-            producer: Key::new("plugin", "callback")
-        }
-    );
+            producer
+        } if producer == Key::new("plugin", "callback")
+    ));
     let event = kernel.drain(1).unwrap().pop().unwrap();
     assert_eq!(event.producer, Key::new("plugin", "callback"));
     let error = event.result.err().unwrap();
@@ -278,12 +278,12 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     let failure = kernel
         .run_until(&WakeHandle::default(), |_| panic!("driver must not run"))
         .unwrap_err();
-    assert_eq!(
+    assert!(matches!(
         failure,
         DriverError::WakeRegistrationPanicked {
-            producer: Key::new("plugin", "callback"),
-        }
-    );
+            producer, ..
+        } if producer == Key::new("plugin", "callback")
+    ));
     // A failed registration must restore the owned producer slot. The original
     // typed poll error can still be observed, and no extra producer is created.
     let event = kernel.drain(1).unwrap().pop().expect("producer slot lost");

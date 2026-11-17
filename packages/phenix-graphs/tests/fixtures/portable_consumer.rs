@@ -44,25 +44,28 @@ impl ContractValue for Record {
         out
     }
 
-    fn decode(mut bytes: &[u8]) -> Result<Self, String> {
-        fn field<'a>(bytes: &mut &'a [u8]) -> Result<&'a [u8], String> {
-            let header = bytes.get(..8).ok_or("missing length")?;
-            let length = usize::try_from(u64::from_le_bytes(header.try_into().unwrap()))
-                .map_err(|_| "length overflow")?;
+    fn decode(mut bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+        fn field<'a>(bytes: &mut &'a [u8], name: &str) -> Result<&'a [u8], phenix_graph::Failure> {
+            let header = bytes.get(..8).ok_or_else(|| phenix_graph::CodecError::TruncatedHeader { field: name.into(), offset: 0, remaining: bytes.len() }.failure())?;
+            let wire_length = u64::from_le_bytes(header.try_into().unwrap());
+            let length = usize::try_from(wire_length)
+                .map_err(|cause| phenix_graph::CodecError::LengthOverflow { field: name.into(), length: wire_length, cause }.failure())?;
             let rest = &bytes[8..];
-            let value = rest.get(..length).ok_or("missing payload")?;
+            let value = rest.get(..length).ok_or_else(|| phenix_graph::CodecError::TruncatedPayload { field: name.into(), offset: 8, length, remaining: rest.len() }.failure())?;
             *bytes = &rest[length..];
             Ok(value)
         }
-        let number = i64::decode(field(&mut bytes)?)?;
-        let text = match field(&mut bytes)? {
+        let total = bytes.len();
+        let number = i64::decode(field(&mut bytes, "bytes")?)?;
+        let optional = field(&mut bytes, "cursor")?;
+        let text = match optional {
             [0] => None,
             [1, rest @ ..] => Some(String::decode(rest)?),
-            _ => return Err("bad optional tag".into()),
+            _ => return Err(phenix_graph::CodecError::OptionTag { field: "cursor".into(), tag: optional.first().copied(), length: optional.len() }.failure()),
         };
-        let flag = bool::decode(field(&mut bytes)?)?;
+        let flag = bool::decode(field(&mut bytes, "type")?)?;
         if !bytes.is_empty() {
-            return Err("trailing bytes".into());
+            return Err(phenix_graph::CodecError::TrailingBytes { offset: total - bytes.len(), total }.failure());
         }
         Ok(Self { flag, text, number })
     }
@@ -89,10 +92,10 @@ impl ContractValue for Number {
         self.number.to_le_bytes().to_vec()
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
         let bytes: [u8; 8] = bytes
             .try_into()
-            .map_err(|_| "consumer: expected eight bytes")?;
+            .map_err(|cause| phenix_graph::Failure::external("consumer: expected eight bytes", cause))?;
         Ok(Self {
             number: i64::from_le_bytes(bytes),
         })

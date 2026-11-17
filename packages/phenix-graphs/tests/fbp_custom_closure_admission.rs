@@ -12,7 +12,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 struct DropInput;
 impl Process for DropInput {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.take("in").is_some());
         Ok(Step::Complete)
     }
@@ -20,7 +20,7 @@ impl Process for DropInput {
 
 struct ObserveAbsence;
 impl Process for ObserveAbsence {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.take("opt").is_none());
         assert!(cx.is_request_closed("opt"));
         assert!(!cx.is_eos("opt"));

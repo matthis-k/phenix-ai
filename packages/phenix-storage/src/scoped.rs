@@ -28,7 +28,17 @@ pub enum Error {
     InvalidBaseDirectory,
     WrongResourceKind,
     InvalidRuntimeDirectory,
+    RuntimeDirectoryIo {
+        path: PathBuf,
+        phase: RuntimeDirectoryPhase,
+        cause: std::io::Error,
+    },
     Storage(crate::Error),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeDirectoryPhase {
+    SymlinkMetadata,
 }
 
 impl std::fmt::Display for Error {
@@ -40,6 +50,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Storage(cause) => Some(cause),
+            Self::RuntimeDirectoryIo { cause, .. } => Some(cause),
             _ => None,
         }
     }
@@ -677,7 +688,11 @@ impl XdgPaths {
             .as_ref()
             .ok_or(Error::MissingRuntimeDirectory)?;
         let metadata =
-            std::fs::symlink_metadata(path).map_err(|_| Error::InvalidRuntimeDirectory)?;
+            std::fs::symlink_metadata(path).map_err(|cause| Error::RuntimeDirectoryIo {
+                path: path.clone(),
+                phase: RuntimeDirectoryPhase::SymlinkMetadata,
+                cause,
+            })?;
         if !metadata.is_dir()
             || metadata.uid() != effective_uid
             || metadata.mode() & 0o7777 != 0o700
@@ -712,7 +727,10 @@ mod tests {
         fn decode(&self, bytes: &[u8]) -> crate::Result<Text> {
             String::from_utf8(bytes.to_vec())
                 .map(Text)
-                .map_err(|e| crate::Error::Codec(e.to_string()))
+                .map_err(|e| crate::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for Text {
@@ -796,6 +814,44 @@ mod tests {
             project.resolve(ScopeKind::Session),
             Err(Error::MissingSession)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_metadata_failure_retains_path_phase_and_actual_os_error() {
+        use std::error::Error as _;
+        use std::os::unix::fs::MetadataExt;
+        let root =
+            std::env::temp_dir().join(format!("phenix-runtime-cause-{}", std::process::id()));
+        std::fs::write(&root, b"not a directory").unwrap();
+        let uid = std::fs::metadata(&root).unwrap().uid();
+        for (path, kind) in [
+            (root.join("child"), std::io::ErrorKind::NotADirectory),
+            (root.with_extension("missing"), std::io::ErrorKind::NotFound),
+        ] {
+            let expected = std::fs::symlink_metadata(&path).unwrap_err();
+            let paths = XdgPaths::new(
+                "/tmp/config".into(),
+                "/tmp/data".into(),
+                "/tmp/state".into(),
+                "/tmp/cache".into(),
+                Some(path.clone()),
+            )
+            .unwrap();
+            let error = paths.validate_runtime(uid).unwrap_err();
+            assert!(matches!(&error, Error::RuntimeDirectoryIo {
+                path: actual, phase: RuntimeDirectoryPhase::SymlinkMetadata, ..
+            } if actual == &path));
+            let cause = error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap();
+            assert_eq!(cause.kind(), kind);
+            assert_eq!(cause.raw_os_error(), expected.raw_os_error());
+            assert!(cause.raw_os_error().is_some());
+        }
+        std::fs::remove_file(root).unwrap();
     }
 
     #[cfg(unix)]

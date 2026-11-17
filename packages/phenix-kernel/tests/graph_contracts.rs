@@ -29,10 +29,10 @@ macro_rules! portable {
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
             }
-            fn decode(bytes: &[u8]) -> Result<Self, String> {
-                Ok(Self(i64::from_le_bytes(
-                    bytes.try_into().map_err(|_| "bad i64 length")?,
-                )))
+            fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+                Ok(Self(i64::from_le_bytes(bytes.try_into().map_err(
+                    |cause| phenix_graph::Failure::external("bad i64 length", cause),
+                )?)))
             }
         }
     };
@@ -82,7 +82,7 @@ mod provider {
     }
     struct Worker(i64, bool);
     impl Process for Worker {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.1 {
                 self.1 = false;
                 return Ok(Step::Complete);
@@ -90,7 +90,12 @@ mod provider {
             if context.is_closed("run") {
                 return Ok(Step::Finished);
             }
-            let request = Request::decode(context.take("run").ok_or("missing request")?.bytes())?;
+            let request = Request::decode(
+                context
+                    .take("run")
+                    .ok_or_else(|| phenix_graph::Failure::application_message("missing request"))?
+                    .bytes(),
+            )?;
             self.1 = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "value",
@@ -350,19 +355,31 @@ fn missing_paths_and_definitions_fail_closed() {
             .to_string()
             .contains("missing contract definition")
     );
+    let error = build(
+        [
+            snapshot,
+            support::snapshot("definition", definition::Plugin),
+        ],
+        missing_path_options,
+    )
+    .err()
+    .unwrap();
+    let phenix_kernel::ResolutionError::MissingUnit { offer, unit, cause } = &error else {
+        panic!("{error}");
+    };
+    assert_eq!(*offer, Key::new("provider", "service"));
+    assert_eq!(unit, "does-not-exist");
     assert!(
-        build(
-            [
-                snapshot,
-                support::snapshot("definition", definition::Plugin)
-            ],
-            missing_path_options
-        )
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("does-not-exist")
+        matches!(cause.as_ref(), phenix_graph::NetworkError::UnknownProcess(path) if path == unit)
     );
+    assert!(std::ptr::eq(
+        std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<phenix_graph::NetworkError>()
+            .unwrap(),
+        cause.as_ref()
+    ));
+    assert!(error.to_string().contains("does-not-exist"));
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }
 struct RequirementPlugin(Contract);
@@ -474,6 +491,17 @@ fn plugin_request_checks_final_selected_unit_after_late_composition() {
     )
     .err()
     .unwrap();
+    let phenix_kernel::ResolutionError::Compilation { cause } = &error else {
+        panic!("{error}");
+    };
+    let phenix_graph::NetworkError::Interface(cause) = cause else {
+        panic!("{error}");
+    };
+    assert!(matches!(
+        cause.reason.as_ref(),
+        phenix_graph::interface::InterfaceReason::MissingExplicitClaim { contract }
+            if contract.as_ref() == "example/transform@1"
+    ));
     assert!(error.to_string().contains("claim"), "{error}");
     assert_eq!(activations.load(Ordering::SeqCst), 0);
 }

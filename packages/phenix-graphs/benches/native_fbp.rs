@@ -134,7 +134,7 @@ struct Split {
     value: i64,
 }
 impl Process for Split {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 2 {
             self.phase = 0;
             return Ok(Step::Complete);
@@ -154,7 +154,7 @@ struct Join {
     sum: i64,
 }
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let a = *cx.take("a").unwrap().borrow::<i64>().unwrap();
         let b = *cx.take("b").unwrap().borrow::<i64>().unwrap();
         assert_eq!(b, a * 2);
@@ -214,7 +214,7 @@ struct Feedback {
     count: Arc<AtomicUsize>,
 }
 impl Process for Feedback {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let Some(v) = cx.take("in") else {
             return Ok(Step::Complete);
         };

@@ -18,7 +18,7 @@ struct MoveOnly(String);
 
 struct Echo(bool);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
@@ -77,9 +77,13 @@ impl<const N: u8> ContractValue for Wire<N> {
         self.1.fetch_add(1, Ordering::SeqCst);
         self.0.to_le_bytes().to_vec()
     }
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
         Ok(Self(
-            i64::from_le_bytes(bytes.try_into().map_err(|_| "bad i64")?),
+            i64::from_le_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|cause| phenix_graph::Failure::external("bad i64", cause))?,
+            ),
             Arc::default(),
         ))
     }

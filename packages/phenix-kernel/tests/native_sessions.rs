@@ -166,14 +166,14 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
                 .unwrap()
                 .upgrade()
                 .unwrap();
-            assert_eq!(
+            assert!(matches!(
                 kernel.drain(0).unwrap_err(),
                 phenix_kernel::DriverError::ReentrantDrain
-            );
+            ));
             self.failures
                 .lock()
                 .unwrap()
-                .push(kernel.run_steps(0).unwrap_err());
+                .push(kernel.run_steps(0).unwrap_err().to_string());
             snapshot
                 .heads
                 .iter()
@@ -318,7 +318,7 @@ fn concurrent_session_calls_fail_fast_and_can_retry_after_lease_release() {
     holder.join().unwrap();
     assert_eq!(
         result.expect("contending caller blocked").unwrap_err(),
-        "kernel session busy"
+        phenix_kernel::SessionAccessError::Busy
     );
     waiter.join().unwrap();
     assert!(kernel.run_steps(0).is_ok());
@@ -351,7 +351,7 @@ fn host_grants_are_required_and_cannot_be_supplied_by_the_patch() {
 fn portless_sources_require_explicit_start_edits() {
     struct Source(Arc<AtomicUsize>);
     impl Process for Source {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(Step::Finished)
         }
@@ -413,7 +413,7 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
     }
     struct Guard(Arc<Mutex<Vec<std::thread::ThreadId>>>);
     impl ProcessExecutionGuard for Guard {
-        fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+        fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
             self.0.lock().unwrap().push(std::thread::current().id());
             Ok(Box::new(()))
         }
@@ -478,12 +478,12 @@ fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
         Arc<Mutex<Vec<String>>>,
     );
     impl Process for ReentrantProcess {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
             self.1
                 .lock()
                 .unwrap()
-                .push(kernel.with_session(|_| ()).unwrap_err());
+                .push(kernel.with_session(|_| ()).unwrap_err().to_string());
             Ok(Step::Finished)
         }
     }
@@ -551,9 +551,11 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
         Arc<Mutex<Option<Result<(), String>>>>,
     );
     impl Process for Probe {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let kernel = self.0.lock().unwrap().as_ref().unwrap().upgrade().unwrap();
-            let result = kernel.with_session(|_| ());
+            let result = kernel
+                .with_session(|_| ())
+                .map_err(|error| error.to_string());
             *self.1.lock().unwrap() = Some(result);
             Ok(Step::Finished)
         }
@@ -680,7 +682,7 @@ fn blocking_driver_observes_native_process_wakes_and_external_shutdown() {
         done: std::sync::mpsc::Sender<()>,
     }
     impl Process for Source {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Ok(Step::WaitWake);
             }
@@ -839,7 +841,7 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
         phenix_kernel::DriverError::SessionStopped {
             state: phenix_graph::runtime::SessionState::Failed,
             cause: Some(cause),
-        } if cause.contains("deferred job timeout")
+        } if cause.summary().contains("deferred job timeout")
     ));
     assert!(held.lock().unwrap().is_some());
 }
@@ -931,7 +933,7 @@ fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
         .unwrap();
     // No wake registration is needed for an already-terminal session;
     // the fixture's producer deliberately does not support set_waker.
-    assert_eq!(
+    assert!(matches!(
         kernel
             .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
             .unwrap_err(),
@@ -939,7 +941,7 @@ fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
             state: phenix_graph::runtime::SessionState::Cancelled,
             cause: None
         }
-    );
+    ));
 }
 
 #[test]
@@ -950,8 +952,9 @@ fn completed_empty_session_returns_success_without_blocking_or_registering_wakes
         kernel.with_session(|session| session.state()).unwrap(),
         phenix_graph::runtime::SessionState::Completed
     );
-    assert_eq!(
-        kernel.run_until(&phenix_kernel::WakeHandle::default(), |_| {}),
-        Ok(())
+    assert!(
+        kernel
+            .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
+            .is_ok()
     );
 }

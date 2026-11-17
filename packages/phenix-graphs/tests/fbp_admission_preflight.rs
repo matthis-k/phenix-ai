@@ -66,7 +66,7 @@ fn direct_injection_preserves_eager_reservation_and_driver_executes() {
 
 struct Noop;
 impl Process for Noop {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Complete)
     }
 }

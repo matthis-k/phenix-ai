@@ -87,7 +87,7 @@ impl Generation {
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
-    ) -> Result<R, String> {
+    ) -> Result<R, crate::SessionAccessError> {
         self.kernel.with_session(use_session)
     }
 
@@ -105,7 +105,7 @@ impl Generation {
         self.kernel.inject_key(key, payload)
     }
 
-    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, crate::SessionAccessError> {
         self.kernel.run_steps(budget)
     }
 
@@ -239,7 +239,12 @@ impl KernelHost {
             bind(&Binding { kernel: &kernel })
         }))
         .unwrap_or_else(|payload| {
-            Err(crate::contained_panic_message("generation binding panicked", payload).into())
+            Err(kernel
+                .lease_failure(phenix_graph::process::callback_panicked(
+                    phenix_graph::CallbackPhase::GenerationBind,
+                    payload,
+                ))
+                .into())
         })
         .map_err(|cause| {
             LifecycleError::Binding(phenix_plugin::lease_callback_error(
@@ -692,7 +697,7 @@ mod tests {
                 wake.shutdown();
             }
             driver.join().unwrap();
-            assert_eq!(outcome.unwrap(), Err(crate::DriverError::Retired));
+            assert!(matches!(outcome.unwrap(), Err(crate::DriverError::Retired)));
             assert!(generation.kernel.driver_wake.lock().unwrap().is_none());
             assert!(generation.kernel.producers.lock().unwrap().retired);
 

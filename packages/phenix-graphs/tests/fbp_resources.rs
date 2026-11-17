@@ -76,7 +76,7 @@ fn lookup_is_exact_borrowed_and_never_invokes_capability_operations() {
 
 struct Complete;
 impl Process for Complete {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Complete)
     }
 }
@@ -155,14 +155,14 @@ struct Source {
     emitted: bool,
 }
 impl Process for Source {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
         }
         let counter = context
             .resource::<Arc<Counter>>("counter")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| phenix_graph::Failure::external("resource access failed", e))?;
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new(
             "out",
@@ -260,19 +260,23 @@ struct Continuation {
     stage: u8,
 }
 impl Process for Continuation {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let counter = context
             .resource::<Arc<Counter>>("counter")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| phenix_graph::Failure::external("resource access failed", e))?;
         counter.increment();
         let step = match self.stage {
             0 => {
-                context.take("in").ok_or("initial input absent")?;
+                context.take("in").ok_or_else(|| {
+                    phenix_graph::Failure::application_message("initial input absent")
+                })?;
                 Step::Yield
             }
             1 => Step::WaitInput("in".into()),
             2 => {
-                context.take("in").ok_or("staged input absent")?;
+                context.take("in").ok_or_else(|| {
+                    phenix_graph::Failure::application_message("staged input absent")
+                })?;
                 Step::Complete
             }
             _ => unreachable!(),
@@ -542,13 +546,32 @@ fn managed_completion_and_cancellation_report_actual_resource_cleanup_panics() {
                     handoff.cancel(),
                     Err(HandoffCancelError::DestructorPanicked { ticket: None })
                 );
+                assert_cleanup(&events, &["left", "right"], payload_panic);
             } else {
                 let job = handoff.next_job().unwrap();
                 let error = handoff.complete(job.run()).unwrap().unwrap_err();
-                assert!(error.contains("owned destructor panicked"));
+                assert!(error.summary().contains("owned destructor panicked"));
                 assert_eq!(handoff.state(), HandoffState::Failed);
+                if payload_panic {
+                    assert_eq!(
+                        *events.lock().unwrap(),
+                        ["left", "panic-payload", "right", "panic-payload"]
+                    );
+                }
+                drop(error);
+                // Completion's escaped Failure owns all known resource code
+                // leases, not the capabilities or the ProcessContext itself.
+                let mut expected = vec!["left"];
+                if payload_panic {
+                    expected.push("panic-payload");
+                }
+                expected.push("right");
+                if payload_panic {
+                    expected.push("panic-payload");
+                }
+                expected.extend(["lease-last", "lease-first", "lease-last", "lease-first"]);
+                assert_eq!(*events.lock().unwrap(), expected);
             }
-            assert_cleanup(&events, &["left", "right"], payload_panic);
         }
     }
 }

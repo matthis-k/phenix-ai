@@ -275,7 +275,7 @@ struct CheckProcess {
     calls: Arc<AtomicUsize>,
 }
 impl Process for CheckProcess {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(self.alive.load(Ordering::SeqCst));
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Finished)
@@ -442,4 +442,83 @@ fn detached_compiled_network_does_not_pin_defeated_snapshot_revisions() {
     drop(detached);
     assert!(!winner_alive.load(Ordering::SeqCst));
     assert_eq!(*log.lock().unwrap(), ["loser", "winner"]);
+}
+
+#[test]
+fn lease_failure_pins_independently_escaping_nested_cleanup_without_changing_sources() {
+    for reverse in [false, true] {
+        let log = Log::default();
+        let life = Life::new("plugin", &log);
+        let alive = life.alive.clone();
+        let application = Life::new("application", &log);
+        let application_alive = application.alive.clone();
+        let mut options = BuildOptions::default();
+        options.execution.lease = Some(Arc::new(application));
+        let snapshot = support::snapshot(
+            "plugin",
+            Plugin {
+                life,
+                phase: Phase::None,
+            },
+        );
+        let kernel = Kernel::build_with_options(
+            "cleanup",
+            [snapshot],
+            Arc::new(LocalProcessDispatcher),
+            options,
+        )
+        .unwrap();
+        let make_failure = || {
+            phenix_graph::Failure::external(
+                "cached host summary",
+                Cause {
+                    alive: alive.clone(),
+                    log: log.clone(),
+                },
+            )
+        };
+        let original = make_failure().with_cleanup(make_failure().with_cleanup(make_failure()));
+        let failure = kernel.lease_failure(original.clone());
+        assert!(failure.same_origin(&original));
+        assert!(std::ptr::eq(
+            failure.source().unwrap(),
+            original.source().unwrap()
+        ));
+        let mut escaped = vec![
+            failure.cleanup()[0].clone(),
+            failure.cleanup()[0].cleanup()[0].clone(),
+        ];
+        for (leased, original) in [
+            (&escaped[0], &original.cleanup()[0]),
+            (&escaped[1], &original.cleanup()[0].cleanup()[0]),
+        ] {
+            assert!(leased.same_origin(original));
+            assert!(std::ptr::eq(
+                leased.source().unwrap(),
+                original.source().unwrap()
+            ));
+            assert_eq!(leased.context(), original.context());
+        }
+        drop(original);
+        drop(failure);
+        drop(kernel);
+        assert!(alive.load(Ordering::SeqCst));
+        assert!(application_alive.load(Ordering::SeqCst));
+        for failure in &escaped {
+            inspect(failure);
+        }
+        if reverse {
+            escaped.reverse();
+        }
+        drop(escaped.pop());
+        assert!(alive.load(Ordering::SeqCst));
+        assert!(application_alive.load(Ordering::SeqCst));
+        drop(escaped);
+        assert!(!alive.load(Ordering::SeqCst));
+        assert!(!application_alive.load(Ordering::SeqCst));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["cause", "cause", "cause", "application", "plugin"]
+        );
+    }
 }

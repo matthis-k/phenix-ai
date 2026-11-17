@@ -21,8 +21,8 @@ impl NetworkSession {
     pub fn process_origin(&self, index: usize) -> Option<&GraphOrigin> {
         self.compiled.processes().get(index)?.origin()
     }
-    pub fn failure(&self) -> Option<&str> {
-        self.failure.as_deref()
+    pub fn failure(&self) -> Option<&Failure> {
+        self.failure.as_ref()
     }
     pub fn disposed_packets(&self) -> usize {
         self.disposed_packets

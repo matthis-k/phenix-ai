@@ -110,12 +110,17 @@ fn dirty_lane_capture_retry_and_eos_propagate_without_a_full_scan() {
     );
     assert_eq!(session.request_work(request).unwrap().queued, 0);
     session.release_request(request).unwrap();
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
 }
 
 struct Echo(bool);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
@@ -124,7 +129,9 @@ impl Process for Echo {
             return Ok(Step::Finished);
         };
         if value.borrow::<i64>() == Some(&-1) {
-            return Err("deliberate request failure".into());
+            return Err(phenix_graph::Failure::application_message(
+                "deliberate request failure",
+            ));
         }
         self.0 = true;
         Ok(Step::Emit(ProcessEmission::new("out", value)))
@@ -159,7 +166,7 @@ fn echo_network() -> CompiledNetwork {
 fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
     struct Source(bool);
     impl Process for Source {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.0 {
                 return Ok(Step::Finished);
             }
@@ -169,7 +176,7 @@ fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
     }
     struct Join(bool);
     impl Process for Join {
-        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.0 {
                 self.0 = false;
                 return Ok(Step::Complete);
@@ -178,8 +185,12 @@ fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
             if cx.inputs().next().is_none() {
                 return Ok(Step::Complete);
             }
-            let a = cx.take("a").ok_or("join activated without a")?;
-            let b = cx.take("b").ok_or("join activated without b")?;
+            let a = cx.take("a").ok_or_else(|| {
+                phenix_graph::Failure::application_message("join activated without a")
+            })?;
+            let b = cx.take("b").ok_or_else(|| {
+                phenix_graph::Failure::application_message("join activated without b")
+            })?;
             self.0 = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "out",
@@ -238,7 +249,12 @@ fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
     let report = session.run_until_idle(16);
     assert_eq!(report.steps, 2, "only source Emit and Finished should run");
     assert_eq!(report.state, SessionState::Waiting);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert!(!session.output_closed("out").unwrap());
     assert!(
         session
@@ -274,7 +290,12 @@ fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
             .unwrap()
             .is_none()
     );
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     session.release_request(request).unwrap();
 }
 
@@ -324,7 +345,7 @@ fn close_input_applies_to_existing_and_later_allocated_lanes() {
 fn finished_reader_stays_closed_in_existing_reused_and_new_lanes() {
     struct Finish(Arc<Mutex<usize>>);
     impl Process for Finish {
-        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             assert_eq!(cx.take("in").unwrap().borrow::<i64>(), Some(&17));
             *self.0.lock().unwrap() += 1;
             Ok(Step::Finished)
@@ -388,7 +409,12 @@ fn finished_reader_stays_closed_in_existing_reused_and_new_lanes() {
     }
     assert_eq!(session.run_until_idle(8).steps, 0);
     assert_eq!(*calls.lock().unwrap(), 1);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
 }
 
 #[test]
@@ -415,6 +441,7 @@ fn fail_session_retains_another_requests_capture_until_scoped_drain() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("deliberate request failure")
     );
@@ -440,7 +467,7 @@ type Records = Arc<Mutex<Vec<(Option<usize>, i64)>>>;
 
 struct Record(Records);
 impl Process for Record {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let Some(value) = cx.take("in") else {
             return Ok(Step::Finished);
         };
@@ -503,7 +530,12 @@ fn shared_fifo_rotates_queues_on_the_same_port_across_requests() {
         ]
     );
     assert_eq!(session.run_until_idle(8).steps, 0);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     for request in [a, b] {
         assert_eq!(
             session.request_status(request).unwrap(),
@@ -554,7 +586,12 @@ fn bounded_lanes_round_robin_includes_unscoped_traffic_under_scoped_refill() {
             .collect::<Vec<_>>(),
         (10..next).collect::<Vec<_>>()
     );
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert_eq!(
         session.request_status(request).unwrap(),
         RequestStatus::Settled { captures: 0 }
@@ -566,7 +603,7 @@ fn bounded_lanes_round_robin_includes_unscoped_traffic_under_scoped_refill() {
 fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
     struct Router(bool);
     impl Process for Router {
-        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.0 {
                 self.0 = false;
                 return Ok(Step::Complete);
@@ -585,7 +622,7 @@ fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
         seen: Observations,
     }
     impl Process for OptionalRecord {
-        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.remaining != 0 {
                 self.remaining -= 1;
                 return Ok(if self.remaining == 0 {
@@ -727,7 +764,12 @@ fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
         session.request_status(a).unwrap(),
         RequestStatus::Settled { captures: 0 }
     );
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert_eq!(session.run_until_idle(8).steps, 0);
     session.release_request(a).unwrap();
 }

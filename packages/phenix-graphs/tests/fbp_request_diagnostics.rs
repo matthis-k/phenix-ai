@@ -23,7 +23,7 @@ fn one() -> NonZeroUsize {
 
 struct Echo(Arc<AtomicUsize>);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(match cx.take("in") {
             Some(value) => Step::Emit(ProcessEmission::new("out", value)),
@@ -34,7 +34,7 @@ impl Process for Echo {
 
 struct Drain;
 impl Process for Drain {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         cx.take("tight");
         cx.take("spare");
         Ok(Step::Complete)
@@ -226,7 +226,12 @@ fn scoped_waits_report_only_full_pending_targets_and_clear_after_relief() {
         session.run_until_idle(32);
         assert!(session.request_blocked_queues(b).unwrap().is_empty());
         assert!(session.blocked_queues().is_empty());
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
 }
 
@@ -358,7 +363,12 @@ fn observation_does_not_call_readiness_execute_steps_or_supervise_overdue_jobs()
         );
         assert_eq!(session.request_status(b).unwrap(), RequestStatus::Pending);
         assert_eq!(session.overdue_jobs(now), overdue);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
         assert_eq!(session.supervise_deferred(now), overdue);
         assert_eq!(session.state(), SessionState::Failed);
         assert_eq!(session.request_status(b).unwrap(), RequestStatus::Failed);

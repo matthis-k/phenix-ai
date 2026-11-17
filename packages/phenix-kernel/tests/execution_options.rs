@@ -85,7 +85,10 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
         report.budget_exhausted,
         "{report:?}; failure={:?}",
         kernel
-            .with_session(|session| session.failure().map(str::to_owned))
+            .with_session(|session| session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .map(str::to_owned))
             .unwrap()
     );
     assert_eq!(report.steps, 8);

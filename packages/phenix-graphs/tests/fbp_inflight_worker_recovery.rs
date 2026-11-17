@@ -28,14 +28,14 @@ struct PausedWorker {
 }
 
 impl Process for PausedWorker {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
         }
         let value = cx
             .take("in")
-            .ok_or("missing request packet")?
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing request packet"))?
             .get::<u64>()?;
         if value % 2 == 1 {
             // Signal that the worker is *inside* Process::step, not simply

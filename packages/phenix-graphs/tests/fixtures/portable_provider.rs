@@ -35,10 +35,10 @@ impl ContractValue for Number {
         self.value.to_le_bytes().to_vec()
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
         let bytes: [u8; 8] = bytes
             .try_into()
-            .map_err(|_| "provider: expected eight bytes")?;
+            .map_err(|cause| phenix_graph::Failure::external("provider: expected eight bytes", cause))?;
         Ok(Self {
             value: i64::from_le_bytes(bytes),
         })

@@ -22,8 +22,12 @@ pub enum Error {
     UnknownMount,
     UnknownDataset,
     Denied,
-    UnsupportedCapability { capability: Capability },
-    Conflict { current: Option<Revision> },
+    UnsupportedCapability {
+        capability: Capability,
+    },
+    Conflict {
+        current: Option<Revision>,
+    },
     RevisionExhausted,
     SubscriptionClosed,
     SchemaMismatch,
@@ -33,9 +37,17 @@ pub enum Error {
     Reentrant,
     MixedSnapshotSources,
     SnapshotEntryMismatch,
-    MissingInput { address: Address, key: String },
+    MissingInput {
+        address: Address,
+        key: String,
+    },
     Codec(String),
+    CodecCause {
+        summary: &'static str,
+        cause: Box<dyn std::error::Error + Send + Sync>,
+    },
     Sql(rusqlite::Error),
+    Io(std::io::Error),
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -46,6 +58,8 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Sql(e) => Some(e),
+            Self::Io(e) => Some(e),
+            Self::CodecCause { cause, .. } => Some(cause.as_ref()),
             _ => None,
         }
     }

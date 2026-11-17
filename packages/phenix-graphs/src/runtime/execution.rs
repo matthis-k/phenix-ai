@@ -24,14 +24,34 @@ impl NetworkSession {
             .any(|scope| scope.timed_out && scope.cancelled_jobs.contains(&ticket))
     }
 
-    fn record_late_return_cleanup_panic(&mut self, request: Option<RequestId>) {
-        let failure = request
-            .and_then(|request| self.requests.get_mut(&request))
-            .and_then(|scope| scope.failure.as_mut())
-            .or(self.failure.as_mut());
-        if let Some(failure) = failure {
-            failure.push_str("; destructor panicked during late dispatcher return cleanup");
+    fn record_late_return_cleanup_panic(
+        &mut self,
+        ticket: StepTicket,
+        metadata: Option<ActivationMetadata>,
+    ) {
+        let request = metadata.as_ref().and_then(|metadata| metadata.request);
+        let mut context = crate::FailureContext {
+            ticket: Some(ticket),
+            phase: Some(CallbackPhase::Cleanup),
+            ..Default::default()
+        };
+        if let Some(metadata) = metadata {
+            context.session = Some(metadata.session);
+            context.generation = Some(metadata.generation);
+            context.request = metadata.request;
+            context.process = Some(metadata.process);
+            context.path = Some(metadata.path);
+            context.output = metadata.output;
         }
+        let mut secondary = RuntimeError::DestructorPanicked {
+            stage: CleanupStage::LateReturn,
+        }
+        .failure()
+        .with_context(context);
+        if let Some(lease) = &self.lease {
+            secondary = secondary.retain_leases(std::slice::from_ref(lease));
+        }
+        self.append_failure_cleanup(request, secondary);
     }
 
     pub fn take_dispatch_return(&mut self) -> Option<DispatchReturn> {
@@ -58,11 +78,19 @@ impl NetworkSession {
             if let Some(request) = request {
                 self.requests.get_mut(&request).unwrap().timed_out = true;
             }
-            self.fail_process(index, format!(
-                "deferred job timeout for process {} ({}, request={request:?}) at activation {} step {}",
-                index, self.compiled.processes()[index].path(),
-                job.ticket.activation(), job.ticket.sequence()
-            ));
+            let failure = RuntimeError::DeferredTimeout {
+                process: index,
+                path: self.compiled.processes()[index].path().into(),
+                request,
+                ticket: job.ticket,
+                timeout: self.deferred_timeout.expect("supervised timeout"),
+            }
+            .failure()
+            .with_context(crate::FailureContext {
+                ticket: Some(job.ticket),
+                ..Default::default()
+            });
+            self.fail_process(index, failure);
         }
         overdue
     }
@@ -142,21 +170,28 @@ impl NetworkSession {
                 let process = &self.compiled.processes()[index];
                 let actual = emission.value.identity();
                 let error = match process.interface().output(&emission.output) {
-                    None => Some(format!(
-                        "invalid emission from process {index} ({}) output {:?}: unknown output",
-                        process.path(),
-                        emission.output
-                    )),
-                    Some(port) if port.value != actual => Some(format!(
-                        "invalid emission from process {index} ({}) output {:?}: incompatible value identity (expected {:?}, actual {actual:?})",
-                        process.path(),
-                        emission.output,
-                        port.value
-                    )),
+                    None => Some(
+                        RuntimeError::UnknownOutput {
+                            process: index,
+                            path: process.path().into(),
+                            output: emission.output.clone(),
+                        }
+                        .failure(),
+                    ),
+                    Some(port) if port.value != actual => Some(
+                        RuntimeError::EmissionType {
+                            process: index,
+                            path: process.path().into(),
+                            output: emission.output.clone(),
+                            expected: port.value.clone(),
+                            actual,
+                        }
+                        .failure(),
+                    ),
                     Some(_) => None,
                 };
                 if let Some(error) = error {
-                    self.fail_process(index, error);
+                    self.fail_emission(index, ticket, emission, error);
                     return Ok(());
                 }
                 let outgoing = match (self.processes[index].request, self.request_queue_policy) {
@@ -172,7 +207,7 @@ impl NetworkSession {
                     _ => self.processes[index].outputs[&emission.output].as_slice(),
                 };
                 let indices = if let Some(destinations) = &emission.destinations {
-                    let selection = (|| -> Result<Vec<usize>, String> {
+                    let selection = (|| -> Result<Vec<usize>, Failure> {
                         let budget = outgoing
                             .iter()
                             .filter(|q| {
@@ -182,9 +217,11 @@ impl NetworkSession {
                         // Reject oversized process-produced lists before allocating
                         // routing maps, copying targets, or preparing any payload.
                         if destinations.len() > budget {
-                            return Err(format!(
-                                "selection exceeds compiled outgoing connection budget ({budget})"
-                            ));
+                            return Err(RuntimeError::SelectionBudget {
+                                budget,
+                                actual: destinations.len(),
+                            }
+                            .failure());
                         }
                         let connected: BTreeMap<_, _> = outgoing
                             .iter()
@@ -198,26 +235,26 @@ impl NetworkSession {
                         let mut selected = BTreeSet::new();
                         for (position, path) in destinations.iter().enumerate() {
                             let resolved = self.compiled.resolve_input(path).ok_or_else(|| {
-                                format!("unknown selected input at destination {position}")
+                                RuntimeError::UnknownSelection { position }.failure()
                             })?;
                             if resolved.is_empty() {
-                                return Err("selected input has no physical destinations".into());
+                                return Err(RuntimeError::EmptySelection { position }.failure());
                             }
                             for (target, input) in resolved {
                                 let queue =
                                     connected.get(&(*target, input.as_str())).ok_or_else(|| {
-                                        format!(
-                                            "selected input {}.{} is not connected to this output",
-                                            self.compiled.processes()[*target].path(),
-                                            input
-                                        )
+                                        RuntimeError::UnconnectedSelection {
+                                            path: self.compiled.processes()[*target].path().into(),
+                                            input: input.clone(),
+                                        }
+                                        .failure()
                                     })?;
                                 if !selected.insert(*queue) {
-                                    return Err(format!(
-                                        "duplicate selected input after alias resolution: {}.{}",
-                                        self.compiled.processes()[*target].path(),
-                                        input
-                                    ));
+                                    return Err(RuntimeError::DuplicateSelection {
+                                        path: self.compiled.processes()[*target].path().into(),
+                                        input: input.clone(),
+                                    }
+                                    .failure());
                                 }
                             }
                         }
@@ -233,7 +270,7 @@ impl NetworkSession {
                     match selection {
                         Ok(indices) => indices,
                         Err(error) => {
-                            self.fail_process(index, error);
+                            self.fail_emission(index, ticket, emission, error);
                             return Ok(());
                         }
                     }
@@ -247,14 +284,12 @@ impl NetworkSession {
                         emission.output.clone(),
                     ))
                 {
-                    self.fail_process(
-                        index,
-                        format!(
-                            "unconnected output {}.{} requires explicit discard_outputs",
-                            self.compiled.processes()[index].path(),
-                            emission.output
-                        ),
-                    );
+                    let error = RuntimeError::UnconnectedOutput {
+                        path: self.compiled.processes()[index].path().into(),
+                        output: emission.output.clone(),
+                    }
+                    .failure();
+                    self.fail_emission(index, ticket, emission, error);
                     return Ok(());
                 }
                 let targets: Vec<_> = indices.iter().map(|q| FanoutTarget::identity(*q)).collect();
@@ -267,12 +302,32 @@ impl NetworkSession {
                     session: self.session_id,
                     generation: self.generation,
                     process: Some(index),
-                    output: emission.output,
+                    output: emission.output.clone(),
                     activation: ticket.activation(),
                     request: self.processes[index].request,
                     capture: None,
                 }));
-                match self.transport.prepare(&packet, &targets) {
+                let prepared = self.transport.prepare(&packet, &targets).map_err(|error| {
+                    error
+                        .into_failure()
+                        .retain_leases(packet.value().known_leases())
+                });
+                let cleanup = packet.into_value().dispose_with_cleanup(|| {
+                    self.enrich_failure(
+                        Some(index),
+                        RuntimeError::DestructorPanicked {
+                            stage: CleanupStage::Failure,
+                        }
+                        .failure()
+                        .with_context(crate::FailureContext {
+                            ticket: Some(ticket),
+                            output: Some(emission.output.clone()),
+                            phase: Some(CallbackPhase::Cleanup),
+                            ..Default::default()
+                        }),
+                    )
+                });
+                match prepared {
                     Ok(mut transaction) => {
                         for queue in &indices {
                             if let QueueEndpoint::Capture(name) = &self.endpoints[*queue].1 {
@@ -281,13 +336,29 @@ impl NetworkSession {
                         }
                         self.processes[index].pending = Some(transaction);
                         self.processes[index].pending_targets = indices;
+                        let mut cleanup = cleanup.into_iter();
+                        if let Some(failure) = cleanup.next() {
+                            self.fail_process(index, cleanup.fold(failure, Failure::with_cleanup));
+                        }
                     }
-                    Err(error) => self.fail_process(index, error.to_string()),
+                    Err(mut failure) => {
+                        let mut context = failure.context().clone();
+                        context.ticket = Some(ticket);
+                        context.output = Some(emission.output);
+                        failure = failure.with_context(context);
+                        for secondary in cleanup {
+                            failure = failure.with_cleanup(secondary);
+                        }
+                        self.fail_process(index, failure);
+                    }
                 }
             }
             Ok(Step::WaitInput(name)) => {
                 if !self.processes[index].inputs.iter().any(|p| p.name == name) {
-                    self.fail_process(index, format!("unknown WaitInput port: {name}"));
+                    self.fail_process(
+                        index,
+                        RuntimeError::UnknownWaitInput { port: name }.failure(),
+                    );
                 } else {
                     // A staged input may later become request-locally closed
                     // when an upstream activation ends without a queue event.
@@ -307,7 +378,7 @@ impl NetworkSession {
                 self.processes[index].request = None;
             }
             Ok(Step::Yield) => {}
-            Err(error) => self.fail_process(index, format!("process {index}: {error}")),
+            Err(error) => self.fail_process(index, error),
         }
         self.dirty_process(index);
         self.refresh();
@@ -322,8 +393,11 @@ impl NetworkSession {
         let Some(p) = self.processes.get_mut(index) else {
             return Err((HandoffError::ForeignCompletion, job));
         };
-        p.handoff.reject(job)?;
+        let cleanup = p.handoff.reject(job)?;
         self.dispatched_at.remove(&index);
+        if let Err(failure) = cleanup {
+            self.fail_process(index, failure);
+        }
         self.dirty_process(index);
         self.refresh();
         Ok(())
@@ -365,7 +439,11 @@ impl NetworkSession {
                 self.publications = self.publications.saturating_add(1);
             }
             Err(ConnectionError::Full) => {}
-            Err(error) => self.fail_process(index, format!("process {index} publication: {error}")),
+            Err(error) => self.fail_process(
+                index,
+                Failure::external("process publication failed", error)
+                    .with_kind(FailureKind::Framework),
+            ),
         }
     }
     /// The budget counts process steps; publication retries do not execute code
@@ -390,9 +468,10 @@ impl NetworkSession {
             let dispatched = match dispatched {
                 Ok(dispatched) => dispatched,
                 Err(payload) => {
-                    crate::discard_panic_payload(payload);
+                    let failure =
+                        crate::process::callback_panicked(CallbackPhase::Dispatch, payload);
                     if self.processes[index].handoff.outstanding() == Some(ticket) {
-                        self.fail_process(index, "process dispatcher panicked".into());
+                        self.fail_process(index, failure);
                     }
                     break;
                 }
@@ -402,16 +481,24 @@ impl NetworkSession {
                     if let Err((error, completion)) = self.complete(index, completion) {
                         let ticket = completion.ticket();
                         if self.timeout_invalidated(ticket) || self.terminal.is_some() {
-                            let request =
-                                completion.metadata().and_then(|metadata| metadata.request);
+                            let metadata = completion.metadata().cloned();
                             if completion.dispose_catching() {
-                                self.record_late_return_cleanup_panic(request);
+                                self.record_late_return_cleanup_panic(ticket, metadata);
                             }
                             break;
                         }
                         self.dispatch_return =
                             Some(DispatchReturn::Completed { error, completion });
-                        self.fail(format!("process dispatcher returned an invalid completion for process {index}: {error}"));
+                        self.fail(
+                            self.enrich_failure(
+                                Some(index),
+                                Failure::external(
+                                    "process dispatcher returned an invalid completion",
+                                    error,
+                                )
+                                .with_kind(FailureKind::Framework),
+                            ),
+                        );
                         break;
                     }
                 }
@@ -428,14 +515,23 @@ impl NetworkSession {
                     if let Err((error, job)) = self.reject(index, job) {
                         let ticket = job.ticket();
                         if self.timeout_invalidated(ticket) || self.terminal.is_some() {
-                            let request = job.metadata().and_then(|metadata| metadata.request);
+                            let metadata = job.metadata().cloned();
                             if job.dispose_catching() {
-                                self.record_late_return_cleanup_panic(request);
+                                self.record_late_return_cleanup_panic(ticket, metadata);
                             }
                             break;
                         }
                         self.dispatch_return = Some(DispatchReturn::Rejected { error, job });
-                        self.fail(format!("process dispatcher returned an invalid rejected job for process {index}: {error}"));
+                        self.fail(
+                            self.enrich_failure(
+                                Some(index),
+                                Failure::external(
+                                    "process dispatcher returned an invalid rejected job",
+                                    error,
+                                )
+                                .with_kind(FailureKind::Framework),
+                            ),
+                        );
                     }
                     break;
                 }
@@ -452,5 +548,37 @@ impl NetworkSession {
             budget_exhausted: steps == budget && state == SessionState::Runnable,
             next_deferred_timeout: self.next_deferred_timeout(),
         }
+    }
+
+    fn fail_emission(
+        &mut self,
+        index: usize,
+        ticket: StepTicket,
+        emission: crate::ProcessEmission,
+        failure: Failure,
+    ) {
+        let leases = emission.value.known_leases().to_vec();
+        let mut context = failure.context().clone();
+        context.output = Some(emission.output);
+        context.ticket = Some(ticket);
+        let mut failure = failure.with_context(context).retain_leases(&leases);
+        if emission.value.dispose_catching() {
+            let secondary = self.enrich_failure(
+                Some(index),
+                RuntimeError::DestructorPanicked {
+                    stage: CleanupStage::Failure,
+                }
+                .failure()
+                .with_context(crate::FailureContext {
+                    ticket: Some(ticket),
+                    output: failure.context().output.clone(),
+                    phase: Some(CallbackPhase::Cleanup),
+                    ..Default::default()
+                })
+                .retain_leases(&leases),
+            );
+            failure = failure.with_cleanup(secondary);
+        }
+        self.fail_process(index, failure);
     }
 }

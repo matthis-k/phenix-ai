@@ -29,7 +29,7 @@ struct StatefulSink {
 }
 
 impl Process for StatefulSink {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if context.take("run").is_none() {
             return Ok(Step::Finished);
         }

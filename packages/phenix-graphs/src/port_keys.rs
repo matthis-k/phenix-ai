@@ -39,12 +39,32 @@
 //! let _ = Encoded::<LocalOnly>::interface();
 //! ```
 use crate::network::{ComponentRef, InputRef, NetworkError, OutputRef};
-use crate::{ContractValue, Interface, InterfaceError, PortDef, ProcessContext, Value};
+use crate::{
+    ContractValue, Failure, FailureKind, Interface, InterfaceError, PortDef, ProcessContext,
+    TypeIdentity, Value,
+};
 use std::borrow::Cow;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-type Decoder<T> = fn(&Value) -> Result<T, String>;
+type Decoder<T> = fn(&Value) -> Result<T, Failure>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InputError {
+    Missing {
+        field: String,
+    },
+    WrongType {
+        field: String,
+        expected: TypeIdentity,
+        actual: TypeIdentity,
+    },
+}
+impl std::fmt::Display for InputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "input reconstruction: {self:?}")
+    }
+}
+impl std::error::Error for InputError {}
 
 enum Mode<R> {
     Local,
@@ -177,7 +197,8 @@ fn path(prefix: &str, name: &str) -> String {
 /// An input-only record whose leaves are real named ports. Implementations must
 /// use the same keys for metadata and reconstruction. Reconstruction consumes
 /// only the named leaves from this reservation; it does not select queue slots.
-/// Encoded and explicit Arc leaves retain their source envelopes as leases.
+/// Encoded and explicit Arc leaves copy their source's known code/resource leases
+/// on both success and error, without retaining the source envelope.
 /// Unique local leaves move through reconstruction while retaining their leases.
 ///
 /// `map_inputs` is a scoped transformation: do not detach raw payloads through
@@ -195,7 +216,7 @@ fn path(prefix: &str, name: &str) -> String {
 /// let value = context.input_record::<Request>()?;
 /// assert_eq!(value.borrow::<Request>().unwrap().request.r#type, "hello");
 /// # }
-/// # Ok::<(), String>(())
+/// # Ok::<(), phenix_graph::Failure>(())
 /// ```
 /// Reconstruction requires sendable records, not just named type descriptors:
 /// ```compile_fail
@@ -210,22 +231,31 @@ pub trait InputRecord: Sized + Send + Sync + 'static {
     fn map_inputs(
         context: &mut ProcessContext,
         prefix: &str,
-        finish: impl FnOnce(&mut ProcessContext, Self) -> Result<Value, String>,
-    ) -> Result<Value, String>;
+        finish: impl FnOnce(&mut ProcessContext, Self) -> Result<Value, Failure>,
+    ) -> Result<Value, Failure>;
 
     /// Assemble one record as a local envelope, retaining all consumed leases.
     /// Missing or shared move-only inputs return an error, never an implicit
     /// clone. Failure may consume preceding leaves, like other process errors.
-    fn from_inputs(context: &mut ProcessContext) -> Result<Value, String> {
+    fn from_inputs(context: &mut ProcessContext) -> Result<Value, Failure> {
         // Validate duplicate flattened paths before consuming any inputs.
-        Interface::new(Self::input_ports().map_err(|error| error.to_string())?, [])
-            .map_err(|error| error.to_string())?;
+        Interface::new(
+            Self::input_ports().map_err(|error| {
+                Failure::external("invalid input record ports", error)
+                    .with_kind(FailureKind::Framework)
+            })?,
+            [],
+        )
+        .map_err(|error| {
+            Failure::external("invalid input record interface", error)
+                .with_kind(FailureKind::Framework)
+        })?;
         Self::map_inputs(context, "", |_, record| Ok(Value::local(record)))
     }
 }
 
 impl ProcessContext {
-    pub fn input_record<T: InputRecord>(&mut self) -> Result<Value, String> {
+    pub fn input_record<T: InputRecord>(&mut self) -> Result<Value, Failure> {
         T::from_inputs(self)
     }
 }
@@ -285,8 +315,8 @@ impl<T: InputRecord> InputGroup<T> {
         &self,
         context: &mut ProcessContext,
         prefix: &str,
-        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, String>,
-    ) -> Result<Value, String> {
+        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, Failure>,
+    ) -> Result<Value, Failure> {
         T::map_inputs(context, &path(prefix, &self.name), finish)
     }
 }
@@ -314,17 +344,43 @@ impl<T: Send + Sync + 'static> InputKey<T> {
         }
     }
 
-    fn take(&self, context: &mut ProcessContext, prefix: &str) -> Result<Value, String> {
+    fn take(&self, context: &mut ProcessContext, prefix: &str) -> Result<Value, Failure> {
         let name = path(prefix, self.name);
-        let expected = self.definition().map_err(|error| error.to_string())?.value;
-        let value = context
-            .input(&name)
-            .ok_or_else(|| format!("missing input {name:?}"))?;
+        let expected = self
+            .definition()
+            .map_err(|error| {
+                Failure::external("invalid input definition", error)
+                    .with_kind(FailureKind::Framework)
+            })?
+            .value;
+        let value = context.input(&name).ok_or_else(|| {
+            Failure::external(
+                "missing input",
+                InputError::Missing {
+                    field: name.clone(),
+                },
+            )
+            .with_kind(FailureKind::Framework)
+            .with_context(crate::FailureContext {
+                field: Some(name.clone()),
+                ..Default::default()
+            })
+        })?;
         if value.identity() != expected {
-            return Err(format!(
-                "incompatible input {name:?}: expected {expected:?}, got {:?}",
-                value.identity()
-            ));
+            return Err(Failure::external(
+                "incompatible input",
+                InputError::WrongType {
+                    field: name.clone(),
+                    expected,
+                    actual: value.identity(),
+                },
+            )
+            .with_kind(FailureKind::Framework)
+            .with_context(crate::FailureContext {
+                field: Some(name),
+                ..Default::default()
+            })
+            .retain_leases(value.known_leases()));
         }
         Ok(context.take(&name).expect("checked input"))
     }
@@ -333,15 +389,25 @@ impl<T: Send + Sync + 'static> InputKey<T> {
         &self,
         context: &mut ProcessContext,
         prefix: &str,
-        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, String>,
-    ) -> Result<Value, String> {
+        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, Failure>,
+    ) -> Result<Value, Failure> {
         let source = self.take(context, prefix)?;
-        if let Some(decode) = self.decode {
-            let payload = decode(&source)?;
-            let result = finish(context, payload)?;
-            return Ok(result.with_lease(Arc::new(source)));
-        }
-        source.map_local::<T>(|payload| finish(context, payload))
+        let result = if let Some(decode) = self.decode {
+            let result = source.map_callback(|| {
+                let payload = decode(&source)?;
+                finish(context, payload)
+            });
+            source.finish_owned(result)
+        } else {
+            source.map_local::<T>(|payload| finish(context, payload))
+        };
+        result.map_err(|failure| {
+            let mut metadata = failure.context().clone();
+            if metadata.field.is_none() {
+                metadata.field = Some(path(prefix, self.name));
+            }
+            failure.with_context(metadata)
+        })
     }
 }
 
@@ -351,13 +417,28 @@ impl<T: Clone + Send + Sync + 'static> InputKey<T> {
         &self,
         context: &mut ProcessContext,
         prefix: &str,
-        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, String>,
-    ) -> Result<Value, String> {
+        finish: impl FnOnce(&mut ProcessContext, T) -> Result<Value, Failure>,
+    ) -> Result<Value, Failure> {
         let source = self.take(context, prefix)?;
-        let payload = source
-            .borrow::<T>()
-            .ok_or("expected local shared input")?
-            .clone();
-        Ok(finish(context, payload)?.with_lease(Arc::new(source)))
+        let result = source.map_callback(|| {
+            let payload = source
+                .borrow::<T>()
+                .ok_or_else(|| {
+                    crate::ValueError::LocalType {
+                        expected: std::any::type_name::<T>(),
+                        actual: source.identity(),
+                    }
+                    .failure()
+                })?
+                .clone();
+            finish(context, payload)
+        });
+        source.finish_owned(result).map_err(|failure| {
+            let mut metadata = failure.context().clone();
+            if metadata.field.is_none() {
+                metadata.field = Some(path(prefix, self.name));
+            }
+            failure.with_context(metadata)
+        })
     }
 }

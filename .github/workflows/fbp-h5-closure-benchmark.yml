@@ -58,7 +58,15 @@ jobs:
             > artifacts/benchmark-source-sha256.txt
           cat artifacts/benchmark-source-sha256.txt
           for variant in baseline candidate; do
-            (cd "$variant" && nix develop --command cargo build --locked --release -q -p phenix-graph \
+            rustflags="${RUSTFLAGS:+$RUSTFLAGS }--check-cfg=cfg(fbp_benchmark_baseline_string_error)"
+            error_api=Failure
+            if [[ "$variant" == baseline ]]; then
+              rustflags+=' --cfg=fbp_benchmark_baseline_string_error'
+              error_api=String
+            fi
+            printf 'variant=%s process_step_error=%s RUSTFLAGS=%s\n' \
+              "$variant" "$error_api" "$rustflags" | tee -a artifacts/build-flags.txt
+            (cd "$variant" && RUSTFLAGS="$rustflags" nix develop --command cargo build --locked --release -q -p phenix-graph \
               --example fbp_closure_benchmark --example fbp_benchmark)
           done
       - name: Three interleaved closure and sparse-scheduler repetitions

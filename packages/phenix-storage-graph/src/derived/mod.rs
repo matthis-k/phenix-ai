@@ -59,8 +59,17 @@ pub enum RefreshCause {
 }
 
 #[derive(Debug)]
+pub enum QueryCleanupStage {
+    Close,
+    CancelledJobs,
+    Disposal,
+}
+
+#[derive(Debug)]
 pub enum Error {
-    Graph(String),
+    Access(phenix_kernel::SessionAccessError),
+    Transport(phenix_graph::connection::ConnectionError),
+    Execution(phenix_graph::Failure),
     Network(Box<NetworkError>),
     Kernel(phenix_kernel::CallbackError),
     Storage(phenix_storage::Error),
@@ -77,14 +86,17 @@ pub enum Error {
         cause: Box<Error>,
         request: phenix_graph::runtime::RequestId,
         termination: Option<phenix_graph::runtime::RequestError>,
+        /// A new or newly enriched termination failure unrelated to `cause`.
+        termination_failure: Option<phenix_graph::Failure>,
         release: Option<phenix_graph::runtime::RequestError>,
+        inventory: Vec<(QueryCleanupStage, phenix_graph::runtime::RequestError)>,
     },
     RequestInterrupted {
         cause: Box<Error>,
         cancelled_jobs: Vec<phenix_graph::process::StepTicket>,
         disposal: phenix_graph::runtime::RequestDisposal,
     },
-    Wave(Vec<String>),
+    Wave(Vec<phenix_graph::Failure>),
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,6 +106,10 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Access(e) => Some(e),
+            Self::Transport(e) => Some(e),
+            Self::Execution(e) => Some(e),
+            Self::Wave(errors) => errors.first().map(|e| e as _),
             Self::Network(e) => Some(e.as_ref()),
             Self::Kernel(e) => Some(e.as_ref()),
             Self::Storage(e) => Some(e),
@@ -103,11 +119,6 @@ impl std::error::Error for Error {
             }
             _ => None,
         }
-    }
-}
-impl From<String> for Error {
-    fn from(e: String) -> Self {
-        Self::Graph(e)
     }
 }
 impl From<NetworkError> for Error {

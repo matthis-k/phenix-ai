@@ -197,6 +197,66 @@ fn nested_replacement_checks_exact_grant_shape_and_path_atomically() {
 }
 
 #[test]
+fn unknown_composite_is_typed_but_does_not_bypass_private_seam_guards() {
+    use phenix_graph::InvalidEditReason;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct NeverStarted;
+    impl phenix_graph::Process for NeverStarted {
+        fn step(
+            &mut self,
+            _: &mut phenix_graph::ProcessContext,
+        ) -> Result<phenix_graph::Step, phenix_graph::Failure> {
+            unreachable!("planning must not execute processes")
+        }
+    }
+
+    let mut composer = composer(true, true);
+    let published = composer.current().clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let definition = Arc::new(ComponentDef::primitive(
+        stage("unused").interface().clone(),
+        Arc::new(move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            NeverStarted
+        }),
+    ));
+    let error = composer
+        .register([replacement(
+            "absent/inner/leaf",
+            definition,
+            [Footprint::Component("absent/inner/leaf".into())],
+        )])
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ComposeError::InvalidEdit {
+            registration: "extension".into(),
+            reason: Box::new(InvalidEditReason::UnknownComposite {
+                path: "absent".into()
+            }),
+        }
+    );
+    // A missing, unexposed child is still a private-scope error, not a lookup
+    // error that reveals or bypasses the composite's replacement manifest.
+    assert!(
+        matches!(composer.register([replacement("m/missing/leaf", stage("unused"), [Footprint::Component("m/missing/leaf".into())])]), Err(ComposeError::PrivateEditScope(path)) if path == "m/missing/leaf")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(composer.current().active(), published.active());
+    assert_eq!(
+        composer.current().network().instances()["m"].definition_key(),
+        published.network().instances()["m"].definition_key()
+    );
+    assert_eq!(
+        composer.current().compiled().connections(),
+        published.compiled().connections()
+    );
+    assert!(composer.revoke("extension").unwrap().is_empty());
+}
+
+#[test]
 fn replacement_manifest_is_authoring_scoped_and_additions_rollback_safe() {
     let mut b = NetworkBuilder::new();
     let leaf = b.add("leaf", stage("old")).unwrap();

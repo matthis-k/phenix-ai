@@ -17,6 +17,20 @@ use phenix_storage::{
 use phenix_storage_graph::derived::*;
 use std::sync::Arc;
 
+pub fn failures(error: &Error) -> &[phenix_graph::Failure] {
+    match error {
+        Error::Wave(failures) => failures,
+        Error::Execution(failure) => match std::error::Error::source(failure)
+            .and_then(|cause| cause.downcast_ref::<Error>())
+        {
+            Some(cause) => failures(cause),
+            None => std::slice::from_ref(failure),
+        },
+        Error::RequestInterrupted { cause, .. } | Error::Cleanup { cause, .. } => failures(cause),
+        other => panic!("expected execution failure: {other:?}"),
+    }
+}
+
 pub struct Fixture {
     pub registry: Registry,
     pub session: Session,

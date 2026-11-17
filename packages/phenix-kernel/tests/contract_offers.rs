@@ -101,13 +101,30 @@ fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection()
                 options,
             );
             if let Some(failure) = failure {
-                let error = result.err().unwrap().to_string();
+                let error = result.err().unwrap();
+                if matches!(failure, "claim" | "late") {
+                    let cause = match (&error, failure) {
+                        (phenix_kernel::ResolutionError::Interface { cause, .. }, "claim") => {
+                            cause.as_ref()
+                        }
+                        (phenix_kernel::ResolutionError::Compilation { cause }, "late") => cause,
+                        _ => panic!("module={module}, case={failure}: {error}"),
+                    };
+                    let phenix_graph::NetworkError::Interface(cause) = cause else {
+                        panic!("{error}");
+                    };
+                    assert!(matches!(
+                        cause.reason.as_ref(),
+                        phenix_graph::interface::InterfaceReason::MissingExplicitClaim { contract }
+                            if contract.as_ref() == "example/service@1"
+                    ));
+                }
                 let expected = match failure {
                     "path" | "selection" => "absent",
                     _ => "claim",
                 };
                 assert!(
-                    error.contains(expected),
+                    error.to_string().contains(expected),
                     "module={module}, case={failure}: {error}"
                 );
             } else {

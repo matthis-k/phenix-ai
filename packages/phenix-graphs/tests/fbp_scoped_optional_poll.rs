@@ -22,17 +22,21 @@ fn one() -> NonZeroUsize {
 
 struct RootDrop;
 impl Process for RootDrop {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        cx.take("in").ok_or("missing request root packet")?;
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        cx.take("in").ok_or_else(|| {
+            phenix_graph::Failure::application_message("missing request root packet")
+        })?;
         Ok(Step::Complete)
     }
 }
 
 struct ObserveAbsent(Arc<AtomicUsize>);
 impl Process for ObserveAbsent {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if cx.take("opt").is_some() || !cx.is_request_closed("opt") || cx.is_eos("opt") {
-            return Err("expected request-local absent input, not packet or global EOS".into());
+            return Err(phenix_graph::Failure::application_message(
+                "expected request-local absent input, not packet or global EOS",
+            ));
         }
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)
@@ -155,12 +159,14 @@ fn sealed_optional_watch_is_idempotent_and_isolated_across_requests() {
 
 struct EmitRequired(bool);
 impl Process for EmitRequired {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
         }
-        let value = cx.take("in").ok_or("missing required source")?;
+        let value = cx
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing required source"))?;
         self.0 = true;
         Ok(Step::Emit(phenix_graph::process::ProcessEmission::new(
             "out", value,
@@ -170,9 +176,11 @@ impl Process for EmitRequired {
 
 struct RequiredAndAbsent(Arc<AtomicUsize>);
 impl Process for RequiredAndAbsent {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if cx.take("req").is_none() || cx.take("opt").is_some() || !cx.is_request_closed("opt") {
-            return Err("required data and request-local absent optional must be paired".into());
+            return Err(phenix_graph::Failure::application_message(
+                "required data and request-local absent optional must be paired",
+            ));
         }
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)

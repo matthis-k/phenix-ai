@@ -36,6 +36,7 @@ mod compiler;
 mod resolution;
 mod validation;
 
+pub use crate::limits::{CompileLimit, LimitKind};
 pub use authoring::{
     ComponentRef, InputEndpoint, InputRef, NetworkBuilder, OutputEndpoint, OutputRef,
 };
@@ -50,6 +51,8 @@ pub struct PortPath {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkError {
+    Readiness(crate::runtime::ReadinessError),
+    CorrelationBounds(crate::correlation::InvalidCorrelationBounds),
     Interface(Box<InterfaceError>),
     InvalidName(String),
     DuplicateInstance(String),
@@ -72,12 +75,13 @@ pub enum NetworkError {
         to: PortPath,
     },
     InvalidProjection(String),
+    IncompletePublicBoundary,
     InvalidSource(String),
     AmbiguousDefinition,
     UnknownDefinition,
     RecursiveComposite(String),
     LimitExceeded {
-        limit: &'static str,
+        limit: CompileLimit,
         path: String,
     },
 }
@@ -88,13 +92,20 @@ impl From<InterfaceError> for NetworkError {
 }
 impl fmt::Display for NetworkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "network: {self:?}")
+        match self {
+            Self::Readiness(error) => write!(f, "network readiness: {error}"),
+            Self::CorrelationBounds(error) => write!(f, "network: {error}"),
+            Self::Interface(error) => write!(f, "network: {error}"),
+            _ => write!(f, "network: {self:?}"),
+        }
     }
 }
 impl std::error::Error for NetworkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Interface(error) => Some(error.as_ref()),
+            Self::Readiness(error) => Some(error),
+            Self::CorrelationBounds(error) => Some(error),
             _ => None,
         }
     }

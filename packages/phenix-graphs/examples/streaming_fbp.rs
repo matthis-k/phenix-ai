@@ -24,7 +24,7 @@ struct Split {
     emitted: bool,
 }
 impl Process for Split {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(packet) = self.right.take() {
             return Ok(Step::Emit(ProcessEmission::new(
                 "right",
@@ -56,7 +56,7 @@ struct Join {
     emitted: bool,
 }
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -64,7 +64,9 @@ impl Process for Join {
         let Some(left) = cx.take("left") else {
             return Ok(Step::Finished);
         };
-        let right = cx.take("right").ok_or("join requires both branches")?;
+        let right = cx.take("right").ok_or_else(|| {
+            phenix_graph::Failure::application_message("join requires both branches")
+        })?;
         let packet = *left.borrow::<Packet>().unwrap();
         if !packet.stop {
             self.total += packet.value + right.borrow::<Packet>().unwrap().value;
@@ -84,7 +86,7 @@ struct Feedback {
     emitted: bool,
 }
 impl Process for Feedback {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);

@@ -22,7 +22,7 @@ fn one() -> NonZeroUsize {
 
 struct Consume;
 impl Process for Consume {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         cx.take("in");
         Ok(Step::Complete)
     }
@@ -75,7 +75,13 @@ fn resolved_factory_readiness_is_validated_before_scheduling() {
             .unwrap();
         let mut session = builder.build().unwrap().compile().unwrap().start();
         assert_eq!(session.state(), SessionState::Failed);
-        assert!(session.failure().unwrap().contains("process sink:"));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains("process sink:")
+        );
         assert_eq!(session.begin_request(None), Err(RequestError::Stale));
         assert_eq!(session.run_until_idle(8).steps, 0);
     }
@@ -86,9 +92,10 @@ struct Join {
     staged: bool,
 }
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 0 && self.staged {
-            cx.take("a").ok_or("missing initial a")?;
+            cx.take("a")
+                .ok_or_else(|| phenix_graph::Failure::application_message("missing initial a"))?;
             self.phase = 1;
             return Ok(Step::WaitInputs(Readiness::CorrelatedAll));
         }
@@ -96,8 +103,12 @@ impl Process for Join {
             self.phase = 0;
             return Ok(Step::Complete);
         }
-        let a = cx.take("a").ok_or("missing a")?;
-        let b = cx.take("b").ok_or("missing b")?;
+        let a = cx
+            .take("a")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing a"))?;
+        let b = cx
+            .take("b")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing b"))?;
         self.phase = 2;
         Ok(Step::Emit(ProcessEmission::new(
             "out",
@@ -176,7 +187,12 @@ fn bounded_correlated_all_joins_crossed_requests_in_both_queue_modes() {
             );
             session.release_request(request).unwrap();
         }
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
 }
 
@@ -222,7 +238,12 @@ fn bounded_correlated_all_staged_wait_requires_the_whole_lane_group() {
         session.release_request(request).unwrap();
         session.close_request(spare).unwrap();
         session.release_request(spare).unwrap();
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
 }
 
@@ -299,6 +320,11 @@ fn leased_factory_readiness_keeps_targeted_notification_contract() {
         assert_eq!(session.run_until_idle(8).steps, 1);
         assert_eq!(calls.load(Ordering::SeqCst), before + 1);
         assert_eq!(session.state(), SessionState::Quiescent);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
     }
 }

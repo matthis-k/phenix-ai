@@ -1,6 +1,6 @@
 use super::*;
 use phenix_graph::{
-    Value,
+    Failure, Value,
     network::CompiledNetwork,
     process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{RequestFailurePolicy, RequestStatus, SessionOptions, SessionState},
@@ -18,7 +18,7 @@ impl Drop for DispatchGuard {
 }
 pub(super) struct HostOnlyGuard;
 impl ProcessExecutionGuard for HostOnlyGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, Failure> {
         let guard = DispatchGuard(DISPATCHING.replace(true));
         Ok(Box::new(guard))
     }
@@ -203,14 +203,16 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 for output in &outputs {
                                     while session
                                         .take_output(output)
-                                        .map_err(|e| Error::Graph(e.to_string()))?
+                                        .map_err(Error::Transport)?
                                         .is_some()
                                     {}
                                 }
                                 if report.state == SessionState::Failed {
-                                    return Err(Error::Wave(vec![
-                                        session.failure().unwrap_or("native session failed").into(),
-                                    ]));
+                                    return Err(session
+                                        .failure()
+                                        .cloned()
+                                        .map(Error::Execution)
+                                        .unwrap_or(Error::InvalidPublication));
                                 }
                                 if remaining == 0 || report.steps == 0 {
                                     return Err(Error::Unsettled);
@@ -229,20 +231,21 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                         remaining = remaining.saturating_sub(report.steps);
                         match session.request_status(request)? {
                             RequestStatus::Failed => {
-                                return Err(Error::Wave(vec![
-                                    session
-                                        .request_failure(request)?
-                                        .unwrap_or("native request failed")
-                                        .into(),
-                                ]));
+                                return Err(session
+                                    .request_failure(request)?
+                                    .cloned()
+                                    .map(Error::Execution)
+                                    .unwrap_or(Error::InvalidPublication));
                             }
                             RequestStatus::Cancelled => return Err(Error::InvalidPublication),
                             _ => {}
                         }
                         if report.state == SessionState::Failed {
-                            return Err(Error::Wave(vec![
-                                session.failure().unwrap_or("native session failed").into(),
-                            ]));
+                            return Err(session
+                                .failure()
+                                .cloned()
+                                .map(Error::Execution)
+                                .unwrap_or(Error::InvalidPublication));
                         }
                         for output in &outputs {
                             // Drain older observation captures too: they cannot satisfy
@@ -252,7 +255,7 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                     Some(packet) => packet,
                                     None => match session
                                         .take_output(output)
-                                        .map_err(|e| Error::Graph(e.to_string()))?
+                                        .map_err(Error::Transport)?
                                     {
                                         Some(packet) => packet,
                                         None => break,
@@ -267,11 +270,8 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 }
                                 if output == &self.spec.value.root.errors {
                                     errors.push(
-                                        packet
-                                            .value()
-                                            .borrow::<String>()
-                                            .ok_or(Error::InvalidPublication)?
-                                            .clone(),
+                                        Failure::from_value(packet.value())
+                                            .map_err(Error::Execution)?,
                                     );
                                 }
                                 if output == &self.spec.capture {
@@ -301,12 +301,11 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                             }
                             RequestStatus::Cancelled => return Err(Error::InvalidPublication),
                             RequestStatus::Failed => {
-                                return Err(Error::Wave(vec![
-                                    session
-                                        .request_failure(request)?
-                                        .unwrap_or("native request failed")
-                                        .into(),
-                                ]));
+                                return Err(session
+                                    .request_failure(request)?
+                                    .cloned()
+                                    .map(Error::Execution)
+                                    .unwrap_or(Error::InvalidPublication));
                             }
                             _ => {}
                         }
@@ -315,29 +314,112 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                         }
                     }
                 })();
-                let _ = session.close_request(request);
-                let termination_error = match &result {
-                    Err(Error::Unsettled) => session.cancel_request(request).err(),
-                    Err(error) => session.fail_request(request, error.to_string()).err(),
-                    Ok(_) => None,
+                let before_failure = session.request_failure(request).ok().flatten().cloned();
+                let mut inventory = Vec::new();
+                match session.request_status(request) {
+                    Ok(RequestStatus::Open | RequestStatus::Pending) => {
+                        if let Err(error) = session.close_request(request) {
+                            inventory.push((QueryCleanupStage::Close, error));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => inventory.push((QueryCleanupStage::Close, error)),
+                }
+                // Classify cancellation before moving the non-Clone initiating error.
+                let unsettled = matches!(&result, Err(Error::Unsettled));
+                let (mut result, termination_error) = match result {
+                    Err(error) if unsettled => (Err(error), session.cancel_request(request).err()),
+                    Err(error) => {
+                        let failure = match error {
+                            Error::Execution(failure) => failure,
+                            error => Failure::external("derived query failed", error),
+                        };
+                        let failure = self.kernel.lease_failure(failure);
+                        let mut context = failure.context().clone();
+                        context.session = Some(request.session());
+                        context.generation = Some(request.generation());
+                        context.request = Some(request);
+                        let failure = failure.with_context(context);
+                        let termination = session.fail_request(request, failure.clone()).err();
+                        (Err(Error::Execution(failure)), termination)
+                    }
+                    Ok(value) => (Ok(value), None),
                 };
+                // Termination can enrich the primary via COW, or install a new
+                // recovery failure. Snapshot it while the authenticated scope
+                // still exists, without mistaking an older unrelated failure
+                // for this query's initiating cause.
+                let termination_failure = session
+                    .request_failure(request)
+                    .ok()
+                    .flatten()
+                    .cloned()
+                    .and_then(|failure| {
+                        if let Err(Error::Execution(primary)) = &mut result
+                            && primary.same_origin(&failure)
+                        {
+                            let mut context = failure.context().clone();
+                            context.session = Some(request.session());
+                            context.generation = Some(request.generation());
+                            context.request = Some(request);
+                            *primary = self.kernel.lease_failure(failure.with_context(context));
+                            return None;
+                        }
+                        let is_new = before_failure.as_ref().is_none_or(|before| {
+                            !before.same_origin(&failure)
+                                || failure.cleanup().len() > before.cleanup().len()
+                        });
+                        is_new.then(|| self.kernel.lease_failure(failure))
+                    });
                 // Automatic failure recovery may also invalidate runner-owned jobs.
                 // Scope release destroys this inventory, so transfer it to the caller.
-                let cancelled_jobs = session.request_cancelled_jobs(request)?.to_vec();
-                let disposal = session.request_disposal(request)?;
+                let cancelled_jobs = match session.request_cancelled_jobs(request) {
+                    Ok(jobs) => jobs.to_vec(),
+                    Err(error) => {
+                        inventory.push((QueryCleanupStage::CancelledJobs, error));
+                        Vec::new()
+                    }
+                };
+                let disposal = match session.request_disposal(request) {
+                    Ok(disposal) => disposal,
+                    Err(error) => {
+                        inventory.push((QueryCleanupStage::Disposal, error));
+                        Default::default()
+                    }
+                };
                 let release_error = session.release_request(request).err();
                 let result = match (result, termination_error, release_error) {
                     (Err(cause), termination, release)
-                        if termination.is_some() || release.is_some() =>
+                        if termination.is_some()
+                            || termination_failure.is_some()
+                            || release.is_some()
+                            || !inventory.is_empty() =>
                     {
                         Err(Error::Cleanup {
                             cause: Box::new(cause),
                             request,
                             termination,
+                            termination_failure,
                             release,
+                            inventory,
                         })
                     }
-                    (Ok(_), _, Some(error)) => Err(Error::Request(error)),
+                    (Ok(_), termination, Some(error)) => Err(Error::Cleanup {
+                        cause: Box::new(Error::Request(error.clone())),
+                        request,
+                        termination,
+                        termination_failure,
+                        release: Some(error),
+                        inventory,
+                    }),
+                    (Ok(_), termination, release) if !inventory.is_empty() => Err(Error::Cleanup {
+                        cause: Box::new(Error::Request(inventory[0].1.clone())),
+                        request,
+                        termination,
+                        termination_failure,
+                        release,
+                        inventory,
+                    }),
                     (result, _, _) => result,
                 };
                 result.map_err(|cause| {
@@ -352,7 +434,7 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                     }
                 })
             })
-            .map_err(Error::Graph)?
+            .map_err(Error::Access)?
     }
 }
 
@@ -365,7 +447,7 @@ pub(crate) fn lower<T: Clone + Send + Sync + 'static>(
     let definition = source::function(
         [phenix_graph::PortDef::local::<T>("run")],
         phenix_graph::PortDef::local::<T>("value"),
-        |ctx| ctx.take("run").ok_or_else(|| "missing query input".into()),
+        |ctx| ctx.take("run").ok_or_else(|| source::missing_input("run")),
     )?;
     let spec = QuerySpec {
         definition: definition.definition_key(),

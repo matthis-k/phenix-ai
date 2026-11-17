@@ -438,7 +438,7 @@ fn wake_host_retirement_still_notifies_native_driver_and_keeps_explicit_old_sess
         wake.shutdown();
     }
     worker.join().unwrap();
-    assert_eq!(result.unwrap(), Err(DriverError::Retired));
+    assert!(matches!(result.unwrap(), Err(DriverError::Retired)));
     assert!(!wake.is_shutdown());
     old.run_steps(32).unwrap();
     old.inject("in", Value::local(9_i64)).unwrap();
@@ -776,7 +776,12 @@ fn idle_reactor_reloads_on_publication_then_processes_source_wake_and_idle_shutd
                 generation
                     .with_session(|session| {
                         assert!(reactor_host.try_lock().is_ok());
-                        assert!(session.failure().is_none());
+                        assert!(
+                            session
+                                .failure()
+                                .map(phenix_graph::Failure::summary)
+                                .is_none()
+                        );
                         while let Some(packet) = session.take_output("out").unwrap() {
                             captured = true;
                             notice_tx
