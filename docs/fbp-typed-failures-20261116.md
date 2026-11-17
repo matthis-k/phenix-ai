@@ -2,18 +2,24 @@
 
 ## Current Status: 2026-11-17
 
-**Q7 OPEN. No score change or closure until full local assembled verification
-and CI on the exact committed head both pass.** This section supersedes all
+**Original Q7 is scoped verified at
+`6f6e751b36f77273da8799900f665bc026447418`: 26.0% -> 100.0%, +74.0 pp.**
+Independent whole-slice reviews, all local assembled gates including the Nix
+snapshot and actual committed-head `nix flake check`, and all fifteen exact-head
+hosted workflows passed; hosted SUCCESS was confirmed through `gh`. This supersedes all
 historical phase-1 scope restrictions, API descriptions, file-ownership lists,
 and verification/remaining-work assertions below. Those checkpoints are retained
 as history, not as the current implementation contract.
 
-The current code implements the full native migration across Graph failures,
-Process/guards/jobs, Value/input reconstruction, codecs/macros, adapters, runtime,
-Kernel, StorageGraph source local Failure DATA/query, plugin registry/binding/
-lifecycle, and adjacent storage causes. It is no longer a core-only seed.
+The accepted code implements the full native migration across Graph failures,
+Process/Value/guards/helpers/codecs/macros/adapters/handoff/runtime/request/session,
+Kernel, StorageGraph source local Failure DATA/query, typed framework reasons,
+plugin registry/binding/lifecycle errors and lifetimes, and adjacent storage causes.
+Acceptance is not narrowed to a core-only seed.
 See [Final Review And Erasure Inventory](fbp-q7-final-review-20261117.md) for
-current boundaries, constraints, review results, and pending gates.
+current boundaries, constraints, whole-slice review results, tests and all fifteen
+exact-head run URLs. This evidence-only docs revision requires its own checks;
+the implementation's accepted gates do not certify this revision or newer code.
 
 - Final reviews reproduced six more P2 issues, now fixed: recursive secondary
   leases in `from_value`; an unchecked virtual Process disposer; a discarded
@@ -28,12 +34,14 @@ current boundaries, constraints, review results, and pending gates.
   claim tests preserve actual Compilation versus Interface validation precedence.
 - An independent final fix reviewer found only two test expectation mistakes,
   since corrected, and no additional production issues. Plugin review covered all
-  requested manager conditions; 38 plugin tests and strict Clippy passed. Neither
-  result closes the assembled-workspace or exact-head gate.
+  requested manager conditions; 38 plugin tests and strict Clippy passed. Subsequent
+  independent whole-slice reviews accept the original full Q7 migration; focused
+  reviews alone were not substituted for that acceptance.
 - Assembled local gates passed: default/no-default workspace tests, standalone
   Graph no-default tests, explicit workspace doctests in both modes and standalone
   Graph no-default doctests, all-target compilation, strict workspace Clippy,
-  formatting, and all ten Nix snapshot checks. Exact committed-head CI is pending.
+  formatting, and all ten Nix snapshot checks. Actual committed-head
+  `nix flake check` also passed, followed by all fifteen exact-head hosted workflows.
 - Benchmark CI adaptation passed independent review. The same three
   harnesses select baseline-only String versus candidate Failure through explicit
   cfg, preserve baseline `516e088`, and record API selection and `RUSTFLAGS`.
@@ -41,13 +49,19 @@ current boundaries, constraints, review results, and pending gates.
   tests passed; this is not performance acceptance.
 - The flake now includes default doctests through the per-package helper,
   Graph-plus-plugin-plus-derive doctests, and workspace no-default doctests, without a new
-  workflow. Snapshot verification must include untracked sources through
-  `builtins.path`, excluding `.git` and `target`; a Git-filtered snapshot is
-  insufficient. Snapshot `/nix/store/cbqspiik1gij7zk12fw7fmidwz2w8nxy-source`
-  passed all checks, including these untracked modules and tests.
+  workflow. Pre-commit snapshot verification included the then-untracked sources
+  through `builtins.path`, excluding `.git` and `target`; a Git-filtered snapshot
+  would have omitted them. Snapshot `/nix/store/cbqspiik1gij7zk12fw7fmidwz2w8nxy-source`
+  passed all checks, including those modules and tests, before committed-head checks.
 
-Authoritative counts remain **18 verified / 6 partial / 8 open / 1 exclusion**;
-the **14 partial/open** items are unchanged pending exact-head acceptance.
+Authoritative counts are **19 scoped verified / 6 partial / 7 open / 1 approved
+exclusion**, leaving **13 partial/open** findings. The subjective issue mean is
+**75.4% (2489 / 33)**, not product completion. C7's old 12.0% is unchanged with no
+sandbox credit; prior Q1 acceptance and its broader Kernel residual remain intact.
+Leases are per independently escaping handle and nonretroactive; cached host
+observation remains passive, and ordinary Drop cannot report retroactively.
+Trusted native abort/double-panic exclusions remain. Green benchmark execution
+does not establish performance acceptance or M7/M8 completion.
 
 ## Historical Checkpoints
 

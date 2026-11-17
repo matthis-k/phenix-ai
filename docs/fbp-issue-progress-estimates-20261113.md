@@ -1,5 +1,34 @@
 # FBP 33-Issue Progress Estimates
 
+## Current Acceptance: Q7, 2026-11-17
+
+Latest accepted implementation: `6f6e751b36f77273da8799900f665bc026447418`.
+Independent whole-slice reviews and all local gates passed, including the complete
+Nix snapshot and actual committed-head `nix flake check`. All fifteen exact-head
+hosted workflows are SUCCESS, confirmed through `gh`; [the final Q7 record](fbp-q7-final-review-20261117.md)
+contains the complete run URL table, tests, review facts and limits.
+
+Original Q7 is **scoped verified: 26.0% -> 100.0%, +74.0 pp**. Acceptance covers
+the full process/Value/guards/helpers/codecs/macros/adapters/handoff/runtime/request/
+session/Kernel/StorageGraph source local Failure DATA/query protocol, typed framework
+reasons and plugin lifetime errors, not just a failure-envelope core.
+The authoritative current table below changes only Q7; all prior Q1 acceptance
+and other issue scores remain intact. Classifications are **19 scoped verified /
+6 partial / 7 open / 1 approved exclusion**, leaving **13 in-scope findings**.
+The subjective unweighted issue mean is **75.4% (2489 / 33)**, up from
+73.2% (2415 / 33); it is not product completion, a safety probability or milestone
+acceptance. C7's historical **12.0%** is unchanged, with no sandbox credit.
+
+Known leases are complete per escaping handle and nonretroactive; observations use
+passive cached host data, and ordinary Drop cannot report retroactively. Trusted
+native abort/double-panic exclusions remain. Green benchmarks are execution evidence,
+not performance acceptance; M7/M8 remain incomplete. This current status and Q7's
+current table row supersede earlier status/count/remaining-work assertions below;
+historical evidence and narrative are preserved. This evidence-only docs revision
+requires its own checks; implementation-head passes do not accept a later revision.
+
+## Historical Acceptance Sequence
+
 Comparison baseline: verified PR #1300 at `516e0883875d5ec483e3595d50b77b3d5e8979c4`;
 Flake CI [43537983510](https://github.com/matthis-k/phenix-ai/actions/runs/43537983510),
 native Q5 [43537982855](https://github.com/matthis-k/phenix-ai/actions/runs/43537982855),
@@ -135,7 +164,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
 | Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
 | Q6 | Diagnostic quality | 22.0% | 100.0% | +78.0 | Scoped verified | [Complete bounded current-state explanations](fbp-explanations-20261116.md), shared selector/closure authority, jobs/wakes/publication/request-live accounting and adversarial passivity; [exact-head][L]; not Q4 liveness |
-| Q7 | Typed error consistency | 26.0% | 26.0% | +0.0 | Open | Typed graph/derived/storage and selected-import causes, plus [exact-head][K] query declaration lookup causes; process/runtime strings remain |
+| Q7 | Typed error consistency | 26.0% | 100.0% | +74.0 | Scoped verified | [Full native typed protocol, framework reasons and plugin lifetime errors; independent whole-slice reviews, local/Nix and all fifteen exact-head workflows](fbp-q7-final-review-20261117.md) at `6f6e751b36f77273da8799900f665bc026447418`; per-handle nonretroactive leases and trusted native limits remain |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
 
 [B]: https://github.com/matthis-k/phenix-ai/actions/runs/43537983510

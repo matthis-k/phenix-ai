@@ -2,28 +2,42 @@
 
 ## Status
 
-**Q7 OPEN.** This is the current review checkpoint for
-`/tmp/opencode/fbp-q7-typed-failures-7c611912`, not acceptance or closure.
-Full local assembled gates passed; CI on the exact committed head is still required
-before any Q7 score/closure change. Authoritative counts remain **18 verified /
-6 partial / 8 open / 1 exclusion**, with **14 partial/open** unchanged.
+**Original Q7 is scoped verified at
+`6f6e751b36f77273da8799900f665bc026447418`: 26.0% -> 100.0%, +74.0 pp.**
+Independent whole-slice reviews accepted the full migration after the fixes below.
+All local assembled gates passed, including the immutable Nix snapshot and actual
+committed-head `nix flake check`. All fifteen exact-head hosted workflows completed
+SUCCESS, confirmed via `gh`; the complete URL table appears below.
+
+Authoritative counts are **19 scoped verified / 6 partial / 7 open / 1 approved
+exclusion**, leaving **13 in-scope findings**. The subjective unweighted issue mean
+is **75.4% (2489 / 33)**, previously 73.2% (2415 / 33), not product completion.
+C7's historical 12.0% remains unchanged with no sandbox credit. All prior Q1
+acceptance, including the broader Kernel root residual, remains intact.
 
 The [typed-failures checkpoint](fbp-typed-failures-20261116.md) retains historical
 phase-1 and intermediate evidence. Its current top status and this note supersede
 old core-only restrictions and stale remaining-migration assertions. This
-record does not change the authoritative ledger before exact-head acceptance.
+record supplies the exact-head acceptance evidence for the [authoritative scorecard](fbp-issue-progress-estimates-20261113.md).
+It supersedes earlier Q7 OPEN/pending assertions, including the explicitly
+historical gate at the end. This evidence-only docs revision requires its own
+checks; the accepted implementation's checks do not certify this revision or a
+newer implementation. No commit or push is part of this documentation update.
 
 ## Boundary Inventory
 
 The current implementation is a native signature migration, not a String
 compatibility layer. The inventory distinguishes preserved causes from deliberate
 presentation and genuine message-only leaves; it is not a claim that every String
-in the workspace is an error-erasure bug or that every boundary is accepted.
+in the workspace is an error-erasure bug. Acceptance covers the original full Q7
+process/Value/guards/helpers/codecs/macros/adapters/handoff/runtime/request/session/
+Kernel/source DATA/query scope, plus framework typed reasons and plugin lifetime
+errors, rather than narrowing acceptance to an envelope core.
 
 | Boundary | Current representation and preservation |
 | --- | --- |
 | Graph failure core | `Failure` owns a cached host summary, typed classification/context, original concrete non-Clone cause, ordered cleanup handles, and known leases. COW enrichment preserves cause pointer and origin identity. `source()` borrows the actual cause rather than a formatted replacement. |
-| Process/guards/jobs/handoff | Step and guard failures carry `Failure`; caught callback panics carry typed phase data. First failure remains primary, reverse cleanup appends typed secondaries, and accepted-job identity enriches diagnostics without inventing unknown IDs. Managed cleanup contains the virtual disposer boundary too. |
+| Process/guards/helpers/jobs/handoff | Step, source/map/sink helper and guard failures carry `Failure`; caught callback panics carry typed phase data. First failure remains primary, reverse cleanup appends typed secondaries, and accepted-job identity enriches diagnostics without inventing unknown IDs. Managed cleanup contains the virtual disposer boundary too. |
 | Value/input/codec/macros | Fallible access and reconstruction use typed failures. Exact-local `Failure::from_value` retains known envelope leases recursively on success and rejection, without retaining the Value/payload Arc. Standard and generated/portable codecs preserve typed field/tag/offset/length data and actual conversion sources. |
 | Adapters/connections | Preparation preserves original adapter/connection causes plus payload/lease cleanup faults. Errors and successful local adapter outputs pin the exact adapter definition; portable host-owned bytes need no extra adapter pin. Partial fanout cleanup does not replace the initiating failure. |
 | Runtime/request/session | Native slots retain original failure handles, typed readiness/runtime faults, and cleanup metadata. Late cleanup synchronizes matching request/session origins across COW rather than replacing an unrelated primary. Recovery faults retain known retiring request/ticket identity. |
@@ -70,7 +84,11 @@ The plugin review covered all requested manager conditions, including binding
 locator/origin failures and lifecycle foreign catalog/set, registration/load state,
 revision exhaustion, duplicate/stale stages, candidate revision, and missing
 candidate conditions. Reported evidence is **38 plugin tests plus strict Clippy
-passed**. This is scoped review evidence, not a full Q7 acceptance claim.
+passed**. Those focused results alone were not whole-Q7 acceptance. Subsequent
+independent whole-slice reviews accepted the original full protocol and its
+assembled integration after the fixes, with no remaining blocking findings.
+The full local gates and exact-head hosted results below complete that acceptance;
+neither a core-only review nor green CI alone is the closure rationale.
 
 ## Constraints And Alternatives
 
@@ -112,12 +130,13 @@ passed**. This is scoped review evidence, not a full Q7 acceptance claim.
 - Focused reviews/tests do not prove every interleaving or erase the historical
   query-review limitation: the unrelated-terminal test uses a real timeout rather
   than forcing expiry at the exact instant inside finalizer `fail_request`.
-- No performance acceptance, regression budget result, or benchmark CI pass is
-  claimed. Successful release compilation is not a performance measurement.
+- Green benchmark workflows below establish successful execution, not performance
+  acceptance or a regression-budget result. Successful release compilation is not
+  a performance measurement. H4/H5/H6 scores and M7/M8 acceptance remain unchanged.
 
 ## Verification Evidence
 
-The assembled candidate passed these commands under `nix develop --command`,
+The assembled migration passed these commands under `nix develop --command`,
 using its own worktree target directory:
 
 ```bash
@@ -138,6 +157,18 @@ executed; the required-schema negative fixture checks E0046 rather than acceptin
 stale-signature or missing-macro failures. Existing intentionally ignored examples
 and zero-test feature-gated targets receive no additional coverage credit.
 
+Focused regression evidence includes Graph failure core (12), failure protocol
+(15 default / 14 no-default; the generated codec case requires derive), and the
+runtime group (207 default / 206 no-default), including library, terminal cleanup,
+deferred timeout, in-flight recovery, request/session isolation, request lanes,
+owned steps, connections and streams. StorageGraph query cleanup (2) and typed
+failures (2) passed, alongside derived/source/host coverage. These are overlapping
+target/group counts, not an additive workspace total. Tests inspect original
+non-Clone cause pointer identity, typed reasons and sources, ordered cleanup and exact known metadata,
+recursive per-handle leases and unchanged escaped clones, and passive repeated Q6
+presentation with zero external formatter/source callbacks. The full workspace and
+isolated-feature gates above, not just these focused tests, support acceptance.
+
 The benchmark adaptation passed independent review. The three
 existing EOS-endpoint, targeted-wake, and closure workflows use the same harness
 source for baseline and candidate, with explicit
@@ -147,17 +178,17 @@ candidate uses Failure. Baseline remains
 `RUSTFLAGS`, including the explicit check-cfg declaration. Production has no shim.
 Candidate and exact-baseline release builds, strict scoped Clippy, and example
 tests passed. Sources were byte-identical across revisions. Neither build/review
-success nor future successful workflow execution is performance acceptance.
+success nor the now-successful workflow execution is performance acceptance.
 
 The current flake adds default doctests to the per-package test helper, explicit
 Graph-plus-plugin-plus-derive doctests, and workspace no-default doctests alongside isolated
 Graph no-default docs. It adds no new workflow. Source inspection confirms gate
 wiring; the complete Nix snapshot check also passed these commands.
 
-Untracked migration sources are part of the assembled tree. A local Nix snapshot
-must use `builtins.path` to include them, with `.git` and `target` excluded; the
-ordinary Git-filtered flake view can omit required new files. For example, the
-source-capture expression is:
+Before commit, the assembled migration tree included untracked sources. The local
+Nix snapshot used `builtins.path` to include them, with `.git` and `target` excluded;
+the ordinary Git-filtered flake view could omit required new files. The
+source-capture expression was:
 
 ```nix
 builtins.path {
@@ -179,7 +210,56 @@ The first invocation hit the terminal's ten-minute timeout while builds were
 still running; repeating the same immutable snapshot command completed with
 `all checks passed!`. This is local source-snapshot evidence, not hosted CI.
 
-## Exact-Head Gate
+## Exact-Head Acceptance
+
+Accepted implementation SHA: **`6f6e751b36f77273da8799900f665bc026447418`**.
+The actual committed-head `nix flake check` passed in addition to the immutable
+assembled-source snapshot above. The snapshot is not substituted for this
+committed-head check. Local results here record the completed migration gates,
+not a rerun or acceptance of this new evidence-only docs revision.
+
+`gh api` queried the repository's runs filtered by that exact `head_sha`, and
+`gh run view 44059873792` separately confirmed its head and jobs. Each of the
+following fifteen workflows is completed with conclusion **SUCCESS** on that SHA:
+
+| Workflow | Exact-Head Run URL | Conclusion |
+| --- | --- | --- |
+| Flake CI | [44059873792](https://github.com/matthis-k/phenix-ai/actions/runs/44059873792) | SUCCESS |
+| Q5 session ownership Loom | [44059872702](https://github.com/matthis-k/phenix-ai/actions/runs/44059872702) | SUCCESS |
+| Q5 actual wake Loom | [44059872936](https://github.com/matthis-k/phenix-ai/actions/runs/44059872936) | SUCCESS |
+| Q5 native notifier retirement concurrency | [44059873083](https://github.com/matthis-k/phenix-ai/actions/runs/44059873083) | SUCCESS |
+| Q5 in-flight worker recovery | [44059872727](https://github.com/matthis-k/phenix-ai/actions/runs/44059872727) | SUCCESS |
+| Native runtime benchmark | [44059872761](https://github.com/matthis-k/phenix-ai/actions/runs/44059872761) | SUCCESS |
+| H4 EOS endpoint paired benchmark | [44059872694](https://github.com/matthis-k/phenix-ai/actions/runs/44059872694) | SUCCESS |
+| H4 scoped optional poll paired benchmark | [44059872720](https://github.com/matthis-k/phenix-ai/actions/runs/44059872720) | SUCCESS |
+| H5 scoped closure paired benchmark | [44059872764](https://github.com/matthis-k/phenix-ai/actions/runs/44059872764) | SUCCESS |
+| H5 request index paired benchmark | [44059872704](https://github.com/matthis-k/phenix-ai/actions/runs/44059872704) | SUCCESS |
+| H4 targeted wake paired benchmark | [44059872736](https://github.com/matthis-k/phenix-ai/actions/runs/44059872736) | SUCCESS |
+| H4 notified Custom readiness benchmark | [44059873077](https://github.com/matthis-k/phenix-ai/actions/runs/44059873077) | SUCCESS |
+| H4 live request sparse paired benchmark | [44059873061](https://github.com/matthis-k/phenix-ai/actions/runs/44059873061) | SUCCESS |
+| H6 agent allocation events | [44059873094](https://github.com/matthis-k/phenix-ai/actions/runs/44059873094) | SUCCESS |
+| H4 mixed agent acceptance benchmark | [44059872750](https://github.com/matthis-k/phenix-ai/actions/runs/44059872750) | SUCCESS |
+
+All **six Flake jobs** succeeded: exact-head inventory evaluation, shared Nix
+build/cache writer, check shard-00, shard-01, shard-02, and the Flake matrix evidence
+aggregate. No skipped shard or pending aggregate is counted as a pass.
+
+## Numerical Reconciliation
+
+Only Q7 changes: open -> scoped verified, 26.0% -> 100.0%, +74.0 pp.
+Thus 18 -> **19 verified**, 6 -> **6 partial**, 8 -> **7 open**, and 1 -> **1
+approved exclusion**; 19 + 6 + 7 + 1 = 33. Remaining partial/open findings move
+14 -> **13** (6 + 7). The score sum moves 2415 -> **2489**, and 2489 / 33 =
+75.4242...%, rounded to **75.4%**. This is a subjective issue mean, not product
+completion. C7 stays 12.0%, +0.0 pp; Q1 and every other score/delta are unchanged.
+Historical rows and narrative retain their original stage's values and are
+superseded for current status, not rewritten into newer-head evidence.
+
+## Historical Exact-Head Gate
+
+The following checkpoint predates acceptance at `6f6e751b36f77273da8799900f665bc026447418`
+and is preserved as history only. Its pending status and counts are superseded by
+the current acceptance above.
 
 **PENDING.** No exact committed migration head or matching CI result is recorded
 here. Local working-tree

@@ -1,5 +1,37 @@
 # Phenix Native FBP Design
 
+## Current Acceptance: Q7, 2026-11-17
+
+Latest accepted implementation: `6f6e751b36f77273da8799900f665bc026447418`.
+Original Q7 is scoped verified after independent whole-slice reviews, all local
+gates including Nix snapshot and actual committed-head `nix flake check`, and all
+fifteen exact-head hosted workflows confirmed SUCCESS via `gh`. See [final Q7
+review, tests and all run URLs](fbp-q7-final-review-20261117.md).
+
+The full typed protocol spans process/Value/guards/helpers/codecs/macros/adapters/
+handoff/runtime/request/session/Kernel/StorageGraph source local Failure DATA/query,
+plus typed framework reasons and plugin lifetime errors. It is not a core-only
+acceptance. Known leases must be complete per independently escaping handle;
+later enrichment is nonretroactive. Cached summaries and Q6 observation remain
+passive. Ordinary Drop contains supported unwinds but cannot report retroactively;
+trusted native `panic=abort`, aborting hooks/destructors and arbitrary double-panic
+behavior remain excluded, not sandbox guarantees.
+
+The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md) now records
+**19 scoped verified / 6 partial / 7 open / 1 approved exclusion**, **13 remaining**,
+and Q7 **26.0% -> 100.0%, +74.0 pp**. The subjective issue mean is
+**75.4% (2489 / 33)**, not product completion. C7's historical 12.0% is unchanged,
+with no sandbox credit. Prior Q1 ownership acceptance and the broader Kernel root
+residual are preserved. Green benchmark execution is not performance acceptance;
+M7/M8 and production-agent integration remain incomplete.
+
+This current top supersedes earlier status/count/remaining-work assertions below,
+including the closing reference summary; historical narrative and Q1 acceptance
+are preserved. This evidence-only docs revision requires its own checks and does
+not certify any newer implementation.
+
+## Prior Status And Design
+
 Status: Kernel, Plugin and StorageGraph use native networks. PR #1302 integrated
 the complete verified `516e088` stack and retains all scoped gates. Subsequent
 implementation `026cfbe05` passed all fifteen exact-head workflows. The current

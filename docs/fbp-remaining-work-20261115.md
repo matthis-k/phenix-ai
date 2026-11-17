@@ -1,5 +1,36 @@
 # Remaining Finding And WIP Work Map
 
+## Current Acceptance: Q7, 2026-11-17
+
+Original Q7 is **scoped verified** at
+`6f6e751b36f77273da8799900f665bc026447418`, following independent whole-slice
+reviews, all local gates (Nix snapshot and actual committed-head flake check
+included), and all fifteen exact-head hosted workflows confirmed SUCCESS via `gh`.
+See [final Q7 acceptance and all run URLs](fbp-q7-final-review-20261117.md).
+This accepts the full process/Value/guards/helpers/codecs/macros/adapters/handoff/
+runtime/request/session/Kernel/StorageGraph source local Failure DATA/query
+protocol, typed framework reasons and plugin lifetime errors, not a narrowed core.
+
+Current counts are **19 scoped verified / 6 partial / 7 open / 1 approved
+exclusion**, leaving **13 in-scope findings**. The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
+records Q7 **26.0% -> 100.0%, +74.0 pp**, and the subjective mean
+**75.4% (2489 / 33)**, not product completion. C7 remains excluded with its old
+12.0% unchanged and no sandbox credit. Prior Q1 acceptance, including the broader
+Kernel concentration residual, is unchanged.
+
+The six partial findings are H1, H3b, H4, H5, H6 and H7; the seven open findings
+are A1, A2, A5, Q2, Q3, Q4 and Q5. Known leases remain per escaping handle and
+nonretroactive, cached observation remains passive, and ordinary Drop cannot report
+retroactively. Trusted native abort exclusions remain; green benchmark execution
+does not establish performance acceptance or M7/M8 completion.
+
+This current section supersedes earlier counts, Q7 development/pending labels and
+the historical Q7 row below. All 22 starting rows and prior acceptance narrative
+remain for traceability, not as a second current status authority. This evidence-only
+docs revision requires its own checks; no later implementation is accepted here.
+
+## Historical Work Map And Acceptance Sequence
+
 Starting point: verified `30a62f706`, 22 remaining findings: seven partial and
 fifteen open. The [33-finding scorecard](fbp-issue-progress-estimates-20261113.md)
 remains authoritative. This map supplies concrete work and acceptance dependencies,

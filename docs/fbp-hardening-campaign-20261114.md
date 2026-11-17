@@ -1,6 +1,32 @@
 # FBP Hardening Campaign: Dependency And Policy Record
 
-## Current Accepted Batch
+## Current Accepted Batch: Q7
+
+Implementation `6f6e751b36f77273da8799900f665bc026447418` passed independent
+whole-slice reviews and all local gates, including the complete Nix snapshot and
+actual committed-head `nix flake check`. All fifteen exact-head hosted workflows
+are SUCCESS, confirmed via `gh`, including [six-job Flake CI 44059873792](https://github.com/matthis-k/phenix-ai/actions/runs/44059873792)
+with all three shards and aggregate successful. The [final Q7 record](fbp-q7-final-review-20261117.md)
+contains every run URL, tests, review fixes, whole-slice acceptance and limits.
+
+Q7's original scope is **scoped verified: 26.0% -> 100.0%, +74.0 pp**. It is the
+full process/Value/guards/helpers/codecs/macros/adapters/handoff/runtime/request/
+session/Kernel/StorageGraph source local Failure DATA/query protocol, plus typed
+framework reasons and plugin lifetime errors, not an envelope-only seed. Current
+counts are **19 scoped verified / 6 partial / 7 open / 1 approved exclusion**,
+with **13 in-scope findings remaining**. The subjective historical-row mean is
+**75.4% (2489 / 33)**, not product completion. C7's old 12.0% is unchanged and
+earns no sandbox credit. All prior Q1 acceptance and its Kernel residual stand.
+
+Leases remain per escaping handle and nonretroactive; cached observations remain
+passive, and ordinary Drop cannot report retroactively. Trusted native abort and
+double-panic exclusions remain. Green benchmark execution is not performance
+acceptance, and no M7/M8 closure follows. This current section supersedes historical
+status/count/pending assertions below, which are retained as historical narrative.
+This evidence-only docs revision requires its own checks, separate from the accepted
+implementation SHA; no newer implementation acceptance is claimed.
+
+## Previous Ownership Batch
 
 Implementation `7c6119122` passed all fifteen exact-head workflows, including
 [six-job Flake CI 43811659284](https://github.com/matthis-k/phenix-ai/actions/runs/43811659284).
