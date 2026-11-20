@@ -207,15 +207,13 @@ fn multiple_offers_and_self_imports_derive_the_actual_composer_identity() {
                     for (id, expected_unit) in [("service", "unit-one"), ("second", "unit-two")] {
                         let bound = context.bind_import(id)?;
                         assert_eq!(bound.path(), expected_unit);
-                        edits.push(Edit::ExposeInput {
-                            name: id.into(),
-                            targets: vec![support::path(bound.path(), "run")],
-                            capacity: support::capacity(),
-                        });
-                        edits.push(Edit::ExposeOutput {
-                            name: id.into(),
-                            from: support::path(bound.path(), "value"),
-                        });
+                        edits.push(context.expose_bound_input(
+                            id,
+                            &[bound.input::<i64>("run")?],
+                            support::capacity(),
+                        )?);
+                        edits
+                            .push(context.expose_bound_output(id, &bound.output::<i64>("value")?)?);
                     }
                     assert!(context.import("undeclared").is_err());
                     assert!(context.inspect_network().is_err());

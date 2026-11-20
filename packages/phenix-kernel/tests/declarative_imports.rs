@@ -103,20 +103,13 @@ impl PluginInstance for Consumer {
                 let bound = context.bind_import("service")?;
                 assert!(bound.input::<i64>("private").is_err());
                 assert!(bound.output::<String>("value").is_err());
-                bound.input::<i64>("run")?;
-                bound.output::<i64>("value")?;
+                let input = bound.input::<i64>("run")?;
+                let output = bound.output::<i64>("value")?;
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.export(config.observed.clone())?;
                 artifacts.patch = Some(NetworkPatch::new([
-                    Edit::ExposeInput {
-                        name: "request".into(),
-                        targets: vec![support::path(bound.path(), "run")],
-                        capacity: support::capacity(),
-                    },
-                    Edit::ExposeOutput {
-                        name: "result".into(),
-                        from: support::path(bound.path(), "value"),
-                    },
+                    context.expose_bound_input("request", &[input], support::capacity())?,
+                    context.expose_bound_output("result", &output)?,
                 ]));
                 Ok(artifacts)
             })

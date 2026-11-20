@@ -886,18 +886,15 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
             Arc::new(LocalProcessDispatcher),
             "inspect",
             |binding| {
-                let physical = binding.lookup_definition(declaration)?;
-                assert_eq!(physical.path, "worker");
+                let worker = binding.bind_definition(declaration)?;
+                assert_eq!(worker.path(), "worker");
                 assert_eq!(binding.inspect("worker")?.definition_key, Some(declaration));
-                assert_eq!(
-                    binding.output_source("output"),
-                    Some((physical.index, "value"))
-                );
-                assert_eq!(binding.output_source("missing"), None);
-                assert_eq!(
-                    binding.input_targets("input"),
-                    Some([(physical.index, "run".into())].as_slice())
-                );
+                let capture = binding.capture("output")?;
+                assert!(capture.matches_output(&worker.output::<i64>("value")?)?);
+                assert!(binding.capture("missing").is_err());
+                let ingress =
+                    binding.bind_ingress("input", phenix_graph::InputKey::<i64>::new("run"))?;
+                assert!(ingress.matches_input(&worker.input::<i64>("run")?)?);
                 assert!(calls.lock().unwrap().is_empty());
                 assert_eq!(polls.load(Ordering::SeqCst), 0);
                 Ok(())

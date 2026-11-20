@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CleanupStage {
+    Configuration,
     Request,
     Failure,
     Cancellation,

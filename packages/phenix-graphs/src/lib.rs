@@ -39,8 +39,9 @@ pub use failure::{CallbackPhase, Failure, FailureContext, FailureKind, WrongFail
 pub use interface::{Interface, InterfaceError, InterfacePhase, PortDef};
 pub use limits::{CompileLimit, CompileLimits, LimitKind, MAX_IDENTIFIER_BYTES};
 pub use network::{
-    CompiledNetwork, ComponentRef, InputEndpoint, InputRef, NetworkBuilder, NetworkDef,
-    NetworkError, OutputEndpoint, OutputRef, PortPath,
+    BoundComponent, BoundDeclaration, BoundInput, BoundOutput, CaptureHandle, CompiledNetwork,
+    ComponentRef, IngressHandle, InputEndpoint, InputRef, NetworkBuilder, NetworkDef, NetworkError,
+    OutputEndpoint, OutputRef, PortPath, SourceHandle,
 };
 pub use phenix_schema::Schema;
 pub use port_keys::{InputError, InputGroup, InputKey, InputRecord, OutputKey};

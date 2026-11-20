@@ -1,6 +1,6 @@
 use super::*;
 use phenix_graph::{
-    Failure, Value,
+    BoundDeclaration, CaptureHandle, Failure, IngressHandle, InputKey, OutputKey, Value,
     network::CompiledNetwork,
     process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{RequestFailurePolicy, RequestStatus, SessionOptions, SessionState},
@@ -102,68 +102,140 @@ pub struct QuerySpec<T: Clone + Send + Sync + 'static> {
 }
 impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
     pub fn bind_kernel<'a>(&self, kernel: &'a Kernel) -> Result<QueryHandle<'a, T>, Error> {
-        self.validate_compiled(kernel.compiled())?;
-        Ok(QueryHandle {
-            kernel,
-            spec: self.clone(),
-        })
+        let compiled = kernel.compiled();
+        self.resolve(
+            |key| compiled.bind_definition(key),
+            || compiled.bind_ingress(self.value.refresh_route(), InputKey::new("run")),
+            || compiled.bind_capture(&self.capture, OutputKey::<T>::new("value")),
+            || compiled.bind_capture(&self.value.root.errors, OutputKey::<Failure>::new("error")),
+            || compiled.declaration(""),
+            |name| compiled.capture(name),
+        )?
+        .bind_kernel(kernel)
     }
-    fn validate_compiled(&self, compiled: &CompiledNetwork) -> Result<(), Error> {
-        let tap = compiled.lookup_definition(self.definition)?;
-        let root = compiled.lookup_definition(self.value.root.definition.definition_key())?;
-        self.validate_targets(
-            root.index,
-            compiled
-                .inputs()
-                .get(self.value.refresh_route())
-                .map(Vec::as_slice),
-        )?;
-        if compiled.outputs().get(&self.capture) != Some(&(tap.index, "value".into())) {
-            return Err(Error::InvalidPublication);
-        }
-        if compiled.outputs().get(&self.value.root.capture) != Some(&(root.index, "value".into()))
-            || compiled.outputs().get(&self.value.root.errors)
-                != Some(&(root.index, "error".into()))
-        {
-            return Err(Error::InvalidPublication);
-        }
-        Ok(())
+    /// Resolve immutable authority during preparation, without admission or reads.
+    /// The result can only execute with this exact compiled generation's Kernel.
+    pub fn bind_preparation(
+        &self,
+        binding: &phenix_kernel::host::Binding<'_>,
+    ) -> Result<QueryBinding<T>, Error> {
+        self.resolve(
+            |key| binding.bind_definition(key),
+            || binding.bind_ingress(self.value.refresh_route(), InputKey::new("run")),
+            || binding.bind_capture(&self.capture, OutputKey::<T>::new("value")),
+            || binding.bind_capture(&self.value.root.errors, OutputKey::<Failure>::new("error")),
+            || binding.declaration(""),
+            |name| binding.capture(name),
+        )
     }
     pub fn validate_binding(
         &self,
         binding: &phenix_kernel::host::Binding<'_>,
     ) -> Result<(), Error> {
-        let tap = binding.lookup_definition(self.definition)?;
-        let root = binding.lookup_definition(self.value.root.definition.definition_key())?;
-        self.validate_targets(
-            root.index,
-            binding.input_targets(self.value.refresh_route()),
-        )?;
-        if binding.output_source(&self.capture) != Some((tap.index, "value"))
-            || binding.output_source(&self.value.root.capture) != Some((root.index, "value"))
-            || binding.output_source(&self.value.root.errors) != Some((root.index, "error"))
-        {
-            return Err(Error::InvalidPublication);
-        }
-        Ok(())
+        self.bind_preparation(binding).map(drop)
     }
-    fn validate_targets(
+    fn resolve(
         &self,
-        root: usize,
-        targets: Option<&[(usize, String)]>,
-    ) -> Result<(), Error> {
-        if targets != Some(&[(root, "run".into())][..]) {
+        definition: impl Fn(DefinitionKey) -> Result<BoundDeclaration, NetworkError>,
+        ingress: impl FnOnce() -> Result<IngressHandle<RefreshCause>, NetworkError>,
+        selected: impl FnOnce() -> Result<CaptureHandle, NetworkError>,
+        errors: impl FnOnce() -> Result<CaptureHandle, NetworkError>,
+        boundary: impl FnOnce() -> Result<BoundDeclaration, NetworkError>,
+        capture: impl Fn(&str) -> Result<CaptureHandle, NetworkError>,
+    ) -> Result<QueryBinding<T>, Error> {
+        // Definition errors precede route errors, including ambiguous occurrences.
+        let tap = definition(self.definition)?;
+        let root = definition(self.value.root.definition.definition_key())?;
+        let refresh =
+            ingress().map_err(|_| Error::InvalidRefreshRoute(self.value.refresh_route().into()))?;
+        if !refresh.matches_input(&root.input_key(InputKey::new("run"))?)? {
             return Err(Error::InvalidRefreshRoute(
                 self.value.refresh_route().into(),
             ));
         }
+        let selected = selected().map_err(|_| Error::InvalidPublication)?;
+        if !selected.matches_output(&tap.output_key(OutputKey::<T>::new("value"))?)? {
+            return Err(Error::InvalidPublication);
+        }
+        let root_value =
+            capture(&self.value.root.capture).map_err(|_| Error::InvalidPublication)?;
+        if !(self.value.root.matches_value)(&root, &root_value)? {
+            return Err(Error::InvalidPublication);
+        }
+        let errors = errors().map_err(|_| Error::InvalidPublication)?;
+        if !errors.matches_output(&root.output_key(OutputKey::<Failure>::new("error"))?)? {
+            return Err(Error::InvalidPublication);
+        }
+        let mut captures = Vec::new();
+        // Enumerate aliases only at binding. Erased captures include unrelated
+        // heterogeneous observations; every export can backpressure publication.
+        for name in boundary()?.interface().outputs().keys() {
+            let handle = if name == selected.name() {
+                selected.clone()
+            } else if name == root_value.name() {
+                root_value.clone()
+            } else if name == errors.name() {
+                errors.clone()
+            } else {
+                capture(name)?
+            };
+            captures.push(QueryCapture {
+                selected: name == selected.name(),
+                root: name == root_value.name(),
+                errors: name == errors.name(),
+                handle,
+            });
+        }
+        Ok(QueryBinding {
+            tap,
+            root,
+            refresh,
+            captures,
+            marker: PhantomData,
+        })
+    }
+}
+
+/// Immutable routes for one resolved generation. Cloning never rebinds authority
+/// or retains a candidate, session, queued value, or authored Storage context.
+#[derive(Clone)]
+pub struct QueryBinding<T: Clone + Send + Sync + 'static> {
+    tap: BoundDeclaration,
+    root: BoundDeclaration,
+    refresh: IngressHandle<RefreshCause>,
+    captures: Vec<QueryCapture>,
+    marker: PhantomData<fn() -> T>,
+}
+#[derive(Clone)]
+struct QueryCapture {
+    handle: CaptureHandle,
+    selected: bool,
+    root: bool,
+    errors: bool,
+}
+impl<T: Clone + Send + Sync + 'static> QueryBinding<T> {
+    fn validate(&self, compiled: &CompiledNetwork) -> Result<(), Error> {
+        self.tap.validate(compiled)?;
+        self.root.validate(compiled)?;
+        self.refresh.validate(compiled)?;
+        for capture in &self.captures {
+            capture.handle.validate(compiled)?;
+        }
         Ok(())
+    }
+    /// Adopt previously resolved authority, never a same-named successor route.
+    pub fn bind_kernel<'a>(&self, kernel: &'a Kernel) -> Result<QueryHandle<'a, T>, Error> {
+        self.validate(kernel.compiled())?;
+        Ok(QueryHandle {
+            kernel,
+            binding: self.clone(),
+        })
     }
 }
 
 pub struct QueryHandle<'a, T: Clone + Send + Sync + 'static> {
     kernel: &'a Kernel,
-    spec: QuerySpec<T>,
+    binding: QueryBinding<T>,
 }
 impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
     pub fn query(&self) -> Result<QueryValue<T>, Error> {
@@ -176,18 +248,17 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
         if DISPATCHING.get() {
             return Err(Error::NestedQuery);
         }
-        self.spec.validate_compiled(self.kernel.compiled())?;
-        let outputs: Vec<_> = self.kernel.compiled().outputs().keys().cloned().collect();
+        self.binding.validate(self.kernel.compiled())?;
         self.kernel
             .with_session(|session| {
-                let request = session.begin_request(None)?;
+                let request = session.begin_bound_request(None)?;
                 let result = (|| {
                     let mut remaining = budget;
-                    let mut value = Value::local(RefreshCause::Demand);
+                    let mut value = self.binding.refresh.value(RefreshCause::Demand);
                     loop {
-                        match session.inject_request(
+                        match session.inject_bound_request_value(
                             request,
-                            self.spec.value.refresh_route(),
+                            &self.binding.refresh,
                             value,
                         ) {
                             Ok(()) => break,
@@ -200,12 +271,15 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 value = error.value;
                                 let report = session.run_until_idle(remaining.min(64));
                                 remaining = remaining.saturating_sub(report.steps);
-                                for output in &outputs {
+                                let mut drained = false;
+                                for output in &self.binding.captures {
                                     while session
-                                        .take_output(output)
+                                        .take_bound_output(&output.handle)
                                         .map_err(Error::Transport)?
                                         .is_some()
-                                    {}
+                                    {
+                                        drained = true;
+                                    }
                                 }
                                 if report.state == SessionState::Failed {
                                     return Err(session
@@ -214,7 +288,7 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                         .map(Error::Execution)
                                         .unwrap_or(Error::InvalidPublication));
                                 }
-                                if remaining == 0 || report.steps == 0 {
+                                if remaining == 0 || (report.steps == 0 && !drained) {
                                     return Err(Error::Unsettled);
                                 }
                             }
@@ -247,34 +321,38 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 .map(Error::Execution)
                                 .unwrap_or(Error::InvalidPublication));
                         }
-                        for output in &outputs {
+                        let mut drained = false;
+                        for output in &self.binding.captures {
                             // Drain older observation captures too: they cannot satisfy
                             // this request, and retaining them would block its fanout.
                             loop {
-                                let packet = match session.take_request_output(request, output)? {
+                                let packet = match session
+                                    .take_bound_request_output(request, &output.handle)?
+                                {
                                     Some(packet) => packet,
                                     None => match session
-                                        .take_output(output)
+                                        .take_bound_output(&output.handle)
                                         .map_err(Error::Transport)?
                                     {
                                         Some(packet) => packet,
                                         None => break,
                                     },
                                 };
+                                drained = true;
                                 if packet.metadata().and_then(|m| m.request()) != Some(request) {
                                     continue;
                                 }
-                                session.validate_capture(request, output, &packet)?;
-                                if output == &self.spec.value.root.capture {
+                                session.validate_bound_capture(request, &output.handle, &packet)?;
+                                if output.root {
                                     roots += 1;
                                 }
-                                if output == &self.spec.value.root.errors {
+                                if output.errors {
                                     errors.push(
                                         Failure::from_value(packet.value())
                                             .map_err(Error::Execution)?,
                                     );
                                 }
-                                if output == &self.spec.capture {
+                                if output.selected {
                                     count += 1;
                                     if packet.value().borrow::<T>().is_none() {
                                         return Err(Error::InvalidPublication);
@@ -309,7 +387,9 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                             }
                             _ => {}
                         }
-                        if remaining == 0 || report.steps == 0 {
+                        // Removing a finite buffered capture can unblock a retained
+                        // publication even when the preceding drive took no steps.
+                        if remaining == 0 || (report.steps == 0 && !drained) {
                             return Err(Error::Unsettled);
                         }
                     }

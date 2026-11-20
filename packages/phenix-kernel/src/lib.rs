@@ -1,4 +1,5 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
+mod bound;
 mod config_error;
 mod exclusive;
 pub mod host;
@@ -140,6 +141,10 @@ impl Key {
 }
 
 /// One bounded external admission to one public network input.
+/// Producer events are symbolic, contribution-route-scoped authoring data, not
+/// compiled binding capabilities. Factories are prepared before final composition;
+/// final handles are issued separately by host::Binding for explicit session work.
+/// Possessing an ingress handle never grants a producer an additional route.
 pub struct InputEvent {
     pub input: String,
     pub value: Value,
@@ -321,6 +326,42 @@ impl CandidateArtifacts {
 }
 
 impl CandidateContext<'_> {
+    /// Lower an authenticated preview endpoint into symbolic composition data.
+    /// The resulting compilation must issue fresh execution handles.
+    pub fn expose_bound_input<T>(
+        &self,
+        name: impl Into<String>,
+        targets: &[phenix_graph::BoundInput<T>],
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_bound_input(self.compiled, name, targets, capacity)
+    }
+
+    pub fn expose_bound_output<T>(
+        &self,
+        name: impl Into<String>,
+        from: &phenix_graph::BoundOutput<T>,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_bound_output(self.compiled, name, from)
+    }
+
+    /// Connect an imported preview output to a newly authored symbolic input.
+    /// The composer validates the destination and the host's exact write grant.
+    pub fn connect_bound_output<T>(
+        &self,
+        from: &phenix_graph::BoundOutput<T>,
+        to: phenix_graph::network::PortPath,
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        Ok(phenix_graph::compose::Edit::Connect(
+            phenix_graph::network::ConnectionDef {
+                from: from.symbolic_path(self.compiled)?.clone(),
+                to,
+                capacity,
+            },
+        ))
+    }
+
     /// Look up only this contribution's declared imports. The result owns its
     /// metadata so callers can retain provider and offer identities.
     pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {

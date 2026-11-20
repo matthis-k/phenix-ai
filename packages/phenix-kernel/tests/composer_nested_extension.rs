@@ -107,23 +107,16 @@ impl PluginInstance for Consumer {
                 assert!(context.bind_import("leaf").is_err());
                 let bound = context.bind_import("outer")?;
                 assert_eq!(bound.contract().id(), OUTER);
-                bound.input::<i64>("run")?;
-                bound.output::<i64>("value")?;
+                let input = bound.input::<i64>("run")?;
+                let output = bound.output::<i64>("value")?;
                 assert!(bound.input::<i64>("private").is_err());
                 assert!(bound.output::<String>("value").is_err());
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.export(context.import("outer")?)?;
-                // Only the projected outer path is used; no provider internals.
+                // Only authenticated outer endpoints are used; no provider internals.
                 artifacts.patch = Some(NetworkPatch::new([
-                    Edit::ExposeInput {
-                        name: "request".into(),
-                        targets: vec![support::path(bound.path(), "run")],
-                        capacity: support::capacity(),
-                    },
-                    Edit::ExposeOutput {
-                        name: "reply".into(),
-                        from: support::path(bound.path(), "value"),
-                    },
+                    context.expose_bound_input("request", &[input], support::capacity())?,
+                    context.expose_bound_output("reply", &output)?,
                 ]));
                 Ok(artifacts)
             })

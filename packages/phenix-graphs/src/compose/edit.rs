@@ -60,6 +60,56 @@ pub enum Edit {
     },
 }
 impl Edit {
+    /// Import checked declaration boundaries as symbolic authoring data, not
+    /// physical projections or authority over the resulting compilation.
+    pub fn connect_bound<T>(
+        network: &crate::CompiledNetwork,
+        from: &crate::BoundOutput<T>,
+        to: &crate::BoundInput<T>,
+        capacity: NonZeroUsize,
+    ) -> Result<Self, NetworkError> {
+        from.validate(network)?;
+        to.validate(network)?;
+        if from.value_type() != to.value_type() {
+            return Err(NetworkError::WrongType {
+                path: to.symbolic_path(network)?.clone(),
+                expected: to.value_type().clone(),
+                actual: from.value_type().clone(),
+            });
+        }
+        let from = from.symbolic_path(network)?.clone();
+        let to = to.symbolic_path(network)?.clone();
+        Ok(Self::Connect(ConnectionDef { from, to, capacity }))
+    }
+
+    pub fn expose_bound_input<T>(
+        network: &crate::CompiledNetwork,
+        name: impl Into<String>,
+        targets: &[crate::BoundInput<T>],
+        capacity: NonZeroUsize,
+    ) -> Result<Self, NetworkError> {
+        let targets = targets
+            .iter()
+            .map(|target| target.symbolic_path(network).cloned())
+            .collect::<Result<_, _>>()?;
+        Ok(Self::ExposeInput {
+            name: name.into(),
+            targets,
+            capacity,
+        })
+    }
+
+    pub fn expose_bound_output<T>(
+        network: &crate::CompiledNetwork,
+        name: impl Into<String>,
+        from: &crate::BoundOutput<T>,
+    ) -> Result<Self, NetworkError> {
+        Ok(Self::ExposeOutput {
+            name: name.into(),
+            from: from.symbolic_path(network)?.clone(),
+        })
+    }
+
     pub(super) fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
         match self {
             Self::Add { path, definition } => {

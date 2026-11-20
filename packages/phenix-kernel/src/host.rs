@@ -8,11 +8,14 @@ use crate::{
     ResolutionError, StartError, WakeHandle,
 };
 use phenix_graph::{
-    Value,
+    BoundDeclaration, CaptureHandle, IngressHandle, InputKey, OutputKey, SourceHandle, Value,
     component::DefinitionKey,
-    network::{CompiledNetwork, ComponentSnapshot, NetworkError, PhysicalDeclaration},
+    network::{CompiledNetwork, ComponentSnapshot, NetworkError},
     process::ProcessDispatcher,
-    runtime::{InjectionError, NetworkSession, RunReport},
+    runtime::{
+        InjectionError, NetworkSession, ProcessNotifier, RequestError, RequestId,
+        RequestInjectionError, RunReport,
+    },
 };
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
 use std::sync::Arc;
@@ -105,6 +108,118 @@ impl Generation {
         self.kernel.inject_key(key, payload)
     }
 
+    pub fn inject_bound<T: Send + Sync + 'static>(
+        &self,
+        ingress: &IngressHandle<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_bound(ingress, payload)
+    }
+
+    pub fn inject_bound_value<T: 'static>(
+        &self,
+        ingress: &IngressHandle<T>,
+        value: Value,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_bound_value(ingress, value)
+    }
+
+    pub fn inject_bound_request<T: Send + Sync + 'static>(
+        &self,
+        id: RequestId,
+        ingress: &IngressHandle<T>,
+        payload: T,
+    ) -> Result<(), RequestInjectionError> {
+        self.kernel.inject_bound_request(id, ingress, payload)
+    }
+
+    pub fn inject_bound_request_value<T: 'static>(
+        &self,
+        id: RequestId,
+        ingress: &IngressHandle<T>,
+        value: Value,
+    ) -> Result<(), RequestInjectionError> {
+        self.kernel.inject_bound_request_value(id, ingress, value)
+    }
+
+    pub fn begin_bound_request<'a>(
+        &self,
+        exact_output: impl Into<Option<&'a CaptureHandle>>,
+    ) -> Result<Result<RequestId, RequestError>, crate::SessionAccessError> {
+        self.kernel.begin_bound_request(exact_output)
+    }
+
+    pub fn close_bound_input<T>(
+        &self,
+        ingress: &IngressHandle<T>,
+    ) -> Result<Result<(), phenix_graph::connection::ConnectionError>, crate::SessionAccessError>
+    {
+        self.kernel.close_bound_input(ingress)
+    }
+
+    pub fn take_bound_output(
+        &self,
+        capture: &CaptureHandle,
+    ) -> Result<
+        Result<Option<phenix_graph::connection::Packet>, phenix_graph::connection::ConnectionError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.take_bound_output(capture)
+    }
+
+    pub fn take_bound_request_output(
+        &self,
+        id: RequestId,
+        capture: &CaptureHandle,
+    ) -> Result<
+        Result<Option<phenix_graph::connection::Packet>, RequestError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.take_bound_request_output(id, capture)
+    }
+
+    pub fn validate_bound_capture(
+        &self,
+        id: RequestId,
+        capture: &CaptureHandle,
+        packet: &phenix_graph::connection::Packet,
+    ) -> Result<Result<(), RequestError>, crate::SessionAccessError> {
+        self.kernel.validate_bound_capture(id, capture, packet)
+    }
+
+    pub fn bound_output_closed(
+        &self,
+        capture: &CaptureHandle,
+    ) -> Result<Result<bool, phenix_graph::connection::ConnectionError>, crate::SessionAccessError>
+    {
+        self.kernel.bound_output_closed(capture)
+    }
+
+    pub fn start_bound_request_source(
+        &self,
+        id: RequestId,
+        source: &SourceHandle,
+    ) -> Result<Result<(), RequestError>, crate::SessionAccessError> {
+        self.kernel.start_bound_request_source(id, source)
+    }
+
+    pub fn bound_wake_handle(
+        &self,
+        declaration: &BoundDeclaration,
+    ) -> Result<
+        Result<Option<phenix_graph::runtime::WakeHandle>, NetworkError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.bound_wake_handle(declaration)
+    }
+
+    pub fn bound_process_notifier(
+        &self,
+        declaration: &BoundDeclaration,
+    ) -> Result<Result<Option<ProcessNotifier>, NetworkError>, crate::SessionAccessError> {
+        self.kernel.bound_process_notifier(declaration)
+    }
+
     pub fn run_steps(&self, budget: usize) -> Result<RunReport, crate::SessionAccessError> {
         self.kernel.run_steps(budget)
     }
@@ -145,32 +260,49 @@ pub struct Binding<'a> {
 }
 
 impl Binding<'_> {
+    /// Final-composition authority only; no executable owner escapes this view.
+    pub fn declaration(&self, path: &str) -> Result<BoundDeclaration, NetworkError> {
+        self.kernel.compiled().declaration(path)
+    }
+
+    pub fn bind_definition(&self, key: DefinitionKey) -> Result<BoundDeclaration, NetworkError> {
+        self.kernel.compiled().bind_definition(key)
+    }
+
+    pub fn declarations(&self, key: DefinitionKey) -> Vec<BoundDeclaration> {
+        self.kernel.compiled().declarations(key)
+    }
+
+    pub fn bind_ingress<T: 'static>(
+        &self,
+        name: &str,
+        key: InputKey<T>,
+    ) -> Result<IngressHandle<T>, NetworkError> {
+        self.kernel.compiled().bind_ingress(name, key)
+    }
+
+    pub fn bind_capture<T: 'static>(
+        &self,
+        name: &str,
+        key: OutputKey<T>,
+    ) -> Result<CaptureHandle, NetworkError> {
+        self.kernel.compiled().bind_capture(name, key)
+    }
+
+    pub fn capture(&self, name: &str) -> Result<CaptureHandle, NetworkError> {
+        self.kernel.compiled().capture(name)
+    }
+
+    pub fn source(&self, declaration: &BoundDeclaration) -> Result<SourceHandle, NetworkError> {
+        self.kernel.compiled().source(declaration)
+    }
+
     pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
         self.kernel.export(key)
     }
 
     pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
         self.kernel.compiled().inspect(path)
-    }
-
-    pub fn lookup_definition(
-        &self,
-        key: DefinitionKey,
-    ) -> Result<PhysicalDeclaration, NetworkError> {
-        self.kernel.compiled().lookup_definition(key)
-    }
-
-    pub fn input_targets(&self, name: &str) -> Option<&[(usize, String)]> {
-        self.kernel.compiled().inputs().get(name).map(Vec::as_slice)
-    }
-
-    /// Inspect the exact compiled capture source without exposing session admission.
-    pub fn output_source(&self, output: &str) -> Option<(usize, &str)> {
-        self.kernel
-            .compiled()
-            .outputs()
-            .get(output)
-            .map(|(index, port)| (*index, port.as_str()))
     }
 }
 

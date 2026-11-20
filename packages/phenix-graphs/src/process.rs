@@ -760,6 +760,9 @@ pub struct ProcessHandoff {
     context: Option<ProcessContext>,
     outstanding: Option<StepTicket>,
     lease: Option<Arc<dyn Send + Sync>>,
+    // Weak deduplication only, never authority or a code owner. Repeated bound
+    // source starts must not grow a lease chain once per request.
+    attached_leases: Vec<std::sync::Weak<dyn Send + Sync>>,
 }
 
 pub(crate) struct CancelledProcess {
@@ -814,11 +817,35 @@ impl ProcessHandoff {
             context: None,
             outstanding: None,
             lease: None,
+            attached_leases: Vec::new(),
         }
     }
     pub fn with_lease(mut self, lease: Arc<dyn Send + Sync>) -> Self {
+        self.attached_leases.clear();
         self.lease = Some(lease);
         self
+    }
+    pub(crate) fn retain_leases(&mut self, leases: &[Arc<dyn Send + Sync>]) {
+        let mut added = Vec::new();
+        for lease in leases {
+            let weak = Arc::downgrade(lease);
+            if !self.attached_leases.iter().any(|held| held.ptr_eq(&weak)) {
+                self.attached_leases.push(weak);
+                if !self
+                    .lease
+                    .as_ref()
+                    .is_some_and(|held| Arc::ptr_eq(held, lease))
+                {
+                    added.push(lease.clone());
+                }
+            }
+        }
+        if !added.is_empty() {
+            self.lease = Some(crate::network::HandleLeases::append(
+                self.lease.take(),
+                added,
+            ));
+        }
     }
     pub fn state(&self) -> HandoffState {
         self.state

@@ -166,20 +166,13 @@ mod consumer {
                 .import("transform", Key::new("definition", "transform"))
                 .prepare(move |context| {
                     let bound = context.bind_import("transform")?;
-                    bound.wire_input::<Request>("run")?;
-                    bound.wire_output::<Response>("value")?;
+                    let input = bound.wire_input::<Request>("run")?;
+                    let output = bound.wire_output::<Response>("value")?;
                     let mut artifacts = CandidateArtifacts::default();
                     artifacts.export(observed.clone())?;
                     artifacts.patch = Some(NetworkPatch::new([
-                        Edit::ExposeInput {
-                            name: "request".into(),
-                            targets: vec![support::path(bound.path(), "run")],
-                            capacity: support::capacity(),
-                        },
-                        Edit::ExposeOutput {
-                            name: "reply".into(),
-                            from: support::path(bound.path(), "value"),
-                        },
+                        context.expose_bound_input("request", &[input], support::capacity())?,
+                        context.expose_bound_output("reply", &output)?,
                     ]));
                     Ok(artifacts)
                 })

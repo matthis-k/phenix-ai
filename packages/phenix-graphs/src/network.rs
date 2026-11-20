@@ -40,7 +40,11 @@ pub use crate::limits::{CompileLimit, LimitKind};
 pub use authoring::{
     ComponentRef, InputEndpoint, InputRef, NetworkBuilder, OutputEndpoint, OutputRef,
 };
-pub use resolution::{BoundComponent, BoundInput, BoundOutput};
+pub(crate) use resolution::HandleLeases;
+pub use resolution::{
+    BoundComponent, BoundDeclaration, BoundInput, BoundOutput, CaptureHandle, IngressHandle,
+    SourceHandle,
+};
 pub(crate) use validation::{collect_component_obligations, normalize_requirements};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -293,7 +297,8 @@ impl CompiledNetwork {
         compiled
     }
     pub(crate) fn execution_lease(&self) -> Option<Arc<dyn Send + Sync>> {
-        (!self.leases.0.is_empty()).then(|| Arc::new(self.leases.clone()) as Arc<dyn Send + Sync>)
+        (!self.leases.0.is_empty())
+            .then(|| Arc::new(HandleLeases(self.leases.0.clone())) as Arc<dyn Send + Sync>)
     }
     pub fn interface(&self) -> &Arc<Interface> {
         &self.interface

@@ -2,7 +2,7 @@ use phenix_graph::{
     ContractValue, Interface, PortDef, Schema,
     component::ComponentDef,
     compose::{Edit, NetworkPatch},
-    network::{ConnectionDef, PortPath},
+    network::PortPath,
     process::{Process, ProcessContext, Step},
 };
 use phenix_kernel::{CandidateArtifacts, Contribution, Key};
@@ -62,9 +62,9 @@ impl PluginInstance for Plugin {
                 let bound = context.bind_import("transform")?;
                 // Only contract-visible names and C's own Rust types are used.
                 assert!(bound.wire_input::<Request>("extra").is_err());
-                bound.wire_input::<Request>("left")?;
-                bound.wire_input::<Request>("right")?;
-                bound.wire_output::<Response>("value")?;
+                let left = bound.wire_input::<Request>("left")?;
+                let right = bound.wire_input::<Request>("right")?;
+                let output = bound.wire_output::<Response>("value")?;
                 let capacity = std::num::NonZeroUsize::new(1).unwrap();
                 let port = |process: &str, name: &str| PortPath {
                     process: process.into(),
@@ -80,18 +80,18 @@ impl PluginInstance for Plugin {
                         path: "consumer-sink".into(),
                         definition: Arc::new(sink),
                     },
-                    Edit::Connect(ConnectionDef {
-                        from: port(bound.path(), "value"),
-                        to: port("consumer-sink", "value"),
+                    context.connect_bound_output(
+                        &output,
+                        port("consumer-sink", "value"),
                         capacity,
-                    }),
+                    )?,
                 ];
-                for name in ["left", "right"] {
-                    edits.push(Edit::ExposeInput {
-                        name: name.into(),
-                        targets: vec![port(bound.path(), name)],
+                for input in [left, right] {
+                    edits.push(context.expose_bound_input(
+                        input.name(),
+                        std::slice::from_ref(&input),
                         capacity,
-                    });
+                    )?);
                 }
                 Ok(CandidateArtifacts {
                     patch: Some(NetworkPatch::new(edits)),

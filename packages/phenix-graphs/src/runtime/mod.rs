@@ -20,6 +20,8 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, atomic::Ordering};
 use std::time::{Duration, Instant};
 mod admission;
+mod bound;
+pub use bound::BoundSessionOptions;
 mod closure;
 mod diagnostics;
 mod errors;
@@ -88,6 +90,8 @@ impl crate::process::Process for UnavailableProcess {
 
 #[derive(Clone)]
 pub struct SessionOptions {
+    /// Owned, generation-checked selectors, lowered only after start preflight.
+    pub bound: BoundSessionOptions,
     /// Capacity of each exported-output FIFO (including aliases).
     pub capture_capacity: NonZeroUsize,
     /// Physical compiled process paths, not definition-scoped authoring handles.
@@ -131,6 +135,7 @@ impl std::fmt::Debug for SessionOptions {
 impl Default for SessionOptions {
     fn default() -> Self {
         Self {
+            bound: BoundSessionOptions::default(),
             capture_capacity: NonZeroUsize::new(16).unwrap(),
             readiness: BTreeMap::new(),
             discard_outputs: BTreeSet::new(),
@@ -369,8 +374,26 @@ impl CompiledNetwork {
 impl NetworkSession {
     fn new(compiled: CompiledNetwork, mut options: SessionOptions) -> Self {
         if let Some(lease) = compiled.execution_lease() {
-            options.lease = Some(Arc::new((options.lease.take(), lease)));
+            options.lease = Some(crate::network::HandleLeases::append(
+                options.lease.take(),
+                vec![lease],
+            ));
         }
+        if let Some(lease) = options.bound.execution_lease() {
+            options.lease = Some(crate::network::HandleLeases::append(
+                options.lease.take(),
+                vec![lease],
+            ));
+        }
+        let bound_failure = options
+            .bound
+            .apply(
+                &compiled,
+                &mut options.readiness,
+                &mut options.resources,
+                &mut options.discard_outputs,
+            )
+            .err();
         let invalid_path = options
             .readiness
             .keys()
@@ -384,23 +407,26 @@ impl NetworkSession {
             .cloned();
         // Reject static configuration before invoking any plugin-owned factory.
         // Readiness policy callbacks are never evaluated during this preflight.
-        let mut initial_failure = invalid_path
-            .map(|path| RuntimeError::UnknownConfiguration { path }.failure())
+        let mut initial_failure = bound_failure
             .or_else(|| {
-                options
-                    .discard_outputs
-                    .iter()
-                    .find(|(path, output)| {
-                        !compiled.processes().iter().any(|p| {
-                            p.path() == path && p.interface().outputs().contains_key(output)
-                        })
-                    })
-                    .map(|(path, output)| {
-                        RuntimeError::InvalidDiscard {
-                            path: path.clone(),
-                            output: output.clone(),
-                        }
-                        .failure()
+                invalid_path
+                    .map(|path| RuntimeError::UnknownConfiguration { path }.failure())
+                    .or_else(|| {
+                        options
+                            .discard_outputs
+                            .iter()
+                            .find(|(path, output)| {
+                                !compiled.processes().iter().any(|p| {
+                                    p.path() == path && p.interface().outputs().contains_key(output)
+                                })
+                            })
+                            .map(|(path, output)| {
+                                RuntimeError::InvalidDiscard {
+                                    path: path.clone(),
+                                    output: output.clone(),
+                                }
+                                .failure()
+                            })
                     })
             })
             .or_else(|| {
@@ -667,7 +693,9 @@ impl NetworkSession {
         let mut always_poll = BTreeSet::new();
         let mut custom_readiness = Vec::new();
         for (index, process) in processes.iter_mut().enumerate() {
-            if let Readiness::Custom(policy) = &process.policy {
+            if initial_failure.is_none()
+                && let Readiness::Custom(policy) = &process.policy
+            {
                 custom_readiness.push(index);
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     policy.notification_driven()

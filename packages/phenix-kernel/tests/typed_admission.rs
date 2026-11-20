@@ -375,7 +375,11 @@ fn local_move_only_payloads_and_explicit_envelope_leases_need_no_codec() {
     let mut built = kernel(fixture);
     built.start().unwrap();
     let key = InputKey::<MoveOnly>::new("public");
-    built.inject_key(key, MoveOnly("kernel".into())).unwrap();
+    let ingress = built.compiled().bind_ingress("public", key).unwrap();
+    built
+        .inject_bound(&ingress.clone(), MoveOnly("kernel".into()))
+        .unwrap();
+    drop(ingress);
     let event = InputEvent::new(key, MoveOnly("event".into()));
     built.inject(&event.input, event.value).unwrap();
     built.run_steps(32).unwrap();
@@ -457,4 +461,385 @@ fn blocking_conversion_does_not_acquire_kernel_session_ownership() {
     thread.join().unwrap().unwrap();
     available.unwrap();
     assert_eq!(encodes.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn bound_conversion_precedes_session_access_and_preserves_refused_value_leases() {
+    use phenix_graph::runtime::RequestError;
+    let mut built = kernel(Fixture::wire());
+    let ingress = built.compiled().bind_ingress("public", INPUT).unwrap();
+    let capture = built.compiled().capture("result").unwrap();
+    let encodes = Arc::new(AtomicUsize::new(0));
+    let lease = Arc::new(());
+    let weak = Arc::downgrade(&lease);
+    let ingress = ingress.with_lease(lease);
+    let error = built
+        .inject_bound(&ingress, Payload::new(1, &encodes))
+        .unwrap_err();
+    assert_eq!(error.reason, ConnectionError::Cancelled);
+    assert_eq!(encodes.load(Ordering::SeqCst), 1);
+    drop(error);
+    built.start().unwrap();
+    let built = Arc::new(built);
+    let request = built.begin_bound_request(&capture).unwrap().unwrap();
+    let inner = built.clone();
+    let mut payload = Payload::new(2, &encodes);
+    payload.before = Some(Arc::new(move || {
+        inner.with_session(|_| ()).unwrap();
+    }));
+    built
+        .inject_bound_request(request, &ingress, payload)
+        .unwrap();
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let owner = built.clone();
+    let holder = std::thread::spawn(move || {
+        owner
+            .with_session(|_| {
+                entered.send(()).unwrap();
+                released.recv().unwrap();
+            })
+            .unwrap()
+    });
+    ready.recv().unwrap();
+    let ordinary = built
+        .inject_bound(&ingress, Payload::new(3, &encodes))
+        .unwrap_err();
+    let scoped = built
+        .inject_bound_request(request, &ingress, Payload::new(4, &encodes))
+        .unwrap_err();
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    assert_eq!(ordinary.reason, ConnectionError::WouldBlock);
+    assert_eq!(
+        scoped.reason,
+        RequestError::Transport(ConnectionError::WouldBlock)
+    );
+    assert_eq!(ordinary.value.bytes(), 3_i64.to_le_bytes());
+    assert_eq!(scoped.value.bytes(), 4_i64.to_le_bytes());
+    built
+        .with_session(|_| {
+            assert_eq!(
+                built
+                    .inject_bound_value(&ingress, Value::of(5_i64))
+                    .unwrap_err()
+                    .reason,
+                ConnectionError::Reentrant
+            );
+            assert_eq!(
+                built
+                    .inject_bound_request_value(request, &ingress, Value::of(6_i64))
+                    .unwrap_err()
+                    .reason,
+                RequestError::Transport(ConnectionError::Reentrant)
+            );
+            assert_eq!(
+                built.begin_bound_request(&capture),
+                Err(phenix_kernel::SessionAccessError::Reentrant)
+            );
+        })
+        .unwrap();
+    built.run_steps(32).unwrap();
+    built
+        .take_bound_request_output(request, &capture)
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    built
+        .with_session(|session| session.close_request(request).unwrap())
+        .unwrap();
+    // Retry the exact constructed bytes through raw bound admission.
+    built.inject_bound_value(&ingress, ordinary.value).unwrap();
+    assert_eq!(encodes.load(Ordering::SeqCst), 4);
+    built.run_steps(32).unwrap();
+    built.take_bound_output(&capture).unwrap().unwrap().unwrap();
+    let foreign = kernel(Fixture::wire());
+    let rejected = foreign
+        .inject_bound_value(&ingress, scoped.value)
+        .unwrap_err();
+    assert_eq!(rejected.reason, ConnectionError::ForeignTopology);
+    drop((built, foreign, capture, ingress));
+    assert!(weak.upgrade().is_some());
+    assert_eq!(rejected.value.bytes(), 4_i64.to_le_bytes());
+    drop(rejected);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn bound_blocking_and_panicking_conversion_never_owns_the_kernel_session() {
+    let mut built = kernel(Fixture::wire());
+    built.start().unwrap();
+    let built = Arc::new(built);
+    let ingress = built.compiled().bind_ingress("public", INPUT).unwrap();
+    let encodes = Arc::new(AtomicUsize::new(0));
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let released = std::sync::Mutex::new(released);
+    let mut payload = Payload::new(7, &encodes);
+    payload.before = Some(Arc::new(move || {
+        entered.send(()).unwrap();
+        released.lock().unwrap().recv().unwrap();
+    }));
+    let caller = built.clone();
+    let input = ingress.clone();
+    let thread = std::thread::spawn(move || caller.inject_bound(&input, payload));
+    ready.recv().unwrap();
+    let available = built.with_session(|_| ());
+    release.send(()).unwrap();
+    thread.join().unwrap().unwrap();
+    available.unwrap();
+    let mut payload = Payload::new(8, &encodes);
+    payload.before = Some(Arc::new(|| panic!("bound codec panic")));
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || built.inject_bound(&ingress, payload)
+        ))
+        .is_err()
+    );
+    built
+        .with_session(|session| assert!(session.failure().is_none()))
+        .unwrap();
+    assert_eq!(encodes.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn bound_full_retry_preserves_constructed_bytes_without_reencoding() {
+    use phenix_graph::runtime::{RequestFailurePolicy, RequestQueuePolicy};
+    for queue in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        for failure in [
+            RequestFailurePolicy::FailSession,
+            RequestFailurePolicy::RestartAffectedProcess,
+        ] {
+            let mut options = options();
+            options.execution.request_queue_policy = queue;
+            options.execution.request_failure_policy = failure;
+            let mut built = Kernel::build_with_options(
+                "full",
+                [support::snapshot("fixture", Fixture::wire())],
+                Arc::new(LocalProcessDispatcher),
+                options,
+            )
+            .unwrap();
+            built.start().unwrap();
+            let ingress = built.compiled().bind_ingress("public", INPUT).unwrap();
+            let capture = built.compiled().capture("result").unwrap();
+            let encodes = Arc::new(AtomicUsize::new(0));
+            built
+                .inject_bound(&ingress, Payload::new(1, &encodes))
+                .unwrap();
+            built
+                .inject_bound(&ingress, Payload::new(2, &encodes))
+                .unwrap();
+            let error = built
+                .inject_bound(&ingress, Payload::new(3, &encodes))
+                .unwrap_err();
+            assert_eq!(error.reason, ConnectionError::Full);
+            assert_eq!(error.value.bytes(), 3_i64.to_le_bytes());
+            built.run_steps(32).unwrap();
+            for expected in [1_i64, 2] {
+                let packet = built.take_bound_output(&capture).unwrap().unwrap().unwrap();
+                assert_eq!(packet.value().bytes(), expected.to_le_bytes());
+            }
+            built.inject_bound_value(&ingress, error.value).unwrap();
+            assert_eq!(encodes.load(Ordering::SeqCst), 3);
+            built.run_steps(32).unwrap();
+            assert_eq!(
+                built
+                    .take_bound_output(&capture)
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .bytes(),
+                3_i64.to_le_bytes()
+            );
+            assert!(
+                built
+                    .take_bound_output(&capture)
+                    .unwrap()
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn repeated_bound_raw_refusals_retain_stable_owners_without_reencoding() {
+    use phenix_graph::runtime::{RequestError, RequestQueuePolicy};
+
+    for queue in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        for scoped in [false, true] {
+            let fixture = Fixture::wire();
+            let drops = fixture.drops.clone();
+            let mut options = options();
+            options.execution.request_queue_policy = queue;
+            let mut built = Kernel::build_with_options(
+                "repeated-raw-retry",
+                [support::snapshot("fixture", fixture)],
+                Arc::new(LocalProcessDispatcher),
+                options,
+            )
+            .unwrap();
+            built.start().unwrap();
+            let codec = Arc::new(());
+            let declaration = Arc::new(());
+            let payload_owner = Arc::new(());
+            let codec_weak = Arc::downgrade(&codec);
+            let declaration_weak = Arc::downgrade(&declaration);
+            let payload_weak = Arc::downgrade(&payload_owner);
+            let compiled = built.compiled().with_lease(declaration.clone());
+            let ingress = compiled
+                .bind_ingress("public", INPUT)
+                .unwrap()
+                .with_lease(codec.clone());
+            drop(compiled);
+            let capture = built.compiled().capture("result").unwrap();
+            let request = scoped.then(|| built.begin_bound_request(None).unwrap().unwrap());
+            let encodes = Arc::new(AtomicUsize::new(0));
+            for number in [1, 2] {
+                if let Some(request) = request {
+                    built
+                        .inject_bound_request(request, &ingress, Payload::new(number, &encodes))
+                        .unwrap();
+                } else {
+                    built
+                        .inject_bound(&ingress, Payload::new(number, &encodes))
+                        .unwrap();
+                }
+            }
+            let foreign = kernel(Fixture::wire());
+            // Start without handle leases to prove even foreign raw refusal attaches them.
+            let value = INPUT
+                .value(Payload::new(3, &encodes))
+                .with_lease(payload_owner.clone());
+            let identity = value.bytes().as_ptr() as usize;
+            let counts = || {
+                (
+                    Arc::strong_count(&codec),
+                    Arc::strong_count(&declaration),
+                    Arc::strong_count(&payload_owner),
+                )
+            };
+            let before = counts();
+            let value = if let Some(request) = request {
+                let error = foreign
+                    .inject_bound_request_value(request, &ingress, value)
+                    .unwrap_err();
+                assert_eq!(error.reason, RequestError::Foreign);
+                error.value
+            } else {
+                let error = foreign.inject_bound_value(&ingress, value).unwrap_err();
+                assert_eq!(error.reason, ConnectionError::ForeignTopology);
+                error.value
+            };
+            assert_eq!(counts(), (before.0 + 1, before.1 + 1, before.2));
+            let retained = counts();
+            let retry = |owner: &Kernel, mut value: Value, reason: ConnectionError| {
+                for _ in 0..1000 {
+                    value = if let Some(request) = request {
+                        let error = owner
+                            .inject_bound_request_value(request, &ingress, value)
+                            .unwrap_err();
+                        assert_eq!(
+                            error.reason,
+                            if reason == ConnectionError::ForeignTopology {
+                                RequestError::Foreign
+                            } else {
+                                RequestError::Transport(reason)
+                            }
+                        );
+                        error.value
+                    } else {
+                        let error = owner.inject_bound_value(&ingress, value).unwrap_err();
+                        assert_eq!(error.reason, reason);
+                        error.value
+                    };
+                    assert_eq!(
+                        counts(),
+                        retained,
+                        "lease growth on {reason:?}, {queue:?}, scoped={scoped}"
+                    );
+                    assert_eq!(value.bytes().as_ptr() as usize, identity);
+                    assert_eq!(value.bytes(), 3_i64.to_le_bytes());
+                    assert_eq!(encodes.load(Ordering::SeqCst), 3);
+                }
+                value
+            };
+            let value = retry(&foreign, value, ConnectionError::ForeignTopology);
+            let value = retry(&built, value, ConnectionError::Full);
+            // Another thread sees Busy, not same-thread reentry. Scoped threads
+            // cannot strand a holder if a regression assertion panics.
+            let value = built
+                .with_session(|_| {
+                    std::thread::scope(|scope| {
+                        let retry = &retry;
+                        let built = &built;
+                        scope
+                            .spawn(move || retry(built, value, ConnectionError::WouldBlock))
+                            .join()
+                            .unwrap()
+                    })
+                })
+                .unwrap();
+            built.run_steps(32).unwrap();
+            let take = || {
+                if let Some(request) = request {
+                    built
+                        .take_bound_request_output(request, &capture)
+                        .unwrap()
+                        .unwrap()
+                        .unwrap()
+                } else {
+                    built.take_bound_output(&capture).unwrap().unwrap().unwrap()
+                }
+            };
+            for number in [1_i64, 2] {
+                assert_eq!(take().value().bytes(), number.to_le_bytes());
+            }
+            if let Some(request) = request {
+                built
+                    .inject_bound_request_value(request, &ingress, value)
+                    .unwrap();
+                built
+                    .with_session(|session| session.close_request(request).unwrap())
+                    .unwrap();
+            } else {
+                built.inject_bound_value(&ingress, value).unwrap();
+            }
+            built.run_steps(32).unwrap();
+            let escaped = take().into_value();
+            assert_eq!(escaped.bytes(), 3_i64.to_le_bytes());
+            assert_eq!(encodes.load(Ordering::SeqCst), 3);
+            if let Some(request) = request {
+                built
+                    .with_session(|session| session.release_request(request).unwrap())
+                    .unwrap();
+            }
+            drop((
+                built,
+                foreign,
+                ingress,
+                capture,
+                codec,
+                declaration,
+                payload_owner,
+            ));
+            assert_eq!(drops.load(Ordering::SeqCst), 0);
+            assert_eq!(codec_weak.strong_count(), 1);
+            assert_eq!(declaration_weak.strong_count(), 1);
+            assert_eq!(payload_weak.strong_count(), 1);
+            drop(escaped);
+            assert_eq!(drops.load(Ordering::SeqCst), 1);
+            assert_eq!(codec_weak.strong_count(), 0);
+            assert_eq!(declaration_weak.strong_count(), 0);
+            assert_eq!(payload_weak.strong_count(), 0);
+        }
+    }
 }

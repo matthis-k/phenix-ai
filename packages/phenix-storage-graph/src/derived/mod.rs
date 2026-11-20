@@ -38,7 +38,7 @@ mod source;
 pub use host::{DerivedGeneration, DerivedHost};
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
-pub use query::{DerivedRuntime, QueryHandle, QuerySpec, QueryValue};
+pub use query::{DerivedRuntime, QueryBinding, QueryHandle, QuerySpec, QueryValue};
 
 use phenix_graph::{
     component::{ComponentDef, DefinitionKey},
@@ -143,6 +143,10 @@ pub(crate) struct Root {
     definition: Arc<ComponentDef>,
     capture: String,
     errors: String,
+    matches_value: fn(
+        &phenix_graph::BoundDeclaration,
+        &phenix_graph::CaptureHandle,
+    ) -> Result<bool, NetworkError>,
 }
 
 /// Typed native endpoint and source lineage, not a value cache.
@@ -218,6 +222,11 @@ impl GraphDeriveExt for NetworkBuilder {
             definition: source::definition::<I>(inputs, reader)?,
             capture: format!("{name}.snapshot"),
             errors: format!("{name}.errors"),
+            matches_value: |declaration, capture| {
+                capture.matches_output(
+                    &declaration.output_key(phenix_graph::OutputKey::<I::Values>::new("value"))?,
+                )
+            },
         });
         self.additions(|graph| source::lower::<I>(graph, name, root))
     }

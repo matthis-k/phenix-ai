@@ -264,6 +264,33 @@ impl NetworkSession {
         }
         self.requests.get(&id).ok_or(RequestError::Stale)
     }
+    pub(super) fn check_request_admission(
+        &self,
+        id: RequestId,
+    ) -> Result<&RequestScope, RequestError> {
+        let scope = self.check_request(id)?;
+        if self.terminal.is_some() || scope.terminal.is_some() {
+            Err(RequestError::Stale)
+        } else if scope.sealed {
+            Err(RequestError::Sealed)
+        } else {
+            Ok(scope)
+        }
+    }
+    pub(super) fn check_request_capture(
+        &self,
+        id: RequestId,
+    ) -> Result<&RequestScope, RequestError> {
+        let scope = self.check_request(id)?;
+        let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
+            && self.terminal == Some(SessionState::Failed)
+            && scope.terminal != Some(RequestStatus::Cancelled);
+        if !failure_drain && (self.terminal.is_some() || scope.terminal.is_some()) {
+            Err(RequestError::Stale)
+        } else {
+            Ok(scope)
+        }
+    }
     pub fn inject_request(
         &mut self,
         id: RequestId,
@@ -271,16 +298,7 @@ impl NetworkSession {
         value: Value,
     ) -> Result<(), RequestInjectionError> {
         self.supervise_configured_deferred();
-        let validation = self.check_request(id).and_then(|r| {
-            if self.terminal.is_some() || r.terminal.is_some() {
-                Err(RequestError::Stale)
-            } else if r.sealed {
-                Err(RequestError::Sealed)
-            } else {
-                Ok(())
-            }
-        });
-        if let Err(reason) = validation {
+        if let Err(reason) = self.check_request_admission(id) {
             return Err(RequestInjectionError { reason, value });
         }
         self.inject_scoped(name, value, Some(id))
@@ -330,14 +348,16 @@ impl NetworkSession {
     /// Start only an explicitly compiled zero-input source, using the same
     /// persistent process and handoff. No root guessing or process respawning.
     pub fn start_request_source(&mut self, id: RequestId, path: &str) -> Result<(), RequestError> {
+        self.start_request_source_with_leases(id, path, &[])
+    }
+    pub(super) fn start_request_source_with_leases(
+        &mut self,
+        id: RequestId,
+        path: &str,
+        leases: &[Arc<dyn Send + Sync>],
+    ) -> Result<(), RequestError> {
         self.supervise_configured_deferred();
-        let scope = self.check_request(id)?;
-        if self.terminal.is_some() || scope.terminal.is_some() {
-            return Err(RequestError::Stale);
-        }
-        if scope.sealed {
-            return Err(RequestError::Sealed);
-        }
+        let scope = self.check_request_admission(id)?;
         let lane = scope.lane;
         let index = self
             .compiled
@@ -359,6 +379,7 @@ impl NetworkSession {
                     .with_correlation_lane(Some(lane)),
             )
             .map_err(|_| RequestError::Exhausted)?;
+        p.handoff.retain_leases(leases);
         p.request = Some(id);
         self.note_request_root(id, index);
         self.refresh();
@@ -516,14 +537,8 @@ impl NetworkSession {
         name: &str,
     ) -> Result<Option<Packet>, RequestError> {
         self.supervise_configured_deferred();
-        let scope = self.check_request(id)?;
+        let scope = self.check_request_capture(id)?;
         let lane = scope.lane;
-        let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
-            && self.terminal == Some(SessionState::Failed)
-            && scope.terminal != Some(RequestStatus::Cancelled);
-        if !failure_drain && (self.terminal.is_some() || scope.terminal.is_some()) {
-            return Err(RequestError::Stale);
-        }
         let queue = if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
             self.request_lanes
                 .get(&lane)
@@ -555,13 +570,7 @@ impl NetworkSession {
         name: &str,
         packet: &Packet,
     ) -> Result<(), RequestError> {
-        let request = self.check_request(id)?;
-        let failure_drain = self.request_queue_policy == RequestQueuePolicy::BoundedLanes
-            && self.terminal == Some(SessionState::Failed)
-            && request.terminal != Some(RequestStatus::Cancelled);
-        if !failure_drain && (self.terminal.is_some() || request.terminal.is_some()) {
-            return Err(RequestError::Stale);
-        }
+        let request = self.check_request_capture(id)?;
         let (process, output) = self
             .compiled
             .outputs()
