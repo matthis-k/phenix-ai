@@ -1,17 +1,42 @@
 # A5 Bound Handles: Implementation And Acceptance Design
 
-Date: 2026-11-17, implementation/review checkpoint. **A5 remains OPEN** pending
-independent review of the integrated diff and exact-head hosted CI. All assembled
-local gates and the untracked-inclusive Nix snapshot checks have passed.
-Graph/Kernel/StorageGraph implementation and final independent whole-scope review
-now exist; their reported no-findings results are not A5 closure.
+## Final Acceptance: A5, 2026-11-20
 
-This is the sole owned documentation change in the isolated worktree. No ledger,
-production file, test, workflow, commit, or push is changed here. The parent is
-Q7 production acceptance `6f6e751b36f77273da8799900f665bc026447418`;
-`86256f35b` is its separate documentation acceptance, not an ancestor or source
-of imported old ledgers. A5 evidence below is from the current diff/new files and
-reported final review/probe outputs, not those historical ledgers.
+**Original A5 is scoped verified at
+`45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`: 24.0% -> 100.0%, +76.0 pp.**
+The independent final whole-scope Graph/Kernel/StorageGraph review reports no
+remaining findings after all review corrections. Full local default/no-default
+workspace and isolated Graph test gates, explicit doctests, all-target compilation,
+strict Clippy and formatting passed. All ten checks on the untracked-inclusive Nix
+snapshot passed, and all fifteen hosted workflows completed **SUCCESS** on that exact
+SHA, confirmed through `gh`; the complete run URL table appears below.
+
+Acceptance covers real compiled-generation-owned handles through Graph basic and
+internal declaration/endpoint resolution, ordinary/request execution,
+configuration, wake/notifier, source and closure operations; checked
+composition/compilation bridges without transferring intermediate-preview authority;
+Kernel/Generation forwarding and final `Binding`; and the actual production
+StorageGraph query. Stale/foreign rejection preserves canonical execution rather
+than adding another scheduler or request store. Known-owner, per-handle,
+nonretroactive leases, hostile-drop cleanup and Q7 typed primary/cleanup behavior
+are preserved. Necessary validated dynamic paths remain; physical coordinates are
+no longer application correctness proof.
+
+Only A5 changes in the authoritative scorecard. Counts are **20 scoped verified /
+6 partial / 6 open / 1 approved exclusion**, leaving **12 in-scope findings**. The
+score sum moves 2489 + 76 = **2565**, and 2565 / 33 = 77.727...%, rounded to
+**77.7%**. This subjective unweighted issue mean is not product completion. Every
+other score is unchanged, including H7 at 56.0% and excluded C7 at 12.0%. H7's
+older-request scoped-capture retention and shared-process occupancy residual stays
+partial and unresolved: A5 completes its original binding-authority scope, not
+universal request progress or fairness. Green benchmark workflows are execution
+evidence, not performance acceptance; M7/M8 remain incomplete.
+
+This final status and the exact-head evidence below supersede the earlier pending
+checkpoint and historical gate language. The design, baseline and acceptance matrix
+are retained as history. This evidence-only documentation revision requires its own
+checks; the accepted implementation's checks do not certify a later documentation
+revision. No commit or push is part of this reconciliation.
 
 ## Current Implementation
 
@@ -112,37 +137,65 @@ corrects all seven detailed issues:
    shared process or retain its scoped captures until its owner relieves them;
    this demonstrated **H7 residual remains outside A5**.
 
-Reported passing probes, not runs by this documentation task: **29 Graph bound
-tests under both default and isolated no-default features** (18 bound + 10
+Recorded focused evidence, not new runs by this documentation task: **29 Graph
+bound tests under both default and isolated no-default features** (18 bound + 10
 cleanup + one diagnostic harness with eight negative and one positive fixture);
 **13 focused Kernel tests** (three bound + ten typed-admission, of which four are
-new bound tests); and **55 StorageGraph tests**. Reported full default and
-no-default workspace runs passed on the current changes based on that parent.
-These counts do not imply that every strict command or configured gate passed.
+new bound tests); and **55 StorageGraph tests**. These groups overlap with the full
+workspace gates and are not an additive test total. Focused results alone did not
+close A5; the complete scope review and full gates below supply that acceptance.
 
-| Gate | Current status |
+| Gate | Final status |
 | --- | --- |
-| Independent final whole-scope Graph/Kernel/StorageGraph review | Reported complete, no findings |
-| Focused Graph/Kernel/StorageGraph probes | Reported passing as above |
-| Full default and no-default workspace tests | Reported passing on parent |
+| Independent final whole-scope Graph/Kernel/StorageGraph review | Passed; no findings after all review fixes |
+| Focused Graph/Kernel/StorageGraph probes | Passed as recorded above |
+| Full default/no-default workspace and isolated Graph no-default tests | Passed |
 | All-target compilation, strict workspace Clippy and formatting | Passed |
-| Explicit default/no-default workspace and isolated Graph doctests | Passed |
+| Explicit default/no-default workspace and isolated Graph no-default doctests | Passed |
 | All ten checks on untracked-inclusive snapshot `/nix/store/ksma6x2zbs6k7v77rxnqax3szd0047hi-source` | Passed |
-| Isolated Loom/native concurrency and full Q5 gates | **PENDING after integration** |
-| Exact committed assembled-head hosted CI | **PENDING; no head/run exists yet** |
+| Exact-head Loom/native concurrency Q5 gates | Passed in the four hosted Q5 runs below; no exhaustive Q5 closure inferred |
+| Exact committed assembled-head hosted CI | Passed; all fifteen workflows SUCCESS on `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf` |
 
-No performance credit or A1/A2/Q2/Q3/Q4/Q5 closure follows. Existing C3 archival,
-C5 supervision, C6 restart/persistence and C7 trusted-native scope decisions are
-retained; this change does not broaden or close them. The H7 limitation is not
-relabeled solved. The sections below preserve the original design and
-pre-implementation baseline as history; the implementation/inventory above is
-authoritative for current names and evidence.
+## Exact-Head Hosted Acceptance
+
+Accepted implementation SHA: **`45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`**.
+`gh api` confirmed that each run below has that exact `head_sha`, status `completed`
+and conclusion `success`. No parent-head or different-SHA result is substituted.
+
+| Workflow | Exact-head run URL | Conclusion |
+| --- | --- | --- |
+| Flake CI | [44667125080](https://github.com/matthis-k/phenix-ai/actions/runs/44667125080) | SUCCESS |
+| Q5 session ownership Loom | [44667124389](https://github.com/matthis-k/phenix-ai/actions/runs/44667124389) | SUCCESS |
+| Q5 actual wake Loom | [44667124605](https://github.com/matthis-k/phenix-ai/actions/runs/44667124605) | SUCCESS |
+| Q5 native notifier retirement concurrency | [44667124524](https://github.com/matthis-k/phenix-ai/actions/runs/44667124524) | SUCCESS |
+| Q5 in-flight worker recovery | [44667124303](https://github.com/matthis-k/phenix-ai/actions/runs/44667124303) | SUCCESS |
+| Native runtime benchmark | [44667124534](https://github.com/matthis-k/phenix-ai/actions/runs/44667124534) | SUCCESS |
+| H4 EOS endpoint paired benchmark | [44667124413](https://github.com/matthis-k/phenix-ai/actions/runs/44667124413) | SUCCESS |
+| H4 scoped optional poll paired benchmark | [44667124327](https://github.com/matthis-k/phenix-ai/actions/runs/44667124327) | SUCCESS |
+| H5 scoped closure paired benchmark | [44667124296](https://github.com/matthis-k/phenix-ai/actions/runs/44667124296) | SUCCESS |
+| H5 request index paired benchmark | [44667124437](https://github.com/matthis-k/phenix-ai/actions/runs/44667124437) | SUCCESS |
+| H4 targeted wake paired benchmark | [44667124354](https://github.com/matthis-k/phenix-ai/actions/runs/44667124354) | SUCCESS |
+| H4 notified Custom readiness benchmark | [44667124549](https://github.com/matthis-k/phenix-ai/actions/runs/44667124549) | SUCCESS |
+| H4 live request sparse paired benchmark | [44667124381](https://github.com/matthis-k/phenix-ai/actions/runs/44667124381) | SUCCESS |
+| H6 agent allocation events | [44667124623](https://github.com/matthis-k/phenix-ai/actions/runs/44667124623) | SUCCESS |
+| H4 mixed agent acceptance benchmark | [44667124297](https://github.com/matthis-k/phenix-ai/actions/runs/44667124297) | SUCCESS |
+
+All **six Flake jobs** succeeded: exact-head inventory evaluation, shared Nix
+build/cache writer, check shard-00, shard-01, shard-02 and the matrix evidence
+aggregate. No skipped shard or pending aggregate is counted as a pass.
+
+No performance credit or A1/A2/Q2/Q3/Q4/Q5 closure follows from these runs.
+Existing C3 archival, C5 supervision, C6 restart/persistence and C7 trusted-native
+scope decisions are retained; this change does not broaden or close them. The H7
+limitation is not relabeled solved. The sections below preserve the original design
+and pre-implementation baseline as history; the implementation/inventory and final
+acceptance above are authoritative for current names, status and evidence.
 
 ## Original Scope
 
 The original [A5 finding](fbp-issue-ledger-20261111.md) is: "Physical string
-paths still escape typed handles in compilation and binding APIs." The current
-[remaining-work acceptance](fbp-remaining-work-20261115.md) requires coherent bound
+paths still escape typed handles in compilation and binding APIs." The original
+[remaining-work acceptance](fbp-remaining-work-20261115.md) required coherent bound
 handles for required compilation, binding, and execution operations, with
 stale/foreign rejection, while retaining necessary validated dynamic paths.
 [A6 typed admission](fbp-typed-admission-20261115.md) explicitly leaves generation
@@ -405,12 +458,12 @@ required rather than being replaced by new happy-path tests.
 ## Historical Acceptance Matrix
 
 These are the original falsifiable design requirements, not pending-implementation
-claims. Current operation/test mappings are above; final acceptance remains
-subject to the pending assembled gates and exact-head CI. Exercise `SharedFifo`
-and `BoundedLanes`, and both `FailSession` and `RestartAffectedProcess` failure
-policies where the operation/failure is applicable. Document justified
-nonapplicability, such as production DerivedRuntime fixing its recovery policy;
-do not claim a cross-product that never ran.
+claims. At the design checkpoint, final acceptance remained subject to assembled
+gates and exact-head CI; the final acceptance above supersedes that pending status.
+The matrix requires `SharedFifo` and `BoundedLanes`, and both `FailSession` and
+`RestartAffectedProcess` failure policies where the operation/failure is applicable.
+Justified nonapplicability, such as production DerivedRuntime fixing its recovery
+policy, must be explicit; no unexecuted cross-product is claimed.
 
 | Case | Required observation / failure oracle |
 | --- | --- |
@@ -440,19 +493,12 @@ than treating any compile failure as success. Include hand-written, derive-free
 fixtures under isolated Graph `--no-default-features`; macro absence cannot satisfy
 a type/authority test. Rustdoc examples should complement, not weaken, that oracle.
 
-## Planned Gates And Acceptance Rules
+## Historical Gate Plan And Final Disposition
 
-The gate status table above is authoritative: these are remaining commands, not
-a claim that all local checks ran. Implementation acceptance requires the
-operation-to-test inventory above plus a source audit showing production
-StorageGraph/Kernel binding no longer uses physical coordinates as correctness
-proof. Explain any intentionally retained raw inspection consumer and each
-remaining dynamic selector. No percentage, closure score, or finding
-reclassification follows from this document or a few focused passing tests.
-
-Run the assembled implementation's full local gates, not only newly added tests.
-Use the pinned Nix development environment and an isolated target directory. At
-minimum, record exact commands, source revision, outcomes and skips for:
+These were the required commands at the pre-acceptance checkpoint, not a claim
+that focused tests alone were sufficient. The accepted implementation passed the
+full local gate set under the pinned Nix development environment with an isolated
+target directory:
 
 ```bash
 cargo test --locked --offline --workspace --all-targets --no-fail-fast
@@ -466,28 +512,37 @@ cargo clippy --locked --offline --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-Run the explicit compiler diagnostic harness and all configured flake checks as
-well: workflow synchronization, formatting, strict Clippy, storage/schema, Graph/
-plugin/derive docs, Kernel, derived, no-default, integration, and kernel smoke.
-Include new files in the assembled source snapshot; a Git-filtered local flake can
-omit untracked files and is not evidence for them. Preserve actual-source wake
-Loom, session ownership, repeated notifier/retirement/plugin-lock, and in-flight
-worker recovery gates. Benchmark workflows must remain build-compatible, but
-their successful execution alone is not performance acceptance or a new budget.
+The explicit compiler diagnostic harness and all ten configured flake checks also
+passed: workflow synchronization, formatting, strict Clippy, storage/schema, Graph/
+plugin/derive docs, Kernel, derived, no-default, integration and kernel smoke. The
+untracked-inclusive snapshot `/nix/store/ksma6x2zbs6k7v77rxnqax3szd0047hi-source`
+included the new files; a Git-filtered local flake that omitted them was not used as
+evidence. Exact-head hosted runs preserve actual-source wake Loom, session
+ownership, notifier/retirement and in-flight worker recovery gates. Successful
+benchmark execution is not performance acceptance or a new budget.
+
+Implementation acceptance combines the operation-to-test inventory and source audit
+showing that production StorageGraph/Kernel binding no longer uses physical
+coordinates as correctness proof with the complete reviews and gates above.
+Intentionally retained raw inspection and validated dynamic selectors are not
+authority bypasses. No percentage or finding reclassification follows from a few
+focused passing tests alone.
 
 The independent final whole-scope review inspected the assembled production
 migration, tests, compiler diagnostics, lease/drop ordering, preparation
-nonexecution and canonical delegation, and reports no findings. This does not
-replace the pending gates. Any later implementation change must receive renewed
-review and affected/full gate evidence. Local passes, earlier reviews, and a
-parent commit's green CI do not establish acceptance of a different head.
+nonexecution and canonical delegation, and reports no findings. At the earlier
+checkpoint this did not replace the then-pending gates; their final passing results
+are now recorded above. Any later implementation change requires renewed review
+and affected/full gate evidence. Local passes, earlier reviews and a parent commit's
+green CI do not establish acceptance of a different head.
 
-When a later authorized implementation task commits/pushes, require all applicable
-hosted workflows green on the **exact committed assembled head**, with SHA, run
-links, matrix/diagnostic coverage and independent final-review disposition recorded
-before any closure decision. No commit/push or hosted run is requested or performed
-by this documentation-only task. Review is reported complete; strict local,
-doctest/Nix and exact-head gate entries remain pending as listed above.
+The pre-acceptance plan required all applicable hosted workflows green on the
+**exact committed assembled head**, with SHA, run links, matrix coverage and final
+review disposition recorded before closure. That requirement is now satisfied at
+`45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`. No commit, push or hosted run is
+requested or performed by this documentation-only task. The formerly pending
+implementation gates are complete; this evidence revision still requires its own
+checks.
 
 ## Negative Scope
 
@@ -501,5 +556,6 @@ doctest/Nix and exact-head gate entries remain pending as listed above.
   arbitrary callback effects, forced worker interruption, or abort recovery.
 - No C3 archival revocation, automatic migration/adoption, sole-successor writer
   guarantee, different request/lane ownership model, or broadened Q6 callbacks.
-- No speculative compatibility shim, duplicate execution engine, ledger update,
-  closure score, or assertion that A5 is already resolved.
+- No speculative compatibility shim, duplicate execution engine, unrelated-issue
+  closure, product-completion score or universal progress claim; A5's accepted
+  scope is the binding-authority contract recorded above.

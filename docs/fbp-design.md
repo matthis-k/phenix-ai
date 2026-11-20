@@ -1,32 +1,36 @@
 # Phenix Native FBP Design
 
-## Current Acceptance: Q7, 2026-11-17
+## Current Acceptance: A5, 2026-11-20
 
-Latest accepted implementation: `6f6e751b36f77273da8799900f665bc026447418`.
-Original Q7 is scoped verified after independent whole-slice reviews, all local
-gates including Nix snapshot and actual committed-head `nix flake check`, and all
-fifteen exact-head hosted workflows confirmed SUCCESS via `gh`. See [final Q7
-review, tests and all run URLs](fbp-q7-final-review-20261117.md).
+Latest accepted implementation: `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`.
+Original A5 is **scoped verified: 24.0% -> 100.0%, +76.0 pp** after an independent
+whole-scope review with no remaining findings after all fixes, all local gates
+including the ten-check untracked-inclusive Nix snapshot, and all fifteen exact-head
+hosted workflows confirmed SUCCESS via `gh`. See [final A5 review, tests and all run
+URLs](fbp-bound-handles-20261117.md).
 
-The full typed protocol spans process/Value/guards/helpers/codecs/macros/adapters/
-handoff/runtime/request/session/Kernel/StorageGraph source local Failure DATA/query,
-plus typed framework reasons and plugin lifetime errors. It is not a core-only
-acceptance. Known leases must be complete per independently escaping handle;
-later enrichment is nonretroactive. Cached summaries and Q6 observation remain
-passive. Ordinary Drop contains supported unwinds but cannot report retroactively;
-trusted native `panic=abort`, aborting hooks/destructors and arbitrary double-panic
-behavior remain excluded, not sandbox guarantees.
+Real compiled-generation-owned handles now cover Graph basic/internal declaration
+and endpoint resolution, ordinary/request execution, configuration, wakes/notifiers,
+sources and closure. Checked composition/compilation bridges do not transfer
+intermediate-preview authority; fresh final `Binding` handles are required.
+Kernel/Generation forwarding and the actual production StorageGraph query use the
+same authority. Stale/foreign inputs reject before canonical execution, necessary
+validated dynamic paths remain, and no second scheduler or request store is added.
+Known-owner per-handle nonretroactive leases, hostile-drop cleanup and Q7 typed
+primary/cleanup behavior are preserved.
 
 The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md) now records
-**19 scoped verified / 6 partial / 7 open / 1 approved exclusion**, **13 remaining**,
-and Q7 **26.0% -> 100.0%, +74.0 pp**. The subjective issue mean is
-**75.4% (2489 / 33)**, not product completion. C7's historical 12.0% is unchanged,
-with no sandbox credit. Prior Q1 ownership acceptance and the broader Kernel root
-residual are preserved. Green benchmark execution is not performance acceptance;
-M7/M8 and production-agent integration remain incomplete.
+**20 scoped verified / 6 partial / 6 open / 1 approved exclusion**, **12 remaining**,
+with score sum **2565** and subjective issue mean **77.7% (2565 / 33 = 77.727...%)**,
+not product completion. Every other score is unchanged. C7's historical 12.0% has
+no sandbox credit. H7 remains partial at 56.0%: older-request scoped-capture
+retention and shared-process occupancy remain unresolved, so A5's complete binding
+authority is not universal request progress or fairness. Prior Q7/Q1 acceptance and
+the broader Kernel root residual are preserved. Green benchmark execution is not
+performance acceptance; M7/M8 and production-agent integration remain incomplete.
 
 This current top supersedes earlier status/count/remaining-work assertions below,
-including the closing reference summary; historical narrative and Q1 acceptance
+including the closing reference summary; historical narrative and prior acceptance
 are preserved. This evidence-only docs revision requires its own checks and does
 not certify any newer implementation.
 
@@ -82,6 +86,15 @@ Typed `connect` unifies the Rust payload type. Independently declared portable
 types use `connect_dynamic` and complete schema validation. Local `TypeId`, wire
 schema name/revision/structure/codec, semantic claims and contributor origin remain
 separate checks. Plugin snapshots are Rust objects, not a dynamic-library ABI.
+
+Owned bound declarations, endpoints, public ingress/captures and sources instead
+carry private compiled-generation identity plus exact cached projections. They
+authenticate the receiving owner before delegating to canonical Graph operations;
+`RequestId` continues to authenticate its actual session. Preparation can return
+these immutable capabilities without execution access, but intermediate preview
+endpoints never become final-generation authority. The same final bindings serve
+Kernel/Generation and production StorageGraph query execution, while known code and
+resource leases follow each independently escaping value, job or failure.
 
 ## Process And Publication
 

@@ -1,31 +1,39 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: Q7, 2026-11-17
+## Current Acceptance: A5, 2026-11-20
 
-Latest accepted implementation: `6f6e751b36f77273da8799900f665bc026447418`.
-Independent whole-slice reviews and all local gates passed, including the complete
-Nix snapshot and actual committed-head `nix flake check`. All fifteen exact-head
-hosted workflows are SUCCESS, confirmed through `gh`; [the final Q7 record](fbp-q7-final-review-20261117.md)
+Latest accepted implementation: `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`.
+The independent whole-scope review found no remaining findings after all review
+fixes. All local default/no-default Graph/workspace, explicit documentation,
+compilation, strict-Clippy and formatting gates passed, including all ten checks on
+the untracked-inclusive Nix snapshot. All fifteen exact-head hosted workflows are
+SUCCESS, confirmed through `gh`; [the final A5 record](fbp-bound-handles-20261117.md)
 contains the complete run URL table, tests, review facts and limits.
 
-Original Q7 is **scoped verified: 26.0% -> 100.0%, +74.0 pp**. Acceptance covers
-the full process/Value/guards/helpers/codecs/macros/adapters/handoff/runtime/request/
-session/Kernel/StorageGraph source local Failure DATA/query protocol, typed framework
-reasons and plugin lifetime errors, not just a failure-envelope core.
-The authoritative current table below changes only Q7; all prior Q1 acceptance
-and other issue scores remain intact. Classifications are **19 scoped verified /
-6 partial / 7 open / 1 approved exclusion**, leaving **13 in-scope findings**.
-The subjective unweighted issue mean is **75.4% (2489 / 33)**, up from
-73.2% (2415 / 33); it is not product completion, a safety probability or milestone
+Original A5 is **scoped verified: 24.0% -> 100.0%, +76.0 pp**. Acceptance covers
+real compiled-generation-owned handles for Graph basic/internal resolution and
+execution, configuration, wakes/notifiers, sources and closure; checked composition
+bridges with nontransferable preview authority; Kernel/Generation and final binding;
+and the actual production StorageGraph query. Stale/foreign rejection and validated
+dynamic paths are retained without physical tuples serving as authority. Known-owner
+per-handle nonretroactive leases, hostile-drop cleanup and Q7 typed failure behavior
+are preserved.
+
+The authoritative current table below changes only A5; all prior Q7 acceptance and
+other issue scores remain intact. Classifications are **20 scoped verified /
+6 partial / 6 open / 1 approved exclusion**, leaving **12 in-scope findings**.
+The subjective unweighted issue mean is **77.7% (2565 / 33 = 77.727...%)**, up from
+75.4% (2489 / 33); it is not product completion, a safety probability or milestone
 acceptance. C7's historical **12.0%** is unchanged, with no sandbox credit.
 
-Known leases are complete per escaping handle and nonretroactive; observations use
-passive cached host data, and ordinary Drop cannot report retroactively. Trusted
-native abort/double-panic exclusions remain. Green benchmarks are execution evidence,
-not performance acceptance; M7/M8 remain incomplete. This current status and Q7's
-current table row supersede earlier status/count/remaining-work assertions below;
-historical evidence and narrative are preserved. This evidence-only docs revision
-requires its own checks; implementation-head passes do not accept a later revision.
+H7 remains partial at 56.0%: older-request scoped-capture retention and shared-process
+occupancy are still unresolved. A5 completes the original binding-authority finding,
+not universal request progress or fairness. Trusted native abort/double-panic
+exclusions remain. Green benchmarks are execution evidence, not performance
+acceptance; M7/M8 remain incomplete. This current status and A5's current table row
+supersede earlier status/count/remaining-work assertions below; historical evidence
+and narrative are preserved. This evidence-only docs revision requires its own
+checks; implementation-head passes do not accept a later revision.
 
 ## Historical Acceptance Sequence
 
@@ -155,7 +163,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
 | A3 | Graph/store separation | 20.0% | 100.0% | +80.0 | Scoped verified | [Opaque external capability boundary](fbp-resource-boundary-20261115.md); Graph Store, locks and read/write policy removed; independent review and [exact-head][N] |
 | A4 | Typed authoring consolidation | 30.0% | 100.0% | +70.0 | Scoped verified | [Canonical authority audit and paired executable manual/key/derived equivalence](fbp-authoring-acceptance-20261116.md), real isolated no-default and doctest gates; [exact-head][L] |
-| A5 | Typed vs. string paths | 24.0% | 24.0% | +0.0 | Open | Producer/consumer keys derived during atomic registration; physical graph paths still exposed |
+| A5 | Typed vs. string paths | 24.0% | 100.0% | +76.0 | Scoped verified | [Complete compiled-generation binding authority across Graph, composition/final binding, Kernel/Generation and the real StorageGraph query; independent whole-scope review, local/Nix gates and all fifteen exact-head workflows](fbp-bound-handles-20261117.md) at `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`; validated dynamic paths and the separate H7 residual remain |
 | A6 | Admission API ergonomics | 30.0% | 100.0% | +70.0 | Scoped verified | [Typed key admission design/review](fbp-typed-admission-20261115.md); [exact-head acceptance][A]; keys are names, not generation authority |
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 100.0% | +78.0 | Scoped verified | [Original three graph roots decomposed into cohesive private ownership seams](fbp-owned-boundaries-20261116.md), canonical state/drop order/public paths preserved; independent review and [exact-head][O]; broader Kernel concentration remains |
@@ -181,8 +189,9 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `7c6119122`, not an older commit's passing
-run. This evidence-only documentation revision must pass its own head's checks.
+implementation acceptance is exact-head `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`,
+not an older commit's passing run. This evidence-only documentation revision must
+pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
 | --- | --- | --- | --- |
@@ -210,6 +219,7 @@ run. This evidence-only documentation revision must pass its own head's checks.
 | C3/C5/C6 approved contracts | Revocation, supervision lifetime and restart/continuity policies were unresolved | Explicit user approval plus integrated archival, cooperative deadline and SQLite restart-continuity proofs | Whole approved contract reviews, actual job/lease/schema/CAS/reopen controls; [exact-head][L]; no revocation, autonomous service or live migration claims |
 | Q6 whole original acceptance | Isolated diagnostics did not explain all runtime-owned run/settlement conditions | Shared callback-free selection/closure evidence and passive process/request explanation records | All built-ins, opaque Custom, tickets/deadlines/wakes, target precedence, every request-live term and no-callback/drop passivity; [exact-head][L] |
 | Q1 original responsibility scope | Network, composition and runtime roots mixed distinct tested responsibilities | Cohesive private compiler/authoring/resolution, planning/replay and runtime-control seams; same canonical owners and public type paths | Byte-preserved behavior blocks, independent structural review, full workspace/isolated-feature gates and child-only CI coverage; [exact-head][O] |
+| A5 whole original acceptance | Physical string paths escaped typed handles as compilation/binding/execution correctness proof | Owned compiled-generation declarations/endpoints/ingress/captures/sources authenticate exact projections and owners before canonical Graph execution; checked preview/final binding, Kernel/Generation and production query migration | Real Graph basic/internal/configuration/wake/source/closure coverage, preview nontransfer, hostile lease/drop cleanup, actual query and independent whole-scope review; full local/Nix gates and [all fifteen exact-head runs](fbp-bound-handles-20261117.md#exact-head-hosted-acceptance) at `45c2dfb6f`; H7 shared-process/older-capture residual remains outside A5 |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
@@ -296,7 +306,8 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 | H4, H5, H6 | Verified optimization stack retained; exact paired timing/RSS exposed regressions, leading to a profiled correction | Same-head comparison must verify correction; production-representative acceptance remains outstanding |
 | A6 | Existing typed input keys now feed actual session/request/Kernel/Generation and producer admission; independent review and `08ab8fd23` exact-head acceptance | Bounded finding closed; runtime validation still applies and generation authority belongs to A5 |
 | A4 | Canonical authority/representation audit and paired manual/key/derived compiled executions, both feature configurations | Original bounded finding scoped verified at `89171a843`; no redundant authoring model found or invented replacement API |
-| A1, A2, A5, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension/compatibility, physical-path exposure, incremental compilation and whole dependency scaling remain |
+| A5 | Complete compiled-generation-owned binding authority through Graph execution, preview/final composition, Kernel/Generation and actual StorageGraph query, with independent whole-scope review and exact-head acceptance at `45c2dfb6f` | Original bounded finding scoped verified; validated dynamic lookup/diagnostics remain, and H7 scoped-capture/shared-process limitations are not universal-progress closure |
+| A1, A2, Q2, Q3 | Existing typed authoring/composer regression suites retained | General private extension/compatibility, incremental compilation and whole dependency scaling remain |
 | A3 | Graph Store/locking/permission authority removed in favor of explicit opaque capabilities, with independent lease-safe cleanup | Original bounded finding closed at `026cfbe05`; external authority honesty/revocation and native sandboxing are separate scopes |
 | Q6 | Shared callback-free selection/closure evidence and complete bounded passive process/request explanations | Original bounded finding scoped verified at `89171a843`; not static liveness, future Custom selection or globally atomic wake state |
 | Q1 | Original network/composition/runtime responsibility concentrations decomposed at `7c6119122` with one canonical owner per state domain | Original bounded scope closed; broader Kernel root concentration is disclosed, not claimed eliminated |

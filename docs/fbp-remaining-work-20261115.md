@@ -1,33 +1,38 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: Q7, 2026-11-17
+## Current Acceptance: A5, 2026-11-20
 
-Original Q7 is **scoped verified** at
-`6f6e751b36f77273da8799900f665bc026447418`, following independent whole-slice
-reviews, all local gates (Nix snapshot and actual committed-head flake check
-included), and all fifteen exact-head hosted workflows confirmed SUCCESS via `gh`.
-See [final Q7 acceptance and all run URLs](fbp-q7-final-review-20261117.md).
-This accepts the full process/Value/guards/helpers/codecs/macros/adapters/handoff/
-runtime/request/session/Kernel/StorageGraph source local Failure DATA/query
-protocol, typed framework reasons and plugin lifetime errors, not a narrowed core.
+Original A5 is **scoped verified: 24.0% -> 100.0%, +76.0 pp** at
+`45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`, following an independent whole-scope
+review with no remaining findings after all fixes, all local gates (the ten-check
+untracked-inclusive Nix snapshot included), and all fifteen exact-head hosted
+workflows confirmed SUCCESS via `gh`. See [final A5 acceptance and all run URLs](fbp-bound-handles-20261117.md).
+Acceptance covers real handles through Graph basic/internal resolution and execution,
+configuration, wakes/notifiers, sources and closure; nontransferable preview and
+final compilation/binding; Kernel/Generation; and the actual production StorageGraph
+query. Known-owner per-handle nonretroactive leases, hostile-drop cleanup and Q7
+typed failure behavior are preserved, with stale/foreign rejection and necessary
+validated dynamic paths.
 
-Current counts are **19 scoped verified / 6 partial / 7 open / 1 approved
-exclusion**, leaving **13 in-scope findings**. The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
-records Q7 **26.0% -> 100.0%, +74.0 pp**, and the subjective mean
-**75.4% (2489 / 33)**, not product completion. C7 remains excluded with its old
-12.0% unchanged and no sandbox credit. Prior Q1 acceptance, including the broader
-Kernel concentration residual, is unchanged.
+Current counts are **20 scoped verified / 6 partial / 6 open / 1 approved
+exclusion**, leaving **12 in-scope findings**. The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
+records the score sum **2565** and subjective mean **77.7% (2565 / 33 = 77.727...%)**,
+not product completion. C7 remains excluded with its old 12.0% unchanged and no
+sandbox credit. Prior Q7 and Q1 acceptance, including the broader Kernel
+concentration residual, is unchanged; every other issue score is retained.
 
-The six partial findings are H1, H3b, H4, H5, H6 and H7; the seven open findings
-are A1, A2, A5, Q2, Q3, Q4 and Q5. Known leases remain per escaping handle and
-nonretroactive, cached observation remains passive, and ordinary Drop cannot report
-retroactively. Trusted native abort exclusions remain; green benchmark execution
-does not establish performance acceptance or M7/M8 completion.
+The six partial findings are H1, H3b, H4, H5, H6 and H7; the six open findings are
+A1, A2, Q2, Q3, Q4 and Q5. H7's older-request scoped-capture retention and
+shared-process occupancy residual remains partial and unresolved. A5 completes its
+binding-authority scope, not universal progress or fairness. Trusted native abort
+exclusions remain; green benchmark execution does not establish performance
+acceptance or M7/M8 completion.
 
-This current section supersedes earlier counts, Q7 development/pending labels and
-the historical Q7 row below. All 22 starting rows and prior acceptance narrative
-remain for traceability, not as a second current status authority. This evidence-only
-docs revision requires its own checks; no later implementation is accepted here.
+This current section supersedes earlier counts, Q7 development/pending labels, A5
+open/pending labels and the starting-state rows below. All 22 starting rows and prior
+acceptance narrative remain for traceability, not as a second current status
+authority. This evidence-only docs revision requires its own checks; no later
+implementation is accepted here.
 
 ## Historical Work Map And Acceptance Sequence
 
@@ -107,7 +112,7 @@ isolated worktree; its core alone receives no closure credit.
 | A2 compatibility | Open | Define the safe compatibility relation with positive/negative examples, then validate adapters/replacement and inherited obligations | Shape agreement alone cannot manufacture semantic contract membership |
 | A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
 | A4 typed authoring | Open, now scoped verified | Canonical authority audit and paired real manual/key/derived executions accepted at `89171a843` | Necessary validated views/convenience APIs retained; no second authoring model or Engine shim introduced |
-| A5 physical paths | Open | Cover required compilation/binding/execution operations with coherent bound handles and stale/foreign rejection | Typed InputKey is a name, not generation authority; retain necessary validated dynamic paths |
+| A5 physical paths | Open, now scoped verified | Coherent compiled-generation handles now cover required Graph basic/internal execution, configuration/wake/source/closure, preview/final compilation and binding, Kernel/Generation and the actual StorageGraph query at `45c2dfb6f` | Independent whole-scope review and all local/Nix/exact-head gates passed; necessary validated dynamic paths remain, and H7 older-capture/shared-process limitations stay outside A5 |
 | Q1 responsibility concentration | Open, now scoped verified | Original network/composition/runtime roots decomposed into cohesive private ownership modules at `7c6119122` | Canonical state/public paths/drop order and behavior preserved; broader Kernel root concentration is explicitly residual |
 | Q2 incremental compilation | Open | Define dependency-aware invalidation/cache identity; compare reused candidates against full fresh compilation and measure benefit | Q3 correctness and stable authoring/replacement semantics first |
 | Q3 selection/scaling | Open | Exact global selection, explicit zero/multiple/exhaustion handling and bounded-selector scale evidence accepted at `006b2e9cc`; complete planning/recomposition scale acceptance remains | Allowance excludes ancestor/footprint planning and replay/compile; no whole-finding closure |

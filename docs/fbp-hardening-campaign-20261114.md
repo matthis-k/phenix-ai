@@ -1,6 +1,39 @@
 # FBP Hardening Campaign: Dependency And Policy Record
 
-## Current Accepted Batch: Q7
+## Current Accepted Batch: A5
+
+Implementation `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf` passed independent
+whole-scope review with no remaining findings after all review fixes and all local
+default/no-default Graph/workspace, explicit documentation, compilation,
+strict-Clippy and formatting gates. All ten checks on the untracked-inclusive Nix
+snapshot passed. All fifteen exact-head hosted workflows are SUCCESS, confirmed via
+`gh`, including [six-job Flake CI 44667125080](https://github.com/matthis-k/phenix-ai/actions/runs/44667125080)
+with all three shards and aggregate successful. The [final A5 record](fbp-bound-handles-20261117.md)
+contains every run URL, tests, review fixes, whole-scope acceptance and limits.
+
+A5's original scope is **scoped verified: 24.0% -> 100.0%, +76.0 pp**. Real
+compiled-generation handles now cover Graph basic/internal resolution and execution,
+configuration, wakes/notifiers, sources and closure; checked composition with
+nontransferable preview authority and fresh final binding; Kernel/Generation; and
+the actual production StorageGraph query. Stale/foreign rejection and necessary
+validated dynamic paths remain. Known-owner per-handle nonretroactive leases,
+hostile-drop cleanup and Q7 typed failure behavior are preserved.
+
+Current counts are **20 scoped verified / 6 partial / 6 open / 1 approved exclusion**,
+with **12 in-scope findings remaining**. The score sum is **2565** and the subjective
+historical-row mean is **77.7% (2565 / 33 = 77.727...%)**, not product completion.
+Every other score is unchanged: C7's old 12.0% earns no sandbox credit, and H7 stays
+partial at 56.0% because older-request scoped-capture retention and shared-process
+occupancy remain unresolved. A5 is complete binding authority, not universal request
+progress or fairness. Prior Q7/Q1 acceptance and the Kernel residual stand.
+
+Green benchmark execution is not performance acceptance, and no M7/M8 closure
+follows. This current section supersedes historical status/count/pending assertions
+below, which are retained as historical narrative. This evidence-only docs revision
+requires its own checks, separate from the accepted implementation SHA; no newer
+implementation acceptance is claimed.
+
+## Previous Typed Failure Batch
 
 Implementation `6f6e751b36f77273da8799900f665bc026447418` passed independent
 whole-slice reviews and all local gates, including the complete Nix snapshot and
