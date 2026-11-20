@@ -16,12 +16,19 @@ fn cancellation_cannot_overwrite_preflight_failure() {
     options.readiness.insert("missing".into(), Readiness::All);
     let mut session = graph.start_with_options(options);
     assert_eq!(session.state(), SessionState::Failed);
-    let failure = session.failure().unwrap().to_owned();
+    let failure = session
+        .failure()
+        .map(phenix_graph::Failure::summary)
+        .unwrap()
+        .to_owned();
 
     session.cancel();
     session.cancel();
     assert_eq!(session.state(), SessionState::Failed);
-    assert_eq!(session.failure(), Some(failure.as_str()));
+    assert_eq!(
+        session.failure().map(phenix_graph::Failure::summary),
+        Some(failure.as_str())
+    );
 }
 
 #[test]
@@ -40,9 +47,11 @@ struct FailAfterCapture {
 }
 
 impl Process for FailAfterCapture {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
-            return Err("deliberate failure after accepted capture".into());
+            return Err(phenix_graph::Failure::application_message(
+                "deliberate failure after accepted capture",
+            ));
         }
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new("out", Value::local(7_i64))))
@@ -68,13 +77,26 @@ fn failed_session_keeps_committed_capture_after_cancellation() {
 
     let report = session.run_until_idle(12);
     assert_eq!(report.state, SessionState::Failed);
-    assert!(session.failure().unwrap().contains("deliberate failure"));
-    let failure = session.failure().unwrap().to_owned();
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("deliberate failure")
+    );
+    let failure = session
+        .failure()
+        .map(phenix_graph::Failure::summary)
+        .unwrap()
+        .to_owned();
     let disposed = session.disposed_packets();
 
     session.cancel();
     assert_eq!(session.state(), SessionState::Failed);
-    assert_eq!(session.failure(), Some(failure.as_str()));
+    assert_eq!(
+        session.failure().map(phenix_graph::Failure::summary),
+        Some(failure.as_str())
+    );
     assert_eq!(session.disposed_packets(), disposed);
     let packet = session.take_output("captured").unwrap().unwrap();
     assert_eq!(packet.value().borrow::<i64>().copied(), Some(7));

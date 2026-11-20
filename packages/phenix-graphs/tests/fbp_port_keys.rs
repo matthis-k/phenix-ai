@@ -1,5 +1,6 @@
 #![cfg(feature = "derive")]
 #![allow(dead_code)]
+use phenix_graph::interface::{InterfaceError, InterfacePhase, InterfaceReason};
 use phenix_graph::network::NetworkBuilder;
 use phenix_graph::process::{Process, ProcessContext, ProcessFactory, Step};
 use phenix_graph::{InputKey, InputRecord, Interface, OutputKey, PortDef, Ports, Value};
@@ -38,7 +39,7 @@ struct Sink {
 
 struct Noop;
 impl Process for Noop {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -293,13 +294,27 @@ struct DuplicateFlatten {
 #[test]
 fn flattened_path_collisions_fail_before_consumption() {
     let error = DuplicateFlatten::interface().unwrap_err();
+    assert_eq!(
+        *error.reason,
+        InterfaceReason::DuplicatePort {
+            name: "request.named.value".into(),
+        }
+    );
     assert!(
         error
             .to_string()
             .contains("duplicate port name \"request.named.value\"")
     );
     let mut cx = context([("request.named.value", Value::local(7_i64))]);
-    assert!(cx.input_record::<DuplicateFlatten>().is_err());
+    let failure = cx.input_record::<DuplicateFlatten>().unwrap_err();
+    assert_eq!(failure.kind(), phenix_graph::FailureKind::Framework);
+    let source = std::error::Error::source(&failure)
+        .unwrap()
+        .downcast_ref::<InterfaceError>()
+        .unwrap();
+    assert_eq!(source, &error);
+    assert_eq!(source.phase, InterfacePhase::Definition);
+    assert!(std::error::Error::source(source).is_none());
     assert!(cx.input("request.named.value").is_some());
 }
 
@@ -361,6 +376,7 @@ fn unique_move_only_leaf_moves_and_shared_move_only_leaf_errors_without_clone() 
     assert!(
         cx.input_record::<OwnedLeaf<MoveOnly>>()
             .unwrap_err()
+            .summary()
             .contains("is shared")
     );
     assert!(events.lock().unwrap().is_empty());
@@ -405,14 +421,19 @@ fn leased_local_reconstruction_pins_code_on_error_and_unwind() {
                 if panic {
                     panic!("reconstruction failed");
                 }
-                Err("reconstruction failed".to_owned())
+                Err(phenix_graph::Failure::application_message(
+                    "reconstruction failed",
+                ))
             })
         }));
+        let failure = result.unwrap().unwrap_err();
         if panic {
-            assert!(result.is_err());
+            assert_eq!(failure.kind(), phenix_graph::FailureKind::Panic);
         } else {
-            assert_eq!(result.unwrap().unwrap_err(), "reconstruction failed");
+            assert_eq!(failure.summary(), "reconstruction failed");
         }
+        assert_eq!(*events.lock().unwrap(), ["payload"]);
+        drop(failure);
         assert_eq!(*events.lock().unwrap(), ["payload", "lease"]);
     }
 }
@@ -457,6 +478,7 @@ fn reconstruction_checks_local_encoded_identity_and_missing_leaves() {
     assert!(
         cx.input_record::<WireLeaf>()
             .unwrap_err()
+            .summary()
             .contains("incompatible input")
     );
     assert!(cx.input("request.value").is_some());
@@ -464,6 +486,7 @@ fn reconstruction_checks_local_encoded_identity_and_missing_leaves() {
     assert!(
         cx.input_record::<WireLeaf>()
             .unwrap_err()
+            .summary()
             .contains("missing input")
     );
 }
@@ -476,7 +499,7 @@ struct SelectedWire {
 
 struct SelectLeaf(Arc<std::sync::Mutex<Vec<i64>>>);
 impl Process for SelectLeaf {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if cx.inputs().next().is_none() {
             return Ok(Step::Complete);
         }
@@ -524,6 +547,13 @@ fn nested_leaf_is_an_independent_selectable_fifo_not_a_hidden_group_slot() {
         session.inject("wire", Value::of(value)).unwrap();
     }
     session.run_until_idle(100);
-    assert!(session.failure().is_none(), "{:?}", session.failure());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none(),
+        "{:?}",
+        session.failure().map(phenix_graph::Failure::summary)
+    );
     assert_eq!(*seen.lock().unwrap(), [4, 5, 6]);
 }

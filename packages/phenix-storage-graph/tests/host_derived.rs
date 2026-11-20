@@ -5,6 +5,7 @@ use phenix_graph::{
         ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher,
         ProcessExecutionGuard,
     },
+    runtime::RequestQueuePolicy,
 };
 use phenix_kernel::{CandidateArtifacts, Key, host::LifecycleError};
 use phenix_plugin::PluginCatalog;
@@ -146,7 +147,7 @@ impl ProcessDispatcher for Offload {
 }
 struct ApplicationGuard(Arc<AtomicUsize>);
 impl ProcessExecutionGuard for ApplicationGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(()))
     }
@@ -154,7 +155,12 @@ impl ProcessExecutionGuard for ApplicationGuard {
 
 #[test]
 fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_application_guard() {
-    for offload in [false, true] {
+    for (request_queue_policy, offload) in [
+        (RequestQueuePolicy::SharedFifo, false),
+        (RequestQueuePolicy::SharedFifo, true),
+        (RequestQueuePolicy::BoundedLanes, false),
+        (RequestQueuePolicy::BoundedLanes, true),
+    ] {
         let f = Fixture::new(true);
         f.put(&f.a, 3);
         f.put(&f.b, 5);
@@ -179,9 +185,13 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         );
         let mut options = options(&plugin);
         let entered = Arc::new(AtomicUsize::new(0));
-        options.execution.execution_guard = Some(Arc::new(ApplicationGuard(entered.clone())));
+        options
+            .execution
+            .execution_guards
+            .push(Arc::new(ApplicationGuard(entered.clone())));
         options.execution.capture_capacity = capacity();
         options.execution.max_requests = capacity();
+        options.execution.request_queue_policy = request_queue_policy;
         let mut catalog = PluginCatalog::new();
         let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
         let mut host = DerivedHost::new(catalog.instance());
@@ -214,9 +224,13 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         assert_eq!(*generation.query(&spec).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(entered.load(Ordering::SeqCst) >= 6);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         generation.drain(1).unwrap();
         generation.run_steps(128).unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
         assert_eq!(
             *target
                 .bind_query(&nested_spec_for(&target))
@@ -333,45 +347,280 @@ fn prepare_rejects_redirected_terminal_and_missing_source_captures_before_activa
 
 #[test]
 fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
-    let f = Fixture::new(true);
-    f.put(&f.a, 3);
-    f.put(&f.b, 5);
-    let effects = Arc::new(AtomicUsize::new(0));
-    let committed = effects.clone();
+    for request_queue_policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let f = Fixture::new(true);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let effects = Arc::new(AtomicUsize::new(0));
+        let committed = effects.clone();
+        let plugin = reader(
+            &f,
+            Arc::default(),
+            Some(Arc::new(move || {
+                assert_ne!(
+                    committed.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "first demand fails"
+                );
+            })),
+        );
+        let mut config = options(&plugin);
+        config.execution.capture_capacity = capacity();
+        config.execution.max_requests = capacity();
+        config.execution.request_queue_policy = request_queue_policy;
+        let lease = Arc::new(());
+        let weak = Arc::downgrade(&lease);
+        config.execution.lease = Some(lease);
+        let mut catalog = PluginCatalog::new();
+        let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+        let mut host = DerivedHost::new(catalog.instance());
+        let candidate = host
+            .prepare(
+                vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+                config,
+                Arc::new(LocalProcessDispatcher),
+                "recoverable",
+                |_| Ok(()),
+            )
+            .unwrap();
+        let generation = host.publish(candidate).unwrap();
+        let spec = generation.with_kernel(|k| {
+            k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+                .unwrap()
+                .clone()
+        });
+        let error = generation.query(&spec).unwrap_err();
+        assert!(
+            support::failures(&error)
+                .iter()
+                .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic)
+        );
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let value = generation.query(&spec).unwrap();
+        assert_eq!(*value, 8);
+        assert_eq!(effects.load(Ordering::SeqCst), 2);
+        generation.drain(1).unwrap();
+        generation.run_steps(128).unwrap();
+        assert_eq!(effects.load(Ordering::SeqCst), 3);
+        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(effects.load(Ordering::SeqCst), 4);
+        drop(host);
+        drop(generation);
+        drop(spec);
+        assert!(weak.upgrade().is_some());
+        assert_eq!(*value, 8);
+        drop(value);
+        assert!(
+            weak.upgrade().is_some(),
+            "the independently escaped failure also owns code"
+        );
+        drop(error);
+        assert!(weak.upgrade().is_none());
+    }
+}
+
+// This fixture has exactly one observer producer, synchronous worker completion,
+// no deadlines or explicit injectors, and a single session owner. A full sweep,
+// bounded execution retry, and capture draining are all needed before waiting.
+fn observation_values(generation: &DerivedGeneration) -> Vec<i64> {
+    let outputs: Vec<_> = generation.compiled().outputs().keys().cloned().collect();
+    let mut values = Vec::new();
+    for _ in 0..128 {
+        let events = generation.drain(1).unwrap();
+        assert!(events.iter().all(|event| event.result.is_ok()));
+        let report = generation.run_steps(32).unwrap();
+        let mut captured = false;
+        generation
+            .with_session(|session| {
+                assert!(session.failure().is_none(), "{:?}", session.failure());
+                for output in &outputs {
+                    while let Some(packet) = session.take_output(output).unwrap() {
+                        captured = true;
+                        if output == "query" {
+                            values.push(*packet.value().borrow::<i64>().unwrap());
+                        }
+                    }
+                }
+            })
+            .unwrap();
+        if events.is_empty() && report.steps == 0 && !captured {
+            assert_ne!(report.state, phenix_graph::runtime::SessionState::Runnable);
+            assert!(report.next_deferred_timeout.is_none());
+            return values;
+        }
+    }
+    panic!("observer settlement budget exhausted; must retry rather than wait");
+}
+
+#[test]
+fn wake_observer_captures_updates_and_reload_switches_sources_without_candidate_execution() {
+    let first = Fixture::new(true);
+    first.put(&first.a, 3);
+    first.put(&first.b, 5);
+    let second = Fixture::new(true);
+    second.put(&second.a, 10);
+    second.put(&second.b, 20);
+    let wake = phenix_kernel::WakeHandle::default();
+    let mut catalog = PluginCatalog::new();
+    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+    let mut host = DerivedHost::with_wake(catalog.instance(), wake.clone());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
     let plugin = reader(
-        &f,
+        &first,
         Arc::default(),
         Some(Arc::new(move || {
-            assert_ne!(
-                committed.fetch_add(1, Ordering::SeqCst),
-                0,
-                "first demand fails"
-            );
+            observed.fetch_add(1, Ordering::SeqCst);
         })),
     );
     let config = options(&plugin);
-    let mut catalog = PluginCatalog::new();
-    let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
-    let mut host = DerivedHost::new(catalog.instance());
     let candidate = host
         .prepare(
             vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-            config,
+            phenix_kernel::BuildOptions {
+                composition: config.composition.clone(),
+                ..Default::default()
+            },
             Arc::new(LocalProcessDispatcher),
-            "recoverable",
+            "old-observer",
             |_| Ok(()),
         )
         .unwrap();
-    let generation = host.publish(candidate).unwrap();
-    let spec = generation.with_kernel(|k| {
-        k.export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let before = wake.version();
+    let old = host.publish(candidate).unwrap();
+    assert_ne!(wake.version(), before);
+    assert_eq!(observation_values(&old), [8]);
+    let before = wake.version();
+    first.put(&first.b, 7);
+    assert_ne!(wake.version(), before);
+    assert_eq!(observation_values(&old), [10]);
+
+    let observed = calls.clone();
+    let candidate = host
+        .prepare(
+            vec![
+                host.plugins()
+                    .prepare_reload(
+                        &kind,
+                        reader(
+                            &second,
+                            Arc::default(),
+                            Some(Arc::new(move || {
+                                observed.fetch_add(1, Ordering::SeqCst);
+                            })),
+                        ),
+                    )
+                    .unwrap(),
+            ],
+            config,
+            Arc::new(LocalProcessDispatcher),
+            "new-observer",
+            |_| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    // Activation subscribed privately but no query/process code has executed.
+    second.put(&second.a, 11);
+    let before = wake.version();
+    let new = host.publish(candidate).unwrap();
+    assert_ne!(wake.version(), before);
+    let values = observation_values(&new);
+    assert!(!values.is_empty());
+    assert!(values.iter().all(|value| *value == 31));
+    let before = wake.version();
+    first.put(&first.a, 100);
+    assert_eq!(wake.version(), before, "retired observer must unsubscribe");
+    assert!(old.drain(1).unwrap().is_empty());
+    let old_spec = old.with_kernel(|kernel| {
+        kernel
+            .export::<QuerySpec<i64>>(&Key::new("domain", "derive"))
             .unwrap()
             .clone()
     });
-    assert!(
-        matches!(generation.query(&spec), Err(Error::Wave(e)) if e.join(" ").contains("panicked"))
-    );
-    assert_eq!(effects.load(Ordering::SeqCst), 1);
-    assert_eq!(*generation.query(&spec).unwrap(), 8);
-    assert_eq!(effects.load(Ordering::SeqCst), 2);
+    assert_eq!(*old.query(&old_spec).unwrap(), 107);
+    let before = wake.version();
+    second.put(&second.b, 21);
+    assert_ne!(wake.version(), before);
+    assert_eq!(observation_values(&new), [32]);
+}
+
+#[test]
+fn wake_host_keeps_mandatory_guard_before_ordered_application_guards_on_actual_workers() {
+    use std::sync::Mutex;
+    struct Exit(i8, Arc<Mutex<Vec<i8>>>);
+    impl Drop for Exit {
+        fn drop(&mut self) {
+            self.1.lock().unwrap().push(-self.0);
+        }
+    }
+    struct OrderedGuard {
+        id: i8,
+        trace: Arc<Mutex<Vec<i8>>>,
+        check: Arc<dyn Fn() + Send + Sync>,
+    }
+    impl ProcessExecutionGuard for OrderedGuard {
+        fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
+            (self.check)();
+            self.trace.lock().unwrap().push(self.id);
+            Ok(Box::new(Exit(self.id, self.trace.clone())))
+        }
+    }
+    for offload in [false, true] {
+        let f = Fixture::new(true);
+        f.put(&f.a, 3);
+        f.put(&f.b, 5);
+        let (target_plugin, target_spec) = sum(&f, false);
+        let mut target = local(target_plugin);
+        target.start().unwrap();
+        let target = Arc::new(target);
+        let caller = std::thread::current().id();
+        let check = Arc::new(move || {
+            assert_eq!(std::thread::current().id() != caller, offload);
+            assert!(matches!(
+                target.bind_query(&target_spec).unwrap().query(),
+                Err(Error::NestedQuery)
+            ));
+        });
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let (plugin, _) = sum(&f, true);
+        let mut config = options(&plugin);
+        for id in [1, 2] {
+            config
+                .execution
+                .execution_guards
+                .push(Arc::new(OrderedGuard {
+                    id,
+                    trace: trace.clone(),
+                    check: check.clone(),
+                }));
+        }
+        let mut catalog = PluginCatalog::new();
+        let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
+        let mut host =
+            DerivedHost::with_wake(catalog.instance(), phenix_kernel::WakeHandle::default());
+        let dispatcher: Arc<dyn ProcessDispatcher> = if offload {
+            Arc::new(Offload)
+        } else {
+            Arc::new(LocalProcessDispatcher)
+        };
+        let candidate = host
+            .prepare(
+                vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
+                config,
+                dispatcher,
+                "wake-guarded",
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert!(trace.lock().unwrap().is_empty());
+        let generation = host.publish(candidate).unwrap();
+        assert_eq!(observation_values(&generation), [8]);
+        let trace = trace.lock().unwrap();
+        assert!(!trace.is_empty());
+        assert!(trace.chunks(4).all(|step| step == [1, 2, -2, -1]));
+    }
 }

@@ -6,7 +6,7 @@ use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use phenix_storage::scoped::{
     BindingTarget, Identity, ResourceId, ScopeKind, Storage, StorageClass, Stored, XdgPaths,
 };
-use phenix_storage::{Codec, Operation, Revision, Revisioned, Schema};
+use phenix_storage::{Capability, Codec, Operation, Revision, Revisioned, Schema};
 use phenix_storage_plugin::{
     BackendPlacement, PreparedStorage, ResourceBinding, ResourceOffer, ResourceRequirements,
     StoragePolicy,
@@ -46,7 +46,10 @@ pub mod writer {
         fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<AgentConfig> {
             String::from_utf8(bytes.to_vec())
                 .map(|model| AgentConfig { model })
-                .map_err(|e| phenix_storage::Error::Codec(e.to_string()))
+                .map_err(|e| phenix_storage::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for AgentConfig {
@@ -70,16 +73,12 @@ pub mod writer {
                 "phenix.agent/settings",
                 [Operation::Write],
             );
-            offer.request = offer.request.with_atomic_cas();
+            offer.request = offer.request.require(Capability::CompareExchange);
             registrar.add(offer)?;
             let storage = self.storage.clone();
             let writes = self.writes.clone();
-            registrar.add(Contribution {
-                id: "writer".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("writer", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
@@ -99,8 +98,8 @@ pub mod writer {
                     });
                     context.patch = Some(support::input_patch("save_config", "configure", node));
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -129,7 +128,10 @@ pub mod observer {
         fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<ObservedConfig> {
             String::from_utf8(bytes.to_vec())
                 .map(ObservedConfig)
-                .map_err(|e| phenix_storage::Error::Codec(e.to_string()))
+                .map_err(|e| phenix_storage::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for ObservedConfig {
@@ -141,23 +143,22 @@ pub mod observer {
     }
     impl PluginInstance for Plugin {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            registrar.add(ResourceOffer::kv_schema(
+            let mut offer = ResourceOffer::kv_schema(
                 "config",
                 ScopeKind::Project,
                 StorageClass::Config,
                 "phenix.agent/settings",
                 Format.schema(),
                 [Operation::Read, Operation::Subscribe],
-            ))?;
+            );
+            offer.request = offer.request.require(Capability::RevisionedRead);
+            registrar.add(offer)?;
             let storage = self.storage.clone();
             let source = storage.clone();
             let reads = self.reads.clone();
-            registrar.add(Contribution {
-                id: "observer".into(),
-                requires: vec![],
-                routes: vec!["config_changed".into()],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("observer", NetworkPatch::new([]))
+                .route(["config_changed".into()])
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let kv = storage
                         .get()
@@ -166,7 +167,9 @@ pub mod observer {
                         .config::<ObservedConfig>("phenix.agent/settings")?;
                     let log = reads.clone();
                     let node = support::local_sink(move |_notice: phenix_storage::Notice| {
-                        log.lock().unwrap().push(kv.get("default").map_err(text));
+                        log.lock()
+                            .unwrap()
+                            .push(kv.get_revisioned("default").map_err(text));
                     });
                     context.patch = Some(support::input_patch(
                         "refresh_config",
@@ -187,8 +190,8 @@ pub mod observer {
                         )))
                     })?;
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -211,10 +214,8 @@ pub mod code_index {
             ))?;
             let storage = self.storage.clone();
             let results = self.results.clone();
-            registrar.add(Contribution {
-                id: "index".into(), requires: vec![], routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("index", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let sql = storage.get().ok_or("index storage not injected")?.project()?
                         .sql(StorageClass::Data, "phenix.code/index")?;
@@ -232,8 +233,8 @@ pub mod code_index {
                     });
                     context.patch = Some(support::input_patch("index_symbols", "index", node));
                     Ok(context)
-                })),
-            })
+                })
+                .register(registrar)
         }
     }
 }
@@ -411,7 +412,7 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
     })
 }
 
-pub fn run() -> Result<(), String> {
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir().map_err(text)?;
     let demo = build(root.path(), "project-one")?;
     demo.kernel
@@ -452,6 +453,6 @@ pub fn run() -> Result<(), String> {
 }
 
 #[allow(dead_code)]
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     run()
 }

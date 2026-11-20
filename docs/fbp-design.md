@@ -1,9 +1,53 @@
 # Phenix Native FBP Design
 
-Status: implemented in the current uncommitted worktree, 2026-11-11. The old graph
-engine has been removed; Kernel, Plugin and StorageGraph use native networks.
-Implementation and review/local verification are not a final commit or CI result.
-Local verification and immutable Nix snapshot checks are recorded in the final report. See
+## Current Acceptance: Q5, 2026-11-20
+
+Latest accepted implementation: `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`.
+Original Q5 is **scoped verified: 74.0% -> 100.0%, +26.0 pp** after independent
+final whole-scope/coverage reviews with no remaining findings, full local gates,
+all ten checks on the untracked-inclusive Nix snapshot, and all fifteen exact-head
+hosted workflows confirmed SUCCESS via `gh`. See [final Q5 review, tests and all
+run URLs](fbp-q5-protocol-verification-20261117.md).
+
+The accepted bounded evidence covers exact-source producer/session owner atomics
+and RAII, whole-drain/retirement complements, real owned handoff histories and
+public identity/transport/worker composition. Ten session/ownership Loom
+properties complete 472 schedules with no duration cap; five wake properties and
+13,440 serialized histories are retained. The handoff matrix has 21 anchors,
+1,533 histories and 2,856 attempts (611 accepted / 2,245 refused), covers all
+eight outcomes, and is complemented by seven public worker tests under both
+queue policies, including five fresh `Complete` identity checkpoints. The earlier
+two-Idle assertion was incomplete test authoring, not a production defect.
+
+The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md) now records
+**21 scoped verified / 6 partial / 5 open / 1 approved exclusion**, **11 remaining**,
+with score sum **2591** and subjective issue mean **78.5% (2591 / 33 = 78.515...%)**,
+not product completion. Every other score is unchanged. H3b remains partial at
+78.0%, with no automatic Q5 credit; bounded owner/handoff lifetime evidence is
+not a universal H1/H3b schedule proof. C7 remains approved TrustedNativeScope at
+its historical 12.0%, with no sandbox credit. H7 remains partial at 56.0%. No
+fairness, static-liveness or performance acceptance follows; M7/M8 and
+production-agent integration remain incomplete.
+
+Prior Q7, A5 and Q1 acceptance and their disclosed residuals are preserved. A1
+remains open and design-only. This current top supersedes earlier Q5/pending and
+aggregate status/count assertions below; historical narrative and prior accepted
+batches are preserved. This evidence-only docs revision requires its own checks
+and certifies no newer implementation or evidence-only commit.
+
+## Prior Status And Design
+
+Status: Kernel, Plugin and StorageGraph use native networks. PR #1302 integrated
+the complete verified `516e088` stack and retains all scoped gates. Subsequent
+implementation `026cfbe05` passed all fifteen exact-head workflows. The current
+[resource boundary](fbp-resource-boundary-20261115.md) grants opaque application
+capabilities; Graph no longer owns Store, resource locks or read/write policy.
+[Published-host hints](fbp-published-host-wake-20261115.md) remain application-owned
+source/publication integration, not another scheduler. See the current
+[design/evidence record](fbp-hardening-campaign-20261114.md), authoritative
+[scorecard](fbp-issue-progress-estimates-20261113.md) and [remaining work map](fbp-remaining-work-20261115.md).
+This evidence-only revision needs its own checks. The historical cutover
+verification and immutable Nix snapshot checks are recorded in the report. See
 [migration](fbp-migration.md), [review](fbp-critique.md), and the executable
 [API examples](../packages/phenix-graphs/API-EXAMPLES.md).
 
@@ -44,10 +88,19 @@ types use `connect_dynamic` and complete schema validation. Local `TypeId`, wire
 schema name/revision/structure/codec, semantic claims and contributor origin remain
 separate checks. Plugin snapshots are Rust objects, not a dynamic-library ABI.
 
+Owned bound declarations, endpoints, public ingress/captures and sources instead
+carry private compiled-generation identity plus exact cached projections. They
+authenticate the receiving owner before delegating to canonical Graph operations;
+`RequestId` continues to authenticate its actual session. Preparation can return
+these immutable capabilities without execution access, but intermediate preview
+endpoints never become final-generation authority. The same final bindings serve
+Kernel/Generation and production StorageGraph query execution, while known code and
+resource leases follow each independently escaping value, job or failure.
+
 ## Process And Publication
 
 `Process: Send` implements `step(&mut self, &mut ProcessContext) -> Result<Step,
-String>`; `Sync` is not required. `ProcessFactory: Send + Sync` spawns fresh process
+Failure>`; `Sync` is not required. `ProcessFactory: Send + Sync` spawns fresh process
 state per physical instance/session. Captured shared capabilities remain explicit
 application sharing; factories cannot prove their captures are isolated.
 
@@ -58,6 +111,32 @@ settles success. The process cannot resume while its emission is pending. No
 unbounded emission batch, context-owned output queue, alternate futures API or
 callback replay path is retained. Steps must return cooperatively; cancellation
 cannot preempt application code or undo external effects.
+
+`Failure` shares an original typed cause without cloning it, with a cached host
+summary, diagnostic owner context, independently owned code/resource leases, and
+typed secondary cleanup failures. External construction requires both an explicit
+host summary and the original error; it never formats or inspects external code.
+`application_message` is an explicit application String leaf, not a framework
+conversion shim. Worker guards preserve the first entry/step failure and append
+reverse-order teardown failures. Value access, input reconstruction, codecs and
+fanout preparation use the same failure protocol before a process step returns.
+`with_context` replaces metadata; framework attribution merges actual owner fields
+without discarding a known field, guard index or more-specific callback phase.
+
+Handoff ownership refusal is separate from execution failure. `complete` returns
+an outer refusal with an untouched completion or an inner `Result<Step, Failure>`.
+`reject` likewise returns an outer refusal with an untouched job or an inner
+`Result<(), Failure>` after accepting ownership and disposing guard objects. An
+accepted rejection whose cleanup fails settles the ticket and disposes its owned
+process/inputs, rather than returning a damaged job as if it were refused.
+
+Explicit managed disposal returns the actual contained cleanup report. Ordinary
+Drop contains cleanup but cannot update a session that no longer exists. A Value
+or Failure handle must acquire all known leases before independently escaping;
+later COW enrichment does not retroactively enrich earlier application clones.
+Additional dependencies that the framework cannot observe remain explicit
+application attachments. Q6 explanations copy cached host summaries and metadata,
+never Failure owners, and do not invoke external formatters or source callbacks.
 
 `ComponentDef::source`, `map` and `sink` use this same path. A source creates a
 fresh iterator and emits at most one item per step; `NetworkBuilder::start`
@@ -72,6 +151,27 @@ reentry. `take_dispatch_return` recovers a refused foreign completion/rejected j
 after a dispatcher protocol violation; the session stays failed. Shutdown of
 abandoned external jobs remains the runner's responsibility. Execution guards
 cover delegated work, including StorageGraph worker-thread query execution.
+Kernel's session lease is transferred without holding its mutex through a process
+callback. The Kernel's stable session identity is propagated through the existing
+execution-guard boundary so a synchronously joined dispatcher worker cannot wait
+on its own session lease. This does not make arbitrary plugin-created threads,
+resource-lock cycles, or non-yielding callbacks deadlock-free.
+
+`SessionOptions::execution_guards` is one ordered Vec. Kernel identity is entered
+first, then StorageGraph's host guard, then application/dispatcher guards.
+`ActivationJob::with_guard` appends rather than replaces. Guard tokens are torn
+down in reverse order and stay active through process panic-payload cleanup, so
+application-token destruction cannot remove Kernel identity prematurely.
+
+Only `SessionOptions.deferred_timeout` configures the opt-in cooperative watchdog
+(default `None`). Existing `overdue_jobs(now)` inspects passively and
+`supervise_deferred(now)` applies expiry to exact outstanding tickets. A direct
+`next_job` starts timing at handoff; `run_until_idle` starts timing after its
+dispatcher returns `Deferred`. Driver/completion operations supervise cooperatively;
+`state(&self)` remains passive under C9, with no readiness callbacks or timeout
+mutation. `RunReport::next_deferred_timeout` bounds the Kernel driver's idle wait,
+not callback duration. Timeout cannot stop a worker, undo effects, or release its
+owned payload/code leases; request restart may overlap that worker's effects.
 
 Each connection is a nonzero-capacity FIFO. Publication validates the entire
 selected fanout and prepares it once before committing to all destinations.
@@ -121,13 +221,33 @@ cannot be manufactured from labels. Settlement accounts for queued, reserved,
 dispatched, continuation and pending-publication work, not just the first capture.
 Capture identity includes the exact export and actual producer origin.
 
-Head-only correlation preserves FIFO, including head blocking on crossed requests.
-There is no silent deeper-candidate search or general arrival-skew equivalence.
+Default shared-FIFO head-only correlation preserves FIFO, including head blocking
+on crossed requests. There is no silent deeper-candidate search or general
+arrival-skew equivalence.
 Request-local optional absence and staged closure are tested against conservative
 reachable upstream-work accounting. A live required producer must not be replaced
 by optional EOS; exhausted required groups fail. General cycle absence/progress
 proofs and a production arbitrary-skew demultiplexing guarantee remain pending.
-The historical fixed-lane probes establish limits, not a shipped adapter promise.
+The candidate contains an opt-in fixed-lane composite adapter.
+Its explicit scope-skew bound covers distinct request identities, not repeated
+packets from one request. Its demonstrated independent progress is restricted to
+finite joins with at most one packet per request/input before an incomplete join
+becomes runnable. More repeated packets can fill a lane and intentionally retain
+head-of-line blocking; strict FIFO is preserved and no arbitrary-stream fairness
+claim is made. This remains a bounded adapter, not a general demultiplexer.
+
+`SessionOptions::request_queue_policy` defaults to `SharedFifo`, preserving shared
+connection and capture ordering. Opt-in `BoundedLanes` lazily allocates one bounded
+FIFO per active request for each compiled connection, public ingress edge, and
+capture alias. A lane is reused only after request settlement/cancellation and
+release; stale ticket validation prevents an old worker from publishing into a
+reused lane. The total packet-slot envelope is checked as
+`max_requests * (sum(connection capacities) + sum(ingress capacities per target) +
+capture_capacity * exported_capture_count)`. This bounds packet counts, not payload
+bytes. It does not create request-local process state: a staged continuation or
+blocked atomic publication still owns the one physical process handoff, and a
+nonconsuming reader can fill its own capture lane. The guarantee is queue-level
+cross-request isolation, not unconditional request progress or fairness.
 
 `RequestFailurePolicy::FailSession` is the default. Opt-in
 `RestartAffectedProcess` respawns affected active process state on request failure
@@ -141,18 +261,29 @@ definitions are not. Blocked queue/cycle diagnostics are not progress guarantees
 
 `NetworkPatch` owns immutable `Edit`s, not callbacks. Trusted host `Registration`
 separately supplies ID, dependency set, integer priority, exact origin and grants.
-Only root public declarations are editable; private nested writes reject even
-with an exact-looking grant. Grants name a component, exact connection endpoints,
+Root public declarations are editable; private nested writes require an explicitly
+exposed replacement seam as well as exact host grants. General private extension
+is not implied. Grants name a component, exact connection endpoints,
 directional export or source start; they never imply incident edges, descendants,
 namespace prefixes or semantic membership. Payload origins, including nested
 definitions, must be absent or exactly the registration origin.
 
 Dependencies must exist and form a DAG. They order writes; independent overlapping
-writes require unequal priorities, otherwise reject. Higher-priority selection
-defeats the losing registration as a whole; defeated prerequisites deactivate
-dependents, which cannot suppress eligible independent patches. Independent
-splices of one anchor remain ambiguous even with priorities. Ordered splices
-require explicit grants for the anchor and every removed/generated edge.
+writes require unequal priorities, otherwise reject. A registration is active if
+and only if every direct prerequisite is active and no strictly higher-priority
+independent overlapping writer is active. A unique consistent selection is required;
+zero/multiple models and selection-budget exhaustion reject atomically. Transient
+prerequisite defeat does not permanently suppress an otherwise eligible dependent.
+Independent splices of one anchor remain ambiguous even with priorities. Ordered
+splices require explicit grants for the anchor and every removed/generated edge.
+
+`SelectionLimits::max_work` is a finite, host-controlled allowance for selector
+construction, propagation and the complete uniqueness proof. It does not bound
+ancestor/footprint planning, replay, compilation or total Kernel construction.
+`Composer::set_selection_limits` changes future updates without republishing.
+Kernel `BuildOptions::selection_limits` applies to both its main composer and
+self-import previews, separately for each update. See the [selection design and
+accounting contract](fbp-selection-correctness-20261115.md).
 
 Replacement changes the definition at a stable symbolic path, preserving adjacent
 edges/exports but revoking old authoring revisions. Full public interface equality
@@ -163,8 +294,22 @@ Replay never spawns factories or executes processes. `Composer::revoke` recompos
 from base and deactivates transitive dependents, not inverse-edit callbacks.
 
 Kernel binds selected plugin revisions, approved grants, exact offers/imports and
-leases outside patch payloads. Retirement stops old producer admission without
-pretending to unload code retained by old compiled handles, sessions or jobs.
+leases outside patch payloads. The verified whole-drain retirement gate and
+exclusive blocking-driver ownership remain: external publication waits for the
+whole admitted producer drain, not explicit session work; same-drain publication
+is rejected. Host self-destruction marks retirement and rejects a late poll event,
+while destruction is deferred outside locks. All Kernel session calls fail fast
+on cross-thread contention with busy/`WouldBlock`; same-kernel callback/worker
+re-entry also fails fast. Retry after release preserves the verified lock-inversion
+contract, not the initial, superseded waiter policy. `ExclusiveSlot` uses only
+`Mutex<Option<T>>`, `try_take` and idempotent release, without Condvar or waiters.
+A caller holding a plugin lock must not wait behind a callback that needs it.
+Retirement does not unload code retained by old compiled handles, sessions or jobs,
+nor revoke explicit old-generation calls.
+`Kernel::drain` returns `Result<Vec<ProducerEvent>, DriverError>`: manual drains
+serialize, recursive drains reject, and a live blocking driver excludes manual
+polling even for `drain(0)`. The initial no-wait/empty-return policy is discarded,
+not layered over the verified driver guarantees.
 StorageGraph preserves one bounded pending producer notice, explicit overflow/
 rescan semantics, subscribe-before-bootstrap, exact query origin and dispatch guards.
 
@@ -179,8 +324,11 @@ preserves leases on success, error and unwind. Cloning application data through 
 borrow remains the application's responsibility.
 
 Captures are bounded FIFOs (`SessionOptions::capture_capacity`) that must be
-drained to release publication credit. Native metadata inspection does not spawn
-factories. `RunReport` exposes state, steps, publications, disposed packets,
+drained to release publication credit. Global `take_output` stays FIFO;
+authenticated `take_request_output` can extract that request's first already-
+buffered capture behind another request, preserving within-request FIFO. It cannot
+bypass publication blocked by an occupied full queue. Native metadata inspection
+does not spawn factories. `RunReport` exposes state, steps, publications, disposed packets,
 discarded emissions and budget exhaustion, with queue/wait/last-step diagnostics.
 Legacy wildcard/full-payload tracing, wave reports and exact baseline report
 counters are not retained. No unbounded trace history, complete event ledger or
@@ -192,10 +340,20 @@ Morrison FBP motivates stateful processes and bounded FIFO packets; NoFlo motiva
 one primitive/composite boundary; NiFi motivates capacity diagnostics; Timely
 motivates explicit work accounting, not invented global frontier guarantees.
 DFIR inspired validate-once lowering, but no DFIR backend dependency or experimental
-spike was adopted. The native engine is the chosen implementation. No measured
-throughput, allocation or performance improvement is claimed.
+spike was adopted. The native engine is the chosen implementation. Historical
+scoped measurements remain in the [report](fbp-report.md) and verified stack;
+no new merged-head throughput, allocation or performance acceptance is claimed.
 
 The [regression ledger](fbp-regression-ledger.md) records M6 removals and named
 native tests, including independent randomized composition models. Final counts
 belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
 and final verification status are recorded in the migration/review documents.
+The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative.
+Current classifications are twenty-one scoped verified, six partial, five open
+and one user-approved exclusion. Q5 is scoped verified only for its bounded
+owner/handoff/public-composition evidence; H3b remains partial. Q1's broader
+Kernel root residual and H7's request-state limitations remain explicit. C7's
+TrustedNativeScope exclusion is not sandbox implementation credit. A1 remains
+open/design-only. M7/M8 and missing production-agent, live-migration and
+OS-isolation adapters remain incomplete; queue isolation is not independent
+process state or universal fairness.

@@ -20,19 +20,44 @@ use std::{
     time::Instant,
 };
 
+// Paired CI registers this cfg with --check-cfg; ordinary builds use Failure.
+#[allow(unexpected_cfgs)]
+mod benchmark_error {
+    #[cfg(fbp_benchmark_baseline_string_error)]
+    pub type StepError = String;
+    #[cfg(not(fbp_benchmark_baseline_string_error))]
+    pub type StepError = phenix_graph::Failure;
+
+    pub fn application_message(message: &str) -> StepError {
+        #[cfg(fbp_benchmark_baseline_string_error)]
+        {
+            message.to_owned()
+        }
+        #[cfg(not(fbp_benchmark_baseline_string_error))]
+        {
+            phenix_graph::Failure::application_message(message)
+        }
+    }
+}
+
 struct DropInput;
 impl Process for DropInput {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        black_box(cx.take("in").ok_or("missing request input")?);
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, benchmark_error::StepError> {
+        black_box(
+            cx.take("in")
+                .ok_or_else(|| benchmark_error::application_message("missing request input"))?,
+        );
         Ok(Step::Complete)
     }
 }
 
 struct AbsentInput(Arc<AtomicUsize>);
 impl Process for AbsentInput {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, benchmark_error::StepError> {
         if cx.take("opt").is_some() || !cx.is_request_closed("opt") || cx.is_eos("opt") {
-            return Err("expected authenticated request-local empty optional closure".into());
+            return Err(benchmark_error::application_message(
+                "expected authenticated request-local empty optional closure",
+            ));
         }
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(Step::Complete)

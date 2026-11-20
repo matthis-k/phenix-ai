@@ -42,7 +42,7 @@ struct Memory {
     emitted: bool,
 }
 impl Process for Memory {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -52,7 +52,9 @@ impl Process for Memory {
         };
         let latest = input
             .borrow::<String>()
-            .ok_or("memory expects a local String")?
+            .ok_or_else(|| {
+                phenix_graph::Failure::application_message("memory expects a local String")
+            })?
             .clone();
         self.history.push(latest.clone());
         self.emitted = true;
@@ -92,7 +94,7 @@ struct Model {
     effects: Arc<AtomicUsize>,
 }
 impl Process for Model {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -102,7 +104,9 @@ impl Process for Model {
         };
         let context = input
             .borrow::<String>()
-            .ok_or("model expects a local String")?
+            .ok_or_else(|| {
+                phenix_graph::Failure::application_message("model expects a local String")
+            })?
             .clone();
         self.activations += 1;
         self.effects.fetch_add(1, Ordering::SeqCst);
@@ -375,5 +379,5 @@ fn blocked_output_does_not_repeat_tool_effects_on_retry() {
     let two = s.take_output("reply").unwrap().unwrap();
     assert!(two.value().borrow::<String>().unwrap().contains("second"));
     assert_eq!(tool_calls.load(Ordering::SeqCst), 2);
-    assert!(s.failure().is_none());
+    assert!(s.failure().map(phenix_graph::Failure::summary).is_none());
 }

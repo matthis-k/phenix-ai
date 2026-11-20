@@ -23,14 +23,17 @@ impl PortDef {
         schema: &crate::Schema,
     ) -> Result<Self, InterfaceError> {
         for (field, text) in [
-            ("name", schema.name.as_str()),
-            ("structure", schema.structure.as_str()),
-            ("codec", schema.codec.as_str()),
+            (PortableSchemaField::Name, schema.name.as_str()),
+            (PortableSchemaField::Structure, schema.structure.as_str()),
+            (PortableSchemaField::Codec, schema.codec.as_str()),
         ] {
             if text.trim().is_empty() || text.chars().any(char::is_control) {
-                return Err(InterfaceError::new(format!(
-                    "invalid portable schema {field}"
-                )));
+                return Err(InterfaceError::new(
+                    InterfaceReason::InvalidPortableSchema {
+                        field,
+                        value: text.into(),
+                    },
+                ));
             }
         }
         let port = Self {
@@ -64,7 +67,9 @@ impl Interface {
                 validate_port_name(&port.name)?;
                 let name = port.name.clone();
                 if result.insert(name.clone(), port).is_some() {
-                    return Err(InterfaceError::new(format!("duplicate port name {name:?}")));
+                    return Err(InterfaceError::new(InterfaceReason::DuplicatePort {
+                        name: name.into(),
+                    }));
                 }
             }
             Ok(result)
@@ -98,11 +103,11 @@ impl Interface {
                     continue;
                 }
                 let mut error = InterfaceError::new(if found.is_some() {
-                    "incompatible port type"
+                    InterfaceReason::IncompatibleType
                 } else if opposite.contains_key(name) {
-                    "port has wrong direction"
+                    InterfaceReason::WrongDirection
                 } else {
-                    "missing port"
+                    InterfaceReason::MissingPort
                 });
                 error.endpoint = Some(format!("{direction} {name}").into());
                 error.expected = Some(port.value.clone());
@@ -118,7 +123,7 @@ impl Interface {
         ] {
             for (name, port) in provided {
                 if !required.contains_key(name) {
-                    let mut error = InterfaceError::new("extra port");
+                    let mut error = InterfaceError::new(InterfaceReason::ExtraPort);
                     error.endpoint = Some(format!("{direction} {name}").into());
                     error.actual = Some(port.value.clone());
                     return Err(error);
@@ -134,9 +139,9 @@ fn validate_port_name(name: &str) -> Result<(), InterfaceError> {
         || name.len() > crate::MAX_IDENTIFIER_BYTES
         || name.chars().any(char::is_control)
     {
-        Err(InterfaceError::new(
-            "port name must be nonempty, bounded and contain no control characters",
-        ))
+        Err(InterfaceError::new(InterfaceReason::InvalidPortName {
+            name: name.into(),
+        }))
     } else {
         Ok(())
     }
@@ -149,6 +154,76 @@ pub enum InterfacePhase {
     Compiled,
 }
 
+/// The portable schema fields validated when defining a port. Revision is data,
+/// but is not subject to these text-field checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortableSchemaField {
+    Name,
+    Structure,
+    Codec,
+}
+impl fmt::Display for PortableSchemaField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Name => "name",
+            Self::Structure => "structure",
+            Self::Codec => "codec",
+        })
+    }
+}
+
+/// An owning diagnostic reason. Shape failures use `InterfaceError`'s endpoint
+/// and expected/actual identities rather than duplicating that context here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InterfaceReason {
+    InvalidPortableSchema {
+        field: PortableSchemaField,
+        value: Box<str>,
+    },
+    DuplicatePort {
+        name: Box<str>,
+    },
+    IncompatibleType,
+    WrongDirection,
+    MissingPort,
+    ExtraPort,
+    InvalidPortName {
+        name: Box<str>,
+    },
+    InvalidContractIdentity {
+        id: Box<str>,
+    },
+    DifferingContractDefinition {
+        expected: crate::contract::Contract,
+        actual: crate::contract::Contract,
+    },
+    MissingExplicitClaim {
+        contract: Box<str>,
+    },
+}
+impl fmt::Display for InterfaceReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPortableSchema { field, .. } => {
+                write!(f, "invalid portable schema {field}")
+            }
+            Self::DuplicatePort { name } => write!(f, "duplicate port name {name:?}"),
+            Self::IncompatibleType => f.write_str("incompatible port type"),
+            Self::WrongDirection => f.write_str("port has wrong direction"),
+            Self::MissingPort => f.write_str("missing port"),
+            Self::ExtraPort => f.write_str("extra port"),
+            Self::InvalidPortName { .. } => {
+                f.write_str("port name must be nonempty, bounded and contain no control characters")
+            }
+            Self::InvalidContractIdentity { .. } => f.write_str("invalid contract identity"),
+            Self::DifferingContractDefinition { .. } => {
+                f.write_str("different contract identity or definition")
+            }
+            Self::MissingExplicitClaim { .. } => f.write_str("missing explicit contract claim"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InterfaceError {
     pub contract: Option<Box<str>>,
@@ -157,10 +232,10 @@ pub struct InterfaceError {
     pub endpoint: Option<Box<str>>,
     pub expected: Option<TypeIdentity>,
     pub actual: Option<TypeIdentity>,
-    pub message: Box<str>,
+    pub reason: Box<InterfaceReason>,
 }
 impl InterfaceError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(reason: InterfaceReason) -> Self {
         Self {
             contract: None,
             path: "".into(),
@@ -168,7 +243,7 @@ impl InterfaceError {
             endpoint: None,
             expected: None,
             actual: None,
-            message: message.into().into_boxed_str(),
+            reason: Box::new(reason),
         }
     }
     pub(crate) fn context(
@@ -192,7 +267,7 @@ impl fmt::Display for InterfaceError {
         if let Some(endpoint) = &self.endpoint {
             write!(f, " endpoint {endpoint}")?;
         }
-        write!(f, ": {}", self.message)?;
+        write!(f, ": {}", self.reason)?;
         if self.expected.is_some() || self.actual.is_some() {
             write!(
                 f,

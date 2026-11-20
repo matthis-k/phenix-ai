@@ -1,7 +1,7 @@
 //! Small local function adapters on the ordinary bounded process path.
 use super::ComponentDef;
 use crate::{
-    Value,
+    Failure, Value, ValueError,
     interface::{Interface, PortDef},
     process::{Process, ProcessContext, ProcessEmission, Step},
 };
@@ -10,9 +10,9 @@ use std::sync::Arc;
 struct Adapter<F>(F);
 impl<F> Process for Adapter<F>
 where
-    F: FnMut(&mut ProcessContext) -> Result<Step, String> + Send + 'static,
+    F: FnMut(&mut ProcessContext) -> Result<Step, Failure> + Send + 'static,
 {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, Failure> {
         (self.0)(context)
     }
 }
@@ -52,16 +52,22 @@ impl ComponentDef {
                             Step::Complete
                         });
                     };
-                    let input = value
-                        .borrow::<T>()
-                        .ok_or("expected local adapter input")?
-                        .clone();
-                    let output = handler(input);
+                    let output = value.map_callback(|| {
+                        let input = value
+                            .borrow::<T>()
+                            .ok_or_else(|| {
+                                ValueError::LocalType {
+                                    expected: std::any::type_name::<T>(),
+                                    actual: value.identity(),
+                                }
+                                .failure()
+                            })?
+                            .clone();
+                        Ok(Value::local(handler(input)))
+                    });
+                    let output = value.finish_owned(output)?;
                     emitted = true;
-                    Ok(Step::Emit(ProcessEmission::new(
-                        "output",
-                        Value::local(output),
-                    )))
+                    Ok(Step::Emit(ProcessEmission::new("output", output)))
                 })
             }),
         )
@@ -112,7 +118,17 @@ impl ComponentDef {
                             Step::Complete
                         });
                     };
-                    handler(value.borrow::<T>().ok_or("expected local adapter input")?);
+                    let result = value.map_callback(|| {
+                        handler(value.borrow::<T>().ok_or_else(|| {
+                            ValueError::LocalType {
+                                expected: std::any::type_name::<T>(),
+                                actual: value.identity(),
+                            }
+                            .failure()
+                        })?);
+                        Ok(Value::local(()))
+                    });
+                    value.finish_owned(result)?;
                     Ok(Step::Complete)
                 })
             }),

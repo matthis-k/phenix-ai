@@ -56,12 +56,10 @@ impl PluginInstance for Plugin {
         let start_name = name.clone();
         let start_log = log.clone();
         let start_fail = self.start_fail;
-        r.add(Contribution {
-            id: "main".into(),
-            requires: self.requires.clone(),
-            routes: vec![name.clone()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .after(self.requires.clone())
+            .route([name.clone()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 log.lock().unwrap().push(format!("compose:{name}"));
                 let mark = Mark(format!("engine:{name}"), log.clone());
@@ -108,15 +106,24 @@ impl PluginInstance for Plugin {
                     }))
                 })?;
                 Ok(context)
-            })),
-        })
+            })
+            .register(r)
     }
 }
 fn build(
     name: &str,
-    snapshots: Vec<phenix_plugin::PluginSnapshot>,
+    (snapshots, options): (Vec<phenix_plugin::PluginSnapshot>, BuildOptions),
     dispatcher: Arc<dyn ProcessDispatcher>,
 ) -> Result<Kernel, phenix_kernel::ResolutionError> {
+    Kernel::build_with_options(name, snapshots, dispatcher, options)
+}
+fn snapshots(
+    a: Vec<Key>,
+    b: Vec<Key>,
+    compile_fail: bool,
+    start_fail: bool,
+    log: &Log,
+) -> (Vec<phenix_plugin::PluginSnapshot>, BuildOptions) {
     let mut options = BuildOptions::default();
     for owner in ["alpha", "beta"] {
         support::grant(
@@ -128,15 +135,6 @@ fn build(
             ],
         );
     }
-    Kernel::build_with_options(name, snapshots, dispatcher, options)
-}
-fn snapshots(
-    a: Vec<Key>,
-    b: Vec<Key>,
-    compile_fail: bool,
-    start_fail: bool,
-    log: &Log,
-) -> Vec<phenix_plugin::PluginSnapshot> {
     let mut catalog = PluginCatalog::new();
     let key = catalog.register("alpha", |p: Plugin| Ok(p)).unwrap();
     let other = catalog.register("beta", |p: Plugin| Ok(p)).unwrap();
@@ -165,7 +163,7 @@ fn snapshots(
             },
         )
         .unwrap();
-    vec![second, first]
+    (vec![second, first], options)
 }
 #[test]
 fn loader_order_waves_bounds_and_lifetimes() {
@@ -251,14 +249,18 @@ fn dependencies_fail_before_composition() {
         );
     }
     let log = Log::default();
-    let mut selected = snapshots(vec![], vec![], false, false, &log);
+    let (mut selected, options) = snapshots(vec![], vec![], false, false, &log);
     selected.push(selected[0].clone());
     assert!(
-        build("test", selected, Arc::new(LocalProcessDispatcher))
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("duplicate snapshot owner")
+        build(
+            "test",
+            (selected, options),
+            Arc::new(LocalProcessDispatcher)
+        )
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("duplicate snapshot owner")
     );
 }
 #[test]
@@ -338,8 +340,10 @@ fn compile_failure_never_starts_and_startup_rolls_back() {
 struct FailingDispatcher;
 struct FailingGuard;
 impl ProcessExecutionGuard for FailingGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
-        Err("execution failed".into())
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
+        Err(phenix_graph::Failure::application_message(
+            "execution failed",
+        ))
     }
 }
 impl ProcessDispatcher for FailingDispatcher {
@@ -391,11 +395,9 @@ impl Producer for WakeSource {
 impl PluginInstance for DriverPlugin {
     fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
         let polls = self.polls.clone();
-        r.add(Contribution {
-            id: "driver".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            patch: NetworkPatch::new([
+        Contribution::new(
+            "driver",
+            NetworkPatch::new([
                 Edit::Add {
                     path: "sink".into(),
                     definition: support::sink(|_| {}),
@@ -406,18 +408,20 @@ impl PluginInstance for DriverPlugin {
                     capacity: support::capacity(),
                 },
             ]),
-            prepare: Some(Box::new(move |_| {
-                let mut context = CandidateArtifacts::default();
-                let polls = polls.clone();
-                context.activate(move || {
-                    Ok(Box::new(WakeSource {
-                        polls: polls.clone(),
-                        wake: None,
-                    }))
-                })?;
-                Ok(context)
-            })),
+        )
+        .route(self.routes.clone())
+        .prepare(move |_| {
+            let mut context = CandidateArtifacts::default();
+            let polls = polls.clone();
+            context.activate(move || {
+                Ok(Box::new(WakeSource {
+                    polls: polls.clone(),
+                    wake: None,
+                }))
+            })?;
+            Ok(context)
         })
+        .register(r)
     }
 }
 fn driver_kernel(
@@ -427,6 +431,15 @@ fn driver_kernel(
     let mut catalog = PluginCatalog::new();
     let key = catalog.register("driver", |p: DriverPlugin| Ok(p)).unwrap();
     let mut plugins = catalog.instance();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("driver", "driver"),
+        [
+            Footprint::Component("sink".into()),
+            Footprint::InputExport("run".into()),
+        ],
+    );
     plugins
         .load(
             &key,
@@ -437,7 +450,6 @@ fn driver_kernel(
         )
         .unwrap();
     let snapshots: Vec<_> = plugins.snapshots().collect();
-    let options = support::options(&snapshots);
     Kernel::build_with_options(
         "driver",
         snapshots,
@@ -511,11 +523,9 @@ fn open_ingress_driver_kernel(
     struct OpenIngress;
     impl PluginInstance for OpenIngress {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            registrar.add(Contribution {
-                id: "open".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([
+            Contribution::new(
+                "open",
+                NetworkPatch::new([
                     Edit::Add {
                         path: "open-sink".into(),
                         definition: support::sink(|_| {}),
@@ -526,13 +536,21 @@ fn open_ingress_driver_kernel(
                         capacity: support::capacity(),
                     },
                 ]),
-                prepare: None,
-            })
+            )
+            .register(registrar)
         }
     }
     let mut snapshots: Vec<_> = snapshots.into_iter().collect();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("driver-open-input", "open"),
+        [
+            Footprint::Component("open-sink".into()),
+            Footprint::InputExport("input".into()),
+        ],
+    );
     snapshots.push(support::snapshot("driver-open-input", OpenIngress));
-    let options = support::options(&snapshots);
     Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options).unwrap()
 }
 
@@ -577,18 +595,14 @@ fn permanent_poll_failure_is_reported_once_and_driver_remains_shutdown_capable()
     impl PluginInstance for Broken {
         fn contribute(&self, r: &mut Registrar) -> Result<(), Failure> {
             let polls = self.0.clone();
-            r.add(Contribution {
-                id: "broken".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("broken", NetworkPatch::new([]))
+                .prepare(move |_| {
                     let mut c = CandidateArtifacts::default();
                     let polls = polls.clone();
                     c.activate(move || Ok(Box::new(Broken(polls.clone()))))?;
                     Ok(c)
-                })),
-            })
+                })
+                .register(r)
         }
     }
     let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));

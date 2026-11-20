@@ -15,16 +15,26 @@ explicit `Identity` resolves it to a stable `ScopeId`. Missing projects/sessions
 are errors, never fallbacks to user storage. Resource names use a namespace and
 path, for example `phenix.agent/settings`.
 
-`ResourceOffer::new(id, ResourceRequest::new(spec, operations).with_atomic_cas())`
-can explicitly require atomic compare-and-exchange. SQL requests accept SQL
-operations and subscription; KV requests accept read, write, delete and
-subscription. CAS requires write authority. Since scoped `Kv::get` always returns
-a revision, **every KV `Read` request implicitly requires the atomic-CAS/revision
-capability**, even without `with_atomic_cas()`. Both declared capabilities during
-prepare and actual backend capabilities during activation must satisfy this.
-`ResourceRequest::requires_atomic_cas()` exposes that effective requirement.
-Legacy unversioned-only backends remain usable through low-level `Session::get`,
-not through scoped reads.
+`ResourceRequest::new(spec, operations).require(Capability::CompareExchange)`
+explicitly requires atomic compare-and-exchange. The public `required` set is a
+`BTreeSet<Capability>`; repeated requirements are idempotent. Requirements are
+independent lower bounds, not exact feature matches or permission grants. Extra
+backend features are accepted. Resource kind inherently requires `TypedKv` or
+`Sql`, even without an explicit requirement.
+
+SQL requests accept SQL operations and subscription; KV requests accept read,
+write, delete and subscription. `RevisionedRead` and `AtomicReadMany` require a KV
+resource and `Read`; `CompareExchange` requires a KV resource and `Write`, not
+`Read`. Explicit `TypedKv` requires KV kind, and `Sql` requires SQL kind. Collection
+validates each declaration independently: another plugin's operations cannot make
+an invalid request valid. Matching schemas coalesce logical identity regardless
+of plugin registration order, without combining requirements or authority between
+requesters.
+
+Plain scoped `Kv::get` requires neither revisioned reads, atomic batches nor CAS.
+Declare `RevisionedRead` when using `get_revisioned`, or `AtomicReadMany` when
+using atomic snapshots. `CellSpec::request(operations)` derives `AtomicReadMany`
+only if `Read` is present; write-only cell declarations do not require batch reads.
 
 ## Host Flow
 
@@ -83,6 +93,10 @@ existing SQLite databases read-only, without creation or migration, and rejects
 persisted descriptor conflicts. Missing databases remain uncreated. Registration
 checks compatibility again during activation, including changes after prepare.
 Backend offers used here must declare `with_features(BackendFeatures { ... })`.
+Its independent fields are `typed_kv`, `revisioned_read`, `atomic_read_many`,
+`compare_exchange`, `sql` and `invalidation`. Memory and SQLite advertise all three
+optional KV capabilities; only SQLite advertises SQL. A missing demanded advertised
+feature rejects prepare with zero provider-factory calls.
 The exact offer revision is leased during prepare and retained by opened backends.
 The low-level `mount_offer` remains available without this orchestration.
 Provider factories cannot prove persisted compatibility before opening through
@@ -102,28 +116,45 @@ provenance and private-path/runtime validation inputs for all storage classes.
 The approved requests describe subsequent per-plugin grant/view
 issuance. Inspection itself neither executes these actions nor grants authority.
 
-`activate` constructs a private registry, opens mounts, checks provider capabilities
-before issuing sessions, registers KV schemas, then returns `ActivatedStorage.views`, keyed by plugin
+`activate` constructs a private registry, opens mounts, checks demanded actual
+provider interfaces and support predicates before registering any datasets or
+issuing sessions, then returns `ActivatedStorage.views`, keyed by plugin
 name. Each view has only that plugin's bindings and grants. SQL is always
 mount-wide: explicit sharing exposes the mount's application SQL tables across
 those logical resources. Reserved typed-KV, schema and revision tables remain
 protected by the SQL authorizer, including on mounts colocating KV resources.
 Provider replacement/unload does not replace existing backend instances.
+Capability probing performs no sentinel reads or writes. Providers implementing
+optional operations must explicitly opt in through `supports_revisioned_reads`,
+`supports_atomic_read_many` and/or `supports_compare_exchange`; these default to
+false and are independent. An implemented method without its predicate is not
+support. Registry-mediated writes supply invalidation independently of these
+optional interfaces.
 
 Activation failure publishes no views and releases opened backends and leases.
 It is not a multi-database/filesystem transaction: directories, files and durable
 registration metadata created during activation are not deleted on failure.
-Existing data is never deleted as cleanup. Hosts publish a successful replacement
-activation themselves; old views remain usable until dropped.
+Existing data is never deleted as cleanup. Capability checks cannot prove a trusted
+provider's atomicity or honesty, or roll back provider-factory/durable side effects.
+Hosts publish a successful replacement activation themselves; old views remain
+usable until dropped, without a promise to roll back shared durable data.
 
 ## Scoped Access
 
 Use `view.user().config::<T>(name)`, or `project()?` / `session()?` followed by
 `config`, `data`, `state`, `cache` or `runtime`. `Kv::get` returns
+`Result<Option<T>>`. Explicit `Kv::get_revisioned` returns
 `Result<Option<Revisioned<T>>>`; read `.value` and retain `.revision` for
 `compare_exchange(key, Some(&revision), &value)`. Use `None` to insert only when
 absent. CAS delegates to the session/backend and is never emulated with get/put.
 `put`, `delete` and `changed` retain their explicit operation requirements.
+
+Binding a read cell preflights atomic batch support without reading payloads.
+Atomic snapshots require `AtomicReadMany`, not single-key `RevisionedRead` or CAS.
+Best-effort snapshots prefer batches when supported and otherwise require
+revisioned single-key reads. Runtime support predicates are authoritative and
+rechecked before the corresponding payload calls; unsupported operations return
+errors, not absence.
 
 `view.user().sql(class, name)?.transaction(...)` uses the real SQL mount without
 registering a placeholder dataset. Resource identity does not sandbox SQL tables.

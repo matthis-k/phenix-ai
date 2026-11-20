@@ -1,18 +1,18 @@
 //! Production owned-step invariants. These do not substitute for scheduler,
 //! correlation, topology, or downstream dispatch-guard integration tests.
-use phenix_graph::Value;
 use phenix_graph::process::*;
+use phenix_graph::{Failure, Value};
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 
 struct Counter {
     value: Cell<i64>,
     emitted: bool,
 }
 impl Process for Counter {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -163,7 +163,7 @@ fn rejected_dispatch_keeps_reservation_and_process_and_renews_step_ticket() {
     handoff.admit(inputs(4)).unwrap();
     let first = handoff.next_job().unwrap();
     let ticket = first.ticket();
-    handoff.reject(first).unwrap();
+    handoff.reject(first).unwrap().unwrap();
     let second = handoff.next_job().unwrap();
     assert_eq!(second.ticket().activation(), ticket.activation());
     assert_ne!(second.ticket().sequence(), ticket.sequence());
@@ -181,7 +181,7 @@ fn foreign_dispatch_rejection_does_not_destroy_job() {
     let job = second.next_job().unwrap();
     let (error, job) = first.reject(job).unwrap_err();
     assert_eq!(error, HandoffError::ForeignCompletion);
-    second.reject(job).unwrap();
+    second.reject(job).unwrap().unwrap();
     assert_eq!(emission_value(step(&mut second)), 4);
 }
 
@@ -196,7 +196,7 @@ struct ProbedProcess {
     panic: bool,
 }
 impl Process for ProbedProcess {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(!self.panic, "step panic");
         Ok(Step::Finished)
     }
@@ -206,7 +206,7 @@ impl Process for ProbedProcess {
 fn handoff_cancel_reports_panicking_destructor_after_revoking_ownership() {
     struct PanickingDrop;
     impl Process for PanickingDrop {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(Step::Complete)
         }
     }
@@ -237,13 +237,13 @@ fn completion_and_idle_finish_contain_panicking_destructors() {
     }
     struct Completes;
     impl Process for Completes {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(Step::Complete)
         }
     }
     struct PanicProcessDrop(Arc<AtomicBool>);
     impl Process for PanicProcessDrop {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(Step::Complete)
         }
     }
@@ -268,7 +268,7 @@ fn completion_and_idle_finish_contain_panicking_destructors() {
         .unwrap();
     let completion = handoff.next_job().unwrap().run();
     assert_eq!(
-        handoff.complete(completion).unwrap().unwrap_err(),
+        handoff.complete(completion).unwrap().unwrap_err().summary(),
         "owned destructor panicked during completion"
     );
     assert_eq!(handoff.state(), HandoffState::Failed);
@@ -289,7 +289,7 @@ fn completion_and_idle_finish_contain_panicking_destructors() {
 
     struct Finishes;
     impl Process for Finishes {
-        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(Step::Finished)
         }
     }
@@ -308,7 +308,7 @@ fn completion_and_idle_finish_contain_panicking_destructors() {
     handoff.admit(ProcessContext::default()).unwrap();
     let completion = handoff.next_job().unwrap().run();
     assert_eq!(
-        handoff.complete(completion).unwrap().unwrap_err(),
+        handoff.complete(completion).unwrap().unwrap_err().summary(),
         "owned destructor panicked during completion"
     );
     assert_eq!(handoff.state(), HandoffState::Failed);
@@ -356,7 +356,7 @@ fn panic_settles_failure_and_drops_process_and_owned_inputs_once() {
         .unwrap();
     let job = handoff.next_job().unwrap();
     assert_eq!(
-        handoff.complete(job.run()).unwrap().unwrap_err(),
+        handoff.complete(job.run()).unwrap().unwrap_err().summary(),
         "process step panicked"
     );
     assert_eq!(handoff.state(), HandoffState::Failed);
@@ -412,7 +412,7 @@ impl Drop for LeaseOrder {
     }
 }
 impl Process for LeaseOrder {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -439,7 +439,7 @@ fn late_completion_drops_process_before_code_lease() {
 
 struct Continuation(u8);
 impl Process for Continuation {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0 += 1;
         Ok(match self.0 {
             1 => Step::Yield,
@@ -573,7 +573,7 @@ struct EmitsLeaseGuard {
     alive: Arc<AtomicUsize>,
 }
 impl Process for EmitsLeaseGuard {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Emit(ProcessEmission::new(
             "out",
             Value::local(LeaseOrder {
@@ -662,8 +662,10 @@ fn capacity_one_stall_and_resume_preserve_effect_and_activation_exactly_once() {
 
 struct DeniedGuard;
 impl ProcessExecutionGuard for DeniedGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
-        Err("guard rejected execution".into())
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
+        Err(phenix_graph::Failure::application_message(
+            "guard rejected execution",
+        ))
     }
 }
 #[test]
@@ -678,7 +680,7 @@ fn execution_guard_failure_never_calls_process_and_settles_same_job() {
     let completion = std::thread::spawn(move || job.run()).join().unwrap();
     assert_eq!(completion.ticket(), ticket);
     assert_eq!(
-        handoff.complete(completion).unwrap().unwrap_err(),
+        handoff.complete(completion).unwrap().unwrap_err().summary(),
         "guard rejected execution"
     );
     assert_eq!(handoff.state(), HandoffState::Failed);
@@ -739,4 +741,308 @@ fn successful_handoff_wire_emission_requires_lease_aware_decoding_after_owner_dr
     assert_eq!(alive.load(Ordering::SeqCst), 1);
     drop(cloned);
     assert_eq!(alive.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Clone, Default)]
+struct DisposalProbe {
+    lease: Weak<()>,
+    calls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+    payload_drops: Arc<AtomicUsize>,
+}
+impl DisposalProbe {
+    fn assert_disposed(&self, report: Option<bool>) {
+        assert_eq!(self.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(self.drops.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            self.payload_drops.load(Ordering::SeqCst),
+            usize::from(report.is_none())
+        );
+        assert!(self.lease.upgrade().is_none());
+    }
+}
+struct DisposalPayload(DisposalProbe);
+impl Drop for DisposalPayload {
+    fn drop(&mut self) {
+        assert!(self.0.lease.upgrade().is_some());
+        self.0.payload_drops.fetch_add(1, Ordering::SeqCst);
+        panic!("specialized disposer panic payload destructor");
+    }
+}
+struct SpecializedDisposal {
+    probe: DisposalProbe,
+    report: Option<bool>,
+    result: Option<Result<Step, Failure>>,
+}
+impl Process for SpecializedDisposal {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, Failure> {
+        self.result.take().unwrap()
+    }
+    fn dispose_catching(self: Box<Self>) -> bool {
+        assert!(self.probe.lease.upgrade().is_some());
+        self.probe.calls.fetch_add(1, Ordering::SeqCst);
+        match self.report {
+            Some(report) => report,
+            None => std::panic::panic_any(DisposalPayload(self.probe.clone())),
+        }
+    }
+}
+impl Drop for SpecializedDisposal {
+    fn drop(&mut self) {
+        assert!(self.probe.lease.upgrade().is_some());
+        self.probe.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn specialized_process_disposal_preserves_reports_and_contains_panics_on_every_teardown_path() {
+    use std::error::Error;
+
+    struct Guard {
+        _probe: DropProbe,
+        panic: bool,
+    }
+    impl ProcessExecutionGuard for Guard {
+        fn enter(&self) -> Result<Box<dyn std::any::Any>, Failure> {
+            Ok(Box::new(()))
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            assert!(!self.panic, "rejected guard object cleanup");
+        }
+    }
+    struct PanicInput {
+        _probe: DropProbe,
+    }
+    impl Drop for PanicInput {
+        fn drop(&mut self) {
+            panic!("input cleanup triggers process disposal");
+        }
+    }
+
+    for report in [Some(false), Some(true), None] {
+        for path in [
+            "complete",
+            "step-failure",
+            "context-failure",
+            "reject",
+            "cancel",
+            "publication-failed",
+            "finish-idle",
+            "drop-handoff",
+            "drop-job",
+            "drop-completion",
+            "unwinding-drop",
+        ] {
+            let lease = Arc::new(());
+            let probe = DisposalProbe {
+                lease: Arc::downgrade(&lease),
+                ..Default::default()
+            };
+            let primary =
+                Failure::external("original step cause", std::io::Error::other("original"));
+            let address = primary
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap() as *const _;
+            let result = match path {
+                "step-failure" => Err(primary),
+                "context-failure" | "finish-idle" => Ok(Step::Complete),
+                "publication-failed" => {
+                    Ok(Step::Emit(ProcessEmission::new("out", Value::local(()))))
+                }
+                _ => Ok(Step::Finished),
+            };
+            let mut handoff = ProcessHandoff::new(Box::new(SpecializedDisposal {
+                probe: probe.clone(),
+                report,
+                result: Some(result),
+            }))
+            .with_lease(lease);
+            let input_drops = Arc::new(AtomicUsize::new(0));
+            let guard_drops = Arc::new(AtomicUsize::new(0));
+            let input = if path == "context-failure" {
+                Value::local(PanicInput {
+                    _probe: DropProbe(input_drops.clone()),
+                })
+            } else {
+                Value::local(DropProbe(input_drops.clone()))
+            };
+            handoff
+                .admit(ProcessContext::new([("in".into(), input)].into(), vec![]))
+                .unwrap();
+            let has_job = !matches!(path, "cancel" | "drop-handoff" | "unwinding-drop");
+            let job = has_job.then(|| {
+                handoff.next_job().unwrap().with_guard(Arc::new(Guard {
+                    _probe: DropProbe(guard_drops.clone()),
+                    panic: path == "reject",
+                }))
+            });
+            let panicked = report.unwrap_or(true);
+            match path {
+                "complete" | "step-failure" | "context-failure" => {
+                    let job = job.unwrap();
+                    let ticket = job.ticket();
+                    let result = handoff.complete(job.run()).unwrap();
+                    if path == "complete" && !panicked {
+                        assert!(matches!(result, Ok(Step::Finished)));
+                        assert_eq!(handoff.state(), HandoffState::Finished);
+                    } else {
+                        let failure = result.unwrap_err();
+                        assert_eq!(handoff.state(), HandoffState::Failed);
+                        assert_eq!(failure.context().ticket, Some(ticket));
+                        let cleanup = if path == "step-failure" {
+                            assert_eq!(
+                                failure
+                                    .source()
+                                    .unwrap()
+                                    .downcast_ref::<std::io::Error>()
+                                    .unwrap() as *const _,
+                                address
+                            );
+                            assert_eq!(failure.cleanup().len(), usize::from(panicked));
+                            failure.cleanup().first()
+                        } else {
+                            Some(&failure)
+                        };
+                        if let Some(cleanup) = cleanup {
+                            assert_eq!(
+                                cleanup
+                                    .source()
+                                    .unwrap()
+                                    .downcast_ref::<ProcessCleanupError>(),
+                                Some(&ProcessCleanupError::OwnedState)
+                            );
+                            assert_eq!(cleanup.context().ticket, Some(ticket));
+                            assert_eq!(
+                                cleanup.context().phase,
+                                Some(phenix_graph::CallbackPhase::Cleanup)
+                            );
+                        }
+                        assert!(probe.lease.upgrade().is_some());
+                    }
+                    assert!(handoff.outstanding().is_none());
+                }
+                "reject" => {
+                    let failure = handoff.reject(job.unwrap()).unwrap().unwrap_err();
+                    assert_eq!(handoff.state(), HandoffState::Failed);
+                    assert!(handoff.outstanding().is_none());
+                    assert_eq!(
+                        failure
+                            .source()
+                            .unwrap()
+                            .downcast_ref::<ProcessCleanupError>(),
+                        Some(&ProcessCleanupError::GuardObject { guard_index: 0 })
+                    );
+                    assert_eq!(failure.cleanup().len(), usize::from(panicked));
+                    if panicked {
+                        assert_eq!(
+                            failure.cleanup()[0]
+                                .source()
+                                .unwrap()
+                                .downcast_ref::<ProcessCleanupError>(),
+                            Some(&ProcessCleanupError::OwnedState)
+                        );
+                    }
+                }
+                "cancel" => {
+                    assert_eq!(
+                        handoff.cancel(),
+                        if panicked {
+                            Err(HandoffCancelError::DestructorPanicked { ticket: None })
+                        } else {
+                            Ok(None)
+                        }
+                    );
+                    assert_eq!(handoff.state(), HandoffState::Cancelled);
+                    assert_eq!(handoff.cancel(), Ok(None));
+                }
+                "publication-failed" | "finish-idle" => {
+                    handoff.complete(job.unwrap().run()).unwrap().unwrap();
+                    let result = if path == "publication-failed" {
+                        handoff.publication_failed()
+                    } else {
+                        handoff.finish_idle()
+                    };
+                    assert_eq!(
+                        result,
+                        if panicked {
+                            Err(HandoffError::DestructorPanicked)
+                        } else {
+                            Ok(())
+                        }
+                    );
+                }
+                "drop-handoff" => drop(handoff),
+                "drop-job" => {
+                    drop(handoff);
+                    drop(job);
+                }
+                "drop-completion" => {
+                    let completion = job.unwrap().run();
+                    handoff.cancel().unwrap();
+                    drop(handoff);
+                    drop(completion);
+                }
+                "unwinding-drop" => {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _handoff = handoff;
+                        panic!("original outer unwind");
+                    }));
+                    assert_eq!(
+                        result.unwrap_err().downcast_ref::<&str>(),
+                        Some(&"original outer unwind")
+                    );
+                }
+                _ => unreachable!(),
+            }
+            probe.assert_disposed(report);
+            assert_eq!(input_drops.load(Ordering::SeqCst), 1);
+            assert_eq!(guard_drops.load(Ordering::SeqCst), usize::from(has_job));
+        }
+    }
+}
+
+#[test]
+fn leased_process_disposal_contains_specializations_before_releasing_its_own_code_lease() {
+    use phenix_graph::{Interface, NetworkBuilder};
+
+    for report in [Some(false), Some(true), None] {
+        for managed in [false, true] {
+            let lease = Arc::new(());
+            let probe = DisposalProbe {
+                lease: Arc::downgrade(&lease),
+                ..Default::default()
+            };
+            let factory_probe = probe.clone();
+            let mut builder = NetworkBuilder::new();
+            builder
+                .node(
+                    "worker",
+                    Arc::new(Interface::new([], []).unwrap()),
+                    Arc::new(move || SpecializedDisposal {
+                        probe: factory_probe.clone(),
+                        report,
+                        result: Some(Ok(Step::Finished)),
+                    }),
+                )
+                .unwrap();
+            let compiled = builder
+                .build()
+                .unwrap()
+                .compile()
+                .unwrap()
+                .with_lease(lease);
+            let process = compiled.processes()[0].factory().spawn();
+            drop(compiled);
+            if managed {
+                assert_eq!(process.dispose_catching(), report.unwrap_or(true));
+            } else {
+                drop(process);
+            }
+            probe.assert_disposed(report);
+        }
+    }
 }

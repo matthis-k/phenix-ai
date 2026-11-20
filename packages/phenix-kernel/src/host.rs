@@ -4,15 +4,18 @@
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
 use crate::{
-    BuildOptions, CallbackError, Kernel, KernelLockScope, Key, ProducerEvent, ResolutionError,
-    StartError,
+    BuildOptions, CallbackError, DriverError, Kernel, KernelLockScope, Key, ProducerEvent,
+    ResolutionError, StartError, WakeHandle,
 };
 use phenix_graph::{
-    Value,
+    BoundDeclaration, CaptureHandle, IngressHandle, InputKey, OutputKey, SourceHandle, Value,
     component::DefinitionKey,
-    network::{CompiledNetwork, ComponentSnapshot, NetworkError, PhysicalDeclaration},
+    network::{CompiledNetwork, ComponentSnapshot, NetworkError},
     process::ProcessDispatcher,
-    runtime::{InjectionError, NetworkSession, RunReport},
+    runtime::{
+        InjectionError, NetworkSession, ProcessNotifier, RequestError, RequestId,
+        RequestInjectionError, RunReport,
+    },
 };
 use phenix_plugin::{Failure, PluginSet, StagedPlugin};
 use std::sync::Arc;
@@ -23,6 +26,7 @@ pub enum LifecycleError {
     Build(Box<ResolutionError>),
     Start(StartError),
     Binding(CallbackError),
+    Driver(DriverError),
     StaleCandidate,
     EpochExhausted,
     ReentrantDrain,
@@ -35,6 +39,7 @@ impl std::fmt::Display for LifecycleError {
             Self::Build(error) => write!(f, "generation build: {error}"),
             Self::Start(error) => write!(f, "producer start: {error}"),
             Self::Binding(error) => write!(f, "generation binding: {error}"),
+            Self::Driver(error) => write!(f, "generation wake registration: {error}"),
             Self::StaleCandidate => f.write_str("candidate belongs to another host or epoch"),
             Self::EpochExhausted => f.write_str("host epoch exhausted"),
             Self::ReentrantDrain => {
@@ -51,6 +56,7 @@ impl std::error::Error for LifecycleError {
             Self::Build(error) => Some(error.as_ref()),
             Self::Start(error) => Some(error),
             Self::Binding(error) => Some(error.as_ref()),
+            Self::Driver(error) => Some(error),
             _ => None,
         }
     }
@@ -58,7 +64,9 @@ impl std::error::Error for LifecycleError {
 
 /// An immutable generation identity with serialized producer access. No mutable
 /// kernel or producer access escapes. Explicit session calls remain valid after
-/// replacement, but retired producers can never admit another event.
+/// replacement. Publication waits for an admitted whole drain; self-retirement
+/// inside a callback rejects its late event. An admission that won the retirement
+/// boundary may finish, including its eager session callbacks.
 pub struct Generation {
     epoch: u64,
     kernel: Kernel,
@@ -82,7 +90,7 @@ impl Generation {
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
-    ) -> Result<R, String> {
+    ) -> Result<R, crate::SessionAccessError> {
         self.kernel.with_session(use_session)
     }
 
@@ -90,7 +98,129 @@ impl Generation {
         self.kernel.inject(input, value)
     }
 
-    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+    /// Ordinary typed admission through this generation's Kernel. Keys are names,
+    /// not generation authority; conversion precedes session acquisition.
+    pub fn inject_key<T: Send + Sync + 'static>(
+        &self,
+        key: phenix_graph::InputKey<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_key(key, payload)
+    }
+
+    pub fn inject_bound<T: Send + Sync + 'static>(
+        &self,
+        ingress: &IngressHandle<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_bound(ingress, payload)
+    }
+
+    pub fn inject_bound_value<T: 'static>(
+        &self,
+        ingress: &IngressHandle<T>,
+        value: Value,
+    ) -> Result<(), InjectionError> {
+        self.kernel.inject_bound_value(ingress, value)
+    }
+
+    pub fn inject_bound_request<T: Send + Sync + 'static>(
+        &self,
+        id: RequestId,
+        ingress: &IngressHandle<T>,
+        payload: T,
+    ) -> Result<(), RequestInjectionError> {
+        self.kernel.inject_bound_request(id, ingress, payload)
+    }
+
+    pub fn inject_bound_request_value<T: 'static>(
+        &self,
+        id: RequestId,
+        ingress: &IngressHandle<T>,
+        value: Value,
+    ) -> Result<(), RequestInjectionError> {
+        self.kernel.inject_bound_request_value(id, ingress, value)
+    }
+
+    pub fn begin_bound_request<'a>(
+        &self,
+        exact_output: impl Into<Option<&'a CaptureHandle>>,
+    ) -> Result<Result<RequestId, RequestError>, crate::SessionAccessError> {
+        self.kernel.begin_bound_request(exact_output)
+    }
+
+    pub fn close_bound_input<T>(
+        &self,
+        ingress: &IngressHandle<T>,
+    ) -> Result<Result<(), phenix_graph::connection::ConnectionError>, crate::SessionAccessError>
+    {
+        self.kernel.close_bound_input(ingress)
+    }
+
+    pub fn take_bound_output(
+        &self,
+        capture: &CaptureHandle,
+    ) -> Result<
+        Result<Option<phenix_graph::connection::Packet>, phenix_graph::connection::ConnectionError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.take_bound_output(capture)
+    }
+
+    pub fn take_bound_request_output(
+        &self,
+        id: RequestId,
+        capture: &CaptureHandle,
+    ) -> Result<
+        Result<Option<phenix_graph::connection::Packet>, RequestError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.take_bound_request_output(id, capture)
+    }
+
+    pub fn validate_bound_capture(
+        &self,
+        id: RequestId,
+        capture: &CaptureHandle,
+        packet: &phenix_graph::connection::Packet,
+    ) -> Result<Result<(), RequestError>, crate::SessionAccessError> {
+        self.kernel.validate_bound_capture(id, capture, packet)
+    }
+
+    pub fn bound_output_closed(
+        &self,
+        capture: &CaptureHandle,
+    ) -> Result<Result<bool, phenix_graph::connection::ConnectionError>, crate::SessionAccessError>
+    {
+        self.kernel.bound_output_closed(capture)
+    }
+
+    pub fn start_bound_request_source(
+        &self,
+        id: RequestId,
+        source: &SourceHandle,
+    ) -> Result<Result<(), RequestError>, crate::SessionAccessError> {
+        self.kernel.start_bound_request_source(id, source)
+    }
+
+    pub fn bound_wake_handle(
+        &self,
+        declaration: &BoundDeclaration,
+    ) -> Result<
+        Result<Option<phenix_graph::runtime::WakeHandle>, NetworkError>,
+        crate::SessionAccessError,
+    > {
+        self.kernel.bound_wake_handle(declaration)
+    }
+
+    pub fn bound_process_notifier(
+        &self,
+        declaration: &BoundDeclaration,
+    ) -> Result<Result<Option<ProcessNotifier>, NetworkError>, crate::SessionAccessError> {
+        self.kernel.bound_process_notifier(declaration)
+    }
+
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, crate::SessionAccessError> {
         self.kernel.run_steps(budget)
     }
 
@@ -130,32 +260,49 @@ pub struct Binding<'a> {
 }
 
 impl Binding<'_> {
+    /// Final-composition authority only; no executable owner escapes this view.
+    pub fn declaration(&self, path: &str) -> Result<BoundDeclaration, NetworkError> {
+        self.kernel.compiled().declaration(path)
+    }
+
+    pub fn bind_definition(&self, key: DefinitionKey) -> Result<BoundDeclaration, NetworkError> {
+        self.kernel.compiled().bind_definition(key)
+    }
+
+    pub fn declarations(&self, key: DefinitionKey) -> Vec<BoundDeclaration> {
+        self.kernel.compiled().declarations(key)
+    }
+
+    pub fn bind_ingress<T: 'static>(
+        &self,
+        name: &str,
+        key: InputKey<T>,
+    ) -> Result<IngressHandle<T>, NetworkError> {
+        self.kernel.compiled().bind_ingress(name, key)
+    }
+
+    pub fn bind_capture<T: 'static>(
+        &self,
+        name: &str,
+        key: OutputKey<T>,
+    ) -> Result<CaptureHandle, NetworkError> {
+        self.kernel.compiled().bind_capture(name, key)
+    }
+
+    pub fn capture(&self, name: &str) -> Result<CaptureHandle, NetworkError> {
+        self.kernel.compiled().capture(name)
+    }
+
+    pub fn source(&self, declaration: &BoundDeclaration) -> Result<SourceHandle, NetworkError> {
+        self.kernel.compiled().source(declaration)
+    }
+
     pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
         self.kernel.export(key)
     }
 
     pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
         self.kernel.compiled().inspect(path)
-    }
-
-    pub fn lookup_definition(
-        &self,
-        key: DefinitionKey,
-    ) -> Result<PhysicalDeclaration, NetworkError> {
-        self.kernel.compiled().lookup_definition(key)
-    }
-
-    pub fn input_targets(&self, name: &str) -> Option<&[(usize, String)]> {
-        self.kernel.compiled().inputs().get(name).map(Vec::as_slice)
-    }
-
-    /// Inspect the exact compiled capture source without exposing session admission.
-    pub fn output_source(&self, output: &str) -> Option<(usize, &str)> {
-        self.kernel
-            .compiled()
-            .outputs()
-            .get(output)
-            .map(|(index, port)| (*index, port.as_str()))
     }
 }
 
@@ -167,6 +314,7 @@ pub struct KernelHost {
     epoch: u64,
     plugins: PluginSet,
     active: Option<Arc<Generation>>,
+    wake: Option<WakeHandle>,
 }
 
 impl KernelHost {
@@ -176,7 +324,16 @@ impl KernelHost {
             epoch: 0,
             plugins,
             active: None,
+            wake: None,
         }
+    }
+
+    /// Opt in to source and publication hints for an application-owned reactor.
+    /// This does not install a native session notifier or drive a candidate.
+    pub fn with_wake(plugins: PluginSet, wake: WakeHandle) -> Self {
+        let mut host = Self::new(plugins);
+        host.wake = Some(wake);
+        host
     }
 
     /// Shared access permits staging, never committing the host's inventory.
@@ -213,7 +370,14 @@ impl KernelHost {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             bind(&Binding { kernel: &kernel })
         }))
-        .unwrap_or_else(|_| Err("generation binding panicked".into()))
+        .unwrap_or_else(|payload| {
+            Err(kernel
+                .lease_failure(phenix_graph::process::callback_panicked(
+                    phenix_graph::CallbackPhase::GenerationBind,
+                    payload,
+                ))
+                .into())
+        })
         .map_err(|cause| {
             LifecycleError::Binding(phenix_plugin::lease_callback_error(
                 cause,
@@ -221,6 +385,17 @@ impl KernelHost {
             ))
         })?;
         kernel.start().map_err(LifecycleError::Start)?;
+        if let Some(wake) = &self.wake {
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
+            kernel
+                .register_producer_wakers(wake)
+                .map_err(LifecycleError::Driver)?;
+            if wake.is_shutdown() {
+                return Err(LifecycleError::Driver(DriverError::WakeShutdown));
+            }
+        }
         Ok(Candidate {
             host: self.identity.clone(),
             expected_epoch: self.epoch,
@@ -230,8 +405,9 @@ impl KernelHost {
     }
 
     /// After validation, commit and pointer replacement have no fallible step.
-    /// Retirement waits only for producer drains, never explicit session work or queries.
-    /// Producer destructors run after the transition.
+    /// Retirement waits for an admitted whole producer drain, but never for
+    /// explicit session work. No new drain can poll a retired generation.
+    /// Producer destructors run after the transition and outside the state lock.
     pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
         if !Arc::ptr_eq(&self.identity, &candidate.host) || self.epoch != candidate.expected_epoch {
             return Err(LifecycleError::StaleCandidate);
@@ -276,6 +452,9 @@ impl KernelHost {
         let previous = self.active.replace(candidate.generation.clone());
         drop(drain);
         drop(drain_scope);
+        if let Some(wake) = &self.wake {
+            wake.wake();
+        }
         if let Some(generation) = &retiring {
             generation.kernel.notify_driver_retirement();
         }
@@ -346,12 +525,8 @@ mod tests {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             self.0.fetch_add(1, Ordering::SeqCst);
             let calls = self.0.clone();
-            into.add(Contribution {
-                id: "source".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+            Contribution::new("source", NetworkPatch::new([]))
+                .prepare(move |_| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     let calls = calls.clone();
                     let mut artifacts = CandidateArtifacts::default();
@@ -360,15 +535,15 @@ mod tests {
                         Ok(Box::new(Source))
                     })?;
                     Ok(artifacts)
-                })),
-            })
+                })
+                .register(into)
         }
     }
 
     #[test]
     fn host_drop_during_producer_callbacks_defers_retirement_and_destructors() {
         use std::cell::RefCell;
-        use std::sync::{Mutex, Weak};
+        use std::sync::Weak;
 
         thread_local! {
             static OWNER: RefCell<Option<KernelHost>> = const { RefCell::new(None) };
@@ -478,8 +653,9 @@ mod tests {
                             std::num::NonZeroUsize::new(1).unwrap(),
                         )
                         .unwrap();
-                    kernel.session =
-                        Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
+                    kernel.session = crate::ExclusiveSlot::new(
+                        builder.build().unwrap().compile().unwrap().start(),
+                    );
                 }
 
                 kernel.routes.insert(
@@ -566,7 +742,7 @@ mod tests {
 
     #[test]
     fn externally_retired_live_driver_exits_without_shutdown_and_preserves_session() {
-        use std::sync::{Mutex, mpsc};
+        use std::sync::mpsc;
         use std::time::Duration;
 
         struct Idle {
@@ -607,7 +783,8 @@ mod tests {
                     std::num::NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(Some(builder.build().unwrap().compile().unwrap().start()));
+            kernel.session =
+                crate::ExclusiveSlot::new(builder.build().unwrap().compile().unwrap().start());
             kernel.producers.get_mut().unwrap().producers.push((
                 Key::new("test", "idle"),
                 Some(Box::new(Idle { registered, polled })),
@@ -652,7 +829,7 @@ mod tests {
                 wake.shutdown();
             }
             driver.join().unwrap();
-            assert_eq!(outcome.unwrap(), Err(crate::DriverError::Retired));
+            assert!(matches!(outcome.unwrap(), Err(crate::DriverError::Retired)));
             assert!(generation.kernel.driver_wake.lock().unwrap().is_none());
             assert!(generation.kernel.producers.lock().unwrap().retired);
 

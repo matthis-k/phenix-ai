@@ -51,6 +51,8 @@ pub trait StoredInputs {
     type Owned: Clone + Send + Sync + 'static;
     fn owned(&self) -> Self::Owned;
     fn sources(inputs: &Self::Owned) -> Vec<ReadSource>;
+    /// Tuple implementations require exactly one entry per input and reject a
+    /// cardinality mismatch before invoking any cell decoder.
     fn decode(
         inputs: &Self::Owned,
         entries: &[SnapshotEntry],
@@ -99,7 +101,13 @@ macro_rules! tuples {
             type Owned = ($($T::Owned,)+);
             fn owned(&self) -> Self::Owned { ($(self.$i.owned(),)+) }
             fn sources(v: &Self::Owned) -> Vec<ReadSource> { vec![$($T::source(&v.$i)),+] }
-            fn decode(v: &Self::Owned, entries: &[SnapshotEntry]) -> phenix_storage::Result<Self::Values> { Ok(($($T::decode(&v.$i, &entries[$i])?,)+)) }
+            fn decode(v: &Self::Owned, entries: &[SnapshotEntry]) -> phenix_storage::Result<Self::Values> {
+                const ARITY: usize = [$(stringify!($T)),+].len();
+                if entries.len() != ARITY {
+                    return Err(phenix_storage::Error::SnapshotEntryMismatch);
+                }
+                Ok(($($T::decode(&v.$i, &entries[$i])?,)+))
+            }
         }
         impl<F, O, $($T),+> TupleFunction<($($T,)+), O> for F
         where F: Fn($($T),+) -> O + Send + Sync + 'static {
@@ -114,10 +122,16 @@ macro_rules! tuples {
                 $(self.$i.validate(graph)?;)+
                 let definition = source::function(
                     [$(PortDef::local::<$T>(stringify!($i))),+], PortDef::local::<O>("value"),
-                    move |ctx| Ok(Value::local(function($(
-                        ctx.take(stringify!($i)).ok_or("missing input")?
-                            .borrow::<$T>().ok_or("wrong input type")?.clone()
-                    ),+))),
+                    move |ctx| {
+                        let mut result = Value::local(function($(
+                            ctx.input(stringify!($i)).ok_or_else(|| source::missing_input(stringify!($i)))?
+                                .borrow::<$T>().ok_or_else(|| phenix_graph::ValueError::LocalType {
+                                    expected: std::any::type_name::<$T>(), actual: ctx.input(stringify!($i)).expect("checked input").identity(),
+                                }.failure())?.clone()
+                        ),+));
+                        for (_, value) in ctx.inputs() { result.retain_leases_from(value); }
+                        Ok(result)
+                    },
                 )?;
                 let component = graph.add(name, definition)?;
                 $(graph.connect(self.$i.output(), component.input::<$T>(stringify!($i))?, capacity())?;)+

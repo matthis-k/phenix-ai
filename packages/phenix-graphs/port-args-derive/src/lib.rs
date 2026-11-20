@@ -189,8 +189,8 @@ fn derive_ports(input: DeriveInput) -> syn::Result<Tokens> {
                 fn map_inputs(
                     context: &mut ::phenix_graph::ProcessContext,
                     prefix: &str,
-                    finish: impl FnOnce(&mut ::phenix_graph::ProcessContext, Self) -> ::std::result::Result<::phenix_graph::Value, ::std::string::String>,
-                ) -> ::std::result::Result<::phenix_graph::Value, ::std::string::String> {
+                    finish: impl FnOnce(&mut ::phenix_graph::ProcessContext, Self) -> ::std::result::Result<::phenix_graph::Value, ::phenix_graph::Failure>,
+                ) -> ::std::result::Result<::phenix_graph::Value, ::phenix_graph::Failure> {
                     #assembly
                 }
             }

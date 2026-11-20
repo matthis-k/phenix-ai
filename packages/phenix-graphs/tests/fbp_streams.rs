@@ -1,8 +1,12 @@
 use phenix_graph::{
     Value,
+    correlation::{CorrelationBounds, bounded as bounded_correlation},
     interface::{Interface, PortDef},
     network::{CompiledNetwork, NetworkBuilder},
-    process::{Process, ProcessContext, ProcessEmission, Step},
+    process::{
+        ActivationJob, DispatchResult, Process, ProcessContext, ProcessDispatcher, ProcessEmission,
+        Step,
+    },
     runtime::{
         NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState,
     },
@@ -10,9 +14,10 @@ use phenix_graph::{
 use std::{
     num::NonZeroUsize,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 fn one() -> NonZeroUsize {
@@ -24,7 +29,7 @@ struct Counter {
     effects: Arc<AtomicUsize>,
 }
 impl Process for Counter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -102,6 +107,7 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let before_query = calls.load(Ordering::SeqCst);
     // Startup has no input heads, so the custom policy need not be invoked.
     assert_eq!(session.state(), SessionState::Quiescent);
+    assert_eq!(session.input_waits().len(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), before_query);
     assert_eq!(effects.load(Ordering::SeqCst), 0);
 
@@ -111,12 +117,14 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let snapshot: &NetworkSession = &session;
     for _ in 0..4 {
         assert_eq!(snapshot.state(), SessionState::Waiting);
+        assert!(snapshot.input_waits().is_empty());
     }
     assert_eq!(calls.load(Ordering::SeqCst), after_admission);
 
     allowed.store(true, Ordering::SeqCst);
     // A pure observation does not drive a newly enabled readiness policy.
     assert_eq!(snapshot.state(), SessionState::Waiting);
+    assert!(snapshot.input_waits().is_empty());
     assert_eq!(calls.load(Ordering::SeqCst), after_admission);
     assert!(session.run_until_idle(64).steps > 0);
     assert_eq!(
@@ -150,7 +158,13 @@ fn deferred_job_supervision_invalidates_ticket_without_reclaiming_owned_process(
     assert_eq!(session.state(), SessionState::Waiting);
     assert_eq!(session.supervise_deferred(deadline), overdue);
     assert_eq!(session.state(), SessionState::Failed);
-    assert!(session.failure().unwrap().contains("deferred job timeout"));
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("deferred job timeout")
+    );
     assert!(session.overdue_jobs(deadline).is_empty());
     let (reason, _returned) = session.complete_job(job.run()).unwrap_err();
     assert_eq!(reason, HandoffError::StaleCompletion);
@@ -287,7 +301,7 @@ struct Split {
     phase: usize,
 }
 impl Process for Split {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 0 {
             self.pending = cx.take("in").map(|v| v.get()).transpose()?;
             if self.pending.is_none() {
@@ -313,7 +327,7 @@ impl Process for Split {
 }
 struct Join;
 impl Process for Join {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let (Some(a), Some(b)) = (cx.take("a"), cx.take("b")) {
             assert_eq!(b.get::<i64>()?, a.get::<i64>()? * 2);
             Ok(Step::Complete)
@@ -394,7 +408,7 @@ struct Source {
     emitted: bool,
 }
 impl Process for Source {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             Ok(Step::Complete)
@@ -478,27 +492,35 @@ fn capture_aliases_are_one_atomic_fanout() {
 struct Waiter {
     phase: usize,
     total: Arc<AtomicUsize>,
+    wait_inputs: bool,
+    lane: Arc<Mutex<Option<usize>>>,
 }
 impl Process for Waiter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        *self.lane.lock().unwrap() = cx.correlation_lane();
         match self.phase {
             0 => {
                 cx.take("a").unwrap();
                 self.phase = 1;
-                Ok(Step::WaitInput("b".into()))
             }
             _ => {
                 if let Some(value) = cx.take("b") {
                     self.total
                         .fetch_add(value.get::<i64>()? as usize, Ordering::SeqCst);
-                    Ok(Step::WaitInput("b".into()))
                 } else if cx.is_closed("b") {
-                    Ok(Step::Finished)
+                    return Ok(Step::Finished);
                 } else {
-                    Err("resumed without data or EOS".into())
+                    return Err(phenix_graph::Failure::application_message(
+                        "resumed without data or EOS",
+                    ));
                 }
             }
         }
+        Ok(if self.wait_inputs {
+            Step::WaitInputs(Readiness::Any)
+        } else {
+            Step::WaitInput("b".into())
+        })
     }
 }
 #[test]
@@ -522,6 +544,8 @@ fn wait_input_resumes_same_activation_for_values_and_eos() {
             Arc::new(move || Waiter {
                 phase: 0,
                 total: shared.clone(),
+                wait_inputs: false,
+                lane: Arc::new(Mutex::new(None)),
             }),
         )
         .unwrap();
@@ -543,6 +567,186 @@ fn wait_input_resumes_same_activation_for_values_and_eos() {
     assert_ne!(s.run_until_idle(10).state, SessionState::Completed);
     s.close_input("a").unwrap();
     assert_eq!(s.state(), SessionState::Completed);
+}
+
+#[test]
+fn input_waits_follow_waiter_ownership_and_live_lane_registration() {
+    use phenix_graph::runtime::{QueueEndpoint, RequestQueuePolicy};
+
+    for (policy, wait_inputs) in [
+        (RequestQueuePolicy::SharedFifo, false),
+        (RequestQueuePolicy::SharedFifo, true),
+        (RequestQueuePolicy::BoundedLanes, false),
+        (RequestQueuePolicy::BoundedLanes, true),
+    ] {
+        let total = Arc::new(AtomicUsize::new(0));
+        let shared = total.clone();
+        let lane = Arc::new(Mutex::new(None));
+        let observed_lane = lane.clone();
+        let mut b = NetworkBuilder::new();
+        let p = b
+            .node(
+                "wait",
+                Arc::new(
+                    Interface::new(
+                        [
+                            PortDef::wire::<i64>("a").unwrap(),
+                            PortDef::wire::<i64>("b").unwrap(),
+                        ],
+                        [],
+                    )
+                    .unwrap(),
+                ),
+                Arc::new(move || Waiter {
+                    phase: 0,
+                    total: shared.clone(),
+                    wait_inputs,
+                    lane: observed_lane.clone(),
+                }),
+            )
+            .unwrap();
+        for port in ["a", "b"] {
+            b.expose_input(port, p.wire_input::<i64>(port).unwrap(), one())
+                .unwrap();
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut config = restarting_options();
+        config.max_requests = NonZeroUsize::new(2).unwrap();
+        config.request_queue_policy = policy;
+        config.readiness.insert(
+            "wait".into(),
+            Readiness::Custom(Arc::new(ReadinessCalls(
+                calls.clone(),
+                Arc::new(AtomicBool::new(true)),
+            ))),
+        );
+        let mut s = b
+            .build()
+            .unwrap()
+            .compile()
+            .unwrap()
+            .start_with_options(config);
+        let queues = |s: &NetworkSession| {
+            let before = calls.load(Ordering::SeqCst);
+            let waits = s.input_waits();
+            assert_eq!(calls.load(Ordering::SeqCst), before);
+            waits
+                .into_iter()
+                .map(|wait| {
+                    let QueueEndpoint::Input(port) = wait.producer else {
+                        panic!("expected ingress producer");
+                    };
+                    assert!(matches!(
+                        wait.consumer,
+                        QueueEndpoint::Process { index: 0, port: ref name } if name == &port
+                    ));
+                    assert_eq!(wait.occupancy, 0);
+                    assert_eq!(wait.capacity, one().get());
+                    (port, wait.queue)
+                })
+                .collect::<Vec<_>>()
+        };
+        let waited_ports = |entries: &[(String, usize)]| {
+            entries
+                .iter()
+                .filter(|(port, _)| wait_inputs || port == "b")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let canonical = queues(&s);
+        assert_eq!(
+            canonical
+                .iter()
+                .map(|(port, _)| port.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        let a = s.begin_request(None).unwrap();
+        let a_idle = queues(&s);
+        let a_queues = if policy == RequestQueuePolicy::BoundedLanes {
+            a_idle
+                .iter()
+                .filter(|entry| !canonical.contains(entry))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            canonical.clone()
+        };
+        let b = s.begin_request(None).unwrap();
+        let all_idle = queues(&s);
+        if policy == RequestQueuePolicy::BoundedLanes {
+            assert_eq!(a_queues.len(), 2);
+            // Idle diagnostics keep canonical, A, then B within each port.
+            assert_eq!(all_idle.len(), 6);
+            for (position, port) in ["a", "b"].into_iter().enumerate() {
+                assert_eq!(all_idle[position * 3], canonical[position]);
+                assert_eq!(all_idle[position * 3 + 1], a_queues[position]);
+                assert_eq!(all_idle[position * 3 + 2].0, port);
+            }
+        } else {
+            assert_eq!(all_idle, canonical);
+        }
+
+        s.inject_request(a, "a", Value::of(1_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), Some(0));
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.inject_request(b, "b", Value::of(99_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 0);
+        assert_eq!(s.request_work(a).unwrap().waiting_input, 1);
+        assert_eq!(total.load(Ordering::SeqCst), 0);
+        // Shared FIFO's occupied b queue is not an empty-queue dependency.
+        let expected = if policy == RequestQueuePolicy::SharedFifo {
+            waited_ports(&canonical)
+                .into_iter()
+                .filter(|(port, _)| port != "b")
+                .collect()
+        } else {
+            waited_ports(&a_queues)
+        };
+        assert_eq!(queues(&s), expected);
+        s.cancel_request(b).unwrap();
+        s.release_request(b).unwrap();
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.cancel_request(a).unwrap();
+        s.release_request(a).unwrap();
+        assert_eq!(queues(&s), canonical);
+
+        let reused = s.begin_request(None).unwrap();
+        assert_eq!(queues(&s), a_idle);
+        s.inject_request(reused, "a", Value::of(2_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), Some(0));
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.inject_request(reused, "b", Value::of(3_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(total.load(Ordering::SeqCst), 3);
+        assert_eq!(queues(&s), waited_ports(&a_queues));
+        s.cancel_request(reused).unwrap();
+        s.release_request(reused).unwrap();
+
+        let _a = s.begin_request(None).unwrap();
+        let b = s.begin_request(None).unwrap();
+        assert_eq!(queues(&s), all_idle);
+        s.inject("a", Value::of(4_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 1);
+        assert_eq!(*lane.lock().unwrap(), None);
+        assert_eq!(queues(&s), waited_ports(&canonical));
+        s.inject_request(b, "b", Value::of(99_i64)).unwrap();
+        assert_eq!(s.run_until_idle(10).steps, 0);
+        if policy == RequestQueuePolicy::SharedFifo {
+            assert_eq!(queues(&s), expected);
+        } else {
+            assert_eq!(queues(&s), waited_ports(&canonical));
+        }
+        assert_eq!(total.load(Ordering::SeqCst), 3);
+        if policy == RequestQueuePolicy::BoundedLanes {
+            s.inject("b", Value::of(5_i64)).unwrap();
+            assert_eq!(s.run_until_idle(10).steps, 1);
+            assert_eq!(total.load(Ordering::SeqCst), 8);
+            assert_eq!(queues(&s), waited_ports(&canonical));
+        }
+    }
 }
 
 #[test]
@@ -610,7 +814,7 @@ struct Inspect {
     seen: Arc<AtomicUsize>,
 }
 impl Process for Inspect {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert_eq!(cx.inputs().count(), self.expected);
         self.seen.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)
@@ -709,31 +913,84 @@ fn capture_and_step_metadata_use_actual_compiled_producer_origin() {
     assert_eq!(s.take_output("out").unwrap().unwrap().origin, Some(origin));
 }
 
-struct BadEmission;
+struct BadEmission {
+    output: &'static str,
+    value: Value,
+}
 impl Process for BadEmission {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
-        Ok(Step::Emit(ProcessEmission::new("out", Value::of(42_i64))))
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        Ok(Step::Emit(ProcessEmission::new(
+            self.output,
+            self.value.clone(),
+        )))
     }
 }
 #[test]
 fn wrong_emitted_schema_fails_even_with_no_output_consumers() {
-    let mut b = NetworkBuilder::new();
-    let p = b
-        .node(
-            "bad",
-            Arc::new(Interface::new([], [PortDef::local::<i64>("out")]).unwrap()),
-            Arc::new(|| BadEmission),
-        )
-        .unwrap();
-    b.start(&p).unwrap();
-    let mut s = b.build().unwrap().compile().unwrap().start();
-    assert_eq!(s.run_until_idle(10).state, SessionState::Failed);
-    assert!(s.failure().unwrap().contains("invalid emission"));
+    struct Undebuggable;
+    for (port, value) in [
+        (PortDef::local::<i64>("out"), Value::of(42_i64)),
+        (PortDef::local::<i64>("out"), Value::local(Undebuggable)),
+        (PortDef::wire::<i64>("out").unwrap(), Value::local(42_i64)),
+        (
+            PortDef::wire::<i64>("out").unwrap(),
+            Value::from_wire_parts(
+                <String as phenix_graph::ContractValue>::wire_schema(),
+                vec![0xff],
+            ),
+        ),
+    ] {
+        for output in ["out", "missing"] {
+            for discard in [false, true] {
+                let expected = format!("expected {:?}, actual {:?}", port.value, value.identity());
+                let emitted = value.clone();
+                let mut b = NetworkBuilder::new();
+                let p = b
+                    .node(
+                        "bad",
+                        Arc::new(Interface::new([], [port.clone()]).unwrap()),
+                        Arc::new(move || BadEmission {
+                            output,
+                            value: emitted.clone(),
+                        }),
+                    )
+                    .unwrap();
+                b.start(&p).unwrap();
+                let mut opts = options();
+                if discard {
+                    opts.discard_outputs.insert(("bad".into(), "out".into()));
+                }
+                let mut s = b
+                    .build()
+                    .unwrap()
+                    .compile()
+                    .unwrap()
+                    .start_with_options(opts);
+                let report = s.run_until_idle(10);
+                assert_eq!(report.state, SessionState::Failed);
+                assert_eq!(report.publications, 0);
+                let failure = s.failure().map(phenix_graph::Failure::summary).unwrap();
+                assert!(
+                    failure.contains(&format!(
+                        "invalid emission from process 0 (bad) output {output:?}"
+                    )),
+                    "{failure}"
+                );
+                if output == "missing" {
+                    assert!(failure.contains("unknown output"), "{failure}");
+                    assert!(!failure.contains("expected"), "{failure}");
+                } else {
+                    assert!(failure.contains("incompatible value identity"), "{failure}");
+                    assert!(failure.contains(&expected), "{failure}");
+                }
+            }
+        }
+    }
 }
 
 struct FairInput(Arc<std::sync::Mutex<Vec<String>>>);
 impl Process for FairInput {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let names: Vec<_> = cx.inputs().map(|(name, _)| name.to_owned()).collect();
         assert_eq!(names.len(), 1);
         self.0.lock().unwrap().extend(names);
@@ -782,7 +1039,7 @@ impl Drop for DropPayload {
 }
 struct Hold;
 impl Process for Hold {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Yield)
     }
 }
@@ -883,7 +1140,7 @@ struct CorrelatedJoin {
     emitted: bool,
 }
 impl Process for CorrelatedJoin {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -1074,7 +1331,7 @@ struct Duplicate {
     phase: usize,
 }
 impl Process for Duplicate {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 2 {
             self.phase = 0;
             return Ok(Step::Complete);
@@ -1248,7 +1505,7 @@ struct WakeSource {
     phase: usize,
 }
 impl Process for WakeSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 self.phase = 1;
@@ -1323,20 +1580,20 @@ fn request_source_wake_preserves_scope_and_activation_without_spinning() {
 
 struct ResourceUser;
 impl Process for ResourceUser {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        assert_eq!(cx.read::<i64, _>("value", |v| *v)?, 7);
-        assert!(cx.write::<i64, _>("value", |v| *v = 8).is_err());
-        assert!(cx.read::<i64, _>("secret", |v| *v).is_err());
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        assert_eq!(
+            *cx.resource::<i64>("value")
+                .map_err(|e| phenix_graph::Failure::external("resource access failed", e))?,
+            7
+        );
+        assert!(cx.resource::<Arc<AtomicUsize>>("value").is_err());
+        assert!(cx.resource::<i64>("secret").is_err());
         Ok(Step::Finished)
     }
 }
 #[test]
-fn resources_reference_existing_store_and_require_explicit_per_process_grants() {
-    use phenix_graph::{Store, process::ResourceGrant};
-    let mut store = Store::new();
-    store.insert("value", 7_i64);
-    store.insert("secret", 9_i64);
-    let store = Arc::new(store);
+fn resources_require_explicit_per_process_capabilities() {
+    use phenix_graph::{ResourceGrant, ValidatedResourceSet};
     let mut b = NetworkBuilder::new();
     let p = b
         .node(
@@ -1350,17 +1607,21 @@ fn resources_reference_existing_store_and_require_explicit_per_process_grants() 
     let mut opts = options();
     opts.resources.insert(
         "user".into(),
-        vec![ResourceGrant::read(store.clone(), "value")],
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("value", 7_i64)]).unwrap(),
     );
     assert_eq!(
         c.start_with_options(opts).run_until_idle(10).state,
         SessionState::Completed
     );
     assert_eq!(c.start().run_until_idle(10).state, SessionState::Failed);
-    let cx = ProcessContext::default()
-        .with_resources(vec![ResourceGrant::write(store.clone(), "value")]);
-    cx.write::<i64, _>("value", |v| *v = 10).unwrap();
-    assert_eq!(cx.read::<i64, _>("value", |v| *v).unwrap(), 10);
+    let state = Arc::new(AtomicUsize::new(7));
+    let cx = ProcessContext::default().with_resources(
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("value", state.clone())]).unwrap(),
+    );
+    cx.resource::<Arc<AtomicUsize>>("value")
+        .unwrap()
+        .store(10, Ordering::SeqCst);
+    assert_eq!(state.load(Ordering::SeqCst), 10);
 }
 
 struct NativeLease(Arc<AtomicUsize>);
@@ -1393,7 +1654,7 @@ impl Drop for NativeSource {
     }
 }
 impl Process for NativeSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             Ok(Step::Finished)
         } else {
@@ -1458,7 +1719,7 @@ impl Drop for EnteredGuard {
     }
 }
 impl phenix_graph::process::ProcessExecutionGuard for WorkerGuard {
-    fn enter(&self) -> Result<Box<dyn std::any::Any>, String> {
+    fn enter(&self) -> Result<Box<dyn std::any::Any>, phenix_graph::Failure> {
         assert!(!IN_NATIVE_GUARD.get());
         IN_NATIVE_GUARD.set(true);
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -1467,7 +1728,7 @@ impl phenix_graph::process::ProcessExecutionGuard for WorkerGuard {
 }
 struct Guarded;
 impl Process for Guarded {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(IN_NATIVE_GUARD.get());
         Ok(Step::Finished)
     }
@@ -1498,7 +1759,8 @@ fn dispatcher_and_execution_guard_run_on_actual_worker_and_return_same_handoff()
     b.start(&p).unwrap();
     let mut opts = options();
     opts.dispatcher = Arc::new(Delayed(pending.clone()));
-    opts.execution_guard = Some(Arc::new(WorkerGuard(enters.clone())));
+    opts.execution_guards
+        .push(Arc::new(WorkerGuard(enters.clone())));
     let mut s = b
         .build()
         .unwrap()
@@ -1527,12 +1789,156 @@ fn dispatcher_and_execution_guard_run_on_actual_worker_and_return_same_handoff()
     assert_eq!(s.state(), SessionState::Completed);
 }
 
+#[test]
+fn deferred_timeout_invalidates_late_completion_and_preserves_runner_ownership() {
+    struct Hold(Arc<Mutex<Option<ActivationJob>>>);
+    impl ProcessDispatcher for Hold {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            *self.0.lock().unwrap() = Some(job);
+            DispatchResult::Deferred
+        }
+    }
+
+    assert!(SessionOptions::default().deferred_timeout.is_none());
+    let held = Arc::new(Mutex::new(None));
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "worker",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session_options = options();
+    session_options.deferred_timeout = Some(Duration::ZERO);
+    session_options.dispatcher = Arc::new(Hold(held.clone()));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let request = session.begin_request(None).unwrap();
+    session
+        .inject_request(request, "input", Value::of(7_i64))
+        .unwrap();
+    session.close_request(request).unwrap();
+
+    assert_eq!(session.run_until_idle(1).state, SessionState::Failed);
+    assert_eq!(
+        session.request_status(request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Failed
+    );
+    assert!(
+        session
+            .request_failure(request)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
+            .unwrap()
+            .unwrap()
+            .contains("deferred job timeout")
+    );
+    let job = held.lock().unwrap().take().unwrap();
+    let ticket = job.ticket();
+    assert!(
+        session
+            .request_cancelled_jobs(request)
+            .unwrap()
+            .contains(&ticket)
+    );
+
+    let completion = job.run();
+    let Err((error, completion)) = session.complete_job(completion) else {
+        panic!("a timed-out job regained completion authority");
+    };
+    assert_eq!(error, phenix_graph::process::HandoffError::StaleCompletion);
+    drop(completion);
+}
+
+#[test]
+fn deferred_timeout_restarts_only_the_failed_request_and_rejects_its_late_worker() {
+    struct HoldSlow(Arc<Mutex<Option<ActivationJob>>>);
+    impl ProcessDispatcher for HoldSlow {
+        fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+            if job.metadata().unwrap().path == "slow" {
+                *self.0.lock().unwrap() = Some(job);
+                DispatchResult::Deferred
+            } else {
+                DispatchResult::Completed(job.run())
+            }
+        }
+    }
+
+    let held = Arc::new(Mutex::new(None));
+    let interface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let mut builder = NetworkBuilder::new();
+    let slow = builder
+        .node("slow", interface.clone(), Arc::new(|| Omit))
+        .unwrap();
+    let fast = builder.node("fast", interface, Arc::new(|| Omit)).unwrap();
+    builder
+        .expose_input("slow-input", slow.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("fast-input", fast.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session_options = options();
+    session_options.deferred_timeout = Some(Duration::ZERO);
+    session_options.request_failure_policy =
+        phenix_graph::runtime::RequestFailurePolicy::RestartAffectedProcess;
+    session_options.dispatcher = Arc::new(HoldSlow(held.clone()));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let slow_request = session.begin_request(None).unwrap();
+    let fast_request = session.begin_request(None).unwrap();
+    session
+        .inject_request(slow_request, "slow-input", Value::of(1_i64))
+        .unwrap();
+    session
+        .inject_request(fast_request, "fast-input", Value::of(2_i64))
+        .unwrap();
+    session.close_request(slow_request).unwrap();
+    session.close_request(fast_request).unwrap();
+
+    let report = session.run_until_idle(8);
+    assert_ne!(report.state, SessionState::Failed);
+    assert_eq!(
+        session.request_status(slow_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Failed
+    );
+    assert_eq!(
+        session.request_status(fast_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Settled { captures: 0 }
+    );
+
+    let job = held.lock().unwrap().take().unwrap();
+    let completion = job.run();
+    let Err((error, completion)) = session.complete_job(completion) else {
+        panic!("restarted request accepted the retired worker's completion");
+    };
+    assert_eq!(
+        error,
+        phenix_graph::process::HandoffError::ForeignCompletion
+    );
+    drop(completion);
+    assert_eq!(
+        session.request_status(fast_request).unwrap(),
+        phenix_graph::runtime::RequestStatus::Settled { captures: 0 }
+    );
+}
+
 struct Staged {
     phase: usize,
     total: Arc<AtomicUsize>,
 }
 impl Process for Staged {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 cx.take("start").unwrap();
@@ -1681,6 +2087,7 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("invalid readiness selection for missing")
     );
@@ -1688,7 +2095,7 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
 
 struct OptionalSink(Arc<AtomicUsize>);
 impl Process for OptionalSink {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(value) = cx.take("required") {
             assert!(cx.is_closed("optional"));
             self.0
@@ -1753,7 +2160,7 @@ struct ClosureJoin {
     emitted: bool,
 }
 impl Process for ClosureJoin {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -1830,10 +2237,16 @@ fn closure_finished_and_complete_report_undelivered_input_without_capture_rollba
         );
         assert!(
             s.failure()
+                .map(phenix_graph::Failure::summary)
                 .unwrap()
                 .contains(if finish { "abandoned" } else { "stranded" })
         );
-        assert!(s.failure().unwrap().contains("a=1"));
+        assert!(
+            s.failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains("a=1")
+        );
         assert_eq!(
             s.take_output("out")
                 .unwrap()
@@ -1867,7 +2280,7 @@ fn open_join_and_correlated_fifo_head_blocking_are_not_stranded_eos() {
     assert_eq!(s.run_until_idle(20).state, SessionState::Waiting);
     s.close_input("b").unwrap();
     assert_eq!(s.run_until_idle(20).state, SessionState::Waiting);
-    assert!(s.failure().is_none());
+    assert!(s.failure().map(phenix_graph::Failure::summary).is_none());
     assert_eq!(s.disposed_packets(), 0);
     let mut blocked = correlated_join();
     let a = blocked.begin_request(None).unwrap();
@@ -1880,12 +2293,17 @@ fn open_join_and_correlated_fifo_head_blocking_are_not_stranded_eos() {
     blocked.close_input("a").unwrap();
     blocked.close_input("b").unwrap();
     assert_eq!(blocked.run_until_idle(20).state, SessionState::Waiting);
-    assert!(blocked.failure().is_none());
+    assert!(
+        blocked
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
 }
 
 struct ObserveClosure(Arc<AtomicUsize>);
 impl Process for ObserveClosure {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.is_closed("opt"));
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)
@@ -1959,7 +2377,13 @@ fn unconnected_output_requires_explicit_physical_discard_permission() {
     assert_eq!(report.state, SessionState::Failed);
     assert_eq!(report.publications, 0);
     assert_eq!(report.discarded_emissions, 0);
-    assert!(rejected.failure().unwrap().contains("source.out"));
+    assert!(
+        rejected
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("source.out")
+    );
     let mut opts = options();
     opts.discard_outputs.insert(("source".into(), "out".into()));
     let mut allowed = compiled.start_with_options(opts);
@@ -1980,7 +2404,7 @@ struct DelayedOptional {
     value: i64,
 }
 impl Process for DelayedOptional {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.phase {
             0 => {
                 self.value = cx.take("in").unwrap().get()?;
@@ -2004,7 +2428,7 @@ impl Process for DelayedOptional {
 type OptionalValues = (i64, Option<i64>);
 struct ScopedOptional(Arc<std::sync::Mutex<Vec<OptionalValues>>>);
 impl Process for ScopedOptional {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let required = cx.take("required").unwrap().get::<i64>()?;
         let optional = cx.take("optional").map(|v| v.get::<i64>()).transpose()?;
         if optional.is_none() {
@@ -2013,6 +2437,33 @@ impl Process for ScopedOptional {
         }
         self.0.lock().unwrap().push((required, optional));
         Ok(Step::Complete)
+    }
+}
+struct ScopedOptionalPolicy(Arc<AtomicUsize>);
+impl phenix_graph::runtime::ReadinessPolicy for ScopedOptionalPolicy {
+    fn closure_ports(&self, _: usize) -> Vec<String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        vec!["optional".into()]
+    }
+
+    fn select(&self, snapshot: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+        let available_or_closed = |name: &str| {
+            snapshot
+                .heads
+                .iter()
+                .find(|head| head.port == name)
+                .is_some_and(|head| head.available || head.closed)
+        };
+        if snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "required" && head.available)
+            && available_or_closed("optional")
+        {
+            vec!["required".into(), "optional".into()]
+        } else {
+            vec![]
+        }
     }
 }
 #[test]
@@ -2079,12 +2530,10 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
     )
     .unwrap();
     let mut opts = options();
+    let closure_calls = Arc::new(AtomicUsize::new(0));
     opts.readiness.insert(
         "z_join".into(),
-        Readiness::Optional {
-            required: vec!["required".into()],
-            optional: vec!["optional".into()],
-        },
+        Readiness::Custom(Arc::new(ScopedOptionalPolicy(closure_calls.clone()))),
     );
     let mut s = b
         .build()
@@ -2117,21 +2566,938 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
         assert_eq!(s.state(), SessionState::Quiescent);
     }
     assert_eq!(*log.lock().unwrap(), vec![(0, None), (5, Some(5))]);
+    assert_eq!(closure_calls.load(Ordering::SeqCst), 2);
+}
+
+struct CorrelatedPair {
+    seen: Arc<std::sync::Mutex<Vec<(i64, i64)>>>,
+    emitted: bool,
+}
+impl Process for CorrelatedPair {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        if self.emitted {
+            self.emitted = false;
+            return Ok(Step::Complete);
+        }
+        let a = *context.take("a").unwrap().borrow::<i64>().ok_or_else(|| {
+            phenix_graph::Failure::application_message("wrong correlated a input type")
+        })?;
+        let b = match context.take("b") {
+            Some(value) => *value.borrow::<i64>().ok_or_else(|| {
+                phenix_graph::Failure::application_message("wrong correlated b input type")
+            })?,
+            None => {
+                assert!(context.is_request_closed("b"));
+                0
+            }
+        };
+        self.seen.lock().unwrap().push((a, b));
+        self.emitted = true;
+        Ok(Step::Emit(ProcessEmission::new("out", Value::local(a + b))))
+    }
+}
+
+struct CorrelatedOptionalReadiness;
+impl phenix_graph::runtime::ReadinessPolicy for CorrelatedOptionalReadiness {
+    fn closure_ports(&self, _: usize) -> Vec<String> {
+        vec!["b".into()]
+    }
+
+    fn select(&self, snapshot: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+        let a = snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "a" && head.available);
+        let b = snapshot
+            .heads
+            .iter()
+            .any(|head| head.port == "b" && (head.available || head.closed));
+        if a && b {
+            vec!["a".into(), "b".into()]
+        } else {
+            vec![]
+        }
+    }
+}
+
+#[test]
+fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let definition = Arc::new(
+        bounded_correlation(
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            CorrelationBounds {
+                max_live: NonZeroUsize::new(2).unwrap(),
+                distinct_scope_skew: one(),
+                ingress_capacity: NonZeroUsize::new(2).unwrap(),
+                lane_capacity: one(),
+            },
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder.add("join", definition).unwrap();
+    builder
+        .expose_input("a", join.input::<i64>("a").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("b", join.input::<i64>("b").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    let mut session = compiled.start_with_options(session_options);
+    let waiting = session.begin_request(Some("out")).unwrap();
+    let runnable = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(waiting, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(runnable).unwrap();
+
+    let mut runnable_output = None;
+    for _ in 0..32 {
+        let report = session.run_until_idle(1);
+        assert_ne!(
+            report.state,
+            SessionState::Failed,
+            "correlated request failed: {:?}",
+            session.failure().map(phenix_graph::Failure::summary)
+        );
+        if runnable_output.is_none() {
+            runnable_output = session.take_request_output(runnable, "out").unwrap();
+        }
+        if session.request_status(runnable).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = runnable_output.expect("runnable lane made bounded progress");
+    assert_eq!(packet.metadata().unwrap().request(), Some(runnable));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    session.release_request(runnable).unwrap();
+
+    session
+        .inject_request(waiting, "b", Value::local(1_i64))
+        .unwrap();
+    session.close_request(waiting).unwrap();
+    let mut waiting_output = None;
+    for _ in 0..32 {
+        let report = session.run_until_idle(1);
+        assert_ne!(
+            report.state,
+            SessionState::Failed,
+            "correlated request failed: {:?}",
+            session.failure().map(phenix_graph::Failure::summary)
+        );
+        if waiting_output.is_none() {
+            waiting_output = session.take_request_output(waiting, "out").unwrap();
+        }
+        if session.request_status(waiting).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = waiting_output.expect("completed lane made bounded progress");
+    assert_eq!(packet.metadata().unwrap().request(), Some(waiting));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&11));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1)]);
+    session.release_request(waiting).unwrap();
+
+    let optional = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(optional, "a", Value::local(5_i64))
+        .unwrap();
+    session.close_request(optional).unwrap();
+    let mut optional_output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if optional_output.is_none() {
+            optional_output = session.take_request_output(optional, "out").unwrap();
+        }
+        if session.request_status(optional).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = optional_output.expect("custom closure was preserved through the lane wrapper");
+    assert_eq!(packet.metadata().unwrap().request(), Some(optional));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&5));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1), (5, 0)]);
+
+    let mut overcommitted = options();
+    overcommitted.max_requests = NonZeroUsize::new(3).unwrap();
+    let failed = compiled.start_with_options(overcommitted);
+    assert_eq!(failed.state(), SessionState::Failed);
+    assert!(
+        failed
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("insufficient correlation bound")
+    );
+}
+
+#[test]
+fn bounded_request_lanes_demultiplex_crossed_join_arrivals_and_reuse_credits() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder
+        .node(
+            "join",
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input("a", join.input::<i64>("a").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_input("b", join.input::<i64>("b").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    session_options
+        .readiness
+        .insert("join".into(), Readiness::All);
+    let mut session = compiled.start_with_options(session_options);
+
+    let waiting = session.begin_request(Some("out")).unwrap();
+    let runnable = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(waiting, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(runnable, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(runnable).unwrap();
+
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(runnable, "out").unwrap();
+        }
+        if session.request_status(runnable).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("request lane bypassed the incomplete request's FIFO head");
+    assert_eq!(packet.metadata().unwrap().request(), Some(runnable));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    session.release_request(runnable).unwrap();
+
+    session
+        .inject_request(waiting, "b", Value::local(1_i64))
+        .unwrap();
+    session.close_request(waiting).unwrap();
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(waiting, "out").unwrap();
+        }
+        if session.request_status(waiting).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("the earlier request completed without losing its FIFO order");
+    assert_eq!(packet.metadata().unwrap().request(), Some(waiting));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&11));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2), (10, 1)]);
+    session.release_request(waiting).unwrap();
+
+    let reused = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(reused, "a", Value::local(6_i64))
+        .unwrap();
+    session
+        .inject_request(reused, "b", Value::local(3_i64))
+        .unwrap();
+    session.close_request(reused).unwrap();
+    session.run_until_idle(32);
+    let packet = session
+        .take_request_output(reused, "out")
+        .unwrap()
+        .expect("reused bounded lane retained no prior request packets");
+    assert_eq!(packet.metadata().unwrap().request(), Some(reused));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&9));
+    session.release_request(reused).unwrap();
+
+    let cancelled = session.begin_request(None).unwrap();
+    session
+        .inject_request(cancelled, "a", Value::local(99_i64))
+        .unwrap();
+    session.cancel_request(cancelled).unwrap();
+    session.release_request(cancelled).unwrap();
+
+    let after_cancel = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(after_cancel, "a", Value::local(4_i64))
+        .unwrap();
+    session
+        .inject_request(after_cancel, "b", Value::local(5_i64))
+        .unwrap();
+    session.close_request(after_cancel).unwrap();
+    session.run_until_idle(32);
+    let packet = session
+        .take_request_output(after_cancel, "out")
+        .unwrap()
+        .expect("cancelled lane contents did not leak into its replacement");
+    assert_eq!(packet.metadata().unwrap().request(), Some(after_cancel));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&9));
+}
+
+#[test]
+fn bounded_request_lanes_isolate_repeated_input_backlog_from_later_ready_request() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder
+        .node(
+            "join",
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "a",
+            join.input::<i64>("a").unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "b",
+            join.input::<i64>("b").unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    session_options
+        .readiness
+        .insert("join".into(), Readiness::All);
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let blocked = session.begin_request(None).unwrap();
+    let later = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(11_i64))
+        .unwrap();
+    session
+        .inject_request(later, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(later, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(later).unwrap();
+
+    let mut output = None;
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        if output.is_none() {
+            output = session.take_request_output(later, "out").unwrap();
+        }
+        if session.request_status(later).unwrap() == (RequestStatus::Settled { captures: 1 }) {
+            break;
+        }
+    }
+    let packet = output.expect("repeated packets in one request did not block another lane");
+    assert_eq!(packet.metadata().unwrap().request(), Some(later));
+    assert_eq!(packet.value().borrow::<i64>(), Some(&22));
+    assert_eq!(*seen.lock().unwrap(), [(20, 2)]);
+    assert_eq!(
+        session.request_status(blocked).unwrap(),
+        RequestStatus::Open
+    );
+}
+
+#[test]
+fn bounded_request_lanes_round_robin_ready_requests_at_a_shared_process() {
+    use phenix_graph::runtime::RequestQueuePolicy;
+
+    struct Record(Arc<std::sync::Mutex<Vec<(usize, i64)>>>);
+    impl Process for Record {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.0.lock().unwrap().push((
+                context.correlation_lane().unwrap(),
+                *value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?,
+            ));
+            Ok(Step::Complete)
+        }
+    }
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "record",
+            Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap()),
+            Arc::new(move || Record(factory_seen.clone())),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "input",
+            node.input::<i64>("in").unwrap(),
+            NonZeroUsize::new(3).unwrap(),
+        )
+        .unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let first = session.begin_request(None).unwrap();
+    let second = session.begin_request(None).unwrap();
+    for (request, values) in [(first, [10_i64, 11, 12]), (second, [20_i64, 21, 22])] {
+        for value in values {
+            session
+                .inject_request(request, "input", Value::local(value))
+                .unwrap();
+        }
+        session.close_request(request).unwrap();
+    }
+
+    session.run_until_idle(6);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(0, 10), (1, 20), (0, 11), (1, 21), (0, 12), (1, 22)]
+    );
+}
+
+#[test]
+fn bounded_request_capture_lanes_isolate_different_consumer_speeds() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    struct Echo(bool);
+    impl Process for Echo {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            if self.0 {
+                self.0 = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.0 = true;
+            Ok(Step::Emit(ProcessEmission::new("out", value)))
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "echo",
+            Arc::new(
+                Interface::new(
+                    [PortDef::local::<i64>("in")],
+                    [PortDef::local::<i64>("out")],
+                )
+                .unwrap(),
+            ),
+            Arc::new(|| Echo(false)),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("output", node.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.capture_capacity = one();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let slow_reader = session.begin_request(Some("output")).unwrap();
+    let fast_reader = session.begin_request(Some("output")).unwrap();
+    session
+        .inject_request(slow_reader, "input", Value::local(1_i64))
+        .unwrap();
+    session
+        .inject_request(fast_reader, "input", Value::local(2_i64))
+        .unwrap();
+    session.close_request(slow_reader).unwrap();
+    session.close_request(fast_reader).unwrap();
+    session.run_until_idle(32);
+
+    let fast = session
+        .take_request_output(fast_reader, "output")
+        .unwrap()
+        .expect("slow reader's lane did not occupy the fast reader's capture");
+    assert_eq!(fast.metadata().unwrap().request(), Some(fast_reader));
+    assert_eq!(fast.value().borrow::<i64>(), Some(&2));
+    assert_eq!(
+        session.request_status(fast_reader).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert_eq!(
+        session.request_status(slow_reader).unwrap(),
+        RequestStatus::Pending
+    );
+    let slow = session
+        .take_request_output(slow_reader, "output")
+        .unwrap()
+        .expect("slow reader retained its own bounded capture");
+    assert_eq!(slow.metadata().unwrap().request(), Some(slow_reader));
+    assert_eq!(slow.value().borrow::<i64>(), Some(&1));
+}
+
+#[test]
+fn bounded_request_lanes_route_internal_edges_without_crossing_payloads() {
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+
+    struct Add {
+        amount: i64,
+        emitted: bool,
+    }
+    impl Process for Add {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("in") else {
+                return Ok(Step::Finished);
+            };
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::local(
+                    *value
+                        .borrow::<i64>()
+                        .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?
+                        + self.amount,
+                ),
+            )))
+        }
+    }
+
+    let interface = || {
+        Arc::new(
+            Interface::new(
+                [PortDef::local::<i64>("in")],
+                [PortDef::local::<i64>("out")],
+            )
+            .unwrap(),
+        )
+    };
+    let mut builder = NetworkBuilder::new();
+    let first = builder
+        .node(
+            "first",
+            interface(),
+            Arc::new(|| Add {
+                amount: 1,
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    let second = builder
+        .node(
+            "second",
+            interface(),
+            Arc::new(|| Add {
+                amount: 10,
+                emitted: false,
+            }),
+        )
+        .unwrap();
+    builder
+        .connect(
+            first.output::<i64>("out").unwrap(),
+            second.input::<i64>("in").unwrap(),
+            one(),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", first.input::<i64>("in").unwrap(), one())
+        .unwrap();
+    builder
+        .expose_output("output", second.output::<i64>("out").unwrap())
+        .unwrap();
+    let mut session_options = options();
+    session_options.capture_capacity = one();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(session_options);
+    let first_request = session.begin_request(Some("output")).unwrap();
+    let second_request = session.begin_request(Some("output")).unwrap();
+    session
+        .inject_request(first_request, "input", Value::local(1_i64))
+        .unwrap();
+    session
+        .inject_request(second_request, "input", Value::local(2_i64))
+        .unwrap();
+    session.close_request(first_request).unwrap();
+    session.close_request(second_request).unwrap();
+
+    let mut outputs = Vec::new();
+    for _ in 0..32 {
+        session.run_until_idle(1);
+        for request in [first_request, second_request] {
+            if let Some(packet) = session.take_request_output(request, "output").unwrap() {
+                outputs.push((request, *packet.value().borrow::<i64>().unwrap()));
+            }
+        }
+        if session.request_status(first_request).unwrap()
+            == (RequestStatus::Settled { captures: 1 })
+            && session.request_status(second_request).unwrap()
+                == (RequestStatus::Settled { captures: 1 })
+        {
+            break;
+        }
+    }
+    outputs.sort_by_key(|(request, _)| *request);
+    assert_eq!(outputs, [(first_request, 12), (second_request, 13)]);
+}
+
+#[test]
+fn bounded_request_lanes_reject_packet_capacity_overflow_before_start() {
+    use phenix_graph::runtime::RequestQueuePolicy;
+
+    let compiled = counter(Arc::new(AtomicUsize::new(0)));
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(usize::MAX).unwrap();
+    session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let session = compiled.start_with_options(session_options);
+    assert_eq!(session.state(), SessionState::Failed);
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("request lane packet capacity overflows")
+    );
+}
+
+#[test]
+fn bounded_correlation_preserves_fifo_when_repeated_scope_packets_exceed_lane_credit() {
+    use phenix_graph::runtime::RequestStatus;
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let factory_seen = seen.clone();
+    let interface = Arc::new(
+        Interface::new(
+            [PortDef::local::<i64>("a"), PortDef::local::<i64>("b")],
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    let definition = Arc::new(
+        bounded_correlation(
+            interface,
+            Arc::new(move || CorrelatedPair {
+                seen: factory_seen.clone(),
+                emitted: false,
+            }),
+            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            CorrelationBounds {
+                max_live: NonZeroUsize::new(2).unwrap(),
+                distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
+                ingress_capacity: NonZeroUsize::new(4).unwrap(),
+                lane_capacity: one(),
+            },
+        )
+        .unwrap(),
+    );
+    let mut builder = NetworkBuilder::new();
+    let join = builder.add("join", definition).unwrap();
+    builder
+        .expose_input(
+            "a",
+            join.input::<i64>("a").unwrap(),
+            NonZeroUsize::new(4).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "b",
+            join.input::<i64>("b").unwrap(),
+            NonZeroUsize::new(4).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+    let mut session_options = options();
+    session_options.max_requests = NonZeroUsize::new(2).unwrap();
+    let mut session = compiled.start_with_options(session_options);
+    let blocked = session.begin_request(Some("out")).unwrap();
+    let later = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(10_i64))
+        .unwrap();
+    session
+        .inject_request(blocked, "a", Value::local(11_i64))
+        .unwrap();
+    session
+        .inject_request(later, "a", Value::local(20_i64))
+        .unwrap();
+    session
+        .inject_request(later, "b", Value::local(2_i64))
+        .unwrap();
+    session.close_request(later).unwrap();
+
+    assert_eq!(session.run_until_idle(64).state, SessionState::Waiting);
+    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(
+        session.request_status(blocked).unwrap(),
+        RequestStatus::Open
+    );
+    assert_eq!(
+        session.request_status(later).unwrap(),
+        RequestStatus::Pending
+    );
+    assert!(session.take_request_output(later, "out").unwrap().is_none());
+}
+
+#[test]
+fn bounded_correlation_rejects_skew_beyond_declared_ingress_credit() {
+    let interface = Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap());
+    let result = bounded_correlation(
+        interface,
+        Arc::new(|| Omit),
+        Readiness::All,
+        CorrelationBounds {
+            max_live: NonZeroUsize::new(2).unwrap(),
+            distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
+            ingress_capacity: one(),
+            lane_capacity: one(),
+        },
+    );
+    let Err(error) = result else {
+        panic!("overcommitted correlation bound was accepted");
+    };
+    assert!(matches!(
+        error,
+        phenix_graph::network::NetworkError::CorrelationBounds(
+            phenix_graph::correlation::InvalidCorrelationBounds {
+                distinct_scope_skew: 2,
+                ingress_capacity: 1,
+                ..
+            }
+        )
+    ));
+}
+
+#[test]
+fn bounded_correlation_validates_builtin_readiness_before_wrapping_it() {
+    let interface = Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap());
+    for policy in [
+        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::Optional {
+            required: vec!["missing".into()],
+            optional: vec![],
+        },
+        Readiness::Optional {
+            required: vec![],
+            optional: vec![],
+        },
+    ] {
+        let result = bounded_correlation(
+            interface.clone(),
+            Arc::new(|| Omit),
+            policy,
+            CorrelationBounds {
+                max_live: one(),
+                distinct_scope_skew: one(),
+                ingress_capacity: one(),
+                lane_capacity: one(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(phenix_graph::network::NetworkError::Readiness(_))
+        ));
+    }
 }
 
 struct Omit;
 impl Process for Omit {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         cx.take("in").unwrap();
         Ok(Step::Complete)
     }
 }
+#[test]
+fn panicking_request_closure_policy_rejects_admission_without_partial_scope() {
+    struct PanickingClosure;
+    impl phenix_graph::runtime::ReadinessPolicy for PanickingClosure {
+        fn closure_ports(&self, _: usize) -> Vec<String> {
+            panic!("closure policy panic")
+        }
+
+        fn select(&self, _: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "node",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut options = options();
+    options
+        .readiness
+        .insert("node".into(), Readiness::Custom(Arc::new(PanickingClosure)));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+
+    assert_eq!(
+        session.begin_request(None),
+        Err(phenix_graph::runtime::RequestError::ReadinessPolicyPanicked)
+    );
+}
+
+#[test]
+fn invalid_request_closure_ports_are_rejected_before_scope_admission() {
+    struct UnknownClosure;
+    impl phenix_graph::runtime::ReadinessPolicy for UnknownClosure {
+        fn closure_ports(&self, _: usize) -> Vec<String> {
+            vec!["missing".into()]
+        }
+
+        fn select(&self, _: &phenix_graph::runtime::ReadinessSnapshot) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    builder
+        .node(
+            "node",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| Omit),
+        )
+        .unwrap();
+    let mut options = options();
+    options
+        .readiness
+        .insert("node".into(), Readiness::Custom(Arc::new(UnknownClosure)));
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+
+    let Err(phenix_graph::runtime::RequestError::InvalidClosurePorts(details)) =
+        session.begin_request(None)
+    else {
+        panic!("unknown closure port was admitted");
+    };
+    assert_eq!(details.process, "node");
+    assert_eq!(details.ports, ["missing"]);
+}
+
 struct ClosureRelay {
     name: &'static str,
     log: Arc<std::sync::Mutex<Vec<&'static str>>>,
 }
 impl Process for ClosureRelay {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(cx.is_request_closed("opt"));
         assert!(!cx.is_eos("opt"));
         self.log.lock().unwrap().push(self.name);
@@ -2231,7 +3597,7 @@ struct ScopedStage {
     log: Arc<std::sync::Mutex<Vec<Option<i64>>>>,
 }
 impl Process for ScopedStage {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.phase == 0 {
             cx.take("start").unwrap();
             self.phase = 1;
@@ -2418,7 +3784,7 @@ fn optional_scope_cannot_settle_behind_another_requests_handed_job() {
 
 struct ObserveOptionalData(Arc<std::sync::Mutex<Vec<Option<i64>>>>);
 impl Process for ObserveOptionalData {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let value = cx.take("opt").map(|v| v.get::<i64>()).transpose()?;
         self.0.lock().unwrap().push(value);
         Ok(Step::Complete)
@@ -2687,7 +4053,7 @@ struct FaultyCounter {
     emitted: bool,
 }
 impl Process for FaultyCounter {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -2698,7 +4064,21 @@ impl Process for FaultyCounter {
             panic!("request process panicked after mutating state");
         }
         if value == -2 {
-            return Err("request process rejected input after mutation".into());
+            return Err(phenix_graph::Failure::application_message(
+                "request process rejected input after mutation",
+            ));
+        }
+        if value == -3 {
+            return Ok(Step::Emit(ProcessEmission::new(
+                "out",
+                Value::local(self.sum),
+            )));
+        }
+        if value == -4 {
+            return Ok(Step::Emit(ProcessEmission::new(
+                "missing",
+                Value::of(self.sum),
+            )));
         }
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new("out", Value::of(self.sum))))
@@ -2706,7 +4086,7 @@ impl Process for FaultyCounter {
 }
 #[test]
 fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_instance() {
-    use phenix_graph::runtime::RequestStatus;
+    use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
     let spawns = Arc::new(AtomicUsize::new(0));
     let shared = spawns.clone();
     let mut b = NetworkBuilder::new();
@@ -2751,63 +4131,92 @@ fn tagged_panic_and_error_recover_with_fresh_state_without_resetting_unrelated_i
         b.expose_output(name, p.wire_output::<i64>("out").unwrap())
             .unwrap();
     }
-    let mut opts = restarting_options();
-    opts.capture_capacity = NonZeroUsize::new(4).unwrap();
-    let mut s = b
-        .build()
-        .unwrap()
-        .compile()
-        .unwrap()
-        .start_with_options(opts);
-    s.inject("stable", Value::of(10_i64)).unwrap();
-    s.run_until_idle(30);
-    s.take_output("stable").unwrap().unwrap();
-    for (iteration, value) in [-1_i64, -2].into_iter().enumerate() {
-        let failed = s.begin_request(Some("faulty")).unwrap();
-        let good = s.begin_request(Some("stable")).unwrap();
-        s.inject_request(failed, "faulty", Value::of(value))
-            .unwrap();
-        s.inject_request(good, "stable", Value::of(3_i64)).unwrap();
-        s.close_request(failed).unwrap();
-        s.close_request(good).unwrap();
-        assert_ne!(s.run_until_idle(50).state, SessionState::Failed);
-        assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
-        assert!(
-            s.request_failure(failed)
-                .unwrap()
-                .unwrap()
-                .contains(if value == -1 { "panicked" } else { "rejected" })
-        );
-        assert_eq!(s.request_disposal(failed).unwrap().activations, 1);
-        assert_eq!(spawns.load(Ordering::SeqCst), 3 + iteration);
-        assert_eq!(
-            s.take_request_output(good, "stable")
-                .unwrap()
-                .unwrap()
-                .value()
-                .get::<i64>()
-                .unwrap(),
-            13 + iteration as i64 * 3
-        );
-        let next = s.begin_request(Some("faulty")).unwrap();
-        s.inject_request(next, "faulty", Value::of(7_i64)).unwrap();
-        s.close_request(next).unwrap();
+    let compiled = b.build().unwrap().compile().unwrap();
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        spawns.store(0, Ordering::SeqCst);
+        let mut opts = restarting_options();
+        opts.capture_capacity = NonZeroUsize::new(4).unwrap();
+        opts.request_queue_policy = policy;
+        let mut s = compiled.start_with_options(opts);
+        s.inject("stable", Value::of(10_i64)).unwrap();
         s.run_until_idle(30);
-        assert_eq!(
-            s.take_request_output(next, "faulty")
-                .unwrap()
-                .unwrap()
-                .value()
-                .get::<i64>()
-                .unwrap(),
-            7
-        );
-        for id in [failed, good, next] {
-            s.release_request(id).unwrap();
+        s.take_output("stable").unwrap().unwrap();
+        for (iteration, value) in [-1_i64, -2, -3, -4].into_iter().enumerate() {
+            let failed = s.begin_request(Some("faulty")).unwrap();
+            let good = s.begin_request(Some("stable")).unwrap();
+            s.inject_request(failed, "faulty", Value::of(value))
+                .unwrap();
+            s.inject_request(good, "stable", Value::of(3_i64)).unwrap();
+            s.close_request(failed).unwrap();
+            s.close_request(good).unwrap();
+            let report = s.run_until_idle(50);
+            assert_ne!(report.state, SessionState::Failed);
+            assert_eq!(report.publications, 1);
+            assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
+            assert!(
+                s.request_failure(failed)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap()
+                    .unwrap()
+                    .contains(match value {
+                        -1 => "panicked",
+                        -2 => "rejected",
+                        -3 => "incompatible value identity",
+                        _ => "unknown output",
+                    })
+            );
+            if value <= -3 {
+                let failure = s
+                    .request_failure(failed)
+                    .map(|failure| failure.map(phenix_graph::Failure::summary))
+                    .unwrap()
+                    .unwrap();
+                assert!(failure.contains("process 0 (faulty)"), "{failure}");
+                if value == -3 {
+                    let expected = format!(
+                        "expected {:?}, actual {:?}",
+                        PortDef::wire::<i64>("out").unwrap().value,
+                        Value::local(0_i64).identity()
+                    );
+                    assert!(failure.contains(&expected), "{failure}");
+                }
+            }
+            assert_eq!(s.request_disposal(failed).unwrap().activations, 1);
+            assert_eq!(s.request_disposal(failed).unwrap().prepared_packets, 0);
+            assert_eq!(s.request_disposal(failed).unwrap().queued_packets, 0);
+            assert_eq!(spawns.load(Ordering::SeqCst), 3 + iteration);
+            assert_eq!(
+                s.take_request_output(good, "stable")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                13 + iteration as i64 * 3
+            );
+            let next = s.begin_request(Some("faulty")).unwrap();
+            s.inject_request(next, "faulty", Value::of(7_i64)).unwrap();
+            s.close_request(next).unwrap();
+            s.run_until_idle(30);
+            assert_eq!(
+                s.take_request_output(next, "faulty")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                7
+            );
+            for id in [failed, good, next] {
+                s.release_request(id).unwrap();
+            }
         }
+        s.inject("faulty", Value::of(-1_i64)).unwrap();
+        assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
     }
-    s.inject("faulty", Value::of(-1_i64)).unwrap();
-    assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
 }
 
 #[test]
@@ -2909,7 +4318,13 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
     .unwrap();
     let failed = b.build().unwrap().compile().unwrap().start();
     assert_eq!(failed.state(), SessionState::Failed);
-    assert!(failed.failure().unwrap().contains("factory panicked"));
+    assert!(
+        failed
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("factory panicked")
+    );
     let spawns = Arc::new(AtomicUsize::new(0));
     let shared = spawns.clone();
     let mut b = NetworkBuilder::new();
@@ -2950,19 +4365,74 @@ fn factory_panics_fail_session_at_start_and_during_recovery() {
     s.inject_request(id, "input", Value::of(-1_i64)).unwrap();
     s.close_request(id).unwrap();
     assert_eq!(s.run_until_idle(30).state, SessionState::Failed);
-    assert!(
-        s.failure()
+    let failure = s.failure().unwrap();
+    assert_eq!(failure.kind(), phenix_graph::FailureKind::Panic);
+    assert!(matches!(
+        std::error::Error::source(&failure.cleanup()[0])
             .unwrap()
-            .contains("factory panicked during request recovery")
-    );
+            .downcast_ref::<phenix_graph::process::CallbackPanicked>(),
+        Some(phenix_graph::process::CallbackPanicked {
+            phase: phenix_graph::CallbackPhase::RecoveryConstruct,
+            ..
+        })
+    ));
     s.release_request(id).unwrap();
+}
+
+#[test]
+fn factory_readiness_and_correlation_panics_fail_initialization_cleanly() {
+    struct Empty;
+    impl Process for Empty {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            Ok(Step::Finished)
+        }
+    }
+    struct Factory(bool, bool);
+    impl phenix_graph::process::ProcessFactory for Factory {
+        fn spawn(&self) -> Box<dyn Process> {
+            Box::new(Empty)
+        }
+
+        fn readiness(&self) -> Readiness {
+            assert!(!self.0, "readiness factory panic");
+            Readiness::default()
+        }
+
+        fn correlation_lanes(&self) -> Option<NonZeroUsize> {
+            assert!(!self.1, "correlation factory panic");
+            None
+        }
+    }
+
+    for (readiness, correlation, expected) in [
+        (true, false, "readiness panicked"),
+        (false, true, "correlation bound panicked"),
+    ] {
+        let mut builder = NetworkBuilder::new();
+        builder
+            .node(
+                "factory",
+                Arc::new(Interface::new([], []).unwrap()),
+                Arc::new(Factory(readiness, correlation)),
+            )
+            .unwrap();
+        let session = builder.build().unwrap().compile().unwrap().start();
+        assert_eq!(session.state(), SessionState::Failed);
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(expected)
+        );
+    }
 }
 
 #[test]
 fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
     struct DropOnFinish(Arc<std::sync::atomic::AtomicBool>);
     impl Process for DropOnFinish {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if context.is_eos("in") {
                 return Ok(Step::Complete);
             }
@@ -3000,6 +4470,7 @@ fn panicking_idle_process_destructor_fails_only_after_eos_transition() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("owned destructor panicked while finishing")
     );
@@ -3229,6 +4700,8 @@ fn request_cancellation_restarts_input_continuation_without_reusing_staged_state
             Arc::new(move || Waiter {
                 phase: 0,
                 total: shared.clone(),
+                wait_inputs: false,
+                lane: Arc::new(Mutex::new(None)),
             }),
         )
         .unwrap();
@@ -3284,7 +4757,7 @@ fn panicking_disposed_payloads_cannot_skip_request_wake_and_process_retirement()
     }
     struct CancelWaiter(bool);
     impl Process for CancelWaiter {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if context.take("trigger").is_some() {
                 self.0 = true;
                 return Ok(Step::WaitWake);
@@ -3298,7 +4771,7 @@ fn panicking_disposed_payloads_cannot_skip_request_wake_and_process_retirement()
     }
     struct PayloadSink;
     impl Process for PayloadSink {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             context.take("payload");
             Ok(Step::Complete)
         }
@@ -3452,16 +4925,23 @@ fn active_cancellation_defaults_to_fail_session_and_host_failure_can_opt_into_re
     let failed = s.begin_request(None).unwrap();
     s.inject_request(failed, "input", Value::of(99_i64))
         .unwrap();
-    s.fail_request(failed, "host validation failed").unwrap();
+    s.fail_request(
+        failed,
+        phenix_graph::Failure::application_message("host validation failed"),
+    )
+    .unwrap();
     assert_eq!(s.request_status(failed).unwrap(), RequestStatus::Failed);
     assert_eq!(
-        s.request_failure(failed).unwrap(),
+        s.request_failure(failed)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
+            .unwrap(),
         Some("host validation failed")
     );
     assert_eq!(s.state(), SessionState::Quiescent);
     s.release_request(failed).unwrap();
     assert_eq!(
-        s.fail_request(failed, "again").unwrap_err(),
+        s.fail_request(failed, phenix_graph::Failure::application_message("again"))
+            .unwrap_err(),
         RequestError::Stale
     );
     let next = s.begin_request(Some("output")).unwrap();
@@ -3512,6 +4992,7 @@ fn tagged_dispatcher_panic_invalidates_owned_job_and_allows_followup_under_resta
     assert_eq!(s.request_status(id).unwrap(), RequestStatus::Failed);
     assert!(
         s.request_failure(id)
+            .map(|failure| failure.map(phenix_graph::Failure::summary))
             .unwrap()
             .unwrap()
             .contains("dispatcher panicked")
@@ -3595,11 +5076,17 @@ fn driver_retains_foreign_completion_or_rejected_job_without_panic_publication_o
         assert_eq!(report.steps, 1);
         assert_eq!(report.publications, 0);
         assert_eq!(own_effects.load(Ordering::SeqCst), 0);
-        assert!(session.failure().unwrap().contains(if completed {
-            "invalid completion"
-        } else {
-            "invalid rejected job"
-        }));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(if completed {
+                    "invalid completion"
+                } else {
+                    "invalid rejected job"
+                })
+        );
         assert!(session.take_output("output").unwrap().is_none());
         assert_eq!(session.run_until_idle(20).steps, 0);
         assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 1);
@@ -3620,7 +5107,7 @@ fn driver_retains_foreign_completion_or_rejected_job_without_panic_publication_o
                 assert_eq!(error, HandoffError::ForeignCompletion);
                 assert_eq!(job.ticket(), ticket);
                 assert_eq!(foreign_effects.load(Ordering::SeqCst), 0);
-                foreign.reject(job).unwrap();
+                foreign.reject(job).unwrap().unwrap();
                 let job = foreign.next_job().unwrap();
                 assert_eq!(job.ticket().activation(), ticket.activation());
                 foreign.complete(job.run()).unwrap().unwrap()
@@ -3665,7 +5152,12 @@ fn driver_accepts_ordinary_rejection_without_retaining_a_protocol_error() {
     session.inject("input", Value::of(3_i64)).unwrap();
     assert_eq!(session.run_until_idle(20).state, SessionState::Runnable);
     assert!(session.take_dispatch_return().is_none());
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     assert_eq!(effects.load(Ordering::SeqCst), 0);
     session.run_until_idle(20);
     assert_eq!(
@@ -3700,7 +5192,7 @@ struct RequiredStage {
     scoped: bool,
 }
 impl Process for RequiredStage {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if !self.phase {
             if cx.take("a").is_none() {
                 assert!(cx.is_eos("a"));
@@ -3727,7 +5219,7 @@ impl Process for RequiredStage {
 }
 struct RequiredBSource(u8);
 impl Process for RequiredBSource {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0 += 1;
         Ok(match self.0 {
             1 => Step::WaitWake,
@@ -3859,6 +5351,7 @@ fn staged_missing_required_groups_fail_request_without_successful_continuation()
         assert!(
             session
                 .request_failure(request)
+                .map(|failure| failure.map(phenix_graph::Failure::summary))
                 .unwrap()
                 .unwrap()
                 .contains("required")
@@ -3881,7 +5374,12 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     session.inject("b", Value::of(22_i64)).unwrap();
     session.run_until_idle(20);
     assert_eq!(resumed.load(Ordering::SeqCst), 1);
-    assert!(session.failure().is_none());
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .is_none()
+    );
     session.close_input("a").unwrap();
     session.close_input("b").unwrap();
     assert_eq!(session.run_until_idle(20).state, SessionState::Completed);
@@ -3894,7 +5392,13 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     missing.close_input("b").unwrap();
     assert_eq!(missing.state(), SessionState::Failed);
     assert_eq!(resumed.load(Ordering::SeqCst), 0);
-    assert!(missing.failure().unwrap().contains("required input b"));
+    assert!(
+        missing
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("required input b")
+    );
 }
 
 #[test]

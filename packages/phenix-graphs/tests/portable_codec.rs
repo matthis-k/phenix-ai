@@ -77,7 +77,7 @@ impl<const M: u8> ContractValue for Probe<M> {
     fn encode(&self) -> Vec<u8> {
         vec![if M == 7 { 0 } else { self.0 }]
     }
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
         if M == 8 {
             return Ok(Self(0));
         }
@@ -85,7 +85,7 @@ impl<const M: u8> ContractValue for Probe<M> {
     }
 }
 
-fn probe<const M: u8>(expected: &Schema) -> Result<(), String> {
+fn probe<const M: u8>(expected: &Schema) -> Result<(), phenix_graph::Failure> {
     check(
         expected,
         &[GoldenVector {
@@ -104,42 +104,55 @@ fn conformance_checks_complete_descriptors_and_both_codec_directions() {
     assert!(
         probe::<1>(&expected)
             .unwrap_err()
+            .summary()
             .contains("descriptor mismatch")
     );
     assert!(
         probe::<2>(&expected)
             .unwrap_err()
+            .summary()
             .contains("descriptor mismatch")
     );
     assert!(
         probe::<3>(&expected)
             .unwrap_err()
+            .summary()
             .contains("descriptor mismatch")
     );
     assert!(
         probe::<4>(&expected)
             .unwrap_err()
+            .summary()
             .contains("descriptor mismatch")
     );
     assert!(
         probe::<5>(&Probe::<5>::schema())
             .unwrap_err()
+            .summary()
             .contains("incomplete")
     );
-    assert!(probe::<6>(&expected).unwrap_err().contains("wire identity"));
+    assert!(
+        probe::<6>(&expected)
+            .unwrap_err()
+            .summary()
+            .contains("wire identity")
+    );
     assert!(
         probe::<7>(&expected)
             .unwrap_err()
+            .summary()
             .contains("encoding differs")
     );
     assert!(
         probe::<8>(&expected)
             .unwrap_err()
+            .summary()
             .contains("decoded value differs")
     );
     assert!(
         check::<u8>(&expected, &[], &[])
             .unwrap_err()
+            .summary()
             .contains("at least one")
     );
     assert!(
@@ -153,6 +166,7 @@ fn conformance_checks_complete_descriptors_and_both_codec_directions() {
             &[&[2]]
         )
         .unwrap_err()
+        .summary()
         .contains("malformed vector 0")
     );
     for missing in ["name", "structure", "codec"] {
@@ -162,6 +176,11 @@ fn conformance_checks_complete_descriptors_and_both_codec_directions() {
             "structure" => incomplete.structure.clear(),
             _ => incomplete.codec.clear(),
         }
-        assert!(probe::<0>(&incomplete).unwrap_err().contains("incomplete"));
+        assert!(
+            probe::<0>(&incomplete)
+                .unwrap_err()
+                .summary()
+                .contains("incomplete")
+        );
     }
 }

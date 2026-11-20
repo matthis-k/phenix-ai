@@ -1,6 +1,6 @@
 # Phenix — Graph-native derived values
 
-**Status:** V1 implemented; implementation commit `465033b2835c` passed exact-head CI. Sections 1-16 preserve the historical proposal and rationale, not the current API contract. See section 17 and [the usage guide](derived-values.md).
+**Status:** Historical wave-era V1 design and acceptance at implementation commit `465033b2835c`. Section 17 records that historical implementation, not the current native FBP API or its acceptance. See `packages/phenix-storage-graph/src/derived/` and [native boundary corrections](fbp-quick-boundaries-20261115.md) for the current lookup-error contract.
 **Date:** 2026-11-08  
 **Repository:** `matthis-k/phenix-ai`  
 **Inspected implementation:** `impl/scoped-storage-resources-20261108` @ `86c29792f4f33eea58736a9c19d5f0a299fcc128` (base `rewrite/clean-foundation` @ `b53f5be1ca83a7208568e8d891eaa2e2b9ec30e5`)  
@@ -671,7 +671,7 @@ This section supersedes proposed signatures and acceptance claims above without 
 
 The initial ambient `BUILD` registry and factory-registration/generation tokens were removed. A minimal generic `Engine::node_ids_for_action(&Arc<dyn NodeAction>) -> Vec<u16>` pointer-identity lookup establishes membership in the actual deployed engine. Binding requires exactly one physical source and one tap. Generic `Engine::trigger_targets` inspection verifies that the demand route has one payload targeting only that source inlet; absent or redirected routes return `InvalidRefreshRoute` without executing a wave. The source has only its value output at slot 0. Extraction uses the exact node IDs and slot IDs, successful wave status, one retained terminal payload, exactly one scheduler-owned publication event per source/tap endpoint, and matching current wave/cohort provenance. Source payload retention is not required. Self-consistent identities claimed by a publication are insufficient.
 
-Source and tap actions use shared stateless `with_dyn_action` allocations. Deliberately deploying the same authored module/compatible compiled graph again can reuse its spec; each query still borrows its particular runtime. Fresh incompatible recomposition creates different actions and rejects the old spec with `WrongGeneration`. Multiple physical instances sharing those actions are ambiguous and rejected. This is deployed action membership, not a universal unique-generation-token rule.
+The historical source and tap actions used shared stateless `with_dyn_action` allocations. Deliberate redeployment could reuse a spec, while fresh or ambiguous deployments returned `WrongGeneration`. Native FBP instead preserves final-declaration lookup failures as `Error::Network` with `UnknownDefinition` or `AmbiguousDefinition` causes; `WrongGeneration` has been removed. Neither scheme confers universal generation authority.
 
 No scheduler/compiler behavior or foundational dependency changes were needed. The two generic Engine inspection methods are the small graph-core API additions, superseding section 12's proposed zero graph-core changes. General graph loops remain unchanged. Immutable derived handles are created only after their inputs, so cycles cannot be constructed through this topological API; there is no separate cycle-path detector. An undefined-variable `compile_fail` snippet is not evidence of cycle detection.
 

@@ -72,12 +72,9 @@ impl PluginInstance for Plugin {
         let log = self.log.clone();
         let polls = self.polls.clone();
         let gate = self.gate.clone();
-        into.add(Contribution {
-            id: "source".into(),
-            requires: vec![],
-            routes: vec!["tick".into()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("source", NetworkPatch::new([]))
+            .route(["tick".into()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 context.export(Guard("export", id, log.clone()))?;
                 let action = Guard("action", id, log.clone());
@@ -111,8 +108,8 @@ impl PluginInstance for Plugin {
                     }))
                 })?;
                 Ok(context)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 
@@ -173,18 +170,30 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     let publishing = Arc::new(Barrier::new(2));
     let publisher_gate = publishing.clone();
+    let (published, publication_complete) = std::sync::mpsc::channel();
+    let polls_during_publish = polls.clone();
     let publisher = std::thread::spawn(move || {
         publisher_gate.wait();
         let current = host.publish(candidate).unwrap();
-        // Publication cannot cut the old drain short, even between polls.
-        assert_eq!(polls.load(Ordering::SeqCst), 3);
-        (host, current, polls)
+        assert_eq!(polls_during_publish.load(Ordering::SeqCst), 3);
+        published.send(()).unwrap();
+        (host, current, polls_during_publish)
     });
     publishing.wait();
+    assert!(
+        publication_complete
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err(),
+        "publication cut an admitted whole drain short"
+    );
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
     gate.1.wait();
     let events = drain.join().unwrap();
     assert_eq!(events.len(), 3);
     assert!(events.iter().all(|event| event.result.is_ok()));
+    publication_complete
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
     let (host, current, polls) = publisher.join().unwrap();
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert_eq!(current.epoch(), 2);
@@ -192,7 +201,7 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
         assert!(old.drain(10).unwrap().is_empty());
     }
     assert_eq!(polls.load(Ordering::SeqCst), 3);
-    // Retirement stops owned producers, not already admitted work or explicit queries.
+    // Retirement stops producers, not already admitted work or explicit queries.
     old.run_steps(100).unwrap();
     assert_eq!(
         log.lock()

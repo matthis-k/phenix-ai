@@ -37,12 +37,14 @@ struct MapStep {
     offset: u64,
 }
 impl Process for MapStep {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.stage {
             self.stage = false;
             return Ok(Step::Complete);
         }
-        let value = cx.take("in").ok_or("missing input")?;
+        let value = cx
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing input"))?;
         let n = value.get::<u64>()?;
         self.stage = true;
         Ok(Step::Emit(ProcessEmission::new(
@@ -54,12 +56,14 @@ impl Process for MapStep {
 
 struct RouteStep(bool);
 impl Process for RouteStep {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
         }
-        let value = cx.take("in").ok_or("missing route input")?;
+        let value = cx
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing route input"))?;
         let n = value.get::<u64>()?;
         self.0 = true;
         let route = if n % 2 == 0 { "local" } else { "remote" };
@@ -69,24 +73,32 @@ impl Process for RouteStep {
 
 struct JoinStep(bool);
 impl Process for JoinStep {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
         }
-        let context = cx.take("context").ok_or("missing skills context")?;
+        let context = cx
+            .take("context")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing skills context"))?;
         let local = cx.take("local");
         let remote = cx.take("remote");
         if local.is_some() == remote.is_some() {
-            return Err("expected exactly one tool result".into());
+            return Err(phenix_graph::Failure::application_message(
+                "expected exactly one tool result",
+            ));
         }
         if (local.is_none() && !cx.is_request_closed("local"))
             || (remote.is_none() && !cx.is_request_closed("remote"))
         {
-            return Err("unused tool must be request-locally closed".into());
+            return Err(phenix_graph::Failure::application_message(
+                "unused tool must be request-locally closed",
+            ));
         }
         if cx.is_eos("local") || cx.is_eos("remote") {
-            return Err("request-local absence misreported as global EOS".into());
+            return Err(phenix_graph::Failure::application_message(
+                "request-local absence misreported as global EOS",
+            ));
         }
         let value = local.or(remote).unwrap();
         let answer = context.get::<u64>()?.wrapping_add(value.get::<u64>()?);
@@ -100,8 +112,10 @@ impl Process for JoinStep {
 
 struct Persist(Arc<AtomicUsize>);
 impl Process for Persist {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        let result = cx.take("in").ok_or("missing persisted result")?;
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        let result = cx.take("in").ok_or_else(|| {
+            phenix_graph::Failure::application_message("missing persisted result")
+        })?;
         black_box(result.get::<u64>()?);
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(Step::Complete)

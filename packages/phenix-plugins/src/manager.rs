@@ -3,6 +3,7 @@
 //! Construction is typed at the call site; implementations are erased only
 //! inside the manager. Contributions are retained through leased handles.
 //! Dynamically linked cdylibs require a separate ABI adapter (not Rust Any).
+use crate::registry::RegistryFault;
 use crate::{CallbackPhase, Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
 use phenix_graph::{GraphOrigin, contract::Contract, network::CompiledNetwork};
@@ -16,6 +17,88 @@ use std::{
 
 type Configuration = Box<dyn Any + Send>;
 type Constructor = dyn Fn(Configuration) -> Result<Box<dyn PluginInstance>, Failure> + Send + Sync;
+
+/// Framework binding failures, without exposing graph-origin authority tokens.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BindingFault {
+    MissingComponentLocator {
+        plugin: String,
+        revision: u64,
+        kind: &'static str,
+        contribution: String,
+    },
+    GenerationOriginMismatch {
+        plugin: String,
+        revision: u64,
+        contribution: String,
+        path: String,
+        has_origin: bool,
+    },
+}
+impl std::fmt::Display for BindingFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for BindingFault {}
+
+/// The operation whose committed stage must contain a candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LifecycleOperation {
+    Load,
+    Reload,
+}
+
+/// Framework lifecycle failures. Catalog and set identities remain opaque;
+/// these fields describe rejected operations, not transferable authority.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LifecycleFault {
+    ForeignCatalogKey {
+        plugin: String,
+    },
+    UnregisteredPlugin {
+        plugin: String,
+    },
+    RevisionExhausted {
+        current_revision: u64,
+    },
+    AlreadyLoaded {
+        plugin: String,
+        revision: u64,
+    },
+    NotLoaded {
+        plugin: String,
+    },
+    DuplicateStage {
+        plugin: String,
+    },
+    ForeignSet {
+        plugin: String,
+    },
+    StaleStage {
+        plugin: String,
+        expected_epoch: u64,
+        actual_epoch: u64,
+        expected_revision: Option<u64>,
+        actual_revision: Option<u64>,
+    },
+    CandidateRevisionMismatch {
+        plugin: String,
+        expected: u64,
+        actual: u64,
+    },
+    MissingCandidate {
+        plugin: String,
+        operation: LifecycleOperation,
+        revision: u64,
+    },
+}
+impl std::fmt::Display for LifecycleFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl std::error::Error for LifecycleFault {}
 
 struct Factory {
     make: Box<Constructor>,
@@ -78,20 +161,31 @@ impl PluginCatalog {
     {
         let name = name.into();
         if name == "root" || !identifier(&name) {
-            return Err(Failure::new(
+            return Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "invalid plugin identity",
+                Box::new(RegistryFault::InvalidPlugin { plugin: name }),
             ));
         }
         if self.factories.contains_key(&name) {
-            return Err(Failure::new(
+            return Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "duplicate plugin factory",
+                Box::new(RegistryFault::DuplicatePlugin { plugin: name }),
             ));
         }
+        let plugin = name.clone();
         let make = move |configuration: Configuration| {
-            let configuration = configuration.downcast::<C>().map_err(|_| {
-                Failure::new(Code::SchemaRejected, "plugin configuration type mismatch")
+            let configuration = configuration.downcast::<C>().map_err(|actual| {
+                Failure::with_source(
+                    Code::SchemaRejected,
+                    "plugin configuration type mismatch",
+                    Box::new(RegistryFault::ConfigurationTypeMismatch {
+                        plugin: plugin.clone(),
+                        expected: std::any::TypeId::of::<C>(),
+                        actual: actual.as_ref().type_id(),
+                    }),
+                )
             })?;
             factory(*configuration).map(|instance| Box::new(instance) as Box<dyn PluginInstance>)
         };
@@ -169,25 +263,42 @@ impl PluginSnapshot {
         graph: &CompiledNetwork,
     ) -> Result<ContributionHandle<C>, Failure> {
         (|| {
-            let handle = self.get::<C>(id).ok_or_else(|| {
-                Failure::new(
-                    Code::MissingBinding,
-                    "missing contribution or type mismatch",
-                )
-            })?;
+            let index = self
+                .loaded
+                .contributions
+                .binding_index::<C>(self.name(), id)
+                .map_err(|fault| {
+                    Failure::with_source(
+                        Code::MissingBinding,
+                        "missing contribution or type mismatch",
+                        Box::new(fault),
+                    )
+                })?;
+            let handle = ContributionHandle::<C> {
+                loaded: self.loaded.clone(),
+                index,
+                _value: PhantomData,
+            };
             let path = handle.component_path().ok_or_else(|| {
-                Failure::new(
+                Failure::with_source(
                     Code::MissingBinding,
                     "contribution has no component locator",
+                    Box::new(BindingFault::MissingComponentLocator {
+                        plugin: self.name().into(),
+                        revision: self.revision(),
+                        kind: C::KIND,
+                        contribution: id.into(),
+                    }),
                 )
             })?;
-            let unit = graph.inspect(path).map_err(|_| {
-                Failure::new(
+            let unit = graph.inspect(path).map_err(|cause| {
+                Failure::with_source(
                     Code::MissingBinding,
                     format!(
                         "compiled graph unit not found: {path}, contract {}",
                         requested.id()
                     ),
+                    Box::new(cause),
                 )
             })?;
             if !unit
@@ -195,9 +306,16 @@ impl PluginSnapshot {
                 .as_ref()
                 .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
             {
-                return Err(Failure::new(
+                return Err(Failure::with_source(
                     Code::Denied,
                     format!("compiled unit {path}: contribution generation origin mismatch"),
+                    Box::new(BindingFault::GenerationOriginMismatch {
+                        plugin: self.name().into(),
+                        revision: self.revision(),
+                        contribution: id.into(),
+                        path: path.into(),
+                        has_origin: unit.origin.is_some(),
+                    }),
                 ));
             }
             graph
@@ -309,12 +427,23 @@ pub struct PluginSet {
 impl PluginSet {
     fn factory<C>(&self, key: &PluginKey<C>) -> Result<Arc<Factory>, Failure> {
         if !Arc::ptr_eq(&self.catalog, &key.catalog) {
-            return Err(Failure::new(Code::Denied, "foreign plugin catalog key"));
+            return Err(Failure::with_source(
+                Code::Denied,
+                "foreign plugin catalog key",
+                Box::new(LifecycleFault::ForeignCatalogKey {
+                    plugin: key.name().into(),
+                }),
+            ));
         }
-        self.factories
-            .get(key.name())
-            .cloned()
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "unregistered plugin"))
+        self.factories.get(key.name()).cloned().ok_or_else(|| {
+            Failure::with_source(
+                Code::MissingBinding,
+                "unregistered plugin",
+                Box::new(LifecycleFault::UnregisteredPlugin {
+                    plugin: key.name().into(),
+                }),
+            )
+        })
     }
 
     fn stage<C: Send + 'static>(
@@ -324,16 +453,26 @@ impl PluginSet {
     ) -> Result<Arc<Loaded>, Failure> {
         let factory = self.factory(key)?;
         let revision = self.next_revision.checked_add(1).ok_or_else(|| {
-            Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
+            Failure::with_source(
+                Code::InfrastructureFailure,
+                "plugin revision exhausted",
+                Box::new(LifecycleFault::RevisionExhausted {
+                    current_revision: self.next_revision,
+                }),
+            )
         })?;
         let instance = (factory.make)(Box::new(configuration))
             .map_err(|error| error.at(key.name(), CallbackPhase::Construct, factory.clone()))?;
         let mut registrar = Registrar::new(key.name())?;
         let failure = match instance.contribute(&mut registrar) {
             Err(error) => Some(error),
-            Ok(()) if registrar.owner() != key.name() => Some(Failure::new(
+            Ok(()) if registrar.owner() != key.name() => Some(Failure::with_source(
                 Code::Denied,
                 "plugin replaced registrar owner",
+                Box::new(RegistryFault::OwnerMismatch {
+                    expected: key.name().into(),
+                    actual: registrar.owner().into(),
+                }),
             )),
             Ok(()) => None,
         };
@@ -368,10 +507,14 @@ impl PluginSet {
         configuration: C,
     ) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
-        if self.loaded.contains_key(key.name()) {
-            return Err(Failure::new(
+        if let Some(loaded) = self.loaded.get(key.name()) {
+            return Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "plugin already loaded",
+                Box::new(LifecycleFault::AlreadyLoaded {
+                    plugin: key.name().into(),
+                    revision: loaded.revision,
+                }),
             ));
         }
         Ok(StagedPlugin {
@@ -389,9 +532,15 @@ impl PluginSet {
         configuration: C,
     ) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
-        let expected_revision = self
-            .expected_revision(key.name())
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
+        let expected_revision = self.expected_revision(key.name()).ok_or_else(|| {
+            Failure::with_source(
+                Code::MissingBinding,
+                "plugin is not loaded",
+                Box::new(LifecycleFault::NotLoaded {
+                    plugin: key.name().into(),
+                }),
+            )
+        })?;
         Ok(StagedPlugin {
             set_identity: self.set_identity.clone(),
             name: key.name().to_owned(),
@@ -403,9 +552,15 @@ impl PluginSet {
 
     pub fn prepare_unload<C>(&self, key: &PluginKey<C>) -> Result<StagedPlugin, Failure> {
         self.factory(key)?;
-        let expected_revision = self
-            .expected_revision(key.name())
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
+        let expected_revision = self.expected_revision(key.name()).ok_or_else(|| {
+            Failure::with_source(
+                Code::MissingBinding,
+                "plugin is not loaded",
+                Box::new(LifecycleFault::NotLoaded {
+                    plugin: key.name().into(),
+                }),
+            )
+        })?;
         Ok(StagedPlugin {
             set_identity: self.set_identity.clone(),
             name: key.name().to_owned(),
@@ -430,32 +585,60 @@ impl PluginSet {
             return Ok(());
         }
         let next_revision = self.next_revision.checked_add(1).ok_or_else(|| {
-            Failure::new(Code::InfrastructureFailure, "plugin revision exhausted")
+            Failure::with_source(
+                Code::InfrastructureFailure,
+                "plugin revision exhausted",
+                Box::new(LifecycleFault::RevisionExhausted {
+                    current_revision: self.next_revision,
+                }),
+            )
         })?;
         let mut names = BTreeSet::new();
         for staged in stages {
             if !names.insert(&staged.name) {
-                return Err(Failure::new(Code::Denied, "duplicate plugin stage"));
+                return Err(Failure::with_source(
+                    Code::Denied,
+                    "duplicate plugin stage",
+                    Box::new(LifecycleFault::DuplicateStage {
+                        plugin: staged.name.clone(),
+                    }),
+                ));
             }
             if !Arc::ptr_eq(&self.set_identity, &staged.set_identity) {
-                return Err(Failure::new(
+                return Err(Failure::with_source(
                     Code::Denied,
                     "stage belongs to a different plugin set",
+                    Box::new(LifecycleFault::ForeignSet {
+                        plugin: staged.name.clone(),
+                    }),
                 ));
             }
             if self.next_revision != staged.expected_epoch
                 || self.expected_revision(&staged.name) != staged.expected_revision
             {
-                return Err(Failure::new(Code::Denied, "stale plugin stage"));
+                return Err(Failure::with_source(
+                    Code::Denied,
+                    "stale plugin stage",
+                    Box::new(LifecycleFault::StaleStage {
+                        plugin: staged.name.clone(),
+                        expected_epoch: staged.expected_epoch,
+                        actual_epoch: self.next_revision,
+                        expected_revision: staged.expected_revision,
+                        actual_revision: self.expected_revision(&staged.name),
+                    }),
+                ));
             }
-            if staged
-                .candidate
-                .as_ref()
-                .is_some_and(|loaded| loaded.revision != next_revision)
+            if let Some(loaded) = &staged.candidate
+                && loaded.revision != next_revision
             {
-                return Err(Failure::new(
+                return Err(Failure::with_source(
                     Code::InfrastructureFailure,
                     "candidate revision mismatch",
+                    Box::new(LifecycleFault::CandidateRevisionMismatch {
+                        plugin: staged.name.clone(),
+                        expected: next_revision,
+                        actual: loaded.revision,
+                    }),
                 ));
             }
         }
@@ -518,9 +701,7 @@ impl PluginSet {
         configuration: C,
     ) -> Result<PluginSnapshot, Failure> {
         let staged = self.prepare_load(key, configuration)?;
-        self.commit(staged)?.ok_or_else(|| {
-            Failure::new(Code::InfrastructureFailure, "loaded stage has no candidate")
-        })
+        self.commit_candidate(staged, LifecycleOperation::Load)
     }
 
     pub fn reload<C: Send + 'static>(
@@ -529,10 +710,27 @@ impl PluginSet {
         configuration: C,
     ) -> Result<PluginSnapshot, Failure> {
         let staged = self.prepare_reload(key, configuration)?;
+        self.commit_candidate(staged, LifecycleOperation::Reload)
+    }
+
+    fn commit_candidate(
+        &mut self,
+        staged: StagedPlugin,
+        operation: LifecycleOperation,
+    ) -> Result<PluginSnapshot, Failure> {
+        let plugin = staged.name.clone();
         self.commit(staged)?.ok_or_else(|| {
-            Failure::new(
+            Failure::with_source(
                 Code::InfrastructureFailure,
-                "reloaded stage has no candidate",
+                match operation {
+                    LifecycleOperation::Load => "loaded stage has no candidate",
+                    LifecycleOperation::Reload => "reloaded stage has no candidate",
+                },
+                Box::new(LifecycleFault::MissingCandidate {
+                    plugin,
+                    operation,
+                    revision: self.next_revision,
+                }),
             )
         })
     }
@@ -546,10 +744,15 @@ impl PluginSet {
 
     pub fn snapshot<C>(&self, key: &PluginKey<C>) -> Result<PluginSnapshot, Failure> {
         self.factory(key)?;
-        let loaded = self
-            .loaded
-            .get(key.name())
-            .ok_or_else(|| Failure::new(Code::MissingBinding, "plugin is not loaded"))?;
+        let loaded = self.loaded.get(key.name()).ok_or_else(|| {
+            Failure::with_source(
+                Code::MissingBinding,
+                "plugin is not loaded",
+                Box::new(LifecycleFault::NotLoaded {
+                    plugin: key.name().into(),
+                }),
+            )
+        })?;
         Ok(PluginSnapshot {
             loaded: loaded.clone(),
         })
@@ -567,6 +770,126 @@ impl PluginSet {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn factory_faults_preserve_plugin_and_concrete_configuration_types() {
+        use std::{any::TypeId, error::Error as _};
+        let mut catalog = PluginCatalog::new();
+        let make = |value: i32| {
+            Ok(Example {
+                value,
+                drops: Arc::default(),
+            })
+        };
+        for name in ["root", "bad/id"] {
+            let error = catalog.register(name, make).err().unwrap();
+            assert_eq!(
+                error.source().unwrap().downcast_ref::<RegistryFault>(),
+                Some(&RegistryFault::InvalidPlugin {
+                    plugin: name.into()
+                })
+            );
+        }
+        catalog.register("provider", make).unwrap();
+        let error = catalog.register("provider", make).err().unwrap();
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<RegistryFault>(),
+            Some(&RegistryFault::DuplicatePlugin {
+                plugin: "provider".into()
+            })
+        );
+        let error = (catalog.factories["provider"].make)(Box::new(42_u64))
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<RegistryFault>(),
+            Some(&RegistryFault::ConfigurationTypeMismatch {
+                plugin: "provider".into(),
+                expected: TypeId::of::<i32>(),
+                actual: TypeId::of::<u64>(),
+            })
+        );
+    }
+
+    #[test]
+    fn binding_faults_distinguish_actual_type_mismatch_from_unknown_kind_and_id() {
+        use std::{any::TypeId, error::Error as _};
+        struct OtherPatch;
+        impl Contribution for OtherPatch {
+            const KIND: &'static str = GraphPatch::KIND;
+            fn id(&self) -> &str {
+                "calculate"
+            }
+        }
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("provider", |value| {
+                Ok(Example {
+                    value,
+                    drops: Arc::default(),
+                })
+            })
+            .unwrap();
+        let snapshot = catalog.instance().load(&key, 1).unwrap();
+        let graph = phenix_graph::network::NetworkBuilder::new()
+            .build()
+            .unwrap()
+            .compile()
+            .unwrap();
+        let contract = Contract::new(
+            "test/binding@1",
+            Arc::new(phenix_graph::Interface::new([], []).unwrap()),
+        )
+        .unwrap();
+        let mismatch = snapshot
+            .bind::<OtherPatch>("calculate", &contract, &graph)
+            .err()
+            .unwrap();
+        let missing_kind = snapshot
+            .bind::<ResourceOffer>("calculate", &contract, &graph)
+            .err()
+            .unwrap();
+        let missing_id = snapshot
+            .bind::<GraphPatch>("absent", &contract, &graph)
+            .err()
+            .unwrap();
+        for (error, fault) in [
+            (
+                mismatch,
+                RegistryFault::ContributionTypeMismatch {
+                    owner: "provider".into(),
+                    kind: GraphPatch::KIND,
+                    id: "calculate".into(),
+                    expected: TypeId::of::<OtherPatch>(),
+                    actual: TypeId::of::<GraphPatch>(),
+                },
+            ),
+            (
+                missing_kind,
+                RegistryFault::MissingContribution {
+                    owner: "provider".into(),
+                    kind: ResourceOffer::KIND,
+                    id: "calculate".into(),
+                },
+            ),
+            (
+                missing_id,
+                RegistryFault::MissingContribution {
+                    owner: "provider".into(),
+                    kind: GraphPatch::KIND,
+                    id: "absent".into(),
+                },
+            ),
+        ] {
+            assert_eq!(error.code, Code::MissingBinding);
+            let mut source = error.source().unwrap();
+            while !source.is::<RegistryFault>() {
+                source = source.source().unwrap();
+            }
+            assert_eq!(source.downcast_ref::<RegistryFault>(), Some(&fault));
+        }
+        assert!(snapshot.get::<OtherPatch>("calculate").is_none());
+    }
 
     #[test]
     fn replaced_registrar_owner_is_rejected_before_load_or_reload() {
@@ -590,6 +913,17 @@ mod tests {
         for add in [false, true] {
             let error = plugins.prepare_load(&key, (true, add)).err().unwrap();
             assert_eq!(error.code, Code::Denied);
+            let mut source = std::error::Error::source(&error).unwrap();
+            while !source.is::<RegistryFault>() {
+                source = source.source().unwrap();
+            }
+            assert_eq!(
+                source.downcast_ref::<RegistryFault>(),
+                Some(&RegistryFault::OwnerMismatch {
+                    expected: "trusted".into(),
+                    actual: "forged".into(),
+                })
+            );
             let context = error.context.unwrap();
             assert_eq!(context.plugin, "trusted");
             assert_eq!(context.phase, CallbackPhase::Contribute);
@@ -687,12 +1021,34 @@ mod tests {
         set.next_revision = u64::MAX - 1;
         let snapshot = set.load(&key, 1).unwrap();
         assert_eq!(snapshot.revision(), u64::MAX);
-        assert!(set.prepare_reload(&key, 2).is_err());
-        assert!(set.prepare_load(&other, ()).is_err());
+        for error in [
+            set.prepare_reload(&key, 2).err().unwrap(),
+            set.prepare_load(&other, ()).err().unwrap(),
+        ] {
+            assert_eq!(error.code, Code::InfrastructureFailure);
+            assert_eq!(error.message, "plugin revision exhausted");
+            assert_eq!(
+                std::error::Error::source(&error)
+                    .unwrap()
+                    .downcast_ref::<LifecycleFault>(),
+                Some(&LifecycleFault::RevisionExhausted {
+                    current_revision: u64::MAX,
+                })
+            );
+        }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let unload = set.prepare_unload(&key).unwrap();
         let error = set.commit_batch(vec![unload]).err().unwrap();
         assert_eq!(error.code, Code::InfrastructureFailure);
+        assert_eq!(error.message, "plugin revision exhausted");
+        assert_eq!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .downcast_ref::<LifecycleFault>(),
+            Some(&LifecycleFault::RevisionExhausted {
+                current_revision: u64::MAX,
+            })
+        );
         assert_eq!(set.next_revision, u64::MAX);
         assert_eq!(set.snapshots().count(), 1);
         assert!(Arc::ptr_eq(
@@ -701,6 +1057,85 @@ mod tests {
         ));
         set.commit_batch(vec![]).unwrap();
         assert_eq!(set.next_revision, u64::MAX);
+    }
+
+    #[test]
+    fn defensive_stage_faults_expose_public_data_without_changing_validation_rules() {
+        use std::error::Error as _;
+        let mut catalog = PluginCatalog::new();
+        let key = catalog
+            .register("example", |value| {
+                Ok(Example {
+                    value,
+                    drops: Arc::default(),
+                })
+            })
+            .unwrap();
+        let mut set = catalog.instance();
+        let mut staged = set.prepare_load(&key, 1).unwrap();
+        Arc::get_mut(staged.candidate.as_mut().unwrap())
+            .unwrap()
+            .revision = 42;
+        for error in [
+            set.validate_batch(std::slice::from_ref(&staged))
+                .unwrap_err(),
+            set.candidate_snapshots(std::slice::from_ref(&staged))
+                .err()
+                .unwrap(),
+            set.commit(staged).err().unwrap(),
+        ] {
+            assert_eq!(error.code, Code::InfrastructureFailure);
+            assert_eq!(error.message, "candidate revision mismatch");
+            assert_eq!(
+                error.source().unwrap().downcast_ref::<LifecycleFault>(),
+                Some(&LifecycleFault::CandidateRevisionMismatch {
+                    plugin: "example".into(),
+                    expected: 1,
+                    actual: 42,
+                })
+            );
+        }
+        assert_eq!(set.next_revision, 0);
+        assert_eq!(set.snapshots().count(), 0);
+
+        let mut staged = set.prepare_load(&key, 1).unwrap();
+        staged.expected_revision = Some(99);
+        let error = set.commit(staged).err().unwrap();
+        assert_eq!(error.code, Code::Denied);
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<LifecycleFault>(),
+            Some(&LifecycleFault::StaleStage {
+                plugin: "example".into(),
+                expected_epoch: 0,
+                actual_epoch: 0,
+                expected_revision: Some(99),
+                actual_revision: None,
+            })
+        );
+        assert_eq!(set.next_revision, 0);
+
+        for operation in [LifecycleOperation::Load, LifecycleOperation::Reload] {
+            set.load(&key, 1).unwrap();
+            // Safe public load/reload cannot produce this malformed candidate-less stage.
+            let staged = set.prepare_unload(&key).unwrap();
+            let error = set.commit_candidate(staged, operation).err().unwrap();
+            assert_eq!(error.code, Code::InfrastructureFailure);
+            assert_eq!(
+                error.message,
+                match operation {
+                    LifecycleOperation::Load => "loaded stage has no candidate",
+                    LifecycleOperation::Reload => "reloaded stage has no candidate",
+                }
+            );
+            assert_eq!(
+                error.source().unwrap().downcast_ref::<LifecycleFault>(),
+                Some(&LifecycleFault::MissingCandidate {
+                    plugin: "example".into(),
+                    operation,
+                    revision: set.next_revision,
+                })
+            );
+        }
     }
 
     struct GraphPatch {
@@ -734,6 +1169,7 @@ mod tests {
     impl PluginInstance for Example {
         fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
             if self.value < 0 {
+                // Application callback leaf, not a manager-generated failure.
                 return Err(Failure::new(Code::PluginFailed, "invalid configuration"));
             }
             into.add(GraphPatch {
@@ -980,6 +1416,7 @@ mod tests {
         let key = catalog
             .register("fallible", |value: i32| {
                 if value < 0 {
+                    // Application factory leaf, not a manager-generated failure.
                     Err(Failure::new(Code::PluginFailed, "construction failed"))
                 } else {
                     Ok(Example {

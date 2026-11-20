@@ -47,14 +47,16 @@ registrar.add(ResourceOffer::kv_schema(
 
 `ResourceOffer::kv::<T>` uses `T: Stored`; `kv_schema` requires only a shared wire
 descriptor, not a shared Rust type. `ResourceOffer::sql` declares SQL operations.
-`ResourceOffer::new(id, ResourceRequest::new(spec, operations).with_atomic_cas())`
+`ResourceOffer::new(id, ResourceRequest::new(spec, operations).require(Capability::CompareExchange))`
 explicitly requests atomic CAS and requires `Write`. KV accepts read/write/delete
 and subscription; SQL accepts SQL operations and subscription.
 
-Every scoped KV `Read` implicitly requires the atomic-CAS/revision capability:
-`Kv::get` returns a revision even without an explicit CAS write request.
-`ResourceRequest::requires_atomic_cas()` exposes this effective requirement.
-Unversioned providers can still serve low-level `Session::get`, not scoped reads.
+Plain scoped `Kv::get` returns `Option<T>` and needs no revisioned-read, atomic-batch
+or CAS capability. `get_revisioned` returns `Option<Revisioned<T>>` and requires
+`RevisionedRead`. Declare stronger preparation guarantees with the existing request's
+`.require(capability)` set; capabilities are backend requirements, not permissions.
+Read cells use `CellSpec::request(operations)` to derive `AtomicReadMany` when Read
+is requested. Batch reads and revisioned single reads do not imply CAS or one another.
 
 Host composition is explicit and default-deny:
 
@@ -122,13 +124,13 @@ truthfully agree on all schema fields and actual bytes.
 ```rust
 // storage: scoped::Storage; AgentConfig: Stored
 let config = storage.project()?.config::<AgentConfig>("phenix.agent/settings")?;
-let current = config.get("default")?; // Option<Revisioned<AgentConfig>>
+let current = config.get_revisioned("default")?; // Option<Revisioned<AgentConfig>>
 let expected = current.as_ref().map(|stored| &stored.revision);
 let revision = config.compare_exchange("default", expected, &replacement)?;
 ```
 
-`Kv::get` returns `Result<Option<Revisioned<T>>>`; use `.value` and retain
-`.revision`. `compare_exchange(key, expected: Option<&Revision>, value)` returns
+`Kv::get` returns `Result<Option<T>>`. Use explicit `get_revisioned` to retain
+`.value` and `.revision`. `compare_exchange(key, expected: Option<&Revision>, value)` returns
 the new `Revision`; `None` inserts only if absent. Conflict returns
 `Error::Conflict { current: Option<Revision> }`, not a stored value. CAS is atomic
 in the backend, never get-then-put. `get` needs `Read`; CAS and `put` need `Write`;

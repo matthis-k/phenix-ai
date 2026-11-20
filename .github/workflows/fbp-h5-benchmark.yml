@@ -22,11 +22,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: indexed
-      - name: Checkout exact pre-index baseline
+      - name: Checkout verified PR1300 baseline
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # #1275 head immediately before the H5 per-queue index.
-          ref: 9911b42e3c0a3d84c7c60658090a51d426190dd1
+          ref: 516e0883875d5ec483e3595d50b77b3d5e8979c4
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Record source and machine provenance

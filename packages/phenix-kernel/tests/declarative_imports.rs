@@ -2,14 +2,16 @@ mod support;
 use phenix_graph::{
     compose::{Edit, Footprint, NetworkPatch},
     contract::Contract,
+    interface::InterfaceError,
     process::LocalProcessDispatcher,
 };
 use phenix_kernel::{
-    CandidateArtifacts, ContractDefinition, ContractRequirement, Contribution, ImportPolicy,
-    Kernel, Key, NetworkOffer, ResolutionError,
+    BuildOptions, CandidateArtifacts, ContractDefinition, Contribution, ImportPolicy,
+    IneligibleReason, Kernel, Key, ResolutionError,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::BTreeSet;
+use std::error::Error;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -26,7 +28,7 @@ struct Provider {
     increment: i64,
     semantic: &'static str,
     requires: Vec<Key>,
-    producer: Option<Key>,
+    advertised_path: Option<String>,
     actual_composer: &'static str,
     compositions: Arc<AtomicUsize>,
 }
@@ -39,7 +41,7 @@ impl Provider {
             increment,
             semantic: "service@1",
             requires: vec![],
-            producer: None,
+            advertised_path: None,
             actual_composer: "main",
             compositions: compositions.clone(),
         }
@@ -53,34 +55,29 @@ impl PluginInstance for Provider {
             id: "definition".into(),
             contract: contract(self.semantic),
         })?;
-        into.add(NetworkOffer {
-            id: "offer".into(),
-            unit: self.path.clone(),
-            producer: self
-                .producer
-                .clone()
-                .unwrap_or_else(|| Key::new(&owner, "main")),
-            contract: Key::new(&owner, "definition"),
-        })?;
         let config = self.clone();
-        into.add(Contribution {
-            id: self.actual_composer.into(),
-            requires: self.requires.clone(),
-            routes: vec![],
-            patch: support::patch(&self.path, self.module, true, self.increment, self.semantic),
-            prepare: Some(Box::new(move |_| {
-                config.compositions.fetch_add(1, Ordering::SeqCst);
-                Ok(CandidateArtifacts::default())
-            })),
-        })?;
+        let mut contribution = Contribution::new(
+            self.actual_composer,
+            support::patch(&self.path, self.module, true, self.increment, self.semantic),
+        )
+        .after(self.requires.clone())
+        .prepare(move |_| {
+            config.compositions.fetch_add(1, Ordering::SeqCst);
+            Ok(CandidateArtifacts::default())
+        });
+        if self.actual_composer == "main" {
+            contribution = contribution.offer(
+                "offer",
+                self.advertised_path.as_ref().unwrap_or(&self.path).clone(),
+                Key::new(&owner, "definition"),
+            );
+        }
+        contribution.register(into)?;
         if self.actual_composer != "main" {
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![Key::new(&owner, self.actual_composer)],
-                routes: vec![],
-                patch: NetworkPatch::new([]),
-                prepare: None,
-            })?;
+            Contribution::new("main", NetworkPatch::new([]))
+                .after([Key::new(&owner, self.actual_composer)])
+                .offer("offer", self.path.clone(), Key::new(&owner, "definition"))
+                .register(into)?;
         }
         Ok(())
     }
@@ -94,18 +91,10 @@ struct Consumer {
 
 impl PluginInstance for Consumer {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(ContractRequirement {
-            id: "service".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new("z-provider", "definition"),
-        })?;
         let config = self.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |context| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .import("service", Key::new("z-provider", "definition"))
+            .prepare(move |context| {
                 assert!(context.import("service").is_ok());
                 assert!(context.import("undeclared").is_err());
                 assert!(context.bind_import("undeclared").is_err());
@@ -114,24 +103,17 @@ impl PluginInstance for Consumer {
                 let bound = context.bind_import("service")?;
                 assert!(bound.input::<i64>("private").is_err());
                 assert!(bound.output::<String>("value").is_err());
-                bound.input::<i64>("run")?;
-                bound.output::<i64>("value")?;
+                let input = bound.input::<i64>("run")?;
+                let output = bound.output::<i64>("value")?;
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.export(config.observed.clone())?;
                 artifacts.patch = Some(NetworkPatch::new([
-                    Edit::ExposeInput {
-                        name: "request".into(),
-                        targets: vec![support::path(bound.path(), "run")],
-                        capacity: support::capacity(),
-                    },
-                    Edit::ExposeOutput {
-                        name: "result".into(),
-                        from: support::path(bound.path(), "value"),
-                    },
+                    context.expose_bound_input("request", &[input], support::capacity())?,
+                    context.expose_bound_output("result", &output)?,
                 ]));
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 
@@ -146,17 +128,37 @@ fn selected(owner: &str) -> ImportPolicy {
     policy.selections.insert(requirement(), offer(owner));
     policy
 }
-fn build(snapshots: Vec<PluginSnapshot>, policy: &ImportPolicy) -> Result<Kernel, ResolutionError> {
-    let mut options = support::options(&snapshots);
-    options.imports = policy.clone();
-    support::grant(
-        &mut options,
-        Key::new("a-consumer", "main"),
-        [
-            Footprint::InputExport("request".into()),
-            Footprint::OutputExport("result".into()),
-        ],
-    );
+fn options(writes: &[(&str, &str, &str)], consumer: bool) -> BuildOptions {
+    let mut options = BuildOptions::default();
+    for (owner, composer, path) in writes {
+        support::grant(
+            &mut options,
+            Key::new(*owner, *composer),
+            [Footprint::Component((*path).into())],
+        );
+    }
+    if consumer {
+        support::grant(
+            &mut options,
+            Key::new("a-consumer", "main"),
+            [
+                Footprint::InputExport("request".into()),
+                Footprint::OutputExport("result".into()),
+            ],
+        );
+    }
+    options
+}
+fn build(
+    snapshots: Vec<PluginSnapshot>,
+    policy: &ImportPolicy,
+    granted: &BuildOptions,
+) -> Result<Kernel, ResolutionError> {
+    let options = BuildOptions {
+        composition: granted.composition.clone(),
+        imports: policy.clone(),
+        ..Default::default()
+    };
     Kernel::build_with_options(
         "imports",
         snapshots,
@@ -189,6 +191,7 @@ fn execute(kernel: &Kernel, value: i64) {
 
 #[test]
 fn every_policy_table_rejects_unknown_requirement_and_offer_keys() {
+    let granted = options(&[("z-provider", "main", "service")], true);
     let count = Arc::new(AtomicUsize::new(0));
     let mut catalog = PluginCatalog::new();
     let z = catalog.register("z-provider", |p: Provider| Ok(p)).unwrap();
@@ -230,10 +233,16 @@ fn every_policy_table_rejects_unknown_requirement_and_offer_keys() {
                     policy.deny.insert((requirement, offer));
                 }
             }
-            let error = build(plugins.snapshots().collect(), &policy)
+            let error = build(plugins.snapshots().collect(), &policy, &granted)
                 .err()
                 .expect("stale policy must fail closed");
-            assert!(error.to_string().contains("unknown"), "{error}");
+            assert!(matches!(&error, ResolutionError::Invalid(_)), "{error:?}");
+            let context = if unknown_requirement {
+                "host policy names unknown requirement"
+            } else {
+                "host policy names unknown offer"
+            };
+            assert!(error.to_string().contains(context), "{error}");
             assert_eq!(count.load(Ordering::SeqCst), 0);
         }
     }
@@ -242,6 +251,13 @@ fn every_policy_table_rejects_unknown_requirement_and_offer_keys() {
 #[test]
 fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
     for module in [false, true] {
+        let granted = options(
+            &[
+                ("z-provider", "main", "first"),
+                ("y-provider", "main", "second"),
+            ],
+            true,
+        );
         let mut catalog = PluginCatalog::new();
         let z = catalog.register("z-provider", |p: Provider| Ok(p)).unwrap();
         let y = catalog.register("y-provider", |p: Provider| Ok(p)).unwrap();
@@ -265,7 +281,7 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
             .load(&y, Provider::new("second", !module, 20, &count))
             .unwrap();
         let snapshots: Vec<_> = plugins.snapshots().collect();
-        let error = build(snapshots.clone(), &ImportPolicy::default())
+        let error = build(snapshots.clone(), &ImportPolicy::default(), &granted)
             .err()
             .unwrap();
         assert!(
@@ -273,16 +289,24 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
             if key == requirement() && offers == vec![offer("y-provider"), offer("z-provider")])
         );
         assert_eq!(count.load(Ordering::SeqCst), 0);
-        let mut old = build(snapshots.clone(), &selected("z-provider")).unwrap();
+        let mut old = build(snapshots.clone(), &selected("z-provider"), &granted).unwrap();
         let mut switched = build(
             snapshots.into_iter().rev().collect(),
             &selected("y-provider"),
+            &granted,
         )
         .unwrap();
         old.start().unwrap();
         switched.start().unwrap();
         execute(&old, 1);
         execute(&switched, 1);
+        let granted = options(
+            &[
+                ("z-provider", "main", "renamed"),
+                ("y-provider", "main", "second"),
+            ],
+            true,
+        );
         let staged = plugins
             .prepare_reload(&z, Provider::new("renamed", module, 30, &count))
             .unwrap();
@@ -294,6 +318,7 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
                 .chain([candidate])
                 .collect(),
             &selected("z-provider"),
+            &granted,
         )
         .unwrap();
         plugins.commit(staged).unwrap();
@@ -306,6 +331,13 @@ fn node_and_module_providers_switch_and_reload_without_consumer_paths() {
 
 #[test]
 fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
+    let granted = options(
+        &[
+            ("z-provider", "main", "first"),
+            ("y-provider", "main", "second"),
+        ],
+        true,
+    );
     let mut catalog = PluginCatalog::new();
     let z = catalog.register("z-provider", |p: Provider| Ok(p)).unwrap();
     let y = catalog.register("y-provider", |p: Provider| Ok(p)).unwrap();
@@ -327,57 +359,120 @@ fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
     let mut unrelated = Provider::new("second", true, 20, &count);
     unrelated.semantic = "unrelated@1";
     plugins.load(&y, unrelated).unwrap();
-    assert!(matches!(
-        build(plugins.snapshots().collect(), &selected("y-provider")),
-        Err(ResolutionError::Ineligible { .. })
-    ));
+    for denied in [false, true] {
+        let mut policy = selected("y-provider");
+        if denied {
+            policy.deny.insert((requirement(), offer("y-provider")));
+        }
+        let error = build(plugins.snapshots().collect(), &policy, &granted)
+            .err()
+            .unwrap();
+        let ResolutionError::Ineligible {
+            requirement: key,
+            offer: selected,
+            reason: IneligibleReason::IncompatibleContract(cause),
+        } = &error
+        else {
+            panic!("expected incompatibility even when denied: {error:?}");
+        };
+        assert_eq!(*key, requirement());
+        assert_eq!(*selected, offer("y-provider"));
+        let source = error.source().unwrap();
+        assert!(std::ptr::eq(
+            source.downcast_ref::<InterfaceError>().unwrap(),
+            cause.as_ref()
+        ));
+        assert!(source.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ineligible selection for requirement {key:?}, offer {selected:?}: offer advertising an incompatible contract: {cause}"
+            )
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
     let pair = (requirement(), offer("z-provider"));
     let mut policy = ImportPolicy {
         allow: Some(BTreeSet::new()),
         ..Default::default()
     };
     assert!(matches!(
-        build(plugins.snapshots().collect(), &policy),
+        build(plugins.snapshots().collect(), &policy, &granted),
         Err(ResolutionError::Missing { .. })
     ));
     policy.allow.as_mut().unwrap().insert(pair.clone());
     policy.deny.insert(pair.clone());
     assert!(matches!(
-        build(plugins.snapshots().collect(), &policy),
+        build(plugins.snapshots().collect(), &policy, &granted),
         Err(ResolutionError::Missing { .. })
     ));
     policy.selections.insert(requirement(), offer("z-provider"));
-    assert!(matches!(
-        build(plugins.snapshots().collect(), &policy),
-        Err(ResolutionError::Ineligible { .. })
-    ));
-    assert_eq!(count.load(Ordering::SeqCst), 0);
+    for explicit_deny in [true, false] {
+        let mut policy = policy.clone();
+        if !explicit_deny {
+            policy.deny.clear();
+            policy.allow.as_mut().unwrap().remove(&pair);
+        }
+        let error = build(plugins.snapshots().collect(), &policy, &granted)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&error, ResolutionError::Ineligible {
+                requirement: key,
+                offer: selected,
+                reason: IneligibleReason::DeniedByPolicy,
+            } if *key == requirement() && *selected == offer("z-provider")),
+            "{error:?}"
+        );
+        assert!(error.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ineligible selection for requirement {:?}, offer {:?}: offer denied by host eligibility policy",
+                requirement(),
+                offer("z-provider")
+            )
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
     policy.deny.clear();
     policy.selections.clear();
-    build(plugins.snapshots().collect(), &policy).unwrap();
+    build(plugins.snapshots().collect(), &policy, &granted).unwrap();
     let mut cycle = Provider::new("first", false, 10, &count);
     cycle.requires.push(Key::new("a-consumer", "main"));
     plugins.reload(&z, cycle).unwrap();
     let before = count.load(Ordering::SeqCst);
     assert!(matches!(
-        build(plugins.snapshots().collect(), &policy),
+        build(plugins.snapshots().collect(), &policy, &granted),
         Err(ResolutionError::Cycle(_))
     ));
     assert_eq!(count.load(Ordering::SeqCst), before);
     let mut foreign = Provider::new("first", false, 10, &count);
-    foreign.producer = Some(Key::new("y-provider", "main"));
+    foreign.advertised_path = Some("second".into());
+    plugins
+        .reload(&y, Provider::new("second", true, 20, &count))
+        .unwrap();
+    policy = selected("y-provider");
     plugins.reload(&z, foreign).unwrap();
+    let error = build(plugins.snapshots().collect(), &policy, &granted)
+        .err()
+        .unwrap();
     assert!(
-        build(plugins.snapshots().collect(), &policy)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("ownership")
+        matches!(&error, ResolutionError::WrongOrigin { offer, producer, unit }
+        if *offer == Key::new("z-provider", "offer") && **producer == Key::new("z-provider", "main") && unit == "second"),
+        "{error}"
     );
     let mut sibling = Provider::new("first", false, 10, &count);
     sibling.actual_composer = "sibling";
+    let granted = options(
+        &[
+            ("z-provider", "sibling", "first"),
+            ("y-provider", "main", "second"),
+        ],
+        true,
+    );
     plugins.reload(&z, sibling).unwrap();
-    let error = build(plugins.snapshots().collect(), &policy)
+    let error = build(plugins.snapshots().collect(), &policy, &granted)
         .err()
         .unwrap()
         .to_string();
@@ -386,6 +481,7 @@ fn eligibility_semantics_cycles_and_exact_ownership_fail_closed() {
 
 #[test]
 fn duplicate_owner_is_rejected_even_for_distinct_revisions_before_composition() {
+    let granted = BuildOptions::default();
     let mut catalog = PluginCatalog::new();
     let z = catalog.register("z-provider", |p: Provider| Ok(p)).unwrap();
     let count = Arc::new(AtomicUsize::new(0));
@@ -397,7 +493,7 @@ fn duplicate_owner_is_rejected_even_for_distinct_revisions_before_composition() 
         .prepare_reload(&z, Provider::new("new", true, 2, &count))
         .unwrap();
     assert!(
-        matches!(build(vec![old, staged.candidate().unwrap()], &ImportPolicy::default()),
+        matches!(build(vec![old, staged.candidate().unwrap()], &ImportPolicy::default(), &granted),
         Err(ResolutionError::DuplicateOwner(owner)) if owner == "z-provider")
     );
     assert_eq!(count.load(Ordering::SeqCst), 0);
@@ -412,22 +508,9 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                 id: "definition".into(),
                 contract: contract("service@1"),
             })?;
-            into.add(NetworkOffer {
-                id: "offer".into(),
-                producer: Key::new("combined", "main"),
-                unit: "provider".into(),
-                contract: Key::new("combined", "definition"),
-            })?;
-            into.add(ContractRequirement {
-                id: "service".into(),
-                consumer: Key::new("combined", "main"),
-                contract: Key::new("combined", "definition"),
-            })?;
-            into.add(Contribution {
-                id: "main".into(),
-                requires: vec![],
-                routes: vec![],
-                patch: NetworkPatch::new([
+            Contribution::new(
+                "main",
+                NetworkPatch::new([
                     Edit::Add {
                         path: "provider".into(),
                         definition: support::definition(false, true, 1, "service@1"),
@@ -438,26 +521,46 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
                         capacity: support::capacity(),
                     },
                 ]),
-                prepare: Some(Box::new(|cx| {
-                    cx.bind_import("service")?.input::<i64>("run")?;
-                    Ok(CandidateArtifacts::default())
-                })),
+            )
+            .offer("offer", "provider", Key::new("combined", "definition"))
+            .import("service", Key::new("combined", "definition"))
+            .prepare(|cx| {
+                cx.bind_import("service")?.input::<i64>("run")?;
+                Ok(CandidateArtifacts::default())
             })
+            .register(into)
         }
     }
     let mut catalog = PluginCatalog::new();
     let key = catalog.register("combined", |_: ()| Ok(Combined)).unwrap();
     let mut plugins = catalog.instance();
-    plugins.load(&key, ()).unwrap();
-    for explicit in [false, true] {
-        let mut policy = ImportPolicy::default();
+    let granted = [false, true].map(|explicit| {
+        let mut options = BuildOptions::default();
         if explicit {
-            policy.selections.insert(
+            options.imports.selections.insert(
                 Key::new("combined", "service"),
                 Key::new("combined", "offer"),
             );
         }
-        let mut kernel = build(plugins.snapshots().collect(), &policy).unwrap();
+        support::grant(
+            &mut options,
+            Key::new("combined", "main"),
+            [
+                Footprint::Component("provider".into()),
+                Footprint::InputExport("request".into()),
+            ],
+        );
+        options
+    });
+    plugins.load(&key, ()).unwrap();
+    for options in granted {
+        let mut kernel = Kernel::build_with_options(
+            "imports",
+            plugins.snapshots(),
+            Arc::new(LocalProcessDispatcher),
+            options,
+        )
+        .unwrap();
         kernel.start().unwrap();
         support::run(&kernel, "request", 1);
     }

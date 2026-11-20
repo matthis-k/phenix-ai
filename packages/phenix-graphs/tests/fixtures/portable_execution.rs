@@ -10,7 +10,7 @@ use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc};
 
 struct Relay<T>(PhantomData<T>);
 impl<T: ContractValue> Process for Relay<T> {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(value) = context.take("in") {
             Ok(Step::Emit(ProcessEmission::new(
                 "out",

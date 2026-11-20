@@ -96,7 +96,7 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
             )
             .is_err()
     );
-    assert_eq!(reader.get("default").unwrap().unwrap().value.0, "second");
+    assert_eq!(reader.get("default").unwrap().unwrap().0, "second");
     demo.kernel
         .inject("index", Value::local("Agent::run".to_string()))
         .unwrap();
@@ -144,7 +144,7 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
             .unwrap()
             .config::<ObservedConfig>("phenix.agent/settings")
             .unwrap();
-        let found = reader.get("default").unwrap().unwrap();
+        let found = reader.get_revisioned("default").unwrap().unwrap();
         assert_eq!(found.revision, revision);
         assert_eq!(found.value.0, "persisted");
         let sql = demo
@@ -191,7 +191,7 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
         .unwrap()
         .config::<ObservedConfig>("phenix.agent/settings")
         .unwrap()
-        .get("default")
+        .get_revisioned("default")
         .unwrap()
         .unwrap();
     assert_eq!(found.value.0, "after-restart");
@@ -206,7 +206,7 @@ fn public_entry_point_runs() {
 #[test]
 fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
     use phenix_graph::process::LocalProcessDispatcher;
-    use phenix_kernel::{Contribution, Kernel};
+    use phenix_kernel::Kernel;
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use phenix_storage::{
         Operation,
@@ -279,8 +279,8 @@ fn fixed_host_policy_rejects_extra_requests_before_storage_injection() {
                     .iter()
                     .find(|s| s.name() == owner)
                     .unwrap()
-                    .get::<Contribution>(id)
-                    .is_some()
+                    .keys()
+                    .any(|(_, kind, key)| kind == "kernel.contribution" && key == id)
             );
         }
         // Graphs are already present, but cannot compose until the host injects storage.

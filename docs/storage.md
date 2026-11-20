@@ -85,12 +85,16 @@ Errors distinguish invalid addresses, duplicates, missing resources, denial,
 unsupported capabilities, closed subscriptions, schema mismatch, codec errors,
 invalid queue capacity, ended transactions, poisoned state, and underlying
 structured rusqlite errors. `UnsupportedCapability { capability }` identifies
-`TypedKv`, `Sql` or `CompareExchange`; unsupported operations do not silently emulate another backend.
+`TypedKv`, `RevisionedRead`, `AtomicReadMany`, `Sql` or `CompareExchange`;
+unsupported operations do not silently emulate another backend.
 An empty successful drain means no queued notices; `SubscriptionClosed` means the
 registry state is gone (or the watch is absent), not an empty queue. Sessions keep
 state alive even after the original registry handle is dropped.
 
-`Capabilities` reports `typed_kv`, `sql`, `atomic_cas`, `invalidation`, and `observation`.
+`Capabilities` reports `typed_kv`, `revisioned_read`, `atomic_read_many`,
+`compare_exchange`, `sql`, `invalidation`, and `observation`. Revisioned reads,
+atomic snapshots and conditional writes are independent optional promises; plain
+KV reads require none of those stronger capabilities.
 The closed `Observation` metadata uses `RegistryWrites` as its source,
 `Key` (memory) or `Mount` (SQLite) as coverage, and
 `BoundedNonDurableWithOverflow` as delivery. Every `Invalidation` carries this same
@@ -202,8 +206,10 @@ the same mount/dataset/key, not global sequence numbers, snapshot tokens or gran
 Absence has no historical token; restoring an old database restores its tokens.
 The public CAS guarantee is local to one backend/mount, not a transaction across
 backend instances or mounts.
-See [Scoped storage](scoped-storage.md#typed-access-and-cas) for the revisioned
-scoped read API and implicit revision-capability planning requirement.
+See [Scoped storage](scoped-storage.md#typed-access-and-cas) for plain and explicitly
+revisioned scoped reads and independent declared capability requirements. Scoped
+and storage-plugin errors retain wrapped storage/filesystem causes through
+`Error::source`; unsupported behavior remains distinct from absence or denial.
 
 ## Graph Binding
 

@@ -16,7 +16,7 @@ struct Transform {
     emitted: bool,
 }
 impl Process for Transform {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -89,7 +89,9 @@ fn run(composer: &Composer, expected: i64) -> Result<(), Box<dyn std::error::Err
     session.inject("request", Value::of(2_i64))?;
     let report = session.run_until_idle(64);
     assert!(!report.budget_exhausted);
-    let packet = session.take_output("reply")?.ok_or("missing reply")?;
+    let packet = session
+        .take_output("reply")?
+        .ok_or_else(|| phenix_graph::Failure::application_message("missing reply"))?;
     assert_eq!(packet.value().get::<i64>()?, expected);
     assert_eq!(
         packet.origin,

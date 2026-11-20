@@ -134,4 +134,3 @@ for its request-membership subproblem. A closure-heavy paired workload
 and an H4/H5 mixed-activity benchmark are the appropriate next evidence
 before another runtime scheduling abstraction. The graph's core
 runtime/API is unchanged by this benchmark PR.
-
