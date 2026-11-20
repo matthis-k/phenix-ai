@@ -1,6 +1,49 @@
 # FBP Hardening Campaign: Dependency And Policy Record
 
-## Current Accepted Batch: A5
+## Current Accepted Batch: Q5
+
+Implementation `4b765ddfbabf334895147c1f7bf8b5accfb96ee1` passed independent
+final whole-scope and coverage review with no remaining findings. Exact-source
+owner atomic/RAII behavior is preserved, and all public identity/composition
+fixtures were accepted. The [final Q5 record](fbp-q5-protocol-verification-20261117.md)
+contains the complete evidence, limits and all fifteen run URLs.
+
+Full local default/no-default workspace tests, isolated Graph no-default tests,
+explicit doctests, strict Clippy and formatting passed. All ten checks on
+untracked-inclusive snapshot
+`/nix/store/v6d1vcjn5fnh5l00r5cnqb84mp00kfwg-source` passed after an initial
+disk-exhaustion failure and approved temporary-target cleanup. All fifteen
+exact-head hosted workflows are SUCCESS, confirmed via `gh`, including
+[six-job Flake CI 44699331867](https://github.com/matthis-k/phenix-ai/actions/runs/44699331867)
+with all three shards and aggregate successful.
+
+Accepted evidence includes ten exact-source session/ownership Loom properties
+with **472 completed schedules and no duration cap**, the preserved five wake
+properties and **13,440** serialized wake histories, and the real handoff model's
+**21 anchors, 1,533 histories, 2,856 attempts, 611 accepted and 2,245 refused**.
+All eight outcomes exercise direct ownership-return matrices. The seven public
+worker tests include the non-emitting old `Complete` result through five fresh
+checkpoints under both queue policies. The earlier incomplete two-Idle assertion
+was a test-authoring intermediate corrected to three Idle/21 anchors; no
+production defect or production fix is claimed.
+
+Q5's original scope is **scoped verified: 74.0% -> 100.0%, +26.0 pp**. Current
+counts are **21 scoped verified / 6 partial / 5 open / 1 approved exclusion**,
+with **11 in-scope findings remaining**. The score sum is **2591** and the
+subjective historical-row mean is **78.5% (2591 / 33 = 78.515...%)**, not product
+completion. Every other score is unchanged. H3b remains partial at 78.0%, without
+automatic Q5 credit; this bounded evidence is not a universal H1/H3b lifetime
+schedule proof. C7 remains approved TrustedNativeScope at its historical 12.0%
+with no sandbox credit. No fairness, static-liveness or performance acceptance
+follows from these schedules or successful benchmark runs.
+
+Prior Q7, A5 and Q1 acceptances stand; A1 remains open and design-only. This
+current section supersedes historical status/count/pending assertions below,
+which are retained as historical narrative. This evidence-only docs revision
+requires its own checks, separate from the accepted implementation SHA; no later
+implementation or evidence-only commit is accepted by this reconciliation.
+
+## Previous Bound-Handle Batch: A5
 
 Implementation `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf` passed independent
 whole-scope review with no remaining findings after all review fixes and all local
@@ -19,7 +62,7 @@ the actual production StorageGraph query. Stale/foreign rejection and necessary
 validated dynamic paths remain. Known-owner per-handle nonretroactive leases,
 hostile-drop cleanup and Q7 typed failure behavior are preserved.
 
-Current counts are **20 scoped verified / 6 partial / 6 open / 1 approved exclusion**,
+At A5 acceptance, counts were **20 scoped verified / 6 partial / 6 open / 1 approved exclusion**,
 with **12 in-scope findings remaining**. The score sum is **2565** and the subjective
 historical-row mean is **77.7% (2565 / 33 = 77.727...%)**, not product completion.
 Every other score is unchanged: C7's old 12.0% earns no sandbox credit, and H7 stays

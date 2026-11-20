@@ -1,8 +1,50 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: A5, 2026-11-20
+## Current Acceptance: Q5, 2026-11-20
 
-Latest accepted implementation: `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`.
+Latest accepted implementation: `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`.
+Independent final whole-scope and coverage reviews found no remaining findings.
+Exact-source owner atomic/RAII behavior and all public identity/composition
+fixtures were accepted. Full local default/no-default workspace tests, isolated
+Graph no-default tests, explicit doctests, strict Clippy and formatting passed.
+All ten checks on untracked-inclusive snapshot
+`/nix/store/v6d1vcjn5fnh5l00r5cnqb84mp00kfwg-source` passed after approved
+temporary-target cleanup of the initial disk-exhaustion failure. All fifteen
+exact-head hosted workflows are SUCCESS, confirmed through `gh`; [the final Q5
+record](fbp-q5-protocol-verification-20261117.md) contains the complete run URL
+table, model/test evidence, reviews and limits.
+
+Original Q5 is **scoped verified: 74.0% -> 100.0%, +26.0 pp**. Acceptance covers
+bounded exact-source producer/session ownership, real handoff operation histories,
+public identity/transport/worker composition, retirement and preserved wake
+orders. Ten session/ownership properties complete 472 schedules with no duration
+cap; five wake properties and 13,440 serialized wake histories are preserved.
+The handoff matrix covers 21 anchors, 1,533 histories and 2,856 attempts (611
+accepted / 2,245 refused), all eight outcomes, and public worker composition under
+both queue policies, including five fresh checkpoints for a non-emitting old
+`Complete` result. The intermediate two-Idle assertion was incomplete test
+authoring, not a production defect.
+
+Only Q5 changes relative to the accepted A5 table; all prior Q7/A5/Q1 acceptance
+and every other issue score remain intact. Classifications are **21 scoped
+verified / 6 partial / 5 open / 1 approved exclusion**, leaving **11 in-scope
+findings**. The score sum is **2591**, and the subjective unweighted issue mean
+is **78.5% (2591 / 33 = 78.515...%)**, up from 77.7% (2565 / 33); it is not
+product completion, a safety probability or milestone acceptance.
+
+H3b remains partial at 78.0%, with no automatic Q5 credit. The bounded
+owner/handoff evidence is not a universal schedule proof for broader H1/H3b
+lifetime behavior and supplies no fairness, static-liveness, deadlock-freedom or
+performance conclusion. C7 remains approved TrustedNativeScope at its historical
+12.0%, without sandbox credit. H7 remains partial at 56.0%. A1 stays open and
+design-only; M7/M8 remain incomplete. This current status and Q5's table row
+supersede earlier aggregate counts and Q5 open/pending assertions. This
+evidence-only documentation revision requires its own checks and accepts no
+later implementation or evidence-only commit.
+
+## Previous Acceptance: A5, 2026-11-20
+
+A5 accepted implementation: `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`.
 The independent whole-scope review found no remaining findings after all review
 fixes. All local default/no-default Graph/workspace, explicit documentation,
 compilation, strict-Clippy and formatting gates passed, including all ten checks on
@@ -19,8 +61,8 @@ dynamic paths are retained without physical tuples serving as authority. Known-o
 per-handle nonretroactive leases, hostile-drop cleanup and Q7 typed failure behavior
 are preserved.
 
-The authoritative current table below changes only A5; all prior Q7 acceptance and
-other issue scores remain intact. Classifications are **20 scoped verified /
+At A5 acceptance, the table changed only A5; all prior Q7 acceptance and other
+issue scores remained intact. Classifications were **20 scoped verified /
 6 partial / 6 open / 1 approved exclusion**, leaving **12 in-scope findings**.
 The subjective unweighted issue mean is **77.7% (2565 / 33 = 77.727...%)**, up from
 75.4% (2489 / 33); it is not product completion, a safety probability or milestone
@@ -30,8 +72,8 @@ H7 remains partial at 56.0%: older-request scoped-capture retention and shared-p
 occupancy are still unresolved. A5 completes the original binding-authority finding,
 not universal request progress or fairness. Trusted native abort/double-panic
 exclusions remain. Green benchmarks are execution evidence, not performance
-acceptance; M7/M8 remain incomplete. This current status and A5's current table row
-supersede earlier status/count/remaining-work assertions below; historical evidence
+acceptance; M7/M8 remain incomplete. That A5 status and table row superseded
+earlier status/count/remaining-work assertions below; historical evidence
 and narrative are preserved. This evidence-only docs revision requires its own
 checks; implementation-head passes do not accept a later revision.
 
@@ -134,8 +176,9 @@ dispatchers, and request-recovery factories. The Q5 workflow repeats its native
 suite eight times. Their recorded passes apply to the verified head, not the new
 merge. Candidate cases exercise additional kernel session/producer boundaries.
 
-The baseline does not claim arbitrary plugin-vs-plugin or host-lock deadlock
-freedom. Q5 remains open for unbounded real interleavings, and H3b remains partial.
+The baseline did not claim arbitrary plugin-vs-plugin or host-lock deadlock
+freedom and remains historical evidence only. Current scoped Q5 acceptance still
+supplies no unbounded real-interleaving proof; H3b remains partial.
 
 ## All 33 Issues
 
@@ -170,7 +213,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
 | Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Exact unique selection and global host work limits](fbp-selection-correctness-20261115.md), [exact-head][S]; defect fixed, broader ancestor/footprint planning and recomposition scaling remain |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
-| Q5 | Concurrency verification | 74.0% | 74.0% | +0.0 | Open | [Baseline][B]; candidate actual-source three-property session Loom |
+| Q5 | Concurrency verification | 74.0% | 100.0% | +26.0 | Scoped verified | [Bounded exact-source ownership and real handoff/public identity composition, independent whole-scope/coverage review, local/Nix snapshot gates and all fifteen exact-head workflows](fbp-q5-protocol-verification-20261117.md) at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`; H3b remains partial and no universal schedule, fairness, liveness or performance proof follows |
 | Q6 | Diagnostic quality | 22.0% | 100.0% | +78.0 | Scoped verified | [Complete bounded current-state explanations](fbp-explanations-20261116.md), shared selector/closure authority, jobs/wakes/publication/request-live accounting and adversarial passivity; [exact-head][L]; not Q4 liveness |
 | Q7 | Typed error consistency | 26.0% | 100.0% | +74.0 | Scoped verified | [Full native typed protocol, framework reasons and plugin lifetime errors; independent whole-slice reviews, local/Nix and all fifteen exact-head workflows](fbp-q7-final-review-20261117.md) at `6f6e751b36f77273da8799900f665bc026447418`; per-handle nonretroactive leases and trusted native limits remain |
 | Q8 | Report reconciliation | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; historical report labels corrected |
@@ -189,7 +232,7 @@ freedom. Q5 remains open for unbounded real interleavings, and H3b remains parti
 
 Percentages above describe whole findings, not whether any implementation changed.
 The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`,
+implementation acceptance is exact-head `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`,
 not an older commit's passing run. This evidence-only documentation revision must
 pass its own head's checks.
 
@@ -220,6 +263,7 @@ pass its own head's checks.
 | Q6 whole original acceptance | Isolated diagnostics did not explain all runtime-owned run/settlement conditions | Shared callback-free selection/closure evidence and passive process/request explanation records | All built-ins, opaque Custom, tickets/deadlines/wakes, target precedence, every request-live term and no-callback/drop passivity; [exact-head][L] |
 | Q1 original responsibility scope | Network, composition and runtime roots mixed distinct tested responsibilities | Cohesive private compiler/authoring/resolution, planning/replay and runtime-control seams; same canonical owners and public type paths | Byte-preserved behavior blocks, independent structural review, full workspace/isolated-feature gates and child-only CI coverage; [exact-head][O] |
 | A5 whole original acceptance | Physical string paths escaped typed handles as compilation/binding/execution correctness proof | Owned compiled-generation declarations/endpoints/ingress/captures/sources authenticate exact projections and owners before canonical Graph execution; checked preview/final binding, Kernel/Generation and production query migration | Real Graph basic/internal/configuration/wake/source/closure coverage, preview nontransfer, hostile lease/drop cleanup, actual query and independent whole-scope review; full local/Nix gates and [all fifteen exact-head runs](fbp-bound-handles-20261117.md#exact-head-hosted-acceptance) at `45c2dfb6f`; H7 shared-process/older-capture residual remains outside A5 |
+| Q5 whole original acceptance | Concurrency evidence omitted systematic producer ownership and composed handoff/worker identity schedules | Exact-source owner atomic/RAII Loom, real owned handoff histories and public session/transport/worker identity matrices, retaining wake and retirement contracts | Ten properties/472 schedules with no duration cap, preserved five wake properties/13,440 histories, 21 anchors/1,533 histories/2,856 attempts, all eight outcomes and both-policy public five-checkpoint composition; independent review and [all fifteen exact-head runs](fbp-q5-protocol-verification-20261117.md) at `4b765ddfb`; bounded scope only, H3b remains partial |
 
 The storage WIP is adapted onto the native FBP branch, not merged from its old
 Engine-era tree. It preserves filesystem/mount reservations, schema/codec ordering,
@@ -297,7 +341,7 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 
 | Issues | Candidate implementation/evidence | Closure gap |
 | --- | --- | --- |
-| H3b, Q5 | Unlocked producer/session ownership transfer, ordered worker guards, whole-drain gate, exclusive driver ownership, real-thread regressions, actual-source three-property session Loom plus retained PR #1300 wake verifier | `a2d7b4d3` exact-head gates passed; arbitrary plugin-created thread/lock cycles remain outside the contract |
+| H3b, Q5 | Original Q5 bounded owner/handoff/public identity scope accepted at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`, with exact-source models and retained native/wake evidence | Q5 scoped verified; H3b remains 78.0% partial because broader lifetime schedules, arbitrary plugin-created thread/lock cycles and universal deadlock freedom are outside this acceptance |
 | C5 | Approved cooperative watchdog contract and complete ticket/deadline/policy evidence at `89171a843` | Scoped verified; no abandoned-host autonomous service, callback preemption or worker/effect reclamation |
 | C6 | Approved Restart And Persist, independent SQLite reopen/schema/CAS and archived jobs at `89171a843` | Scoped verified; no live process-state migration or exclusive successor writer |
 | C3 | Approved LeasedArchival with integrated retained generation/session/request/job authentication and leases | Scoped verified; producer retirement does not revoke explicit retained capabilities |
@@ -311,7 +355,7 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 | A3 | Graph Store/locking/permission authority removed in favor of explicit opaque capabilities, with independent lease-safe cleanup | Original bounded finding closed at `026cfbe05`; external authority honesty/revocation and native sandboxing are separate scopes |
 | Q6 | Shared callback-free selection/closure evidence and complete bounded passive process/request explanations | Original bounded finding scoped verified at `89171a843`; not static liveness, future Custom selection or globally atomic wake state |
 | Q1 | Original network/composition/runtime responsibility concentrations decomposed at `7c6119122` with one canonical owner per state domain | Original bounded scope closed; broader Kernel root concentration is disclosed, not claimed eliminated |
-| Q7 | External capabilities and retained error causes | Coherent typed process/runtime provenance and lease-safe error ownership remain |
+| Q7 | Complete typed process/runtime/session/Kernel/StorageGraph migration accepted at `6f6e751b36f77273da8799900f665bc026447418` | Scoped verified; known-owner nonretroactive leases and trusted-native abort/double-panic limits remain |
 | Q4 | Intentional blocking and finite FIFO limitations documented/tested | Static liveness analysis and sound progress diagnostics remain |
 | H2, H3a, C1, C2, C4, C8, C9, C10, A7, Q8 | Baseline scoped guarantees retained and exercised at `a2d7b4d3`; newer changes require their own same-head gates | No permission to weaken existing guarantees or substitute earlier CI for current acceptance |
 

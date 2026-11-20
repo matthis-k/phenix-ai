@@ -1,38 +1,46 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: A5, 2026-11-20
+## Current Acceptance: Q5, 2026-11-20
 
-Original A5 is **scoped verified: 24.0% -> 100.0%, +76.0 pp** at
-`45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`, following an independent whole-scope
-review with no remaining findings after all fixes, all local gates (the ten-check
-untracked-inclusive Nix snapshot included), and all fifteen exact-head hosted
-workflows confirmed SUCCESS via `gh`. See [final A5 acceptance and all run URLs](fbp-bound-handles-20261117.md).
-Acceptance covers real handles through Graph basic/internal resolution and execution,
-configuration, wakes/notifiers, sources and closure; nontransferable preview and
-final compilation/binding; Kernel/Generation; and the actual production StorageGraph
-query. Known-owner per-handle nonretroactive leases, hostile-drop cleanup and Q7
-typed failure behavior are preserved, with stale/foreign rejection and necessary
-validated dynamic paths.
+Original Q5 is **scoped verified: 74.0% -> 100.0%, +26.0 pp** at
+`4b765ddfbabf334895147c1f7bf8b5accfb96ee1`, following independent final
+whole-scope and coverage reviews with no remaining findings, all local gates and
+all fifteen exact-head hosted workflows confirmed SUCCESS via `gh`. The ten-check
+untracked-inclusive Nix snapshot also passed after approved temporary-target
+cleanup of an initial disk-exhaustion failure. See [final Q5 acceptance, model
+counts and all run URLs](fbp-q5-protocol-verification-20261117.md).
 
-Current counts are **20 scoped verified / 6 partial / 6 open / 1 approved
-exclusion**, leaving **12 in-scope findings**. The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
-records the score sum **2565** and subjective mean **77.7% (2565 / 33 = 77.727...%)**,
-not product completion. C7 remains excluded with its old 12.0% unchanged and no
-sandbox credit. Prior Q7 and Q1 acceptance, including the broader Kernel
-concentration residual, is unchanged; every other issue score is retained.
+The accepted bounded scope combines exact-source owner atomic/RAII verification,
+real owned handoff histories, public identity/transport/worker composition and
+preserved wake/retirement evidence. It includes ten session/ownership properties
+with 472 schedules and no duration cap, five preserved wake properties and 13,440
+serialized wake histories, plus 21 handoff anchors, 1,533 histories and 2,856
+attempts (611 accepted / 2,245 refused). All eight outcomes are exercised. Seven
+public worker tests include both queue policies and five fresh identity
+checkpoints for a non-emitting old `Complete` result. The old two-Idle assertion
+was an incomplete test-authoring intermediate corrected to three Idle/21 anchors;
+there is no production defect/fix claim.
 
-The six partial findings are H1, H3b, H4, H5, H6 and H7; the six open findings are
-A1, A2, Q2, Q3, Q4 and Q5. H7's older-request scoped-capture retention and
-shared-process occupancy residual remains partial and unresolved. A5 completes its
-binding-authority scope, not universal progress or fairness. Trusted native abort
-exclusions remain; green benchmark execution does not establish performance
-acceptance or M7/M8 completion.
+Current counts are **21 scoped verified / 6 partial / 5 open / 1 approved
+exclusion**, leaving **11 in-scope findings**. The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
+records the score sum **2591** and subjective mean **78.5% (2591 / 33 = 78.515...%)**,
+not product completion. C7 remains approved TrustedNativeScope with its old 12.0%
+unchanged and no sandbox credit.
 
-This current section supersedes earlier counts, Q7 development/pending labels, A5
-open/pending labels and the starting-state rows below. All 22 starting rows and prior
-acceptance narrative remain for traceability, not as a second current status
-authority. This evidence-only docs revision requires its own checks; no later
-implementation is accepted here.
+The six partial findings are H1, H3b, H4, H5, H6 and H7; the five open findings
+are A1, A2, Q2, Q3 and Q4. H3b remains partial at 78.0% and receives no automatic
+Q5 credit; the bounded owner/handoff lifetime evidence is not a universal H1/H3b
+schedule proof. H7's older-request scoped-capture retention and shared-process
+occupancy residual remains unresolved. No fairness, static-liveness or
+performance acceptance follows. Trusted native abort exclusions and M7/M8 remain
+incomplete.
+
+Prior Q7, A5 and Q1 acceptances, including their disclosed residuals, are
+unchanged; A1 remains open and design-only. This current section supersedes
+earlier counts, Q7 development labels and Q5/A5 open/pending labels below. All 22
+starting rows and prior acceptance narrative remain for traceability, not as a
+second current status authority. This evidence-only docs revision requires its
+own checks; no later implementation or evidence-only commit is accepted here.
 
 ## Historical Work Map And Acceptance Sequence
 
@@ -91,15 +99,16 @@ Q3's correctness unit is now accepted; remaining Q3 work is complete planning an
 recomposition scale measurement/acceptance, not another provisional-defeat patch.
 The later explicit C3/C5/C6/C7 approvals above supersede the pending-policy labels
 from that earlier stage. Q1's three-root ownership decomposition is accepted at
-`7c6119122`. Q7's complete typed-failure migration is now being developed in an
-isolated worktree; its core alone receives no closure credit.
+`7c6119122`. Q7's complete typed-failure migration was developed separately and
+is now scoped verified at `6f6e751b36f77273da8799900f665bc026447418`; its earlier
+core-only stage received no closure credit.
 
 ## All 22 Findings
 
 | Finding | Starting State | Concrete Next Work / Closure Requirement | Dependency Or Decision |
 | --- | --- | --- | --- |
 | H1 FIFO correlation | Partial | Define arrival skew/multiplicity and demonstrate supported crossed joins, staged waits, EOS and cancellation under those bounds | Strict global FIFO cannot also promise arbitrary crossed-stream progress |
-| H3b lifecycle interleavings | Partial | Extend actual-source ownership verification to producer drain, retirement, driver ownership and worker return, retaining real-thread adversaries | Q5; arbitrary plugin-owned locks remain outside kernel control |
+| H3b lifecycle interleavings | Partial | Retain accepted Q5 bounded producer/handoff/worker evidence; separately define and verify any broader lifetime schedules before changing H3b | Q5 does not automatically close or credit H3b; arbitrary plugin-owned locks remain outside kernel control |
 | H4 scheduling scans | Partial | Measure supported addressed-event scaling and remove demonstrated unnecessary scans, retaining required global/polled Custom fallbacks | H6; no scheduler rewrite merely to remove every scan |
 | H5 closure analysis | Partial | Meet agreed closure cost/scaling budgets while preserving absence, cycles, observation and deduplication | H6; exact paired current-head measurements before further optimization |
 | H6 profiling acceptance | Partial | Representative latency/throughput, allocation/live-memory and concurrency budgets with exact comparable sources | Runtime acceptance is distinct from missing production model/tool integration |
@@ -117,9 +126,9 @@ isolated worktree; its core alone receives no closure credit.
 | Q2 incremental compilation | Open | Define dependency-aware invalidation/cache identity; compare reused candidates against full fresh compilation and measure benefit | Q3 correctness and stable authoring/replacement semantics first |
 | Q3 selection/scaling | Open | Exact global selection, explicit zero/multiple/exhaustion handling and bounded-selector scale evidence accepted at `006b2e9cc`; complete planning/recomposition scale acceptance remains | Allowance excludes ancestor/footprint planning and replay/compile; no whole-finding closure |
 | Q4 static liveness | Open | Define an analyzable subset with sound reject/unknown/progress results and explicit environment assumptions | Arbitrary callbacks and every SCC cannot receive a universal progress claim |
-| Q5 concurrency evidence | Open | Cover supported drain/retirement/driver and handoff/wake compositions with actual-source bounded models plus deterministic threads | H3b; more repetitions alone are not exhaustive verification |
+| Q5 concurrency evidence | Open, now scoped verified | Supported drain/retirement/driver, handoff and wake/public identity compositions accepted at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1` with actual-source bounded models and deterministic/public native complements | Original Q5 is scoped verified after independent review and all local/Nix/exact-head gates; H3b remains partial, and bounded schedules are not universal fairness/liveness/deadlock-freedom proof |
 | Q6 diagnostic completeness | Open, now scoped verified | Complete bounded passive process/request explanations accepted at `89171a843`, sharing actual selector and closure predicates | Custom/future behavior remains explicitly unknown; current-state explanation is not Q4 liveness |
-| Q7 typed failures | Open | Migrate a coherent process-to-handoff-to-session/request-to-Kernel/StorageGraph failure slice with original causes and code leases | Current source forwarding and Cleanup envelopes are material but not a complete typed process protocol |
+| Q7 typed failures | Open, now scoped verified | Complete process-to-handoff-to-session/request-to-Kernel/StorageGraph typed protocol accepted at `6f6e751b36f77273da8799900f665bc026447418` | Original causes, cleanup and known per-handle nonretroactive leases are preserved; trusted-native abort/double-panic limits remain |
 
 ## GitHub WIP Disposition
 

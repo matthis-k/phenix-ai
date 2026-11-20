@@ -1,38 +1,39 @@
 # Phenix Native FBP Design
 
-## Current Acceptance: A5, 2026-11-20
+## Current Acceptance: Q5, 2026-11-20
 
-Latest accepted implementation: `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`.
-Original A5 is **scoped verified: 24.0% -> 100.0%, +76.0 pp** after an independent
-whole-scope review with no remaining findings after all fixes, all local gates
-including the ten-check untracked-inclusive Nix snapshot, and all fifteen exact-head
-hosted workflows confirmed SUCCESS via `gh`. See [final A5 review, tests and all run
-URLs](fbp-bound-handles-20261117.md).
+Latest accepted implementation: `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`.
+Original Q5 is **scoped verified: 74.0% -> 100.0%, +26.0 pp** after independent
+final whole-scope/coverage reviews with no remaining findings, full local gates,
+all ten checks on the untracked-inclusive Nix snapshot, and all fifteen exact-head
+hosted workflows confirmed SUCCESS via `gh`. See [final Q5 review, tests and all
+run URLs](fbp-q5-protocol-verification-20261117.md).
 
-Real compiled-generation-owned handles now cover Graph basic/internal declaration
-and endpoint resolution, ordinary/request execution, configuration, wakes/notifiers,
-sources and closure. Checked composition/compilation bridges do not transfer
-intermediate-preview authority; fresh final `Binding` handles are required.
-Kernel/Generation forwarding and the actual production StorageGraph query use the
-same authority. Stale/foreign inputs reject before canonical execution, necessary
-validated dynamic paths remain, and no second scheduler or request store is added.
-Known-owner per-handle nonretroactive leases, hostile-drop cleanup and Q7 typed
-primary/cleanup behavior are preserved.
+The accepted bounded evidence covers exact-source producer/session owner atomics
+and RAII, whole-drain/retirement complements, real owned handoff histories and
+public identity/transport/worker composition. Ten session/ownership Loom
+properties complete 472 schedules with no duration cap; five wake properties and
+13,440 serialized histories are retained. The handoff matrix has 21 anchors,
+1,533 histories and 2,856 attempts (611 accepted / 2,245 refused), covers all
+eight outcomes, and is complemented by seven public worker tests under both
+queue policies, including five fresh `Complete` identity checkpoints. The earlier
+two-Idle assertion was incomplete test authoring, not a production defect.
 
 The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md) now records
-**20 scoped verified / 6 partial / 6 open / 1 approved exclusion**, **12 remaining**,
-with score sum **2565** and subjective issue mean **77.7% (2565 / 33 = 77.727...%)**,
-not product completion. Every other score is unchanged. C7's historical 12.0% has
-no sandbox credit. H7 remains partial at 56.0%: older-request scoped-capture
-retention and shared-process occupancy remain unresolved, so A5's complete binding
-authority is not universal request progress or fairness. Prior Q7/Q1 acceptance and
-the broader Kernel root residual are preserved. Green benchmark execution is not
-performance acceptance; M7/M8 and production-agent integration remain incomplete.
+**21 scoped verified / 6 partial / 5 open / 1 approved exclusion**, **11 remaining**,
+with score sum **2591** and subjective issue mean **78.5% (2591 / 33 = 78.515...%)**,
+not product completion. Every other score is unchanged. H3b remains partial at
+78.0%, with no automatic Q5 credit; bounded owner/handoff lifetime evidence is
+not a universal H1/H3b schedule proof. C7 remains approved TrustedNativeScope at
+its historical 12.0%, with no sandbox credit. H7 remains partial at 56.0%. No
+fairness, static-liveness or performance acceptance follows; M7/M8 and
+production-agent integration remain incomplete.
 
-This current top supersedes earlier status/count/remaining-work assertions below,
-including the closing reference summary; historical narrative and prior acceptance
-are preserved. This evidence-only docs revision requires its own checks and does
-not certify any newer implementation.
+Prior Q7, A5 and Q1 acceptance and their disclosed residuals are preserved. A1
+remains open and design-only. This current top supersedes earlier Q5/pending and
+aggregate status/count assertions below; historical narrative and prior accepted
+batches are preserved. This evidence-only docs revision requires its own checks
+and certifies no newer implementation or evidence-only commit.
 
 ## Prior Status And Design
 
@@ -347,12 +348,12 @@ The [regression ledger](fbp-regression-ledger.md) records M6 removals and named
 native tests, including independent randomized composition models. Final counts
 belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
 and final verification status are recorded in the migration/review documents.
-The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative:
-A6, A3, A4 and Q6 have accepted scoped closure, along with the explicitly approved
-C3 archival, C5 cooperative and C6 restart-and-persist contracts. Current
-classifications are eighteen scoped verified, six partial, eight open and one
-user-approved exclusion. C7 exclusion is not sandbox implementation credit.
-Q1's original three graph responsibility concentrations are decomposed and accepted
-at `7c6119122`; broader concentration in the Kernel root remains explicit residual work.
-M7/M8 and missing production-agent, live-migration and OS-isolation adapters remain
-incomplete; queue isolation is not independent process state or universal fairness.
+The [33-issue tracker](fbp-issue-progress-estimates-20261113.md) is authoritative.
+Current classifications are twenty-one scoped verified, six partial, five open
+and one user-approved exclusion. Q5 is scoped verified only for its bounded
+owner/handoff/public-composition evidence; H3b remains partial. Q1's broader
+Kernel root residual and H7's request-state limitations remain explicit. C7's
+TrustedNativeScope exclusion is not sandbox implementation credit. A1 remains
+open/design-only. M7/M8 and missing production-agent, live-migration and
+OS-isolation adapters remain incomplete; queue isolation is not independent
+process state or universal fairness.

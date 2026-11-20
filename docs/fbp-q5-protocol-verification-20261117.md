@@ -1,19 +1,35 @@
 # Q5 Protocol Verification Design
 
-## CURRENT Implementation Checkpoint — Local Evidence, Acceptance Pending
+## CURRENT Final Acceptance — Q5 Scoped Verified
 
-Date: 2026-11-17. This section supersedes the original Phase 0/1-only status
-while preserving the requirements and design analysis below. The assembled tree
-contains implementation and focused local evidence, but no exact committed-head
-acceptance is claimed. **Q5 remains OPEN. Final independent reviews report no
-findings after the public identity/composition extension and evidence reconciliation.
-H3b is outside this
-Q5-specific checkpoint and receives no automatic closure, credit, or status
-change. No ledger or score update is made.**
+Date: 2026-11-20. **Original Q5 is scoped verified at
+`4b765ddfbabf334895147c1f7bf8b5accfb96ee1`: 74.0% -> 100.0%, +26.0 pp.**
+This section supersedes the earlier local-evidence/pending checkpoint while
+preserving the requirements and design analysis below. Independent final
+whole-scope and coverage reviews report no findings after the public
+identity/composition extension and evidence reconciliation. Exact-source owner
+atomic/RAII behavior and all public identity fixtures were reviewed without
+remaining findings. All local gates and all fifteen exact-head hosted workflows
+passed; the complete run table appears below.
 
-### Implemented core and locally verified counts
+Only Q5 receives new score credit. Counts are **21 scoped verified / 6 partial /
+5 open / 1 approved exclusion**, leaving **11 in-scope findings**. The score sum
+moves 2565 + 26 = **2591**, and 2591 / 33 = 78.515...%, rounded to **78.5%**.
+This is a subjective unweighted historical-row mean, not product completion.
+Prior Q7, A5 and Q1 acceptances remain intact; A1 remains open and design-only.
 
-| Slice | Current source and focused local checkpoint | Claim boundary |
+**H3b stays partial at 78.0% and receives no automatic closure or score credit.**
+The accepted owner/handoff lifetime evidence does not prove every broader H1/H3b
+lifetime schedule. It is bounded concurrency evidence, not universal schedule,
+fairness, liveness, deadlock-freedom or performance proof. C7 remains the
+user-approved TrustedNativeScope exclusion with no sandbox credit. No M7/M8
+acceptance follows. This evidence-only documentation reconciliation requires its
+own checks and does not accept any subsequent implementation or documentation
+revision.
+
+### Accepted core and verified counts
+
+| Slice | Accepted source and focused evidence | Claim boundary |
 | --- | --- | --- |
 | Production ownership extraction | `packages/phenix-kernel/src/producer_ownership.rs` now owns the atomic word, `DriverScope`, `DirectDrainScope`, and private `DriverAdmissionError`. `lib.rs::enter_driver` maps the private errors to the existing public `DriverError` variants without changing their direction or guard order. | This is exact-source primitive verification, not a model of `Kernel::run_until`, retirement, wake registration, or arbitrary graph atomics. |
 | Exact-source Loom | Seven new producer-ownership properties plus the three original `ExclusiveSlot` properties: **10 properties, 472 completed schedules** (411 new + 61 original). Every property reports `inconclusive=false`. Bounds are preemption 2, 1,000 branches, 20,000 permutations, checkpoint interval 1, and **no duration cap**. | Bounded source-level schedules only; not exhaustive arbitrary concurrency, whole-Kernel verification, or a fairness/liveness proof. The conservative `MAX-1` cap test did not trigger. |
@@ -22,7 +38,7 @@ change. No ledger or score update is made.**
 | Execution outcome matrices | All eight real execution outcomes (`Emit`, `Yield`, `WaitInput`, `WaitInputs`, `WaitWake`, `Complete`, `Finished`, and typed failure) each exercise rightful rejection, fresh redispatch, foreign unrun-job return, foreign completion return, and rightful accepted completion. The same-cancellation matrix has **8 intact stale returns and 8 exact return-drop cleanups**. | These are real owned-object executions in the private model. They do not by themselves prove every public session/worker composition or external effect policy. |
 | Public handoff/transport history | `packages/phenix-graphs/tests/fbp_handoff_history.rs` has **8 passing tests** for repeated foreign/stale refusals, rightful acceptance, publication acknowledgement, real transport backpressure, typed panics/cleanup, guards, and leases. A real `ConnectionSet` returns `Full` on four retries, commits once after capacity is released, then returns `AlreadyCommitted`; the session backpressure case retries without new steps/publications or repeated effects. | No cloned/reconstructed completion or replayed process action is used. This verifies the named concrete schedules, not every transport or session interleaving. |
 | Existing worker baseline | The original 48 persistent-session rounds remain split 16/16/16 across replacement-first, old-return-first, and fresh-dispatched orders. Two leased publication/recovery orders add `E<P<R<F` and `E<R<P<F`; these are the workflow's **five deterministic baseline frames**. | Old external effects survive cancellation exactly once, old output cannot enter the replacement, and returned old objects retain process/context/code leases. Repetition is not proof of coverage. |
-| Workflow reproducibility wiring | The session workflow now creates a verified-empty runner `CARGO_HOME`, runs explicit `cargo fetch --locked`, then offline formatting, strict Clippy, and Loom tests. The in-flight workflow hashes the handoff model, runtime/transport/failure/value sources and both test files, runs them with `--nocapture`, and repeats the worker target 12 times with a five-baseline-frame coverage summary. | Workflow source inspection is not hosted success. Exact-head hosted runs and artifact review remain pending. Additional public-extension tests must not be hidden by the older five-frame summary. |
+| Workflow reproducibility wiring | The session workflow creates a verified-empty runner `CARGO_HOME`, records compiler/toolchain and source provenance, runs explicit `cargo fetch --locked`, then offline formatting, strict Clippy and Loom tests. The in-flight workflow hashes the handoff model, runtime/transport/failure/value sources and both test files, runs them with `--nocapture`, and repeats the worker target 12 times with an explicit seven-test/five-baseline-frame coverage summary. | All fifteen workflows passed on the exact accepted SHA. The summary retains the four added identity/composition tests and both queue policies where required; repetition remains bounded witness evidence, not schedule exhaustion. |
 
 The Loom schedule counts observed locally are:
 
@@ -60,9 +76,8 @@ claimed.**
 
 ### Public identity/composition extension — independently reviewed
 
-The public extension is not accepted as finished merely because new tests appear
-in the working tree. At final inspection, the worker target contains locally
-passing cases for:
+At the accepted head, the worker target contains seven passing tests covering
+the five baseline frames and the added public identity/composition scenarios:
 
 - wrong compiled-index return with equal visible activation/sequence numbers;
 - the same compiled path in two sessions, including completion, wake, and
@@ -72,15 +87,16 @@ passing cases for:
   checkpoints before admission, after fresh dispatch, after accepted/retained
   emission, after transport publication, and after logical settlement.
 
-These cases passed the focused local worker target and final independent
-adversarial review found no remaining fixture or production findings. Workflow
-summaries now account for seven tests: the five baseline frames plus four added
-identity/composition tests, including both queue policies where required.
+These cases passed the focused local worker target and exact-head repeated
+workflow; final independent adversarial review found no remaining fixture or
+production findings. Workflow summaries explicitly account for seven tests, five
+baseline frames and four added identity/composition scenarios, including both
+queue policies where required.
 Same-cancellation, replacement, and unrun-job ownership remain covered by the real
 handoff identity matrices and existing direct tests; no result is inferred from
 object cloning or reconstructed tickets.
 
-### Focused local checks completed for this checkpoint
+### Accepted local checks and exact-head hosted gates
 
 Under `nix develop`, using isolated target directories:
 
@@ -93,21 +109,58 @@ Under `nix develop`, using isolated target directories:
 - strict `--no-deps -- -D warnings` Clippy passed for the isolated Loom verifier
   and for both graph integration targets.
 
-These checks passed on the implemented worktree. The parent additionally passed
-full default/no-default workspace tests, isolated Graph no-default tests and
-explicit doctests, strict workspace Clippy, formatting, and all ten checks on
-untracked-inclusive snapshot `/nix/store/v6d1vcjn5fnh5l00r5cnqb84mp00kfwg-source`.
-An initial Nix compilation failed on host disk exhaustion; the same immutable
-snapshot passed after approved temporary-target cleanup. Exact committed-head
-Flake, both dedicated Loom jobs, native repeated workflows and their artifacts
-remain **PENDING**. No acceptance, Q5 closure, H3b inference, or numerical progress
-claim follows.
+These checks passed on the accepted assembled tree. Full default/no-default
+workspace tests, isolated Graph no-default tests and explicit default/no-default
+doctests, strict workspace Clippy and formatting also passed. All ten checks
+passed on untracked-inclusive snapshot
+`/nix/store/v6d1vcjn5fnh5l00r5cnqb84mp00kfwg-source`. An initial Nix compilation
+failed on host disk exhaustion; the same immutable snapshot passed after approved
+temporary-target cleanup. This snapshot evidence is not relabeled as a separate
+committed-head `nix flake check` result.
+
+The five existing actual-wake Loom properties remain preserved, as do the 13,440
+serialized wake-operation histories. The session Loom evidence is exactly the ten
+properties and 472 completed schedules above, with preemption bound two and no
+duration cap. The hosted Loom job starts with a previously nonexistent, verified-empty
+`CARGO_HOME`, captures compiler/toolchain, source/lock hashes and model bounds,
+performs explicit `cargo fetch --locked`, and only then executes formatting,
+strict Clippy and model tests offline.
+
+`gh api` queried runs filtered by exact `head_sha`
+`4b765ddfbabf334895147c1f7bf8b5accfb96ee1`.
+Each of the following fifteen workflows is completed with conclusion **SUCCESS**
+on that SHA:
+
+| Workflow | Exact-head run | Conclusion |
+| --- | --- | --- |
+| Flake CI | [44699331867](https://github.com/matthis-k/phenix-ai/actions/runs/44699331867) | SUCCESS |
+| Q5 session ownership interleavings | [44699331224](https://github.com/matthis-k/phenix-ai/actions/runs/44699331224) | SUCCESS |
+| Q5 actual wake interleavings | [44699331199](https://github.com/matthis-k/phenix-ai/actions/runs/44699331199) | SUCCESS |
+| Q5 notifier retirement concurrency | [44699331285](https://github.com/matthis-k/phenix-ai/actions/runs/44699331285) | SUCCESS |
+| Q5 in-flight worker recovery | [44699331267](https://github.com/matthis-k/phenix-ai/actions/runs/44699331267) | SUCCESS |
+| Native runtime benchmark | [44699331251](https://github.com/matthis-k/phenix-ai/actions/runs/44699331251) | SUCCESS |
+| H4 EOS endpoint paired benchmark | [44699331194](https://github.com/matthis-k/phenix-ai/actions/runs/44699331194) | SUCCESS |
+| H4 scoped optional poll paired benchmark | [44699330990](https://github.com/matthis-k/phenix-ai/actions/runs/44699330990) | SUCCESS |
+| H5 scoped closure paired benchmark | [44699331078](https://github.com/matthis-k/phenix-ai/actions/runs/44699331078) | SUCCESS |
+| H5 request index paired benchmark | [44699331050](https://github.com/matthis-k/phenix-ai/actions/runs/44699331050) | SUCCESS |
+| H4 targeted wake paired benchmark | [44699330977](https://github.com/matthis-k/phenix-ai/actions/runs/44699330977) | SUCCESS |
+| H4 notified Custom readiness benchmark | [44699330995](https://github.com/matthis-k/phenix-ai/actions/runs/44699330995) | SUCCESS |
+| H4 live request sparse paired benchmark | [44699331198](https://github.com/matthis-k/phenix-ai/actions/runs/44699331198) | SUCCESS |
+| H6 agent allocation events | [44699331219](https://github.com/matthis-k/phenix-ai/actions/runs/44699331219) | SUCCESS |
+| H4 mixed agent acceptance benchmark | [44699330992](https://github.com/matthis-k/phenix-ai/actions/runs/44699330992) | SUCCESS |
+
+`gh run view 44699331867` separately confirmed the accepted head and all six
+successful Flake jobs: exact-head inventory evaluation, shared Nix build/cache
+writer, check shards 00/01/02 and the evidence aggregate. No skipped shard or
+pending aggregate is counted as a pass. Successful benchmark execution supplies
+no performance acceptance.
 
 ## Scope And Retained Boundaries
 
 The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md) and
-[remaining-work map](fbp-remaining-work-20261115.md) remain the status authority;
-this document does not modify them. Q7 is separately scoped verified at
+[remaining-work map](fbp-remaining-work-20261115.md) record this explicit Q5
+acceptance and its numerical reconciliation; this document supplies the detailed
+evidence. Q7 is separately scoped verified at
 `6f6e751b36f77273da8799900f665bc026447418`; its typed-failure protocol is a
 constraint to preserve, not a finding reopened or advanced by this work.
 
@@ -120,8 +173,9 @@ conclusion follows. Green benchmark execution is not performance acceptance.
 ## Original Requirements And Design
 
 The sections below retain the original requirements and alternatives, updated to
-the actual implementation filenames and corrected counts. The CURRENT checkpoint
-above, not future-tense wording below, determines which local evidence exists.
+the actual implementation filenames and corrected counts. The CURRENT acceptance
+above determines final status; future-tense wording below records the design and
+falsifiable gates rather than a new pending claim.
 
 ## 1. Actual Contracts And The Missing Evidence
 
@@ -201,7 +255,7 @@ tests rather than replacing them with a handoff model.
 This inventory describes the original baseline obligations and historical
 evidence, not new passes on the source-inspection head. Overlapping workspace
 groups, focused test runs, and repeated workflows are not additive unique-test
-counts. CURRENT separately records the new local checkpoint.
+counts. CURRENT separately records the final accepted evidence.
 
 | Existing layer | Actual coverage already claimed | What must not be claimed again as new work |
 | --- | --- | --- |
@@ -293,10 +347,10 @@ leases.
 
 ## 5. Falsifiable Coverage Matrix
 
-This remains the requirement map. CURRENT records local evidence for the core;
-it does not mark every row complete or discharge the pending public extension.
-A row passes only when its named oracle and required native complement both pass
-where applicable and final review accepts their scope.
+This remains the requirement-to-evidence map. Final review accepted the complete
+original Q5 scope only after each named oracle and required native complement
+passed where applicable, including the public identity/composition extension.
+Its bounded claim boundaries remain unchanged.
 
 ### 5.1 Ownership, driver, and retirement
 
@@ -337,10 +391,10 @@ where applicable and final review accepts their scope.
 | Old worker returns before replacement starts | Existing old-`Emit` case | The real non-emitting `Complete` case separately exercises before-fresh-admission foreign return under both queue policies. |
 | Fresh job dispatched before old completion returns | Existing old-`Emit` case | The real non-emitting `Complete` case separately exercises fresh-dispatched, retained-emission and published-but-unsettled foreign returns under both queue policies. Other late `Step` kinds are covered by the real private handoff matrices; no speculative full public cross-product is required because owner/ticket authentication precedes extraction of their result payload. |
 | Same owner, no replacement | Existing handoff/deferred tests supply examples | Systematically pair cancellation with each late result and both return APIs where applicable; all are stale on that owner and returned intact. |
-| Two owners/sessions | Existing direct foreign-completion examples | Actual worker return crossing a same-path/same-index session boundary verifies only the originating owner can settle it. The locally visible case remains pending final review. |
+| Two owners/sessions | Existing direct foreign-completion examples | Actual worker return crossing a same-path/same-index session boundary verifies only the originating owner can settle it. The accepted public case and final review cover this composition. |
 | Publication backpressure | Existing capacity-one and map retry tests | Compose retained `Emit` with cancellation/replacement and, separately, a dispatched original job with cancellation/replacement. Neither publication retry nor a late return may increment process effects or create a second emission. Both queue policies are required for retained-old-output disposal. |
 | Wake identity | Existing same-index old/fresh notifier tests | Foreign-session same-path wake and late-result composition. A foreign wake may affect only its own live session; an old revoked wake affects neither owner. |
-| Five public fresh boundaries | Existing leased `E<P<R<F` and `E<R<P<F` frames | Keep one real non-emitting old result foreign before fresh admission, after fresh dispatch, after retained emission, after transport publication, and after logical completion, under both queue policies. The locally visible `Complete` case remains pending final review; other outcomes are not inferred from it. |
+| Five public fresh boundaries | Existing leased `E<P<R<F` and `E<R<P<F` frames | Keep one real non-emitting old result foreign before fresh admission, after fresh dispatch, after retained emission, after transport publication, and after logical completion, under both queue policies. The accepted `Complete` case and final review cover these checkpoints; other outcomes are not inferred from it. |
 
 The three baseline orders retain their old-`Emit` native evidence. All eight
 outcomes have real private accepted/rejected/foreign/stale completion matrices.
@@ -493,9 +547,8 @@ source and lock hashes.
 ### Phase 2: independent critique and final review requirements
 
 The original requirement for independent pre-code critique is not retroactively
-claimed as evidence. With implementation now present, a final independent
-reviewer must accept the actual source and remaining extension before acceptance.
-The review must specifically:
+claimed as evidence. Final acceptance instead required independent reviewers to
+accept the actual source and public extension. The review requirements were:
 
 1. validate the three-state ownership oracle, exact history counts, and the claim
    that direct-scope multiplicity is not confused with producer-callback mutual
@@ -518,12 +571,12 @@ The review must specifically:
    private module, `fbp_handoff_history.rs`, and both model/worker paths, with
    native/Loom `RUSTFLAGS` separated and coverage summaries synchronized.
 
-No acceptance occurs with unresolved blocking findings. Independent final reviews
-covering the public extension, whole scope, model counts, workflows and actual
-fixtures completed with no remaining findings. Earlier evidence-matrix and summary
-mismatches were reconciled without weakening the implemented coverage. Exact
-committed-head hosted acceptance remains pending and is not inferred from these
-local passes.
+No acceptance would occur with unresolved blocking findings. Independent final
+reviews covering the public extension, whole scope, model counts, workflows and
+actual fixtures completed with no remaining findings. Earlier evidence-matrix and
+summary mismatches were reconciled without weakening the implemented coverage.
+The exact committed-head hosted gates above complete the formerly pending
+acceptance; no later revision inherits that result automatically.
 
 ### Phase 3: minimal implementation constraints
 
@@ -545,8 +598,9 @@ local passes.
 
 ### Phase 4: falsifiable acceptance checklist
 
-Acceptance remains pending until all of the following identify the same exact
-committed assembled head:
+Scoped acceptance is complete because all of the following identify the same
+exact committed assembled head,
+`4b765ddfbabf334895147c1f7bf8b5accfb96ee1`:
 
 1. Independent final review accepts the actual scope and public identity
    extension, with all counterexamples and coverage-count derivations recorded.
@@ -572,8 +626,10 @@ committed assembled head:
 
 Failure to trigger or execute any required workflow/test, missing schedule
 counts, a missing matrix cell, or substitution of a copied model for actual source
-blocks acceptance. Even after complete scoped acceptance, **Q5 remains OPEN
-unless its authoritative finding receives separate explicit acceptance**. H3b is
-not evaluated or closed by this Q5 checkpoint. No automatic closure, score
-increase, C7 sandbox credit, H1/H7/Q4 conclusion, universal arbitrary-plugin
-deadlock-freedom claim, or performance claim is part of this design.
+would block acceptance. The explicit CURRENT acceptance above supplies the
+separate original-Q5 closure decision required by this checklist. **H3b remains
+partial and is not automatically evaluated, credited or closed by Q5.** No C7
+sandbox credit, broader H1/H3b lifetime proof, H1/H7/Q4 conclusion, universal
+arbitrary-plugin deadlock-freedom claim, fairness/liveness proof or performance
+claim is part of this scoped acceptance. Any subsequent evidence-only commit or
+implementation change requires its own checks and is not accepted here.
