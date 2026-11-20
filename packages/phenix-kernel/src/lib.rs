@@ -3,6 +3,7 @@ mod bound;
 mod config_error;
 mod exclusive;
 pub mod host;
+mod producer_ownership;
 pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 
 use exclusive::{ExclusiveLease, ExclusiveSlot};
@@ -16,6 +17,7 @@ use phenix_graph::{
 };
 pub use phenix_plugin::CallbackError;
 use phenix_plugin::{ContributionHandle, PluginSnapshot, lease_callback_error};
+use producer_ownership::{DirectDrainScope, DriverAdmissionError, DriverScope};
 use std::{
     any::Any,
     cell::RefCell,
@@ -66,43 +68,11 @@ impl Drop for KernelLockScope {
     }
 }
 
-// One linearizable producer ownership word: 0 means free, MAX is a
-// whole-lifetime blocking driver, all other values count in-flight or
-// gate-queued manual drains. The producer_drain mutex still serializes
-// actual callbacks; the owner word prevents direct/driver mode overlap.
-const DRIVER_OWNER: usize = usize::MAX;
-
-struct DriverScope<'a>(&'a AtomicUsize);
-impl<'a> DriverScope<'a> {
-    fn enter(owner: &'a AtomicUsize) -> Result<Self, DriverError> {
-        match owner.compare_exchange(0, DRIVER_OWNER, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => Ok(Self(owner)),
-            Err(DRIVER_OWNER) => Err(DriverError::AlreadyRunning),
-            Err(_) => Err(DriverError::DrainInProgress),
-        }
-    }
-}
-impl Drop for DriverScope<'_> {
-    fn drop(&mut self) {
-        self.0.store(0, Ordering::Release);
-    }
-}
-
-struct DirectDrainScope<'a>(&'a AtomicUsize);
-impl<'a> DirectDrainScope<'a> {
-    fn enter(owner: &'a AtomicUsize) -> Option<Self> {
-        owner
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < DRIVER_OWNER - 1).then(|| count + 1)
-            })
-            .ok()
-            .map(|_| Self(owner))
-    }
-}
-impl Drop for DirectDrainScope<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
-    }
+fn enter_driver(owner: &AtomicUsize) -> Result<DriverScope<'_>, DriverError> {
+    DriverScope::enter(owner).map_err(|error| match error {
+        DriverAdmissionError::AlreadyRunning => DriverError::AlreadyRunning,
+        DriverAdmissionError::DrainInProgress => DriverError::DrainInProgress,
+    })
 }
 
 // The exclusive blocking driver temporarily registers its wake handle for
@@ -1973,7 +1943,7 @@ impl Kernel {
         if ActiveSessionCall::held(self.session_identity) {
             return Err(DriverError::ReentrantSession);
         }
-        let _driver = DriverScope::enter(&self.producer_ownership)?;
+        let _driver = enter_driver(&self.producer_ownership)?;
         let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
         let (mut listener, notifier, initial_state, cause) = {
             let _active = ActiveSessionCall::enter(self.session_identity)
@@ -2077,6 +2047,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::producer_ownership::DRIVER_OWNER;
     use phenix_graph::process::LocalProcessDispatcher;
 
     /// A deliberately live/open network for driver wake-registration callbacks.
@@ -2944,19 +2915,19 @@ mod tests {
     #[test]
     fn rejected_second_driver_keeps_first_lease_active() {
         let owner = AtomicUsize::new(0);
-        let first = DriverScope::enter(&owner).unwrap();
+        let first = enter_driver(&owner).unwrap();
         assert!(matches!(
-            DriverScope::enter(&owner).err(),
+            enter_driver(&owner).err(),
             Some(DriverError::AlreadyRunning)
         ));
         // A rejected attempt must not construct a guard whose Drop releases
         // the first driver's still-active lease.
         assert!(matches!(
-            DriverScope::enter(&owner).err(),
+            enter_driver(&owner).err(),
             Some(DriverError::AlreadyRunning)
         ));
         drop(first);
-        let next = DriverScope::enter(&owner).unwrap();
+        let next = enter_driver(&owner).unwrap();
         drop(next);
     }
 
@@ -3246,6 +3217,119 @@ mod tests {
         let next = WakeHandle::default();
         next.shutdown();
         assert!(kernel.run_until(&next, |_| {}).is_ok());
+    }
+
+    #[test]
+    fn gate_queued_direct_drain_keeps_driver_excluded_until_both_exit() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        struct Paused {
+            polls: usize,
+            entered: mpsc::Sender<usize>,
+            resume_first: mpsc::Receiver<()>,
+            resume_second: mpsc::Receiver<()>,
+            registrations: Arc<AtomicUsize>,
+        }
+        impl Producer for Paused {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polls += 1;
+                self.entered.send(self.polls).unwrap();
+                match self.polls {
+                    1 => self.resume_first.recv_timeout(Duration::from_secs(2)),
+                    2 => self.resume_second.recv_timeout(Duration::from_secs(2)),
+                    poll => panic!("unexpected producer poll {poll}"),
+                }
+                .unwrap();
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.registrations.fetch_add(1, Ordering::SeqCst);
+                true
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "queued-direct-vs-driver",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        let (entered, entered_rx) = mpsc::channel();
+        let (resume_first, first_rx) = mpsc::channel();
+        let (resume_second, second_rx) = mpsc::channel();
+        let registrations = Arc::new(AtomicUsize::new(0));
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "paused"),
+            Some(Box::new(Paused {
+                polls: 0,
+                entered,
+                resume_first: first_rx,
+                resume_second: second_rx,
+                registrations: registrations.clone(),
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+
+        let first_kernel = kernel.clone();
+        let first = std::thread::spawn(move || first_kernel.drain(1));
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+
+        let second_kernel = kernel.clone();
+        let second = std::thread::spawn(move || second_kernel.drain(1));
+        let mut queued = false;
+        for _ in 0..100_000 {
+            if kernel.producer_ownership.load(Ordering::Acquire) == 2 {
+                queued = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            queued,
+            "second direct drain was not admitted behind the gate"
+        );
+
+        let wake = WakeHandle::default();
+        assert!(matches!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        ));
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(wake.version(), 0);
+        assert!(kernel.driver_wake.lock().unwrap().is_none());
+        assert_eq!(registrations.load(Ordering::SeqCst), 0);
+
+        resume_first.send(()).unwrap();
+        assert!(first.join().unwrap().unwrap().is_empty());
+        // The queued drain is now in its own bounded poll. Releasing only the
+        // first direct scope must not open a free/driver window.
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 2);
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
+        assert!(matches!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        ));
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(wake.version(), 0);
+        assert!(kernel.driver_wake.lock().unwrap().is_none());
+        assert_eq!(registrations.load(Ordering::SeqCst), 0);
+
+        resume_second.send(()).unwrap();
+        assert!(second.join().unwrap().unwrap().is_empty());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
+        assert!(!kernel.producers_retired());
+        let next = WakeHandle::default();
+        next.shutdown();
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
+        assert_eq!(registrations.load(Ordering::SeqCst), 1);
     }
 
     #[test]

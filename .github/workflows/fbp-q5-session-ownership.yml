@@ -4,6 +4,11 @@ on:
     paths:
       - "packages/phenix-kernel/src/exclusive.rs"
       - "packages/phenix-kernel/src/lib.rs"
+      - "packages/phenix-kernel/src/producer_ownership.rs"
+      - "packages/phenix-kernel/src/host.rs"
+      - "packages/phenix-kernel/tests/native_sessions.rs"
+      - "packages/phenix-kernel/tests/generation_retirement.rs"
+      - "packages/phenix-kernel/tests/wake_host.rs"
       - "verification/fbp-session-loom/**"
       - "flake.nix"
       - "flake.lock"
@@ -15,7 +20,7 @@ permissions:
   contents: read
 
 jobs:
-  session-ownership:
+  session-ownership-loom:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -30,9 +35,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
+          export CARGO_HOME="$RUNNER_TEMP/fbp-q5-session-loom-cargo-home"
+          test ! -e "$CARGO_HOME"
+          mkdir -p "$CARGO_HOME" artifacts
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
           {
             echo "candidate=$(git rev-parse HEAD)"
+            echo "CARGO_HOME=$CARGO_HOME (created empty)"
             echo "RUSTFLAGS=$RUSTFLAGS"
             date -u +%FT%TZ
             uname -a
@@ -41,23 +50,94 @@ jobs:
           } | tee artifacts/environment.txt
           sha256sum \
             packages/phenix-kernel/src/exclusive.rs \
+            packages/phenix-kernel/src/lib.rs \
+            packages/phenix-kernel/src/producer_ownership.rs \
             verification/fbp-session-loom/Cargo.toml \
             verification/fbp-session-loom/src/lib.rs \
             verification/fbp-session-loom/Cargo.lock \
             | tee artifacts/source-hashes.txt
-      - name: Format and model-check the production ownership primitive
+      - name: Fetch only lockfile-pinned verifier dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo fetch \
+            --manifest-path verification/fbp-session-loom/Cargo.toml --locked \
+            2>&1 | tee artifacts/fetch.log
+      - name: Format, lint, and model-check the actual ownership primitives offline
         shell: bash
         run: |
           set -euo pipefail
           nix develop --command cargo fmt \
             --manifest-path verification/fbp-session-loom/Cargo.toml -- --check
+          nix develop --command cargo clippy \
+            --manifest-path verification/fbp-session-loom/Cargo.toml \
+            --tests --locked --offline --no-deps -- -D warnings
           nix develop --command cargo test \
             --manifest-path verification/fbp-session-loom/Cargo.toml \
-            --lib --locked -- --nocapture 2>&1 | tee artifacts/model.log
+            --lib --locked --offline -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/model.log
       - name: Archive interleaving evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fbp-q5-session-ownership-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
+
+  session-ownership-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Capture native candidate and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "RUSTFLAGS=${RUSTFLAGS-<unset>}"
+            date -u +%FT%TZ
+            uname -a
+            nix --version
+            nix develop --command rustc -vV
+          } | tee artifacts/environment.txt
+          sha256sum \
+            packages/phenix-kernel/src/exclusive.rs \
+            packages/phenix-kernel/src/lib.rs \
+            packages/phenix-kernel/src/producer_ownership.rs \
+            packages/phenix-kernel/src/host.rs \
+            packages/phenix-kernel/tests/native_sessions.rs \
+            packages/phenix-kernel/tests/generation_retirement.rs \
+            packages/phenix-kernel/tests/wake_host.rs \
+            | tee artifacts/source-hashes.txt
+      - name: Format and strictly lint the native graph and kernel libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command env -u RUSTFLAGS cargo fmt -p phenix-kernel -- --check
+          nix develop --command env -u RUSTFLAGS cargo clippy \
+            -p phenix-graph -p phenix-kernel --lib --locked --no-deps -- -D warnings
+      - name: Run actual ownership, gate, host, and retirement tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            nix develop --command env -u RUSTFLAGS cargo test \
+              -p phenix-kernel --lib --locked -- --nocapture
+            nix develop --command env -u RUSTFLAGS cargo test \
+              -p phenix-kernel --locked \
+              --test native_sessions --test generation_retirement --test wake_host \
+              -- --nocapture
+          } 2>&1 | tee artifacts/native.log
+      - name: Archive native ownership evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-q5-session-ownership-native-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/
           if-no-files-found: warn

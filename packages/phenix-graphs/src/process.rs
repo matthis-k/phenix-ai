@@ -10,6 +10,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(test)]
+mod handoff_model;
+
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
 /// One process-private state machine. `Sync` is deliberately not required.
