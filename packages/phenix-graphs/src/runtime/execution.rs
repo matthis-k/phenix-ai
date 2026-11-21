@@ -139,6 +139,202 @@ impl NetworkSession {
         }
         None
     }
+    /// Translate one owned emission into a prepared transport transaction.
+    /// False means validation has already recorded a process failure and
+    /// the completion must retain its historical early-return behavior.
+    fn stage_completed_emission(
+        &mut self,
+        index: usize,
+        ticket: StepTicket,
+        emission: crate::process::ProcessEmission,
+    ) -> bool {
+        let process = &self.compiled.processes()[index];
+        let actual = emission.value.identity();
+        let error = match process.interface().output(&emission.output) {
+            None => Some(
+                RuntimeError::UnknownOutput {
+                    process: index,
+                    path: process.path().into(),
+                    output: emission.output.clone(),
+                }
+                .failure(),
+            ),
+            Some(port) if port.value != actual => Some(
+                RuntimeError::EmissionType {
+                    process: index,
+                    path: process.path().into(),
+                    output: emission.output.clone(),
+                    expected: port.value.clone(),
+                    actual,
+                }
+                .failure(),
+            ),
+            Some(_) => None,
+        };
+        if let Some(error) = error {
+            self.fail_emission(index, ticket, emission, error);
+            return false;
+        }
+        let outgoing = match (self.processes[index].request, self.request_queue_policy) {
+            (Some(request), RequestQueuePolicy::BoundedLanes) => {
+                let output_key = (index, emission.output.clone());
+                let lane = self.requests[&request].lane;
+                self.request_lanes
+                    .get(&lane)
+                    .and_then(|lane| lane.outputs.get(&output_key))
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+            }
+            _ => self.processes[index].outputs[&emission.output].as_slice(),
+        };
+        let indices = if let Some(destinations) = &emission.destinations {
+            let selection = (|| -> Result<Vec<usize>, Failure> {
+                let budget = outgoing
+                    .iter()
+                    .filter(|q| {
+                        matches!(self.endpoints[**q].1, QueueEndpoint::Process { .. })
+                    })
+                    .count();
+                // Reject oversized process-produced lists before allocating
+                // routing maps, copying targets, or preparing any payload.
+                if destinations.len() > budget {
+                    return Err(RuntimeError::SelectionBudget {
+                        budget,
+                        actual: destinations.len(),
+                    }
+                    .failure());
+                }
+                let connected: BTreeMap<_, _> = outgoing
+                    .iter()
+                    .filter_map(|q| match &self.endpoints[*q].1 {
+                        QueueEndpoint::Process { index, port } => {
+                            Some(((*index, port.as_str()), *q))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut selected = BTreeSet::new();
+                for (position, path) in destinations.iter().enumerate() {
+                    let resolved = self.compiled.resolve_input(path).ok_or_else(|| {
+                        RuntimeError::UnknownSelection { position }.failure()
+                    })?;
+                    if resolved.is_empty() {
+                        return Err(RuntimeError::EmptySelection { position }.failure());
+                    }
+                    for (target, input) in resolved {
+                        let queue =
+                            connected.get(&(*target, input.as_str())).ok_or_else(|| {
+                                RuntimeError::UnconnectedSelection {
+                                    path: self.compiled.processes()[*target].path().into(),
+                                    input: input.clone(),
+                                }
+                                .failure()
+                            })?;
+                        if !selected.insert(*queue) {
+                            return Err(RuntimeError::DuplicateSelection {
+                                path: self.compiled.processes()[*target].path().into(),
+                                input: input.clone(),
+                            }
+                            .failure());
+                        }
+                    }
+                }
+                Ok(outgoing
+                    .iter()
+                    .copied()
+                    .filter(|q| {
+                        selected.contains(q)
+                            || matches!(self.endpoints[*q].1, QueueEndpoint::Capture(_))
+                    })
+                    .collect())
+            })();
+            match selection {
+                Ok(indices) => indices,
+                Err(error) => {
+                    self.fail_emission(index, ticket, emission, error);
+                    return false;
+                }
+            }
+        } else {
+            outgoing.to_vec()
+        };
+        if indices.is_empty()
+            && emission.destinations.is_none()
+            && !self.discard_outputs.contains(&(
+                self.compiled.processes()[index].path().to_owned(),
+                emission.output.clone(),
+            ))
+        {
+            let error = RuntimeError::UnconnectedOutput {
+                path: self.compiled.processes()[index].path().into(),
+                output: emission.output.clone(),
+            }
+            .failure();
+            self.fail_emission(index, ticket, emission, error);
+            return false;
+        }
+        let targets: Vec<_> = indices.iter().map(|q| FanoutTarget::identity(*q)).collect();
+        let mut packet = Packet::new(emission.value);
+        packet.origin = self.compiled.processes()[index].origin().cloned();
+        if let Some(lease) = &self.lease {
+            packet = packet.with_lease(lease.clone());
+        }
+        packet.metadata = Some(Arc::new(CaptureMetadata {
+            session: self.session_id,
+            generation: self.generation,
+            process: Some(index),
+            output: emission.output.clone(),
+            activation: ticket.activation(),
+            request: self.processes[index].request,
+            capture: None,
+        }));
+        let prepared = self.transport.prepare(&packet, &targets).map_err(|error| {
+            error
+                .into_failure()
+                .retain_leases(packet.value().known_leases())
+        });
+        let cleanup = packet.into_value().dispose_with_cleanup(|| {
+            self.enrich_failure(
+                Some(index),
+                RuntimeError::DestructorPanicked {
+                    stage: CleanupStage::Failure,
+                }
+                .failure()
+                .with_context(crate::FailureContext {
+                    ticket: Some(ticket),
+                    output: Some(emission.output.clone()),
+                    phase: Some(CallbackPhase::Cleanup),
+                    ..Default::default()
+                }),
+            )
+        });
+        match prepared {
+            Ok(mut transaction) => {
+                for queue in &indices {
+                    if let QueueEndpoint::Capture(name) = &self.endpoints[*queue].1 {
+                        transaction.stamp_capture(*queue, name);
+                    }
+                }
+                self.processes[index].pending = Some(transaction);
+                self.processes[index].pending_targets = indices;
+                let mut cleanup = cleanup.into_iter();
+                if let Some(failure) = cleanup.next() {
+                    self.fail_process(index, cleanup.fold(failure, Failure::with_cleanup));
+                }
+            }
+            Err(mut failure) => {
+                let mut context = failure.context().clone();
+                context.ticket = Some(ticket);
+                context.output = Some(emission.output);
+                failure = failure.with_context(context);
+                for secondary in cleanup {
+                    failure = failure.with_cleanup(secondary);
+                }
+                self.fail_process(index, failure);
+            }
+        }
+        true
+    }
     pub fn complete(
         &mut self,
         index: usize,
@@ -167,190 +363,8 @@ impl NetworkSession {
         });
         match result {
             Ok(Step::Emit(emission)) => {
-                let process = &self.compiled.processes()[index];
-                let actual = emission.value.identity();
-                let error = match process.interface().output(&emission.output) {
-                    None => Some(
-                        RuntimeError::UnknownOutput {
-                            process: index,
-                            path: process.path().into(),
-                            output: emission.output.clone(),
-                        }
-                        .failure(),
-                    ),
-                    Some(port) if port.value != actual => Some(
-                        RuntimeError::EmissionType {
-                            process: index,
-                            path: process.path().into(),
-                            output: emission.output.clone(),
-                            expected: port.value.clone(),
-                            actual,
-                        }
-                        .failure(),
-                    ),
-                    Some(_) => None,
-                };
-                if let Some(error) = error {
-                    self.fail_emission(index, ticket, emission, error);
+                if !self.stage_completed_emission(index, ticket, emission) {
                     return Ok(());
-                }
-                let outgoing = match (self.processes[index].request, self.request_queue_policy) {
-                    (Some(request), RequestQueuePolicy::BoundedLanes) => {
-                        let output_key = (index, emission.output.clone());
-                        let lane = self.requests[&request].lane;
-                        self.request_lanes
-                            .get(&lane)
-                            .and_then(|lane| lane.outputs.get(&output_key))
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[])
-                    }
-                    _ => self.processes[index].outputs[&emission.output].as_slice(),
-                };
-                let indices = if let Some(destinations) = &emission.destinations {
-                    let selection = (|| -> Result<Vec<usize>, Failure> {
-                        let budget = outgoing
-                            .iter()
-                            .filter(|q| {
-                                matches!(self.endpoints[**q].1, QueueEndpoint::Process { .. })
-                            })
-                            .count();
-                        // Reject oversized process-produced lists before allocating
-                        // routing maps, copying targets, or preparing any payload.
-                        if destinations.len() > budget {
-                            return Err(RuntimeError::SelectionBudget {
-                                budget,
-                                actual: destinations.len(),
-                            }
-                            .failure());
-                        }
-                        let connected: BTreeMap<_, _> = outgoing
-                            .iter()
-                            .filter_map(|q| match &self.endpoints[*q].1 {
-                                QueueEndpoint::Process { index, port } => {
-                                    Some(((*index, port.as_str()), *q))
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let mut selected = BTreeSet::new();
-                        for (position, path) in destinations.iter().enumerate() {
-                            let resolved = self.compiled.resolve_input(path).ok_or_else(|| {
-                                RuntimeError::UnknownSelection { position }.failure()
-                            })?;
-                            if resolved.is_empty() {
-                                return Err(RuntimeError::EmptySelection { position }.failure());
-                            }
-                            for (target, input) in resolved {
-                                let queue =
-                                    connected.get(&(*target, input.as_str())).ok_or_else(|| {
-                                        RuntimeError::UnconnectedSelection {
-                                            path: self.compiled.processes()[*target].path().into(),
-                                            input: input.clone(),
-                                        }
-                                        .failure()
-                                    })?;
-                                if !selected.insert(*queue) {
-                                    return Err(RuntimeError::DuplicateSelection {
-                                        path: self.compiled.processes()[*target].path().into(),
-                                        input: input.clone(),
-                                    }
-                                    .failure());
-                                }
-                            }
-                        }
-                        Ok(outgoing
-                            .iter()
-                            .copied()
-                            .filter(|q| {
-                                selected.contains(q)
-                                    || matches!(self.endpoints[*q].1, QueueEndpoint::Capture(_))
-                            })
-                            .collect())
-                    })();
-                    match selection {
-                        Ok(indices) => indices,
-                        Err(error) => {
-                            self.fail_emission(index, ticket, emission, error);
-                            return Ok(());
-                        }
-                    }
-                } else {
-                    outgoing.to_vec()
-                };
-                if indices.is_empty()
-                    && emission.destinations.is_none()
-                    && !self.discard_outputs.contains(&(
-                        self.compiled.processes()[index].path().to_owned(),
-                        emission.output.clone(),
-                    ))
-                {
-                    let error = RuntimeError::UnconnectedOutput {
-                        path: self.compiled.processes()[index].path().into(),
-                        output: emission.output.clone(),
-                    }
-                    .failure();
-                    self.fail_emission(index, ticket, emission, error);
-                    return Ok(());
-                }
-                let targets: Vec<_> = indices.iter().map(|q| FanoutTarget::identity(*q)).collect();
-                let mut packet = Packet::new(emission.value);
-                packet.origin = self.compiled.processes()[index].origin().cloned();
-                if let Some(lease) = &self.lease {
-                    packet = packet.with_lease(lease.clone());
-                }
-                packet.metadata = Some(Arc::new(CaptureMetadata {
-                    session: self.session_id,
-                    generation: self.generation,
-                    process: Some(index),
-                    output: emission.output.clone(),
-                    activation: ticket.activation(),
-                    request: self.processes[index].request,
-                    capture: None,
-                }));
-                let prepared = self.transport.prepare(&packet, &targets).map_err(|error| {
-                    error
-                        .into_failure()
-                        .retain_leases(packet.value().known_leases())
-                });
-                let cleanup = packet.into_value().dispose_with_cleanup(|| {
-                    self.enrich_failure(
-                        Some(index),
-                        RuntimeError::DestructorPanicked {
-                            stage: CleanupStage::Failure,
-                        }
-                        .failure()
-                        .with_context(crate::FailureContext {
-                            ticket: Some(ticket),
-                            output: Some(emission.output.clone()),
-                            phase: Some(CallbackPhase::Cleanup),
-                            ..Default::default()
-                        }),
-                    )
-                });
-                match prepared {
-                    Ok(mut transaction) => {
-                        for queue in &indices {
-                            if let QueueEndpoint::Capture(name) = &self.endpoints[*queue].1 {
-                                transaction.stamp_capture(*queue, name);
-                            }
-                        }
-                        self.processes[index].pending = Some(transaction);
-                        self.processes[index].pending_targets = indices;
-                        let mut cleanup = cleanup.into_iter();
-                        if let Some(failure) = cleanup.next() {
-                            self.fail_process(index, cleanup.fold(failure, Failure::with_cleanup));
-                        }
-                    }
-                    Err(mut failure) => {
-                        let mut context = failure.context().clone();
-                        context.ticket = Some(ticket);
-                        context.output = Some(emission.output);
-                        failure = failure.with_context(context);
-                        for secondary in cleanup {
-                            failure = failure.with_cleanup(secondary);
-                        }
-                        self.fail_process(index, failure);
-                    }
                 }
             }
             Ok(Step::WaitInput(name)) => {
