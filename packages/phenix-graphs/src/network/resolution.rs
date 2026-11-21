@@ -81,6 +81,14 @@ impl Owner {
 }
 
 impl CompiledNetwork {
+    /// Exact physical process lookup from the compiler's immutable inspection
+    /// index. Composite declarations and the root do not resolve to a process.
+    pub(crate) fn physical_process_index(&self, path: &str) -> Option<usize> {
+        self.inspections
+            .get(path)
+            .and_then(|snapshot| snapshot.physical_index)
+    }
+
     pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
         self.inspections
             .get(path)
