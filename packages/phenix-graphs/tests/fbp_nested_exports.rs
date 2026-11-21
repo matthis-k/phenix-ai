@@ -258,7 +258,7 @@ fn private_export_refusals_require_every_author_opt_in_and_exact_host_grants() {
     assert!(matches!(
         composer.register([registration("ungranted", &[], patch, [])]),
         Err(ComposeError::Unauthorized {
-            footprint: Footprint::OutputExport(_),
+            footprint: Footprint::NestedOutputExport { .. },
             ..
         })
     ));
@@ -391,6 +391,71 @@ fn exports_require_explicit_dependency_on_new_component_and_on_ancestor_replacem
             registration("z-export", &[], export.clone(), export.footprints()),
         ]),
         Err(ComposeError::Conflict { .. })
+    ));
+    assert!(composer.current().active().is_empty());
+}
+
+#[test]
+fn nested_export_grants_cannot_be_reused_as_identically_named_root_grants() {
+    let mut composer = composer(true, true);
+    let nested_output = NetworkPatch::new([Edit::ExposeNestedOutput {
+        parent: "m/inner".into(),
+        name: "telemetry".into(),
+        from: port("m/inner/leaf", "output"),
+    }]);
+    let root_output = NetworkPatch::new([Edit::ExposeOutput {
+        name: "m/inner/telemetry".into(),
+        from: port("m", "output"),
+    }]);
+    assert_ne!(nested_output.footprints(), root_output.footprints());
+    assert!(matches!(
+        composer.register([registration(
+            "false-output-grant",
+            &[],
+            nested_output.clone(),
+            root_output.footprints(),
+        )]),
+        Err(ComposeError::Unauthorized {
+            footprint: Footprint::NestedOutputExport { .. },
+            ..
+        })
+    ));
+    assert!(matches!(
+        composer.register([registration(
+            "false-root-grant",
+            &[],
+            root_output.clone(),
+            nested_output.footprints(),
+        )]),
+        Err(ComposeError::Unauthorized {
+            footprint: Footprint::OutputExport(_),
+            ..
+        })
+    ));
+
+    let nested_input = NetworkPatch::new([Edit::ExposeNestedInput {
+        parent: "m/inner".into(),
+        name: "alternate".into(),
+        targets: vec![port("m/inner/leaf", "input")],
+        capacity: cap(),
+    }]);
+    let root_input = NetworkPatch::new([Edit::ExposeInput {
+        name: "m/inner/alternate".into(),
+        targets: vec![port("m", "input")],
+        capacity: cap(),
+    }]);
+    assert_ne!(nested_input.footprints(), root_input.footprints());
+    assert!(matches!(
+        composer.register([registration(
+            "false-input-grant",
+            &[],
+            nested_input.clone(),
+            root_input.footprints(),
+        )]),
+        Err(ComposeError::Unauthorized {
+            footprint: Footprint::NestedInputExport { .. },
+            ..
+        })
     ));
     assert!(composer.current().active().is_empty());
 }
