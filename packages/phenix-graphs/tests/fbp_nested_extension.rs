@@ -2,7 +2,7 @@
 //! host grants, never authority inferred from a path or a replacement seam.
 use phenix_graph::{
     ComponentDef, GraphOrigin, Value,
-    compose::{ComposeError, Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration},
+    compose::{ComposeError, Composer, Edit, Footprint, NetworkPatch, Registration},
     network::{ConnectionDef, NetworkBuilder, NetworkDef, NetworkError, PortPath},
 };
 use std::{
