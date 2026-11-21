@@ -222,9 +222,7 @@ mod dependency_order_tests {
 
     /// The old planner swept the BTreeMap once per pass; a newly ready
     /// earlier key could not preempt an already ready later key.
-    fn reference_order(
-        registrations: &BTreeMap<String, Registration>,
-    ) -> DependencyOrder {
+    fn reference_order(registrations: &BTreeMap<String, Registration>) -> DependencyOrder {
         let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut order = Vec::new();
         while order.len() < registrations.len() {
