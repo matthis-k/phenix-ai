@@ -96,7 +96,8 @@ impl LaneCredits {
 
     fn release(&mut self, lane: usize) {
         debug_assert!(lane < self.next);
-        debug_assert!(self.reusable.insert(lane), "released lane must be allocated");
+        let newly_released = self.reusable.insert(lane);
+        debug_assert!(newly_released, "released lane must be allocated");
     }
 }
 
