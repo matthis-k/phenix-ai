@@ -240,44 +240,46 @@ fn expose_input(
         reason: Box::new(reason),
     };
     if network.inputs.contains_key(name) {
-                return Err(invalid(InvalidEditReason::DuplicateInputExport {
-                    name: name.to_owned(),
-                }));
-            }
-            let target = targets.first().ok_or_else(|| {
-                invalid(InvalidEditReason::EmptyInputProjection { name: name.to_owned() })
-            })?;
-            let component = network.instances.get(&target.process).ok_or_else(|| {
-                invalid(InvalidEditReason::MissingInputComponent {
-                    name: name.to_owned(),
-                    target: target.clone(),
-                })
-            })?;
-            let mut port = component
-                .interface()
-                .input(&target.port)
-                .ok_or_else(|| {
-                    invalid(InvalidEditReason::MissingInputPort {
-                        name: name.to_owned(),
-                        target: target.clone(),
-                    })
-                })?
-                .clone();
-            port.name = name.to_owned();
-            network.interface = Arc::new(
-                Interface::new(
-                    network.interface.inputs().values().cloned().chain([port]),
-                    network.interface.outputs().values().cloned(),
-                )
-                .map_err(NetworkError::from)?,
-            );
-            network.inputs.insert(
-                name.to_owned(),
-                InputProjection {
-                    targets: targets.to_vec(),
-                    capacity,
-                },
-            );
+        return Err(invalid(InvalidEditReason::DuplicateInputExport {
+            name: name.to_owned(),
+        }));
+    }
+    let target = targets.first().ok_or_else(|| {
+        invalid(InvalidEditReason::EmptyInputProjection {
+            name: name.to_owned(),
+        })
+    })?;
+    let component = network.instances.get(&target.process).ok_or_else(|| {
+        invalid(InvalidEditReason::MissingInputComponent {
+            name: name.to_owned(),
+            target: target.clone(),
+        })
+    })?;
+    let mut port = component
+        .interface()
+        .input(&target.port)
+        .ok_or_else(|| {
+            invalid(InvalidEditReason::MissingInputPort {
+                name: name.to_owned(),
+                target: target.clone(),
+            })
+        })?
+        .clone();
+    port.name = name.to_owned();
+    network.interface = Arc::new(
+        Interface::new(
+            network.interface.inputs().values().cloned().chain([port]),
+            network.interface.outputs().values().cloned(),
+        )
+        .map_err(NetworkError::from)?,
+    );
+    network.inputs.insert(
+        name.to_owned(),
+        InputProjection {
+            targets: targets.to_vec(),
+            capacity,
+        },
+    );
     Ok(())
 }
 
@@ -291,36 +293,36 @@ fn expose_output(
         registration: registration.id.clone(),
         reason: Box::new(reason),
     };
-            if network.outputs.contains_key(name) {
-                return Err(invalid(InvalidEditReason::DuplicateOutputExport {
-                    name: name.to_owned(),
-                }));
-            }
-            let component = network.instances.get(&from.process).ok_or_else(|| {
-                invalid(InvalidEditReason::MissingOutputComponent {
-                    name: name.to_owned(),
-                    target: from.clone(),
-                })
-            })?;
-            let mut port = component
-                .interface()
-                .output(&from.port)
-                .ok_or_else(|| {
-                    invalid(InvalidEditReason::MissingOutputPort {
-                        name: name.to_owned(),
-                        target: from.clone(),
-                    })
-                })?
-                .clone();
-            port.name = name.to_owned();
-            network.interface = Arc::new(
-                Interface::new(
-                    network.interface.inputs().values().cloned(),
-                    network.interface.outputs().values().cloned().chain([port]),
-                )
-                .map_err(NetworkError::from)?,
-            );
-            network.outputs.insert(name.to_owned(), from.clone());
+    if network.outputs.contains_key(name) {
+        return Err(invalid(InvalidEditReason::DuplicateOutputExport {
+            name: name.to_owned(),
+        }));
+    }
+    let component = network.instances.get(&from.process).ok_or_else(|| {
+        invalid(InvalidEditReason::MissingOutputComponent {
+            name: name.to_owned(),
+            target: from.clone(),
+        })
+    })?;
+    let mut port = component
+        .interface()
+        .output(&from.port)
+        .ok_or_else(|| {
+            invalid(InvalidEditReason::MissingOutputPort {
+                name: name.to_owned(),
+                target: from.clone(),
+            })
+        })?
+        .clone();
+    port.name = name.to_owned();
+    network.interface = Arc::new(
+        Interface::new(
+            network.interface.inputs().values().cloned(),
+            network.interface.outputs().values().cloned().chain([port]),
+        )
+        .map_err(NetworkError::from)?,
+    );
+    network.outputs.insert(name.to_owned(), from.clone());
     Ok(())
 }
 

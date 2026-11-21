@@ -70,7 +70,10 @@ fn composer(outer_extension: bool, inner_extension: bool) -> Composer {
 
     let mut root = NetworkBuilder::new();
     let module = root
-        .add("m", Arc::new(ComponentDef::composite(outer.build().unwrap())))
+        .add(
+            "m",
+            Arc::new(ComponentDef::composite(outer.build().unwrap())),
+        )
         .unwrap();
     root.expose_input("in", module.input::<String>("input").unwrap(), cap())
         .unwrap();
@@ -146,18 +149,46 @@ fn nested_output_can_wire_into_enclosing_composite_without_changing_root_interfa
         }),
     ]);
     composer
-        .register([registration("extend", &[], patch.clone(), patch.footprints())])
+        .register([registration(
+            "extend",
+            &[],
+            patch.clone(),
+            patch.footprints(),
+        )])
         .unwrap();
     let compiled = composer.current().compiled();
-    assert!(compiled.inspect("m/inner").unwrap().interface.output("telemetry").is_some());
-    assert!(compiled.inspect("m").unwrap().interface.output("telemetry").is_none());
+    assert!(
+        compiled
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_some()
+    );
+    assert!(
+        compiled
+            .inspect("m")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_none()
+    );
     assert_eq!(run(&mut old), "base[Q]");
     assert_eq!(seen.load(Ordering::SeqCst), 0);
     assert_eq!(run(&mut compiled.start()), "base[Q]");
     assert_eq!(seen.load(Ordering::SeqCst), 1);
 
     composer.revoke("extend").unwrap();
-    assert!(composer.current().compiled().inspect("m/inner").unwrap().interface.output("telemetry").is_none());
+    assert!(
+        composer
+            .current()
+            .compiled()
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_none()
+    );
     assert_eq!(run(&mut composer.current().compiled().start()), "base[Q]");
 }
 
@@ -171,11 +202,30 @@ fn nested_input_declares_only_local_projection_and_leaves_root_boundary_unchange
         capacity: cap(),
     }]);
     composer
-        .register([registration("input", &[], patch.clone(), patch.footprints())])
+        .register([registration(
+            "input",
+            &[],
+            patch.clone(),
+            patch.footprints(),
+        )])
         .unwrap();
     let compiled = composer.current().compiled();
-    assert!(compiled.inspect("m/inner").unwrap().interface.input("alternative").is_some());
-    assert!(compiled.inspect("m").unwrap().interface.input("alternative").is_none());
+    assert!(
+        compiled
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .input("alternative")
+            .is_some()
+    );
+    assert!(
+        compiled
+            .inspect("m")
+            .unwrap()
+            .interface
+            .input("alternative")
+            .is_none()
+    );
     assert_eq!(run(&mut compiled.start()), "base[Q]");
 }
 
@@ -189,7 +239,12 @@ fn private_export_refusals_require_every_author_opt_in_and_exact_host_grants() {
             from: port("m/inner/leaf", "output"),
         }]);
         assert!(matches!(
-            composer.register([registration("denied", &[], patch.clone(), patch.footprints())]),
+            composer.register([registration(
+                "denied",
+                &[],
+                patch.clone(),
+                patch.footprints()
+            )]),
             Err(ComposeError::PrivateEditScope(_))
         ));
     }
@@ -215,7 +270,12 @@ fn private_export_refusals_require_every_author_opt_in_and_exact_host_grants() {
             from: port(from, "output"),
         }]);
         assert!(matches!(
-            composer.register([registration("cross-scope", &[], patch.clone(), patch.footprints())]),
+            composer.register([registration(
+                "cross-scope",
+                &[],
+                patch.clone(),
+                patch.footprints()
+            )]),
             Err(ComposeError::PrivateEditScope(_))
         ));
     }
@@ -233,11 +293,28 @@ fn invalid_nested_output_is_atomic_and_does_not_mutate_previous_generation() {
         from: port("m/inner/leaf", "missing"),
     }]);
     assert!(matches!(
-        composer.register([registration("broken", &[], patch.clone(), patch.footprints())]),
+        composer.register([registration(
+            "broken",
+            &[],
+            patch.clone(),
+            patch.footprints()
+        )]),
         Err(ComposeError::InvalidEdit { .. })
     ));
-    assert_eq!(composer.current().compiled().connections(), previous.connections());
-    assert!(composer.current().compiled().inspect("m/inner").unwrap().interface.output("telemetry").is_none());
+    assert_eq!(
+        composer.current().compiled().connections(),
+        previous.connections()
+    );
+    assert!(
+        composer
+            .current()
+            .compiled()
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_none()
+    );
     assert!(composer.current().active().is_empty());
 }
 
@@ -263,25 +340,54 @@ fn exports_require_explicit_dependency_on_new_component_and_on_ancestor_replacem
             registration("z-export", &["a-add"], export.clone(), export.footprints()),
         ])
         .unwrap();
-    assert!(composer.current().compiled().inspect("m/inner").unwrap().interface.output("telemetry").is_some());
+    assert!(
+        composer
+            .current()
+            .compiled()
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_some()
+    );
     let removed = composer.revoke("a-add").unwrap();
     assert!(removed.contains("z-export"));
-    assert!(composer.current().compiled().inspect("m/inner").unwrap().interface.output("telemetry").is_none());
+    assert!(
+        composer
+            .current()
+            .compiled()
+            .inspect("m/inner")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_none()
+    );
 
     let replacement = NetworkPatch::new([Edit::Replace {
         path: "m".into(),
         definition: Arc::new(ComponentDef::composite({
             let mut outer = NetworkBuilder::new();
             outer.allow_extensions().unwrap();
-            let child = outer.add("inner", Arc::new(ComponentDef::composite(inner(true)))).unwrap();
-            outer.expose_input("input", child.input::<String>("input").unwrap(), cap()).unwrap();
-            outer.expose_output("output", child.output::<String>("output").unwrap()).unwrap();
+            let child = outer
+                .add("inner", Arc::new(ComponentDef::composite(inner(true))))
+                .unwrap();
+            outer
+                .expose_input("input", child.input::<String>("input").unwrap(), cap())
+                .unwrap();
+            outer
+                .expose_output("output", child.output::<String>("output").unwrap())
+                .unwrap();
             outer.build().unwrap()
         })),
     }]);
     assert!(matches!(
         composer.register([
-            registration("a-replace", &[], replacement.clone(), replacement.footprints()),
+            registration(
+                "a-replace",
+                &[],
+                replacement.clone(),
+                replacement.footprints()
+            ),
             registration("z-export", &[], export.clone(), export.footprints()),
         ]),
         Err(ComposeError::Conflict { .. })

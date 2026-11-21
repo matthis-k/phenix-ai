@@ -207,7 +207,9 @@ fn nested_export_dependency(declaration: &Registration, export: &Registration) -
         };
         for edit in export.patch.edits() {
             match edit {
-                Edit::ExposeNestedInput { parent, targets, .. } => {
+                Edit::ExposeNestedInput {
+                    parent, targets, ..
+                } => {
                     if nested_under(parent, path)
                         || targets.iter().any(|target| target.process == *path)
                     {
