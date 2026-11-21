@@ -302,7 +302,7 @@ impl Kernel {
         let ContributionCatalog {
             definitions,
             offers,
-            requirements,
+            requirements: _requirements,
             mut pending,
         } = catalog;
         let mut resolved = BTreeSet::new();
