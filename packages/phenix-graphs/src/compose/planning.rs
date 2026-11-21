@@ -202,8 +202,8 @@ fn overlapping_write<'a>(
 #[cfg(test)]
 mod dependency_order_tests {
     use super::*;
-    use crate::compose::NetworkPatch;
     use crate::GraphOrigin;
+    use crate::compose::NetworkPatch;
 
     fn registration(id: &str, dependencies: Vec<String>) -> Registration {
         Registration::new(
@@ -270,12 +270,14 @@ mod dependency_order_tests {
                 .map(|index| {
                     let dependencies = (0..8)
                         .filter(|other| {
-                            ranks[*other] < ranks[index]
-                                && (index * 11 + *other * 7 + seed) % 5 < 2
+                            ranks[*other] < ranks[index] && (index * 11 + *other * 7 + seed) % 5 < 2
                         })
                         .map(|other| names[other].to_owned())
                         .collect();
-                    (names[index].to_owned(), registration(names[index], dependencies))
+                    (
+                        names[index].to_owned(),
+                        registration(names[index], dependencies),
+                    )
                 })
                 .collect();
             assert_eq!(
@@ -288,10 +290,7 @@ mod dependency_order_tests {
 
     #[test]
     fn missing_dependencies_and_cycles_are_rejected() {
-        let missing = BTreeMap::from([(
-            "a".into(),
-            registration("a", vec!["missing".into()]),
-        )]);
+        let missing = BTreeMap::from([("a".into(), registration("a", vec!["missing".into()]))]);
         assert!(matches!(
             dependency_order(&missing),
             Err(ComposeError::MissingDependency { .. })
