@@ -296,21 +296,7 @@ impl Composer {
     /// Remove the prerequisite and its transitive dependents, then rebuild.
     /// Returns all explicitly deactivated registration IDs, including losers.
     pub fn revoke(&mut self, id: &str) -> Result<BTreeSet<String>, ComposeError> {
-        let mut removed = BTreeSet::new();
-        if self.registrations.contains_key(id) {
-            removed.insert(id.to_owned());
-        }
-        loop {
-            let before = removed.len();
-            for (id, registration) in &self.registrations {
-                if !registration.dependencies.is_disjoint(&removed) {
-                    removed.insert(id.clone());
-                }
-            }
-            if before == removed.len() {
-                break;
-            }
-        }
+        let removed = dependent_closure(&self.registrations, id);
         let candidate = self
             .registrations
             .iter()
@@ -322,6 +308,38 @@ impl Composer {
         self.current = current;
         Ok(removed)
     }
+}
+
+/// Collect exact transitive dependents with one reverse-index traversal.
+/// Only the ephemeral per-update inventory is examined; publication remains
+/// atomic under guarded_compose.
+fn dependent_closure(
+    registrations: &BTreeMap<String, Registration>,
+    root: &str,
+) -> BTreeSet<String> {
+    if !registrations.contains_key(root) {
+        return BTreeSet::new();
+    }
+    let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (id, registration) in registrations {
+        for dependency in &registration.dependencies {
+            dependents
+                .entry(dependency.as_str())
+                .or_default()
+                .push(id.as_str());
+        }
+    }
+    let mut removed = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if !removed.insert(id.to_owned()) {
+            continue;
+        }
+        if let Some(children) = dependents.get(id) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    removed
 }
 
 fn guarded_compose(
@@ -365,4 +383,58 @@ fn compose(
         active,
         footprints,
     })
+}
+
+#[cfg(test)]
+mod dependent_closure_tests {
+    use super::*;
+
+    fn registration(id: &str, dependencies: Vec<String>) -> Registration {
+        Registration::new(
+            id,
+            dependencies,
+            0,
+            GraphOrigin::default(),
+            Vec::<Footprint>::new(),
+            NetworkPatch::new(Vec::<Edit>::new()),
+        )
+    }
+
+    #[test]
+    fn revocation_includes_transitive_diamond_and_preserves_unrelated_nodes() {
+        let registrations = BTreeMap::from([
+            ("a".into(), registration("a", Vec::new())),
+            ("b".into(), registration("b", vec!["a".into()])),
+            ("c".into(), registration("c", vec!["a".into()])),
+            ("d".into(), registration("d", vec!["b".into(), "c".into()])),
+            ("e".into(), registration("e", Vec::new())),
+            ("f".into(), registration("f", vec!["e".into()])),
+        ]);
+        assert_eq!(
+            dependent_closure(&registrations, "a"),
+            BTreeSet::from(["a".into(), "b".into(), "c".into(), "d".into()])
+        );
+        assert_eq!(
+            dependent_closure(&registrations, "e"),
+            BTreeSet::from(["e".into(), "f".into()])
+        );
+        assert!(dependent_closure(&registrations, "absent").is_empty());
+    }
+
+    #[test]
+    fn reversed_lexical_chain_needs_no_global_rescan_or_recursion() {
+        let registrations = (0..256)
+            .map(|index| {
+                let dependencies = if index == 255 {
+                    Vec::new()
+                } else {
+                    vec![format!("{:04}", index + 1)]
+                };
+                let id = format!("{index:04}");
+                (id.clone(), registration(&id, dependencies))
+            })
+            .collect();
+        let removed = dependent_closure(&registrations, "0255");
+        assert_eq!(removed.len(), 256);
+    }
 }
