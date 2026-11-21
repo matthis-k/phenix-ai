@@ -28,8 +28,14 @@ pub enum Footprint {
     OutputExport(String),
     /// Exact nested export authority is distinct from a root export whose
     /// literal port name happens to contain the same slash-delimited text.
-    NestedInputExport { parent: String, name: String },
-    NestedOutputExport { parent: String, name: String },
+    NestedInputExport {
+        parent: String,
+        name: String,
+    },
+    NestedOutputExport {
+        parent: String,
+        name: String,
+    },
     Source(String),
 }
 
