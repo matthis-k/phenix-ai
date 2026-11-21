@@ -12,12 +12,16 @@ pub(super) struct SelectedPlan {
     pub(super) footprints: BTreeMap<String, BTreeSet<Footprint>>,
 }
 
+/// Exact replay order and each registration's transitive dependency closure.
+type AncestorMap = BTreeMap<String, BTreeSet<String>>;
+type DependencyOrder = (Vec<String>, AncestorMap);
+
 /// Preserve the former lexical *sweep* order, not ordinary Kahn order:
 /// descendants whose names sort before their final prerequisite wait until
 /// the next sweep; later names can become ready in the current sweep.
 fn dependency_order(
     registrations: &BTreeMap<String, Registration>,
-) -> Result<(Vec<String>, BTreeMap<String, BTreeSet<String>>), ComposeError> {
+) -> Result<DependencyOrder, ComposeError> {
     let mut remaining = BTreeMap::new();
     let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ready = BTreeSet::new();
@@ -220,7 +224,7 @@ mod dependency_order_tests {
     /// earlier key could not preempt an already ready later key.
     fn reference_order(
         registrations: &BTreeMap<String, Registration>,
-    ) -> (Vec<String>, BTreeMap<String, BTreeSet<String>>) {
+    ) -> DependencyOrder {
         let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut order = Vec::new();
         while order.len() < registrations.len() {
