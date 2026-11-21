@@ -10,103 +10,108 @@ struct ContributionCatalog {
 
 // Keep registry validation separate from graph resolution and plugin callbacks.
 fn collect_catalog(snapshots: &[PluginSnapshot]) -> Result<ContributionCatalog, ResolutionError> {
-        let mut owners = BTreeSet::new();
-        for snapshot in &snapshots {
-            if snapshot.name().len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                return Err(ConfigurationError::OwnerIdentifier {
-                    length: snapshot.name().len(),
+    let mut owners = BTreeSet::new();
+    for snapshot in snapshots {
+        if snapshot.name().len() > phenix_graph::MAX_IDENTIFIER_BYTES {
+            return Err(ConfigurationError::OwnerIdentifier {
+                length: snapshot.name().len(),
+                limit: phenix_graph::MAX_IDENTIFIER_BYTES,
+            }
+            .into());
+        }
+        if !owners.insert(snapshot.name()) {
+            return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
+        }
+    }
+    let mut definitions = BTreeMap::new();
+    let mut offers = BTreeMap::new();
+    let mut requirements = BTreeMap::new();
+    let mut pending = BTreeMap::new();
+    for snapshot in snapshots {
+        for (_, kind, id) in snapshot.keys() {
+            if id.len() > phenix_graph::MAX_IDENTIFIER_BYTES {
+                return Err(ConfigurationError::ContributionIdentifier {
+                    owner: snapshot.name().into(),
+                    length: id.len(),
                     limit: phenix_graph::MAX_IDENTIFIER_BYTES,
                 }
                 .into());
             }
-            if !owners.insert(snapshot.name()) {
-                return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
-            }
-        }
-        let mut definitions = BTreeMap::new();
-        let mut offers = BTreeMap::new();
-        let mut requirements = BTreeMap::new();
-        let mut pending = BTreeMap::new();
-        for snapshot in &snapshots {
-            for (_, kind, id) in snapshot.keys() {
-                if id.len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                    return Err(ConfigurationError::ContributionIdentifier {
-                        owner: snapshot.name().into(),
-                        length: id.len(),
-                        limit: phenix_graph::MAX_IDENTIFIER_BYTES,
-                    }
-                    .into());
-                }
-                let key = Key::new(snapshot.name(), id);
-                macro_rules! collect {
-                    ($ty:ty, $map:ident) => {
-                        if kind == <$ty as phenix_plugin::Contribution>::KIND {
-                            let handle = snapshot.get::<$ty>(id).ok_or_else(|| {
-                                ConfigurationError::ContributionType {
-                                    key: key.clone(),
-                                    expected: <$ty as phenix_plugin::Contribution>::KIND,
-                                }
-                            })?;
-                            if $map.insert(key.clone(), handle).is_some() {
-                                return Err(ConfigurationError::DuplicateContribution {
-                                    key: key.clone(),
-                                }
-                                .into());
+            let key = Key::new(snapshot.name(), id);
+            macro_rules! collect {
+                ($ty:ty, $map:ident) => {
+                    if kind == <$ty as phenix_plugin::Contribution>::KIND {
+                        let handle = snapshot.get::<$ty>(id).ok_or_else(|| {
+                            ConfigurationError::ContributionType {
+                                key: key.clone(),
+                                expected: <$ty as phenix_plugin::Contribution>::KIND,
                             }
-                            continue;
+                        })?;
+                        if $map.insert(key.clone(), handle).is_some() {
+                            return Err(ConfigurationError::DuplicateContribution {
+                                key: key.clone(),
+                            }
+                            .into());
                         }
-                    };
-                }
-                collect!(ContractDefinition, definitions);
-                collect!(NetworkOffer, offers);
-                collect!(ContractRequirement, requirements);
-                if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
-                    continue;
-                }
-                let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
-                    ConfigurationError::ContributionType {
-                        key: key.clone(),
-                        expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
+                        continue;
                     }
-                })?;
-                if pending.insert(key.clone(), handle).is_some() {
-                    return Err(
-                        ConfigurationError::DuplicateContribution { key: key.clone() }.into(),
-                    );
-                }
+                };
             }
-        }
-        let mut identities = BTreeMap::new();
-        for (key, definition) in &definitions {
-            if let Some(previous) =
-                identities.insert(definition.contract.id(), &definition.contract)
-                && previous != &definition.contract
-            {
-                return Err(ResolutionError::ConflictingDefinition {
-                    definition: key.clone(),
-                    contract: definition.contract.id().into(),
-                });
+            collect!(ContractDefinition, definitions);
+            collect!(NetworkOffer, offers);
+            collect!(ContractRequirement, requirements);
+            if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
+                continue;
             }
-        }
-        for (key, offer) in &offers {
-            if !definitions.contains_key(&offer.contract) {
-                return Err(ConfigurationError::MissingDefinition {
+            let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
+                ConfigurationError::ContributionType {
                     key: key.clone(),
-                    contract: offer.contract.clone(),
-                    role: DefinitionRole::Offer,
+                    expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
                 }
-                .into());
-            }
-            if offer.producer.owner != key.owner || !pending.contains_key(&offer.producer) {
-                return Err(ResolutionError::WrongOrigin {
-                    offer: key.clone(),
-                    producer: Box::new(offer.producer.clone()),
-                    unit: offer.unit.clone(),
-                });
+            })?;
+            if pending.insert(key.clone(), handle).is_some() {
+                return Err(
+                    ConfigurationError::DuplicateContribution { key: key.clone() }.into(),
+                );
             }
         }
+    }
+    let mut identities = BTreeMap::new();
+    for (key, definition) in &definitions {
+        if let Some(previous) =
+            identities.insert(definition.contract.id(), &definition.contract)
+            && previous != &definition.contract
+        {
+            return Err(ResolutionError::ConflictingDefinition {
+                definition: key.clone(),
+                contract: definition.contract.id().into(),
+            });
+        }
+    }
+    for (key, offer) in &offers {
+        if !definitions.contains_key(&offer.contract) {
+            return Err(ConfigurationError::MissingDefinition {
+                key: key.clone(),
+                contract: offer.contract.clone(),
+                role: DefinitionRole::Offer,
+            }
+            .into());
+        }
+        if offer.producer.owner != key.owner || !pending.contains_key(&offer.producer) {
+            return Err(ResolutionError::WrongOrigin {
+                offer: key.clone(),
+                producer: Box::new(offer.producer.clone()),
+                unit: offer.unit.clone(),
+            });
+        }
+    }
 
-        Ok(ContributionCatalog { definitions, offers, requirements, pending })
+    Ok(ContributionCatalog {
+        definitions,
+        offers,
+        requirements,
+        pending,
+    })
 }
 
 impl Kernel {
@@ -137,8 +142,12 @@ impl Kernel {
         let host_lease = options.execution.lease.take();
         let preparation_lease: Arc<dyn Send + Sync> =
             Arc::new((host_lease.clone(), snapshots.clone()));
-        let ContributionCatalog { definitions, offers, requirements, mut pending } =
-            collect_catalog(&snapshots)?;
+        let ContributionCatalog {
+            definitions,
+            offers,
+            requirements,
+            mut pending,
+        } = collect_catalog(&snapshots)?;
         let mut imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>> = BTreeMap::new();
         let mut dependencies: BTreeMap<Key, BTreeSet<Key>> = pending
             .iter()
