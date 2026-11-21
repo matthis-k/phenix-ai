@@ -324,6 +324,40 @@ fn compose_replace() {
     }
 }
 
+/// Composer end-to-end planning and revocation on a reverse-lexical chain.
+/// This deliberately includes validation, selection, replay and compilation:
+/// it is an acceptance workload, not a claim about planner-only complexity.
+fn compose_reverse_dependency_chain<const N: usize>() {
+    assert!(N > 0);
+    let mut builder = NetworkBuilder::new();
+    builder
+        .add("anchor", Arc::new(ComponentDef::map(|v: i64| v)))
+        .unwrap();
+    let mut composer = Composer::new(builder.build().unwrap()).unwrap();
+    let registrations = (0..N).map(|index| {
+        let id = format!("node{index:04}");
+        let dependencies = if index + 1 < N {
+            vec![format!("node{:04}", index + 1)]
+        } else {
+            Vec::new()
+        };
+        Registration::new(
+            id,
+            dependencies,
+            0,
+            GraphOrigin::default(),
+            Vec::<Footprint>::new(),
+            NetworkPatch::new(Vec::<Edit>::new()),
+        )
+    });
+    composer.register(registrations).unwrap();
+    assert_eq!(composer.current().active().len(), N);
+    let removed = composer.revoke(&format!("node{:04}", N - 1)).unwrap();
+    assert_eq!(removed.len(), N);
+    assert!(composer.current().active().is_empty());
+    black_box(composer.current());
+}
+
 fn main() {
     println!(
         "native_fbp: warmup=2 samples=7; elapsed includes setup, validation and teardown; no allocation instrumentation"
@@ -335,6 +369,9 @@ fn main() {
         ("finite_feedback_1001", finite_feedback),
         ("nested16_compile_inspect_x20", nested_compile),
         ("compose16_replace_revoke_x20", compose_replace),
+        ("compose_revlex_chain16_register_revoke", compose_reverse_dependency_chain::<16>),
+        ("compose_revlex_chain64_register_revoke", compose_reverse_dependency_chain::<64>),
+        ("compose_revlex_chain128_register_revoke", compose_reverse_dependency_chain::<128>),
     ] {
         for _ in 0..2 {
             run();
