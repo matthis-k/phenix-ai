@@ -216,10 +216,10 @@ fn nested_export_dependency(declaration: &Registration, export: &Registration) -
                         return Some(path.clone());
                     }
                 }
-                Edit::ExposeNestedOutput { parent, from, .. } => {
-                    if nested_under(parent, path) || from.process == *path {
-                        return Some(path.clone());
-                    }
+                Edit::ExposeNestedOutput { parent, from, .. }
+                    if nested_under(parent, path) || from.process == *path =>
+                {
+                    return Some(path.clone());
                 }
                 _ => {}
             }
