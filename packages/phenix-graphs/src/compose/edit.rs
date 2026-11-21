@@ -26,6 +26,10 @@ pub enum Footprint {
     Connection(ConnectionKey),
     InputExport(String),
     OutputExport(String),
+    /// Exact nested export authority is distinct from a root export whose
+    /// literal port name happens to contain the same slash-delimited text.
+    NestedInputExport { parent: String, name: String },
+    NestedOutputExport { parent: String, name: String },
     Source(String),
 }
 
@@ -203,12 +207,16 @@ impl Edit {
             Self::Disconnect(key) => [Connection(key.clone())].into(),
             Self::ExposeInput { name, .. } => [InputExport(name.clone())].into(),
             Self::ExposeOutput { name, .. } => [OutputExport(name.clone())].into(),
-            Self::ExposeNestedInput { parent, name, .. } => {
-                [InputExport(format!("{parent}/{name}"))].into()
-            }
-            Self::ExposeNestedOutput { parent, name, .. } => {
-                [OutputExport(format!("{parent}/{name}"))].into()
-            }
+            Self::ExposeNestedInput { parent, name, .. } => [NestedInputExport {
+                parent: parent.clone(),
+                name: name.clone(),
+            }]
+            .into(),
+            Self::ExposeNestedOutput { parent, name, .. } => [NestedOutputExport {
+                parent: parent.clone(),
+                name: name.clone(),
+            }]
+            .into(),
             Self::AddSource(path) => [Source(path.clone())].into(),
             // The planner adds the context-dependent predecessor edges.
             Self::Splice { anchor, output, .. } => [
