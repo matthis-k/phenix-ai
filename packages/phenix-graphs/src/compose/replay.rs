@@ -239,11 +239,7 @@ fn expose_input(
         registration: registration.id.clone(),
         reason: Box::new(reason),
     };
-            name,
-            targets,
-            capacity,
-        } => {
-            if network.inputs.contains_key(name) {
+    if network.inputs.contains_key(name) {
                 return Err(invalid(InvalidEditReason::DuplicateInputExport {
                     name: name.to_owned(),
                 }));
