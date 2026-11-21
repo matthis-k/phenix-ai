@@ -298,7 +298,6 @@ impl NetworkSession {
 
 #[cfg(test)]
 mod indexed_process_paths_tests {
-    use super::*;
     use crate::{ComponentDef, NetworkBuilder};
     use std::{num::NonZeroUsize, sync::Arc};
 
