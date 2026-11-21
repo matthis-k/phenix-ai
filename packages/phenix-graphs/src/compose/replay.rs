@@ -289,16 +289,13 @@ fn mutate_extended(
     let Some((&name, rest)) = ancestors.split_first() else {
         return apply(network);
     };
-    let ancestor = network
-        .instances
-        .get(name)
-        .ok_or_else(|| ComposeError::InvalidEdit {
-            registration: registration.id.clone(),
-            reason: Box::new(InvalidEditReason::UnknownComposite {
-                path: full_path.into(),
-            }),
-        })?
-        .clone();
+    // Without an author-approved ancestor, even an exact host footprint
+    // cannot enumerate or infer private children. Missing ancestors use the
+    // same refusal as a closed extension seam.
+    let Some(ancestor) = network.instances.get(name) else {
+        return Err(ComposeError::PrivateEditScope(full_path.into()));
+    };
+    let ancestor = ancestor.clone();
     let Body::Composite(child) = ancestor.body() else {
         return Err(ComposeError::PrivateEditScope(full_path.into()));
     };
