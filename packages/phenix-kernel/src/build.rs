@@ -267,6 +267,60 @@ fn resolve_dependencies(
     })
 }
 
+/// Incremental lexical frontier. Process each dependency edge only when
+/// its provider becomes ready; never rescan all remaining candidates per step.
+struct ReadyContributions {
+    unmet: BTreeMap<Key, usize>,
+    dependents: BTreeMap<Key, Vec<Key>>,
+    ready: BTreeSet<Key>,
+}
+
+impl ReadyContributions {
+    fn new(dependencies: &BTreeMap<Key, BTreeSet<Key>>) -> Result<Self, ResolutionError> {
+        let mut unmet = BTreeMap::new();
+        let mut dependents: BTreeMap<Key, Vec<Key>> = BTreeMap::new();
+        let mut ready = BTreeSet::new();
+        for (key, requires) in dependencies {
+            unmet.insert(key.clone(), requires.len());
+            if requires.is_empty() {
+                ready.insert(key.clone());
+            }
+            for required in requires {
+                if !dependencies.contains_key(required) {
+                    return Err(ConfigurationError::MissingDependency {
+                        contribution: key.clone(),
+                        dependency: required.clone(),
+                    }
+                    .into());
+                }
+                dependents
+                    .entry(required.clone())
+                    .or_default()
+                    .push(key.clone());
+            }
+        }
+        Ok(Self {
+            unmet,
+            dependents,
+            ready,
+        })
+    }
+
+    fn pop(&mut self) -> Option<Key> {
+        let key = self.ready.pop_first()?;
+        if let Some(dependents) = self.dependents.get(&key) {
+            for dependent in dependents {
+                let remaining = self.unmet.get_mut(dependent).expect("known dependent");
+                *remaining -= 1;
+                if *remaining == 0 {
+                    self.ready.insert(dependent.clone());
+                }
+            }
+        }
+        Some(key)
+    }
+}
+
 impl Kernel {
     /// Resolve all dependencies before composing and build one native session,
     /// without activating producers. Lexical keys break topological ties.
@@ -305,7 +359,7 @@ impl Kernel {
             requirements: _requirements,
             mut pending,
         } = catalog;
-        let mut resolved = BTreeSet::new();
+        let mut ready = ReadyContributions::new(&dependencies)?;
         // Distinct composers retain their exact plugin revision's ancestry.
         let origins: BTreeMap<_, _> = pending
             .iter()
@@ -313,15 +367,12 @@ impl Kernel {
             .collect();
         let mut leases = Vec::new();
         let mut keys = Vec::new();
-        while !pending.is_empty() {
-            let key = pending
-                .iter()
-                .find(|(key, _)| dependencies[*key].iter().all(|k| resolved.contains(k)))
-                .map(|(key, _)| key.clone())
-                .ok_or_else(|| ResolutionError::Cycle(pending.keys().cloned().collect()))?;
+        while let Some(key) = ready.pop() {
             leases.push(pending.remove(&key).expect("selected pending contribution"));
-            keys.push(key.clone());
-            resolved.insert(key);
+            keys.push(key);
+        }
+        if !pending.is_empty() {
+            return Err(ResolutionError::Cycle(pending.keys().cloned().collect()));
         }
         // Candidate artifacts and builder are dropped before leases on build failure.
         let mut artifacts = BTreeMap::new();
@@ -537,5 +588,75 @@ impl Kernel {
             _snapshots: snapshots,
             code_lease,
         })
+    }
+}
+
+/// Regression coverage for the same lexical order and cycle frontier as the
+/// former full-map dependency scan, including ready nodes becoming eligible.
+#[cfg(test)]
+mod ready_contribution_tests {
+    use super::*;
+
+    fn key(id: &str) -> Key {
+        Key::new("plugin", id)
+    }
+
+    #[test]
+    fn newly_ready_lexical_predecessor_takes_priority_over_existing_ready_nodes() {
+        let dependencies = BTreeMap::from([
+            (key("a"), BTreeSet::from([key("b")])),
+            (key("b"), BTreeSet::new()),
+            (key("c"), BTreeSet::new()),
+            (key("d"), BTreeSet::from([key("b"), key("c")])),
+        ]);
+        let mut ready = ReadyContributions::new(&dependencies).unwrap();
+        let order = std::iter::from_fn(|| ready.pop())
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn cycles_leave_exact_unprocessed_keys_after_independent_work() {
+        let dependencies = BTreeMap::from([
+            (key("a"), BTreeSet::from([key("b")])),
+            (key("b"), BTreeSet::from([key("a")])),
+            (key("c"), BTreeSet::new()),
+            (key("d"), BTreeSet::from([key("c")])),
+        ]);
+        let mut ready = ReadyContributions::new(&dependencies).unwrap();
+        let mut pending = dependencies.keys().cloned().collect::<BTreeSet<_>>();
+        while let Some(key) = ready.pop() {
+            pending.remove(&key);
+        }
+        assert_eq!(pending, BTreeSet::from([key("a"), key("b")]));
+    }
+
+    #[test]
+    fn missing_dependency_fails_closed() {
+        let dependencies = BTreeMap::from([(key("consumer"), BTreeSet::from([key("missing")]))]);
+        assert!(matches!(
+            ReadyContributions::new(&dependencies),
+            Err(ResolutionError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn long_dependency_chain_requires_no_recursion() {
+        let dependencies = (0..512)
+            .map(|index| {
+                let requires = if index == 0 {
+                    BTreeSet::new()
+                } else {
+                    BTreeSet::from([key(&format!("{:04}", index - 1))])
+                };
+                (key(&format!("{index:04}")), requires)
+            })
+            .collect();
+        let mut ready = ReadyContributions::new(&dependencies).unwrap();
+        for index in 0..512 {
+            assert_eq!(ready.pop(), Some(key(&format!("{index:04}"))));
+        }
+        assert_eq!(ready.pop(), None);
     }
 }
