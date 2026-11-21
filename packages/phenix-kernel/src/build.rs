@@ -130,9 +130,7 @@ fn resolve_dependencies(
     let mut imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>> = BTreeMap::new();
     let mut dependencies: BTreeMap<Key, BTreeSet<Key>> = pending
         .iter()
-        .map(|(key, contribution)| {
-            (key.clone(), contribution.requires.iter().cloned().collect())
-        })
+        .map(|(key, contribution)| (key.clone(), contribution.requires.iter().cloned().collect()))
         .collect();
     for (requirement, offer) in policy
         .selections
@@ -167,9 +165,7 @@ fn resolve_dependencies(
             }
             .into());
         }
-        if requirement.consumer.owner != key.owner
-            || !pending.contains_key(&requirement.consumer)
-        {
+        if requirement.consumer.owner != key.owner || !pending.contains_key(&requirement.consumer) {
             return Err(ConfigurationError::InvalidConsumer {
                 requirement: key.clone(),
                 consumer: requirement.consumer.clone(),
@@ -299,8 +295,10 @@ impl Kernel {
         let preparation_lease: Arc<dyn Send + Sync> =
             Arc::new((host_lease.clone(), snapshots.clone()));
         let catalog = collect_catalog(&snapshots)?;
-        let ResolvedImports { imports, dependencies } =
-            resolve_dependencies(&options.imports, &catalog)?;
+        let ResolvedImports {
+            imports,
+            dependencies,
+        } = resolve_dependencies(&options.imports, &catalog)?;
         let ContributionCatalog {
             definitions,
             offers,
