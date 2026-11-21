@@ -776,18 +776,20 @@ fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
 
 #[test]
 fn admission_recycles_lowest_free_correlation_lane_for_both_queue_policies() {
-    for policy in [RequestQueuePolicy::SharedFifo, RequestQueuePolicy::BoundedLanes] {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let mut options = lane_options();
         options.max_requests = NonZeroUsize::new(4).unwrap();
         options.request_queue_policy = policy;
-        let mut session = record_network(
-            &["input"],
-            NonZeroUsize::new(16).unwrap(),
-            seen.clone(),
-        )
-        .start_with_options(options);
-        assert_eq!(session.begin_request(Some("missing")), Err(RequestError::UnknownOutput));
+        let mut session = record_network(&["input"], NonZeroUsize::new(16).unwrap(), seen.clone())
+            .start_with_options(options);
+        assert_eq!(
+            session.begin_request(Some("missing")),
+            Err(RequestError::UnknownOutput)
+        );
         let a = session.begin_request(None).unwrap();
         let b = session.begin_request(None).unwrap();
         let c = session.begin_request(None).unwrap();

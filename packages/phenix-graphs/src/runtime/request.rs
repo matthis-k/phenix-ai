@@ -78,7 +78,10 @@ pub(super) struct LaneAllocator {
 impl LaneAllocator {
     pub(super) fn candidate(&self, capacity: usize) -> usize {
         self.recycled.iter().next().copied().unwrap_or_else(|| {
-            assert!(self.next_unused < capacity, "request credit reserves a free lane");
+            assert!(
+                self.next_unused < capacity,
+                "request credit reserves a free lane"
+            );
             self.next_unused
         })
     }
@@ -92,8 +95,14 @@ impl LaneAllocator {
     }
 
     pub(super) fn recycle(&mut self, lane: usize) {
-        assert!(lane < self.next_unused, "released request lane was reserved");
-        assert!(self.recycled.insert(lane), "request lane was not already released");
+        assert!(
+            lane < self.next_unused,
+            "released request lane was reserved"
+        );
+        assert!(
+            self.recycled.insert(lane),
+            "request lane was not already released"
+        );
         // Reclaim trailing free slots so transient peak concurrency does not
         // permanently retain an oversized allocator.
         while self.next_unused > 0 && self.recycled.remove(&(self.next_unused - 1)) {
