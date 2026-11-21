@@ -459,3 +459,52 @@ fn nested_export_grants_cannot_be_reused_as_identically_named_root_grants() {
     ));
     assert!(composer.current().active().is_empty());
 }
+
+#[test]
+fn reverse_lexical_dependency_chain_replays_nested_exports_before_consumers() {
+    // The Q3 ready frontier must retain the old multi-sweep order while A1
+    // replays exact-authority nested edits with real dependent ports.
+    let seen = Arc::new(AtomicUsize::new(0));
+    let observed = seen.clone();
+    let mut composer = composer(true, true);
+    let add = NetworkPatch::new([
+        Edit::Add {
+            path: "m/inner/side".into(),
+            definition: stage("side"),
+        },
+        edge("m/inner/leaf", "m/inner/side"),
+    ]);
+    let export = NetworkPatch::new([output()]);
+    let consume = NetworkPatch::new([
+        Edit::Add {
+            path: "m/monitor".into(),
+            definition: Arc::new(ComponentDef::sink(move |s: &String| {
+                assert_eq!(s, "side[base[Q]]");
+                observed.fetch_add(1, Ordering::SeqCst);
+            })),
+        },
+        Edit::Connect(ConnectionDef {
+            from: port("m/inner", "telemetry"),
+            to: port("m/monitor", "input"),
+            capacity: cap(),
+        }),
+    ]);
+    // Lexical order is consumer, export, producer; replay must be reversed
+    // by the explicitly declared dependency chain, never by a loose sort.
+    composer
+        .register([
+            registration("a-consumer", &["b-export"], consume.clone(), consume.footprints()),
+            registration("b-export", &["z-add"], export.clone(), export.footprints()),
+            registration("z-add", &[], add.clone(), add.footprints()),
+        ])
+        .unwrap();
+    assert_eq!(run(&mut composer.current().compiled().start()), "base[Q]");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+    let removed = composer.revoke("z-add").unwrap();
+    assert_eq!(removed.len(), 3);
+    assert!(removed.contains("a-consumer"));
+    assert!(removed.contains("b-export"));
+    assert!(removed.contains("z-add"));
+    assert_eq!(run(&mut composer.current().compiled().start()), "base[Q]");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+}
