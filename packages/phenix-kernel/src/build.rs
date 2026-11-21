@@ -111,6 +111,166 @@ fn collect_catalog(snapshots: &[PluginSnapshot]) -> Result<ContributionCatalog, 
     })
 }
 
+struct ResolvedImports {
+    imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>>,
+    dependencies: BTreeMap<Key, BTreeSet<Key>>,
+}
+
+// Resolve host-selected providers and dependency order without touching live state.
+fn resolve_dependencies(
+    policy: &ImportPolicy,
+    catalog: &ContributionCatalog,
+) -> Result<ResolvedImports, ResolutionError> {
+    let ContributionCatalog {
+        definitions,
+        offers,
+        requirements,
+        pending,
+    } = catalog;
+    let mut imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>> = BTreeMap::new();
+    let mut dependencies: BTreeMap<Key, BTreeSet<Key>> = pending
+        .iter()
+        .map(|(key, contribution)| {
+            (key.clone(), contribution.requires.iter().cloned().collect())
+        })
+        .collect();
+    for (requirement, offer) in policy
+        .selections
+        .iter()
+        .chain(
+            policy
+                .allow
+                .iter()
+                .flat_map(|pairs| pairs.iter().map(|(r, o)| (r, o))),
+        )
+        .chain(policy.deny.iter().map(|(r, o)| (r, o)))
+    {
+        if !requirements.contains_key(requirement) {
+            return Err(ConfigurationError::UnknownRequirement {
+                requirement: requirement.clone(),
+            }
+            .into());
+        }
+        if !offers.contains_key(offer) {
+            return Err(ConfigurationError::UnknownOffer {
+                offer: offer.clone(),
+            }
+            .into());
+        }
+    }
+    for (key, requirement) in requirements {
+        if !definitions.contains_key(&requirement.contract) {
+            return Err(ConfigurationError::MissingDefinition {
+                key: key.clone(),
+                contract: requirement.contract.clone(),
+                role: DefinitionRole::Requirement,
+            }
+            .into());
+        }
+        if requirement.consumer.owner != key.owner
+            || !pending.contains_key(&requirement.consumer)
+        {
+            return Err(ConfigurationError::InvalidConsumer {
+                requirement: key.clone(),
+                consumer: requirement.consumer.clone(),
+            }
+            .into());
+        }
+        let requested = &definitions[&requirement.contract].contract;
+        let candidates: Vec<_> = offers
+            .iter()
+            .filter(|(offer_key, offer)| {
+                let pair = (key.clone(), (*offer_key).clone());
+                !policy.deny.contains(&pair)
+                    && policy
+                        .allow
+                        .as_ref()
+                        .is_none_or(|allow| allow.contains(&pair))
+                    && requested
+                        .check_definition(&definitions[&offer.contract].contract)
+                        .is_ok()
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        let selected = if let Some(selected) = policy.selections.get(key) {
+            if !candidates.contains(selected) {
+                let offer = &offers[selected];
+                let reason =
+                    match requested.check_definition(&definitions[&offer.contract].contract) {
+                        Err(error) => IneligibleReason::IncompatibleContract(Box::new(error)),
+                        Ok(()) => IneligibleReason::DeniedByPolicy,
+                    };
+                return Err(ResolutionError::Ineligible {
+                    requirement: key.clone(),
+                    offer: selected.clone(),
+                    reason,
+                });
+            }
+            selected.clone()
+        } else {
+            match candidates.as_slice() {
+                [] => {
+                    return Err(ResolutionError::Missing {
+                        requirement: key.clone(),
+                        contract: requirement.contract.clone(),
+                    });
+                }
+                [selected] => selected.clone(),
+                _ => {
+                    return Err(ResolutionError::Ambiguous {
+                        requirement: key.clone(),
+                        offers: candidates,
+                    });
+                }
+            }
+        };
+        let offer = &offers[&selected];
+        // A composer can create its own provider before projecting a self-import.
+        if offer.producer != requirement.consumer {
+            dependencies
+                .get_mut(&requirement.consumer)
+                .unwrap()
+                .insert(offer.producer.clone());
+        }
+        imports
+            .entry(requirement.consumer.clone())
+            .or_default()
+            .insert(
+                requirement.id.clone(),
+                ResolvedImport {
+                    offer: selected,
+                    producer: offer.producer.clone(),
+                    unit: offer.unit.clone(),
+                    contract: requested.clone(),
+                },
+            );
+    }
+    for (key, contribution) in pending {
+        let mut dependencies = BTreeSet::new();
+        for dependency in &contribution.requires {
+            if !dependencies.insert(dependency) {
+                return Err(ConfigurationError::DuplicateDependency {
+                    contribution: key.clone(),
+                    dependency: dependency.clone(),
+                }
+                .into());
+            }
+            if !pending.contains_key(dependency) {
+                return Err(ConfigurationError::MissingDependency {
+                    contribution: key.clone(),
+                    dependency: dependency.clone(),
+                }
+                .into());
+            }
+        }
+    }
+
+    Ok(ResolvedImports {
+        imports,
+        dependencies,
+    })
+}
+
 impl Kernel {
     /// Resolve all dependencies before composing and build one native session,
     /// without activating producers. Lexical keys break topological ties.
@@ -131,7 +291,6 @@ impl Kernel {
         dispatcher: Arc<dyn ProcessDispatcher>,
         mut options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
-        let policy = &options.imports;
         let snapshots: Vec<_> = snapshots.into_iter().collect();
         // Composition can temporarily inspect every candidate revision, but
         // emitted packets and detached graph handles must retain only selected
@@ -139,149 +298,15 @@ impl Kernel {
         let host_lease = options.execution.lease.take();
         let preparation_lease: Arc<dyn Send + Sync> =
             Arc::new((host_lease.clone(), snapshots.clone()));
+        let catalog = collect_catalog(&snapshots)?;
+        let ResolvedImports { imports, dependencies } =
+            resolve_dependencies(&options.imports, &catalog)?;
         let ContributionCatalog {
             definitions,
             offers,
             requirements,
             mut pending,
-        } = collect_catalog(&snapshots)?;
-        let mut imports: BTreeMap<Key, BTreeMap<String, ResolvedImport>> = BTreeMap::new();
-        let mut dependencies: BTreeMap<Key, BTreeSet<Key>> = pending
-            .iter()
-            .map(|(key, contribution)| {
-                (key.clone(), contribution.requires.iter().cloned().collect())
-            })
-            .collect();
-        for (requirement, offer) in policy
-            .selections
-            .iter()
-            .chain(
-                policy
-                    .allow
-                    .iter()
-                    .flat_map(|pairs| pairs.iter().map(|(r, o)| (r, o))),
-            )
-            .chain(policy.deny.iter().map(|(r, o)| (r, o)))
-        {
-            if !requirements.contains_key(requirement) {
-                return Err(ConfigurationError::UnknownRequirement {
-                    requirement: requirement.clone(),
-                }
-                .into());
-            }
-            if !offers.contains_key(offer) {
-                return Err(ConfigurationError::UnknownOffer {
-                    offer: offer.clone(),
-                }
-                .into());
-            }
-        }
-        for (key, requirement) in &requirements {
-            if !definitions.contains_key(&requirement.contract) {
-                return Err(ConfigurationError::MissingDefinition {
-                    key: key.clone(),
-                    contract: requirement.contract.clone(),
-                    role: DefinitionRole::Requirement,
-                }
-                .into());
-            }
-            if requirement.consumer.owner != key.owner
-                || !pending.contains_key(&requirement.consumer)
-            {
-                return Err(ConfigurationError::InvalidConsumer {
-                    requirement: key.clone(),
-                    consumer: requirement.consumer.clone(),
-                }
-                .into());
-            }
-            let requested = &definitions[&requirement.contract].contract;
-            let candidates: Vec<_> = offers
-                .iter()
-                .filter(|(offer_key, offer)| {
-                    let pair = (key.clone(), (*offer_key).clone());
-                    !policy.deny.contains(&pair)
-                        && policy
-                            .allow
-                            .as_ref()
-                            .is_none_or(|allow| allow.contains(&pair))
-                        && requested
-                            .check_definition(&definitions[&offer.contract].contract)
-                            .is_ok()
-                })
-                .map(|(key, _)| key.clone())
-                .collect();
-            let selected = if let Some(selected) = policy.selections.get(key) {
-                if !candidates.contains(selected) {
-                    let offer = &offers[selected];
-                    let reason =
-                        match requested.check_definition(&definitions[&offer.contract].contract) {
-                            Err(error) => IneligibleReason::IncompatibleContract(Box::new(error)),
-                            Ok(()) => IneligibleReason::DeniedByPolicy,
-                        };
-                    return Err(ResolutionError::Ineligible {
-                        requirement: key.clone(),
-                        offer: selected.clone(),
-                        reason,
-                    });
-                }
-                selected.clone()
-            } else {
-                match candidates.as_slice() {
-                    [] => {
-                        return Err(ResolutionError::Missing {
-                            requirement: key.clone(),
-                            contract: requirement.contract.clone(),
-                        });
-                    }
-                    [selected] => selected.clone(),
-                    _ => {
-                        return Err(ResolutionError::Ambiguous {
-                            requirement: key.clone(),
-                            offers: candidates,
-                        });
-                    }
-                }
-            };
-            let offer = &offers[&selected];
-            // A composer can create its own provider before projecting a self-import.
-            if offer.producer != requirement.consumer {
-                dependencies
-                    .get_mut(&requirement.consumer)
-                    .unwrap()
-                    .insert(offer.producer.clone());
-            }
-            imports
-                .entry(requirement.consumer.clone())
-                .or_default()
-                .insert(
-                    requirement.id.clone(),
-                    ResolvedImport {
-                        offer: selected,
-                        producer: offer.producer.clone(),
-                        unit: offer.unit.clone(),
-                        contract: requested.clone(),
-                    },
-                );
-        }
-        for (key, contribution) in &pending {
-            let mut dependencies = BTreeSet::new();
-            for dependency in &contribution.requires {
-                if !dependencies.insert(dependency) {
-                    return Err(ConfigurationError::DuplicateDependency {
-                        contribution: key.clone(),
-                        dependency: dependency.clone(),
-                    }
-                    .into());
-                }
-                if !pending.contains_key(dependency) {
-                    return Err(ConfigurationError::MissingDependency {
-                        contribution: key.clone(),
-                        dependency: dependency.clone(),
-                    }
-                    .into());
-                }
-            }
-        }
+        } = catalog;
         let mut resolved = BTreeSet::new();
         // Distinct composers retain their exact plugin revision's ancestry.
         let origins: BTreeMap<_, _> = pending
