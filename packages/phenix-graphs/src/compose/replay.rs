@@ -95,7 +95,6 @@ fn replay(
                     mutate_extended(
                         network,
                         &parent.split('/').collect::<Vec<_>>(),
-                        registration,
                         parent,
                         |child| connect_edge(child, &local, registration),
                     )?;
@@ -282,7 +281,6 @@ fn connect_edge(
 fn mutate_extended(
     network: &mut NetworkDef,
     ancestors: &[&str],
-    registration: &Registration,
     full_path: &str,
     apply: impl FnOnce(&mut NetworkDef) -> Result<(), ComposeError>,
 ) -> Result<(), ComposeError> {
@@ -303,7 +301,7 @@ fn mutate_extended(
         return Err(ComposeError::PrivateEditScope(full_path.into()));
     }
     let mut updated = (**child).clone();
-    mutate_extended(&mut updated, rest, registration, full_path, apply)?;
+    mutate_extended(&mut updated, rest, full_path, apply)?;
     network.instances.insert(
         name.into(),
         Arc::new(ancestor.with_updated_network(updated)),
@@ -324,7 +322,6 @@ fn add_nested(
     mutate_extended(
         network,
         &parent.split('/').collect::<Vec<_>>(),
-        registration,
         path,
         |child| {
             if child.instances.contains_key(name) {
