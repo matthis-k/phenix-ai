@@ -405,7 +405,10 @@ fn shared_fifo_demand_preserves_another_live_requests_captures() {
 
     fixture.put(&fixture.a, 7);
     let query = runtime.bind_query(&spec).unwrap();
-    assert!(matches!(query.query_with_budget(256), Err(Error::Unsettled)));
+    assert!(matches!(
+        query.query_with_budget(256),
+        Err(Error::Unsettled)
+    ));
     runtime
         .kernel()
         .with_session(|session| {
@@ -419,7 +422,9 @@ fn shared_fifo_demand_preserves_another_live_requests_captures() {
                     while let Some(packet) =
                         session.take_bound_request_output(old, capture).unwrap()
                     {
-                        session.validate_bound_capture(old, capture, &packet).unwrap();
+                        session
+                            .validate_bound_capture(old, capture, &packet)
+                            .unwrap();
                         assert_eq!(packet.metadata().unwrap().request(), Some(old));
                         if capture.name() == "query" {
                             assert_eq!(packet.value().borrow::<i64>(), Some(&3));
