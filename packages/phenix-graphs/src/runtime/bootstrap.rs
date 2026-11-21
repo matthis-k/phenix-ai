@@ -436,6 +436,7 @@ impl NetworkSession {
             ingress,
             captures,
             request_lanes: BTreeMap::new(),
+            lane_allocator: request::LaneAllocator::default(),
             request_cursors: BTreeMap::new(),
             queue_lanes,
             endpoints,

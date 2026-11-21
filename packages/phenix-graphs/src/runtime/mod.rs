@@ -295,6 +295,7 @@ pub struct NetworkSession {
     ingress: BTreeMap<String, Vec<usize>>,
     captures: BTreeMap<String, usize>,
     request_lanes: BTreeMap<usize, RequestLane>,
+    lane_allocator: request::LaneAllocator,
     request_cursors: BTreeMap<usize, usize>,
     queue_lanes: Vec<Option<usize>>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
