@@ -493,7 +493,12 @@ fn reverse_lexical_dependency_chain_replays_nested_exports_before_consumers() {
     // by the explicitly declared dependency chain, never by a loose sort.
     composer
         .register([
-            registration("a-consumer", &["b-export"], consume.clone(), consume.footprints()),
+            registration(
+                "a-consumer",
+                &["b-export"],
+                consume.clone(),
+                consume.footprints(),
+            ),
             registration("b-export", &["z-add"], export.clone(), export.footprints()),
             registration("z-add", &[], add.clone(), add.footprints()),
         ])
