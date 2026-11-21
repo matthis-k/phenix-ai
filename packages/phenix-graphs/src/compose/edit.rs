@@ -50,6 +50,18 @@ pub enum Edit {
         name: String,
         from: PortPath,
     },
+    /// A port on the exact author-approved nested composite, not a root export.
+    ExposeNestedInput {
+        parent: String,
+        name: String,
+        targets: Vec<PortPath>,
+        capacity: NonZeroUsize,
+    },
+    ExposeNestedOutput {
+        parent: String,
+        name: String,
+        from: PortPath,
+    },
     AddSource(String),
     /// Insert an existing component between the original edge's endpoints.
     /// Dependent splices append in dependency order, retaining the original key.
@@ -141,6 +153,30 @@ impl Edit {
                 }
             }
             Self::ExposeOutput { from, .. } => public_path(&from.process)?,
+            Self::ExposeNestedInput {
+                parent,
+                name,
+                targets,
+                ..
+            } => {
+                for part in parent.split('/').chain(std::iter::once(name.as_str())) {
+                    public_path(part)?;
+                }
+                for target in targets {
+                    for part in target.process.split('/') {
+                        public_path(part)?;
+                    }
+                }
+            }
+            Self::ExposeNestedOutput { parent, name, from } => {
+                for part in parent
+                    .split('/')
+                    .chain(std::iter::once(name.as_str()))
+                    .chain(from.process.split('/'))
+                {
+                    public_path(part)?;
+                }
+            }
             Self::AddSource(path) => public_path(path)?,
             Self::Splice {
                 anchor,
@@ -167,6 +203,12 @@ impl Edit {
             Self::Disconnect(key) => [Connection(key.clone())].into(),
             Self::ExposeInput { name, .. } => [InputExport(name.clone())].into(),
             Self::ExposeOutput { name, .. } => [OutputExport(name.clone())].into(),
+            Self::ExposeNestedInput { parent, name, .. } => {
+                [InputExport(format!("{parent}/{name}"))].into()
+            }
+            Self::ExposeNestedOutput { parent, name, .. } => {
+                [OutputExport(format!("{parent}/{name}"))].into()
+            }
             Self::AddSource(path) => [Source(path.clone())].into(),
             // The planner adds the context-dependent predecessor edges.
             Self::Splice { anchor, output, .. } => [

@@ -73,12 +73,12 @@ impl ComponentDef {
         self.origin = Some(origin);
         self
     }
-    /// Copy-on-write composite body revision. The externally visible interface,
-    /// origin, and claims belong to the existing ancestor; changing its internal
-    /// topology creates a fresh definition identity without mutating snapshots.
+    /// Copy-on-write composite revision. Author-approved nested extensions can
+    /// add ports on an inner composite while preserving enclosing public
+    /// boundaries. Compilation revalidates all inherited semantic claims.
     pub(crate) fn with_updated_network(&self, network: NetworkDef) -> Self {
-        debug_assert_eq!(&self.interface, network.interface());
         let mut updated = self.clone();
+        updated.interface = network.interface().clone();
         updated.body = Body::Composite(Arc::new(network));
         updated.key = DefinitionKey::fresh();
         updated

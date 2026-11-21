@@ -123,78 +123,43 @@ fn replay(
             name,
             targets,
             capacity,
-        } => {
-            if network.inputs.contains_key(name) {
-                return Err(invalid(InvalidEditReason::DuplicateInputExport {
-                    name: name.clone(),
-                }));
-            }
-            let target = targets.first().ok_or_else(|| {
-                invalid(InvalidEditReason::EmptyInputProjection { name: name.clone() })
-            })?;
-            let component = network.instances.get(&target.process).ok_or_else(|| {
-                invalid(InvalidEditReason::MissingInputComponent {
-                    name: name.clone(),
-                    target: target.clone(),
-                })
-            })?;
-            let mut port = component
-                .interface()
-                .input(&target.port)
-                .ok_or_else(|| {
-                    invalid(InvalidEditReason::MissingInputPort {
-                        name: name.clone(),
-                        target: target.clone(),
-                    })
-                })?
-                .clone();
-            port.name = name.clone();
-            network.interface = Arc::new(
-                Interface::new(
-                    network.interface.inputs().values().cloned().chain([port]),
-                    network.interface.outputs().values().cloned(),
-                )
-                .map_err(NetworkError::from)?,
-            );
-            network.inputs.insert(
-                name.clone(),
-                InputProjection {
-                    targets: targets.clone(),
-                    capacity: *capacity,
-                },
-            );
-        }
+        } => expose_input(network, name, targets, *capacity, registration)?,
         Edit::ExposeOutput { name, from } => {
-            if network.outputs.contains_key(name) {
-                return Err(invalid(InvalidEditReason::DuplicateOutputExport {
-                    name: name.clone(),
-                }));
-            }
-            let component = network.instances.get(&from.process).ok_or_else(|| {
-                invalid(InvalidEditReason::MissingOutputComponent {
-                    name: name.clone(),
-                    target: from.clone(),
-                })
-            })?;
-            let mut port = component
-                .interface()
-                .output(&from.port)
-                .ok_or_else(|| {
-                    invalid(InvalidEditReason::MissingOutputPort {
-                        name: name.clone(),
-                        target: from.clone(),
+            expose_output(network, name, from, registration)?;
+        }
+        Edit::ExposeNestedInput {
+            parent,
+            name,
+            targets,
+            capacity,
+        } => {
+            let locals = targets
+                .iter()
+                .map(|target| {
+                    Ok(PortPath {
+                        process: local_child(parent, &target.process)?.into(),
+                        port: target.port.clone(),
                     })
-                })?
-                .clone();
-            port.name = name.clone();
-            network.interface = Arc::new(
-                Interface::new(
-                    network.interface.inputs().values().cloned(),
-                    network.interface.outputs().values().cloned().chain([port]),
-                )
-                .map_err(NetworkError::from)?,
-            );
-            network.outputs.insert(name.clone(), from.clone());
+                })
+                .collect::<Result<Vec<_>, ComposeError>>()?;
+            mutate_extended(
+                network,
+                &parent.split('/').collect::<Vec<_>>(),
+                parent,
+                |child| expose_input(child, name, &locals, *capacity, registration),
+            )?;
+        }
+        Edit::ExposeNestedOutput { parent, name, from } => {
+            let local = PortPath {
+                process: local_child(parent, &from.process)?.into(),
+                port: from.port.clone(),
+            };
+            mutate_extended(
+                network,
+                &parent.split('/').collect::<Vec<_>>(),
+                parent,
+                |child| expose_output(child, name, &local, registration),
+            )?;
         }
         Edit::AddSource(path) => {
             if network.sources.contains(path) {
@@ -250,6 +215,116 @@ fn replay(
             splices.insert(anchor.clone(), (output.clone(), capacity));
         }
     }
+    Ok(())
+}
+
+/// Exports name an immediate child of the approved composite. A deeper
+/// descendant must pass through its own independently approved boundary.
+fn local_child<'a>(parent: &str, process: &'a str) -> Result<&'a str, ComposeError> {
+    process
+        .strip_prefix(parent)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .filter(|child| !child.is_empty() && !child.contains('/'))
+        .ok_or_else(|| ComposeError::PrivateEditScope(process.into()))
+}
+
+fn expose_input(
+    network: &mut NetworkDef,
+    name: &str,
+    targets: &[PortPath],
+    capacity: NonZeroUsize,
+    registration: &Registration,
+) -> Result<(), ComposeError> {
+    let invalid = |reason| ComposeError::InvalidEdit {
+        registration: registration.id.clone(),
+        reason: Box::new(reason),
+    };
+            name,
+            targets,
+            capacity,
+        } => {
+            if network.inputs.contains_key(name) {
+                return Err(invalid(InvalidEditReason::DuplicateInputExport {
+                    name: name.to_owned(),
+                }));
+            }
+            let target = targets.first().ok_or_else(|| {
+                invalid(InvalidEditReason::EmptyInputProjection { name: name.to_owned() })
+            })?;
+            let component = network.instances.get(&target.process).ok_or_else(|| {
+                invalid(InvalidEditReason::MissingInputComponent {
+                    name: name.to_owned(),
+                    target: target.clone(),
+                })
+            })?;
+            let mut port = component
+                .interface()
+                .input(&target.port)
+                .ok_or_else(|| {
+                    invalid(InvalidEditReason::MissingInputPort {
+                        name: name.to_owned(),
+                        target: target.clone(),
+                    })
+                })?
+                .clone();
+            port.name = name.to_owned();
+            network.interface = Arc::new(
+                Interface::new(
+                    network.interface.inputs().values().cloned().chain([port]),
+                    network.interface.outputs().values().cloned(),
+                )
+                .map_err(NetworkError::from)?,
+            );
+            network.inputs.insert(
+                name.to_owned(),
+                InputProjection {
+                    targets: targets.to_vec(),
+                    capacity,
+                },
+            );
+    Ok(())
+}
+
+fn expose_output(
+    network: &mut NetworkDef,
+    name: &str,
+    from: &PortPath,
+    registration: &Registration,
+) -> Result<(), ComposeError> {
+    let invalid = |reason| ComposeError::InvalidEdit {
+        registration: registration.id.clone(),
+        reason: Box::new(reason),
+    };
+            if network.outputs.contains_key(name) {
+                return Err(invalid(InvalidEditReason::DuplicateOutputExport {
+                    name: name.to_owned(),
+                }));
+            }
+            let component = network.instances.get(&from.process).ok_or_else(|| {
+                invalid(InvalidEditReason::MissingOutputComponent {
+                    name: name.to_owned(),
+                    target: from.clone(),
+                })
+            })?;
+            let mut port = component
+                .interface()
+                .output(&from.port)
+                .ok_or_else(|| {
+                    invalid(InvalidEditReason::MissingOutputPort {
+                        name: name.to_owned(),
+                        target: from.clone(),
+                    })
+                })?
+                .clone();
+            port.name = name.to_owned();
+            network.interface = Arc::new(
+                Interface::new(
+                    network.interface.inputs().values().cloned(),
+                    network.interface.outputs().values().cloned().chain([port]),
+                )
+                .map_err(NetworkError::from)?,
+            );
+            network.outputs.insert(name.to_owned(), from.clone());
     Ok(())
 }
 
