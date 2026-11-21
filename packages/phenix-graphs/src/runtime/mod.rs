@@ -333,7 +333,6 @@ pub struct NetworkSession {
     lease: Option<Arc<dyn Send + Sync>>,
 }
 
-
 impl CompiledNetwork {
     pub fn start(&self) -> NetworkSession {
         self.start_with_options(SessionOptions::default())
@@ -342,8 +341,6 @@ impl CompiledNetwork {
         NetworkSession::new(self.clone(), options)
     }
 }
-
-
 
 impl Drop for NetworkSession {
     fn drop(&mut self) {

@@ -191,9 +191,7 @@ impl NetworkSession {
             let selection = (|| -> Result<Vec<usize>, Failure> {
                 let budget = outgoing
                     .iter()
-                    .filter(|q| {
-                        matches!(self.endpoints[**q].1, QueueEndpoint::Process { .. })
-                    })
+                    .filter(|q| matches!(self.endpoints[**q].1, QueueEndpoint::Process { .. }))
                     .count();
                 // Reject oversized process-produced lists before allocating
                 // routing maps, copying targets, or preparing any payload.
@@ -215,21 +213,21 @@ impl NetworkSession {
                     .collect();
                 let mut selected = BTreeSet::new();
                 for (position, path) in destinations.iter().enumerate() {
-                    let resolved = self.compiled.resolve_input(path).ok_or_else(|| {
-                        RuntimeError::UnknownSelection { position }.failure()
-                    })?;
+                    let resolved = self
+                        .compiled
+                        .resolve_input(path)
+                        .ok_or_else(|| RuntimeError::UnknownSelection { position }.failure())?;
                     if resolved.is_empty() {
                         return Err(RuntimeError::EmptySelection { position }.failure());
                     }
                     for (target, input) in resolved {
-                        let queue =
-                            connected.get(&(*target, input.as_str())).ok_or_else(|| {
-                                RuntimeError::UnconnectedSelection {
-                                    path: self.compiled.processes()[*target].path().into(),
-                                    input: input.clone(),
-                                }
-                                .failure()
-                            })?;
+                        let queue = connected.get(&(*target, input.as_str())).ok_or_else(|| {
+                            RuntimeError::UnconnectedSelection {
+                                path: self.compiled.processes()[*target].path().into(),
+                                input: input.clone(),
+                            }
+                            .failure()
+                        })?;
                         if !selected.insert(*queue) {
                             return Err(RuntimeError::DuplicateSelection {
                                 path: self.compiled.processes()[*target].path().into(),

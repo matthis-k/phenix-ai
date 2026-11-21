@@ -202,14 +202,12 @@ fn spawn_processes(
                                 CallbackPhase::FactoryReadiness,
                                 payload,
                             )
-                            .with_context(
-                                crate::FailureContext {
-                                    process: Some(index),
-                                    path: Some(p.path().into()),
-                                    phase: Some(CallbackPhase::FactoryReadiness),
-                                    ..Default::default()
-                                },
-                            )
+                            .with_context(crate::FailureContext {
+                                process: Some(index),
+                                path: Some(p.path().into()),
+                                phase: Some(CallbackPhase::FactoryReadiness),
+                                ..Default::default()
+                            })
                         });
                         Readiness::default()
                     }
