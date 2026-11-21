@@ -355,3 +355,94 @@ fn retained_other_lane_blocks_query_without_donating_captures_or_job_authority()
         .unwrap();
     assert_eq!(*query.query_with_budget(256).unwrap(), 7);
 }
+
+#[test]
+fn shared_fifo_demand_preserves_another_live_requests_captures() {
+    let fixture = Fixture::new(false);
+    fixture.put(&fixture.a, 3);
+    let mut graph = NetworkBuilder::new();
+    let group = graph.sources("values", (&fixture.a,)).unwrap();
+    let number = graph
+        .derive_from("number", &group, |a: Number| a.0)
+        .unwrap();
+    let text = graph
+        .derive_from("text", &group, |a: Number| a.0.to_string())
+        .unwrap();
+    graph.expose_output("text", text.output()).unwrap();
+    graph
+        .expose_output("number.alias", number.output())
+        .unwrap();
+    let spec = graph.query_spec("query", &number).unwrap();
+    let plugin = authored(graph, spec.clone(), None);
+    let mut configuration = options(&plugin);
+    configuration.execution.request_queue_policy = RequestQueuePolicy::SharedFifo;
+    configuration.execution.capture_capacity = capacity();
+    let mut runtime = configured(plugin, Arc::new(LocalProcessDispatcher), configuration);
+    runtime.start().unwrap();
+
+    let compiled = runtime.kernel().compiled();
+    let ingress = compiled
+        .bind_ingress("values.refresh", InputKey::new("run"))
+        .unwrap();
+    let captures: Vec<_> = compiled
+        .outputs()
+        .keys()
+        .map(|name| compiled.capture(name).unwrap())
+        .collect();
+    let old = runtime
+        .kernel()
+        .with_session(|session| {
+            let old = session.begin_bound_request(None).unwrap();
+            session
+                .inject_bound_request(old, &ingress, RefreshCause::Demand)
+                .unwrap();
+            session.close_request(old).unwrap();
+            session.run_until_idle(256);
+            assert!(session.request_work(old).unwrap().queued > 0);
+            old
+        })
+        .unwrap();
+
+    fixture.put(&fixture.a, 7);
+    let query = runtime.bind_query(&spec).unwrap();
+    assert!(matches!(query.query_with_budget(256), Err(Error::Unsettled)));
+    runtime
+        .kernel()
+        .with_session(|session| {
+            // The demand may not relieve another live owner's capture pressure.
+            assert_eq!(session.request_status(old).unwrap(), RequestStatus::Pending);
+            let mut total = 0;
+            let mut saw_query = false;
+            for _ in 0..32 {
+                session.run_until_idle(256);
+                for capture in &captures {
+                    while let Some(packet) =
+                        session.take_bound_request_output(old, capture).unwrap()
+                    {
+                        session.validate_bound_capture(old, capture, &packet).unwrap();
+                        assert_eq!(packet.metadata().unwrap().request(), Some(old));
+                        if capture.name() == "query" {
+                            assert_eq!(packet.value().borrow::<i64>(), Some(&3));
+                            saw_query = true;
+                        }
+                        total += 1;
+                    }
+                }
+                if matches!(
+                    session.request_status(old).unwrap(),
+                    RequestStatus::Settled { .. }
+                ) {
+                    break;
+                }
+            }
+            assert!(total > 0);
+            assert!(saw_query);
+            assert!(matches!(
+                session.request_status(old),
+                Ok(RequestStatus::Settled { .. })
+            ));
+            session.release_request(old).unwrap();
+        })
+        .unwrap();
+    assert_eq!(*query.query_with_budget(256).unwrap(), 7);
+}
