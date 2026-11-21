@@ -47,7 +47,7 @@ fn preflight_options(compiled: &CompiledNetwork, options: &mut SessionOptions) -
     let bound_failure = options
         .bound
         .apply(
-            &compiled,
+            compiled,
             &mut options.readiness,
             &mut options.resources,
             &mut options.discard_outputs,
@@ -109,7 +109,7 @@ fn preflight_options(compiled: &CompiledNetwork, options: &mut SessionOptions) -
         })
         .or_else(|| {
             (options.request_queue_policy == RequestQueuePolicy::BoundedLanes)
-                .then(|| request_lane_packet_bound(&compiled, &options).err())
+                .then(|| request_lane_packet_bound(compiled, options).err())
                 .flatten()
         });
     for process in compiled.processes() {
