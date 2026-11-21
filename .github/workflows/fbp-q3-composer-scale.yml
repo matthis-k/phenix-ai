@@ -1,0 +1,47 @@
+name: "FBP Q3 Composer Scale"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/benches/native_fbp.rs"
+      - ".github/workflows/fbp-q3-composer-scale.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  composer-scale:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record exact source and environment
+        run: |
+          mkdir -p artifacts
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "workflow_commit=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            nix --version
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          cat artifacts/environment.txt
+      - name: Three release-mode production composer scale repetitions
+        run: |
+          set -euo pipefail
+          for repetition in 1 2 3; do
+            nix develop --command cargo bench --locked -q -p phenix-graph --bench native_fbp > "artifacts/native-fbp-${repetition}.txt"
+            cat "artifacts/native-fbp-${repetition}.txt"
+          done
+      - name: Preserve raw samples
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: composer-scale-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: error
