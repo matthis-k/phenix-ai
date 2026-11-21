@@ -168,12 +168,14 @@ fn overlapping_write<'a>(
                     // Mutating an ancestor replaces its entire nested body.
                     // Connecting to a new nested declaration also requires
                     // dependency ordering, never incidental replay ordering.
-                    [&edge.from.process, &edge.to.process].into_iter().any(|endpoint| {
-                        endpoint
-                            .strip_prefix(path)
-                            .is_some_and(|suffix| suffix.starts_with('/'))
-                            || (path.contains('/') && endpoint == path)
-                    })
+                    [&edge.from.process, &edge.to.process]
+                        .into_iter()
+                        .any(|endpoint| {
+                            endpoint
+                                .strip_prefix(path)
+                                .is_some_and(|suffix| suffix.starts_with('/'))
+                                || (path.contains('/') && endpoint == path)
+                        })
                 }
                 _ => false,
             }

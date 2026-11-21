@@ -100,10 +100,12 @@ fn replay(
                         |child| connect_edge(child, &local, registration),
                     )?;
                 }
-                _ => return Err(ComposeError::PrivateEditScope(format!(
-                    "{} -> {}",
-                    edge.from.process, edge.to.process
-                ))),
+                _ => {
+                    return Err(ComposeError::PrivateEditScope(format!(
+                        "{} -> {}",
+                        edge.from.process, edge.to.process
+                    )));
+                }
             }
         }
         Edit::Disconnect(key) => {
@@ -311,11 +313,7 @@ fn mutate_extended(
     );
     // Carry nested claims/requirements upward even when subsequent edits
     // replace a newly introduced declaration during the same replay.
-    collect_component_obligations(
-        &network.instances[name],
-        name,
-        &mut network.requirements,
-    );
+    collect_component_obligations(&network.instances[name], name, &mut network.requirements);
     Ok(())
 }
 
@@ -335,9 +333,7 @@ fn add_nested(
             if child.instances.contains_key(name) {
                 return Err(ComposeError::InvalidEdit {
                     registration: registration.id.clone(),
-                    reason: Box::new(InvalidEditReason::DuplicateComponent {
-                        path: path.into(),
-                    }),
+                    reason: Box::new(InvalidEditReason::DuplicateComponent { path: path.into() }),
                 });
             }
             child.instances.insert(
@@ -348,11 +344,7 @@ fn add_nested(
                         .with_origin(registration.origin.clone()),
                 ),
             );
-            collect_component_obligations(
-                &child.instances[name],
-                name,
-                &mut child.requirements,
-            );
+            collect_component_obligations(&child.instances[name], name, &mut child.requirements);
             Ok(())
         },
     )

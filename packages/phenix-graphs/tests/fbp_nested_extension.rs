@@ -112,19 +112,18 @@ fn tap_patch(seen: Arc<AtomicUsize>) -> NetworkPatch {
     ])
 }
 
-fn register(id: &str, patch: NetworkPatch, grants: impl IntoIterator<Item = Footprint>) -> Registration {
-    Registration::new(
-        id,
-        [],
-        0,
-        GraphOrigin::default().child(),
-        grants,
-        patch,
-    )
+fn register(
+    id: &str,
+    patch: NetworkPatch,
+    grants: impl IntoIterator<Item = Footprint>,
+) -> Registration {
+    Registration::new(id, [], 0, GraphOrigin::default().child(), grants, patch)
 }
 
 fn run(session: &mut phenix_graph::runtime::NetworkSession) -> String {
-    session.inject("in", Value::local(String::from("Q"))).unwrap();
+    session
+        .inject("in", Value::local(String::from("Q")))
+        .unwrap();
     let report = session.run_until_idle(128);
     assert!(!report.budget_exhausted);
     session
@@ -169,7 +168,13 @@ fn approved_nested_add_and_connect_execute_with_provenance_and_safe_revoke() {
         Some(origin)
     );
     for unchanged in ["m", "m/inner", "m/inner/leaf", "m/inner/sibling"] {
-        assert!(compiled.inspect(unchanged).unwrap().declared_origin.is_none());
+        assert!(
+            compiled
+                .inspect(unchanged)
+                .unwrap()
+                .declared_origin
+                .is_none()
+        );
     }
     assert!(composer.revoke("extension").unwrap().contains("extension"));
     assert_eq!(composer.current().compiled().processes().len(), 2);
@@ -224,17 +229,18 @@ fn invalid_nested_edges_and_cross_boundary_wiring_fail_atomically() {
         result,
         Err(ComposeError::Network(NetworkError::UnknownOutput(_)))
     ));
-    assert_eq!(composer.current().compiled().processes().len(), published.processes().len());
-    assert_eq!(composer.current().compiled().connections(), published.connections());
+    assert_eq!(
+        composer.current().compiled().processes().len(),
+        published.processes().len()
+    );
+    assert_eq!(
+        composer.current().compiled().connections(),
+        published.connections()
+    );
     assert!(composer.current().active().is_empty());
     assert!(composer.revoke("invalid").unwrap().is_empty());
 
-    let cross = NetworkPatch::new([connect(
-        "m/inner/leaf",
-        "output",
-        "m/inner",
-        "input",
-    )]);
+    let cross = NetworkPatch::new([connect("m/inner/leaf", "output", "m/inner", "input")]);
     assert!(matches!(
         composer.register([register("cross", cross.clone(), cross.footprints())]),
         Err(ComposeError::PrivateEditScope(_))
@@ -244,7 +250,11 @@ fn invalid_nested_edges_and_cross_boundary_wiring_fail_atomically() {
         definition: stage("bad"),
     }]);
     assert!(matches!(
-        composer.register([register("malformed", malformed.clone(), malformed.footprints())]),
+        composer.register([register(
+            "malformed",
+            malformed.clone(),
+            malformed.footprints()
+        )]),
         Err(ComposeError::PrivateEditScope(_))
     ));
     assert_eq!(
@@ -292,5 +302,10 @@ fn extension_opt_in_survives_roundtrip_and_is_rollback_safe() {
     builder.allow_extensions().unwrap();
     let definition = builder.build().unwrap();
     assert!(definition.extensions_allowed());
-    assert!(NetworkBuilder::from_def(&definition).build().unwrap().extensions_allowed());
+    assert!(
+        NetworkBuilder::from_def(&definition)
+            .build()
+            .unwrap()
+            .extensions_allowed()
+    );
 }
