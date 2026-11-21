@@ -2,8 +2,10 @@
 //!
 //! Grants authorize exact writes, not reads or semantic claims. The host must
 //! construct registrations itself; accepting a registration from a plugin is not
-//! a security boundary. Root topology edits remain public-only. A composite may
-//! explicitly expose child replacement seams, still requiring exact host grants.
+//! a security boundary. Root exports and source edits remain public-only.
+//! A composite may separately opt into internal nested Add/Connect extensions
+//! or expose specific child replacement seams; both require exact host grants.
+//! Every ancestor on a nested extension path must explicitly opt in.
 //!
 //! # Selection and replay
 //! Dependencies must exist and form a DAG. Transitive dependencies order writes;

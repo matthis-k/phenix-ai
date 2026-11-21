@@ -215,6 +215,7 @@ pub struct NetworkBuilder {
     outputs: BTreeMap<String, (PortDef, PortPath)>,
     sources: BTreeSet<String>,
     replacement_points: BTreeSet<String>,
+    extensions_allowed: bool,
     claims: Vec<Contract>,
     origin: Option<GraphOrigin>,
     requirements: Vec<(String, Contract)>,
@@ -237,6 +238,7 @@ impl NetworkBuilder {
             outputs: BTreeMap::new(),
             sources: BTreeSet::new(),
             replacement_points: BTreeSet::new(),
+            extensions_allowed: false,
             claims: Vec::new(),
             origin: None,
             requirements: Vec::new(),
@@ -277,6 +279,7 @@ impl NetworkBuilder {
                 .collect(),
             sources: network.sources.iter().cloned().collect(),
             replacement_points: network.replacement_points.clone(),
+            extensions_allowed: network.extensions_allowed,
             claims: network.claims.clone(),
             origin: network.origin.clone(),
             requirements: network.requirements.clone(),
@@ -315,6 +318,7 @@ impl NetworkBuilder {
             outputs: self.outputs.clone(),
             sources: self.sources.clone(),
             replacement_points: self.replacement_points.clone(),
+            extensions_allowed: self.extensions_allowed,
             claims: self.claims.clone(),
             origin: self.origin.clone(),
             requirements: self.requirements.clone(),
@@ -547,6 +551,15 @@ impl NetworkBuilder {
         self.replacement_points.insert(child.process.clone());
         Ok(())
     }
+    /// Author-owned opt-in to *internal* nested Add/Connect edits. This does
+    /// not grant any plugin authority: the host must separately approve each
+    /// exact component or edge footprint. Every enclosing composite must
+    /// opt in; existing replacement points do not imply extension authority.
+    pub fn allow_extensions(&mut self) -> Result<(), NetworkError> {
+        self.check_active()?;
+        self.extensions_allowed = true;
+        Ok(())
+    }
     /// Primitive sources must have no inputs. Starting a composite starts only
     /// its explicitly declared source set, never all of its disconnected roots.
     pub fn start(&mut self, component: &ComponentRef) -> Result<(), NetworkError> {
@@ -582,6 +595,7 @@ impl NetworkBuilder {
                 .collect(),
             sources: self.sources.into_iter().collect(),
             replacement_points: self.replacement_points,
+            extensions_allowed: self.extensions_allowed,
             claims: self.claims,
             origin: self.origin,
             requirements: self.requirements,

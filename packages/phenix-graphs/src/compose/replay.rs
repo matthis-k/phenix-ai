@@ -41,14 +41,18 @@ fn replay(
     };
     match edit {
         Edit::Add { path, definition } | Edit::Replace { path, definition } => {
-            if matches!(edit, Edit::Replace { .. }) && path.contains('/') {
-                replace_nested(network, path, definition, registration, "")?;
-                let root = path.split('/').next().unwrap();
-                collect_component_obligations(
-                    &network.instances[root],
-                    root,
-                    &mut network.requirements,
-                );
+            if path.contains('/') {
+                if matches!(edit, Edit::Add { .. }) {
+                    add_nested(network, path, definition, registration)?;
+                } else {
+                    replace_nested(network, path, definition, registration, "")?;
+                    let root = path.split('/').next().unwrap();
+                    collect_component_obligations(
+                        &network.instances[root],
+                        root,
+                        &mut network.requirements,
+                    );
+                }
                 return Ok(());
             }
             if matches!(edit, Edit::Add { .. }) {
@@ -80,16 +84,27 @@ fn replay(
             );
         }
         Edit::Connect(edge) => {
-            if network
-                .connections
-                .iter()
-                .any(|e| e.from == edge.from && e.to == edge.to)
-            {
-                return Err(invalid(InvalidEditReason::DuplicateConnection {
-                    connection: ConnectionKey::new(edge.from.clone(), edge.to.clone()),
-                }));
+            let from = edge.from.process.rsplit_once('/');
+            let to = edge.to.process.rsplit_once('/');
+            match (from, to) {
+                (None, None) => connect_edge(network, edge, registration)?,
+                (Some((parent, from)), Some((other, to))) if parent == other => {
+                    let mut local = edge.clone();
+                    local.from.process = from.into();
+                    local.to.process = to.into();
+                    mutate_extended(
+                        network,
+                        &parent.split('/').collect::<Vec<_>>(),
+                        registration,
+                        parent,
+                        |child| connect_edge(child, &local, registration),
+                    )?;
+                }
+                _ => return Err(ComposeError::PrivateEditScope(format!(
+                    "{} -> {}",
+                    edge.from.process, edge.to.process
+                ))),
             }
-            network.connections.push(edge.clone());
         }
         Edit::Disconnect(key) => {
             let index = network
@@ -235,6 +250,108 @@ fn replay(
         }
     }
     Ok(())
+}
+
+/// One exact edge inside a validated authoring namespace. Compilation
+/// subsequently checks type, port, producer, and projection invariants.
+fn connect_edge(
+    network: &mut NetworkDef,
+    edge: &ConnectionDef,
+    registration: &Registration,
+) -> Result<(), ComposeError> {
+    if network
+        .connections
+        .iter()
+        .any(|candidate| candidate.from == edge.from && candidate.to == edge.to)
+    {
+        return Err(ComposeError::InvalidEdit {
+            registration: registration.id.clone(),
+            reason: Box::new(InvalidEditReason::DuplicateConnection {
+                connection: ConnectionKey::new(edge.from.clone(), edge.to.clone()),
+            }),
+        });
+    }
+    network.connections.push(edge.clone());
+    Ok(())
+}
+
+/// Descend only through author-approved composite extension seams. Copy on
+/// write keeps existing compiled generations immutable, including on failure.
+fn mutate_extended(
+    network: &mut NetworkDef,
+    ancestors: &[&str],
+    registration: &Registration,
+    full_path: &str,
+    apply: impl FnOnce(&mut NetworkDef) -> Result<(), ComposeError>,
+) -> Result<(), ComposeError> {
+    let Some((&name, rest)) = ancestors.split_first() else {
+        return apply(network);
+    };
+    let ancestor = network.instances.get(name).ok_or_else(|| ComposeError::InvalidEdit {
+        registration: registration.id.clone(),
+        reason: Box::new(InvalidEditReason::UnknownComposite {
+            path: full_path.into(),
+        }),
+    })?;
+    let Body::Composite(child) = ancestor.body() else {
+        return Err(ComposeError::PrivateEditScope(full_path.into()));
+    };
+    if !child.extensions_allowed {
+        return Err(ComposeError::PrivateEditScope(full_path.into()));
+    }
+    let mut updated = (**child).clone();
+    mutate_extended(&mut updated, rest, registration, full_path, apply)?;
+    network.instances.insert(
+        name.into(),
+        Arc::new(ancestor.with_updated_network(updated)),
+    );
+    // Carry nested claims/requirements upward even when subsequent edits
+    // replace a newly introduced declaration during the same replay.
+    collect_component_obligations(
+        &network.instances[name],
+        name,
+        &mut network.requirements,
+    );
+    Ok(())
+}
+
+fn add_nested(
+    network: &mut NetworkDef,
+    path: &str,
+    definition: &Arc<ComponentDef>,
+    registration: &Registration,
+) -> Result<(), ComposeError> {
+    let (parent, name) = path.rsplit_once('/').expect("nested add path");
+    mutate_extended(
+        network,
+        &parent.split('/').collect::<Vec<_>>(),
+        registration,
+        path,
+        |child| {
+            if child.instances.contains_key(name) {
+                return Err(ComposeError::InvalidEdit {
+                    registration: registration.id.clone(),
+                    reason: Box::new(InvalidEditReason::DuplicateComponent {
+                        path: path.into(),
+                    }),
+                });
+            }
+            child.instances.insert(
+                name.into(),
+                Arc::new(
+                    (**definition)
+                        .clone()
+                        .with_origin(registration.origin.clone()),
+                ),
+            );
+            collect_component_obligations(
+                &child.instances[name],
+                name,
+                &mut child.requirements,
+            );
+            Ok(())
+        },
+    )
 }
 
 /// Copy-on-write replacement through explicit *immediate-child* seams. A

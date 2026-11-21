@@ -113,7 +113,9 @@ impl Edit {
     pub(super) fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
         match self {
             Self::Add { path, definition } => {
-                public_path(path)?;
+                for part in path.split('/') {
+                    public_path(part)?;
+                }
                 definition_origin(definition, origin, path)?;
             }
             Self::Replace { path, definition } => {
@@ -123,8 +125,11 @@ impl Edit {
                 definition_origin(definition, origin, path)?;
             }
             Self::Connect(edge) => {
-                public_path(&edge.from.process)?;
-                public_path(&edge.to.process)?;
+                for path in [&edge.from.process, &edge.to.process] {
+                    for part in path.split('/') {
+                        public_path(part)?;
+                    }
+                }
             }
             Self::Disconnect(key) => {
                 public_path(&key.from.process)?;
