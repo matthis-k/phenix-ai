@@ -70,16 +70,13 @@ fn collect_catalog(snapshots: &[PluginSnapshot]) -> Result<ContributionCatalog, 
                 }
             })?;
             if pending.insert(key.clone(), handle).is_some() {
-                return Err(
-                    ConfigurationError::DuplicateContribution { key: key.clone() }.into(),
-                );
+                return Err(ConfigurationError::DuplicateContribution { key: key.clone() }.into());
             }
         }
     }
     let mut identities = BTreeMap::new();
     for (key, definition) in &definitions {
-        if let Some(previous) =
-            identities.insert(definition.contract.id(), &definition.contract)
+        if let Some(previous) = identities.insert(definition.contract.id(), &definition.contract)
             && previous != &definition.contract
         {
             return Err(ResolutionError::ConflictingDefinition {
