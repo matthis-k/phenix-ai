@@ -324,6 +324,7 @@ pub struct NetworkSession {
     deferred_timeout: Option<Duration>,
     dispatched_at: BTreeMap<usize, Instant>,
     requests: BTreeMap<RequestId, request::RequestScope>,
+    lane_credits: request::LaneCredits,
     signal: Arc<WakeSignal>,
     dispatcher: Arc<dyn ProcessDispatcher>,
     dispatch_return: Option<DispatchReturn>,

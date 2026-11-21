@@ -81,6 +81,13 @@ impl Owner {
 }
 
 impl CompiledNetwork {
+    /// Resolve the exact compiled physical process without copying inspection
+    /// metadata or linearly walking the process vector. Composites and the root
+    /// have no physical process index.
+    pub(crate) fn physical_process_index(&self, path: &str) -> Option<usize> {
+        self.inspections.get(path).and_then(|snapshot| snapshot.physical_index)
+    }
+
     pub fn inspect(&self, path: &str) -> Result<ComponentSnapshot, NetworkError> {
         self.inspections
             .get(path)

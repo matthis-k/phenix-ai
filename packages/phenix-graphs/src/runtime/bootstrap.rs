@@ -462,6 +462,7 @@ impl NetworkSession {
             deferred_timeout: options.deferred_timeout,
             dispatched_at: BTreeMap::new(),
             requests: BTreeMap::new(),
+            lane_credits: request::LaneCredits::default(),
             signal: WakeSignal::new(),
             dispatcher: options.dispatcher,
             dispatch_return: None,

@@ -68,6 +68,38 @@ impl CaptureMetadata {
     }
 }
 
+/// Sparse free-credit allocator: admission and release are logarithmic in
+/// recycled lanes, not quadratic in the number of live request scopes.
+/// Newly assigned lanes increase monotonically; freed lanes reuse the lowest
+/// index first so custom readiness continues to observe the original order.
+#[derive(Default)]
+pub(super) struct LaneCredits {
+    next: usize,
+    reusable: BTreeSet<usize>,
+}
+
+impl LaneCredits {
+    fn candidate(&self, limit: usize) -> Option<usize> {
+        self.reusable
+            .first()
+            .copied()
+            .or_else(|| (self.next < limit).then_some(self.next))
+    }
+
+    fn claim(&mut self, lane: usize) {
+        if lane == self.next {
+            self.next += 1;
+        } else {
+            assert!(self.reusable.remove(&lane), "reused lane must be free");
+        }
+    }
+
+    fn release(&mut self, lane: usize) {
+        debug_assert!(lane < self.next);
+        debug_assert!(self.reusable.insert(lane), "released lane must be allocated");
+    }
+}
+
 pub(super) struct RequestScope {
     pub(super) lane: usize,
     pub(super) sealed: bool,
@@ -187,8 +219,9 @@ impl NetworkSession {
         if self.requests.len() == self.max_requests {
             return Err(RequestError::Full);
         }
-        let lane = (0..self.max_requests)
-            .find(|lane| self.requests.values().all(|scope| scope.lane != *lane))
+        let lane = self
+            .lane_credits
+            .candidate(self.max_requests)
             .expect("request credit reserves a free lane");
         let mut closure_ports = BTreeMap::new();
         for &index in &self.custom_readiness {
@@ -224,11 +257,11 @@ impl NetworkSession {
                 closure_ports.insert(index, ports);
             }
         }
+        // Validate exhaustion before constructing or recycling physical queues.
+        let next_request = self.next_request.checked_add(1).ok_or(RequestError::Exhausted)?;
         self.prepare_request_lane(lane)?;
-        self.next_request = self
-            .next_request
-            .checked_add(1)
-            .ok_or(RequestError::Exhausted)?;
+        self.lane_credits.claim(lane);
+        self.next_request = next_request;
         let id = RequestId {
             session: self.session_id,
             generation: self.generation,
@@ -469,7 +502,8 @@ impl NetworkSession {
             let reachable: Vec<_> = scope.reachable.iter().copied().collect();
             self.unwatch_scoped_readiness(&reachable);
         }
-        self.requests.remove(&id);
+        let released = self.requests.remove(&id).expect("validated scope");
+        self.lane_credits.release(released.lane);
         Ok(())
     }
     fn request_live(&self, id: RequestId) -> bool {
@@ -754,5 +788,46 @@ mod queue_request_index_tests {
         assert!(transport.detach_request(b).is_empty());
         assert_eq!(transport.detach_request(a).len(), 1);
         assert_eq!(transport.queues()[0].request_count(a), 0);
+    }
+}
+
+#[cfg(test)]
+mod lane_credits_tests {
+    use super::LaneCredits;
+
+    #[test]
+    fn lowest_free_lane_is_reused_without_linear_live_scope_search() {
+        let mut credits = LaneCredits::default();
+        for expected in 0..64 {
+            assert_eq!(credits.candidate(64), Some(expected));
+            credits.claim(expected);
+        }
+        assert_eq!(credits.candidate(64), None);
+
+        for released in [31, 1, 49, 0, 18] {
+            credits.release(released);
+        }
+        for reused in [0, 1, 18, 31, 49] {
+            assert_eq!(credits.candidate(64), Some(reused));
+            credits.claim(reused);
+        }
+        assert_eq!(credits.candidate(64), None);
+    }
+
+    #[test]
+    fn failed_admission_never_consumes_credit_and_repeated_reuse_is_stable() {
+        let mut credits = LaneCredits::default();
+        assert_eq!(credits.candidate(2), Some(0));
+        // Failed policy/transport admission does not call claim.
+        assert_eq!(credits.candidate(2), Some(0));
+        credits.claim(0);
+        credits.claim(credits.candidate(2).unwrap());
+        assert_eq!(credits.candidate(2), None);
+        for _ in 0..128 {
+            credits.release(0);
+            assert_eq!(credits.candidate(2), Some(0));
+            credits.claim(0);
+            assert_eq!(credits.candidate(2), None);
+        }
     }
 }

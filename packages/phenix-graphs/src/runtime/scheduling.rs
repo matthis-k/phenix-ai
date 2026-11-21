@@ -3,11 +3,7 @@ use super::*;
 
 impl NetworkSession {
     pub fn wake_handle(&self, path: &str) -> Option<WakeHandle> {
-        let index = self
-            .compiled
-            .processes()
-            .iter()
-            .position(|p| p.path() == path)?;
+        let index = self.compiled.physical_process_index(path)?;
         (!self.processes[index].done && self.terminal.is_none()).then(|| WakeHandle {
             slot: self.processes[index].wake.clone(),
             signal: self.signal.clone(),
@@ -19,11 +15,7 @@ impl NetworkSession {
     /// External notification-driven Custom policies should retain this handle
     /// and call notify() after a change affecting their selection.
     pub fn process_notifier(&self, path: &str) -> Option<ProcessNotifier> {
-        let index = self
-            .compiled
-            .processes()
-            .iter()
-            .position(|p| p.path() == path)?;
+        let index = self.compiled.physical_process_index(path)?;
         (!self.processes[index].done && self.terminal.is_none()).then(|| ProcessNotifier {
             slot: self.processes[index].wake.clone(),
             signal: self.signal.clone(),
@@ -301,5 +293,34 @@ impl NetworkSession {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod indexed_process_paths_tests {
+    use super::*;
+    use crate::{ComponentDef, NetworkBuilder};
+    use std::{num::NonZeroUsize, sync::Arc};
+
+    #[test]
+    fn indexed_wake_targets_match_compiled_physical_processes() {
+        let mut builder = NetworkBuilder::new();
+        let first = builder.add("first", Arc::new(ComponentDef::map(|n: i64| n + 1))).unwrap();
+        let last = builder.add("last", Arc::new(ComponentDef::map(|n: i64| n + 2))).unwrap();
+        let capacity = NonZeroUsize::new(1).unwrap();
+        builder.connect(first.output::<i64>("output").unwrap(), last.input::<i64>("input").unwrap(), capacity).unwrap();
+        builder.expose_input("input", first.input::<i64>("input").unwrap(), capacity).unwrap();
+        builder.expose_output("output", last.output::<i64>("output").unwrap()).unwrap();
+        let compiled = builder.build().unwrap().compile().unwrap();
+        let session = compiled.start();
+        for (index, process) in compiled.processes().iter().enumerate() {
+            assert_eq!(compiled.physical_process_index(process.path()), Some(index));
+            assert!(session.wake_handle(process.path()).is_some());
+            assert!(session.process_notifier(process.path()).is_some());
+        }
+        assert_eq!(compiled.physical_process_index(""), None);
+        assert_eq!(compiled.physical_process_index("missing"), None);
+        assert!(session.wake_handle("").is_none());
+        assert!(session.process_notifier("missing").is_none());
     }
 }
