@@ -675,7 +675,6 @@ impl CompiledNetwork {
         Some(compiled)
     }
 
-
     /// Multiple independent root primitive revocations can share one compiled
     /// graph copy. Validate each monotone step through the *same* single-node
     /// oracle, including physical references and exact work/instance charges.
@@ -1454,7 +1453,6 @@ mod isolated_root_addition_tests {
     }
 }
 
-
 #[cfg(test)]
 mod batch_isolated_root_removal_tests {
     use super::*;
@@ -1471,7 +1469,8 @@ mod batch_isolated_root_removal_tests {
             .unwrap();
         builder.start(&source).unwrap();
         let worker = crate::ComponentDef::map(|n: i64| n * 2);
-        let contract = Contract::new("test/batch-root-removal", worker.interface().clone()).unwrap();
+        let contract =
+            Contract::new("test/batch-root-removal", worker.interface().clone()).unwrap();
         let omega = builder
             .add("omega", Arc::new(worker.claim(&contract).unwrap()))
             .unwrap();
@@ -1491,10 +1490,9 @@ mod batch_isolated_root_removal_tests {
             capacity: NonZeroUsize::new(2).unwrap(),
         });
         for name in ["b0", "b1", "b2", "b3", "b4"] {
-            network.instances.insert(
-                name.into(),
-                Arc::new(crate::ComponentDef::map(|n: i64| n)),
-            );
+            network
+                .instances
+                .insert(name.into(), Arc::new(crate::ComponentDef::map(|n: i64| n)));
         }
         (network, contract)
     }
@@ -1517,15 +1515,24 @@ mod batch_isolated_root_removal_tests {
             .unwrap();
         let canonical = after.compile().unwrap();
         assert_eq!(incremental.processes().len(), 4);
-        assert_eq!(incremental.inspect("omega").unwrap().physical_index, Some(3));
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(3)
+        );
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
         assert_eq!(incremental.compile_work, canonical.compile_work);
         assert_eq!(incremental.compile_instances, canonical.compile_instances);
-        assert_eq!(incremental.structural_reachability(), canonical.structural_reachability());
-        assert_eq!(incremental.structural_feedback_cycles(), canonical.structural_feedback_cycles());
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
         for name in ["", "alpha", "b1", "b3", "omega"] {
             let actual = incremental.inspect(name).unwrap();
             let expected = canonical.inspect(name).unwrap();
@@ -1533,11 +1540,19 @@ mod batch_isolated_root_removal_tests {
             assert_eq!(actual.definition_key, expected.definition_key);
             assert_eq!(actual.origin, expected.origin);
         }
-        assert_eq!(old_handle.resolve(&incremental), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            old_handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
         let mut session = incremental.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
     }
@@ -1551,14 +1566,20 @@ mod batch_isolated_root_removal_tests {
             after.instances.remove(name);
         }
         after.outputs.clear();
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         after = before.clone();
         for name in ["b0", "b2"] {
             after.instances.remove(name);
         }
         after.connections.clear();
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         after = before.clone();
         for name in ["b0", "b2"] {
@@ -1566,21 +1587,36 @@ mod batch_isolated_root_removal_tests {
         }
         after.instances.insert(
             "omega".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n * 3).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         let mut claimed = before.clone();
         claimed.instances.insert(
             "b2".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
         let compiled = claimed.compile().unwrap();
         let mut after = claimed.clone();
         for name in ["b0", "b2"] {
             after.instances.remove(name);
         }
-        assert!(compiled.reuse_after_batch_isolated_root_removal(&claimed, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_batch_isolated_root_removal(&claimed, &after)
+                .is_none()
+        );
 
         let mut wired = before.clone();
         wired.connections.push(ConnectionDef {
@@ -1599,15 +1635,25 @@ mod batch_isolated_root_removal_tests {
         for name in ["b0", "b2"] {
             after.instances.remove(name);
         }
-        assert!(compiled.reuse_after_batch_isolated_root_removal(&wired, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_batch_isolated_root_removal(&wired, &after)
+                .is_none()
+        );
 
         let mut after = before.clone();
         after.instances.remove("b0");
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         let mut after = before.clone();
         after.instances.clear();
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1617,41 +1663,62 @@ mod batch_isolated_root_removal_tests {
             base.instances.remove(name);
         }
         let mut composer = Composer::new(base).unwrap();
-        let patch = NetworkPatch::new(
-            ["b0", "b1", "b2", "b3", "b4"].map(|path| Edit::Add {
-                path: path.into(),
-                definition: Arc::new(crate::ComponentDef::map(|n: i64| n)),
-            }),
-        );
-        let contribution = |id: &str| Registration::new(
-            id,
-            [],
-            3,
-            GraphOrigin::default(),
-            ["b0", "b1", "b2", "b3", "b4"]
-                .map(|name| Footprint::Component(name.into())),
-            patch.clone(),
-        );
-        let prior = composer.current().compiled()
+        let patch = NetworkPatch::new(["b0", "b1", "b2", "b3", "b4"].map(|path| Edit::Add {
+            path: path.into(),
+            definition: Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        }));
+        let contribution = |id: &str| {
+            Registration::new(
+                id,
+                [],
+                3,
+                GraphOrigin::default(),
+                ["b0", "b1", "b2", "b3", "b4"].map(|name| Footprint::Component(name.into())),
+                patch.clone(),
+            )
+        };
+        let prior = composer
+            .current()
+            .compiled()
             .bind("omega", &contract)
-            .unwrap().output::<i64>("output").unwrap();
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         composer.register([contribution("pack")]).unwrap();
         assert_eq!(composer.current().compiled().processes().len(), 7);
-        assert_eq!(prior.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            prior.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         composer.revoke("pack").unwrap();
         assert_eq!(composer.current().compiled().processes().len(), 2);
         for name in ["b0", "b1", "b2", "b3", "b4"] {
             assert!(composer.current().compiled().inspect(name).is_err());
         }
         let canonical = composer.current().network().compile().unwrap();
-        assert_eq!(composer.current().compiled().connections(), canonical.connections());
-        assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
-        assert_eq!(composer.current().compiled().compile_instances, canonical.compile_instances);
+        assert_eq!(
+            composer.current().compiled().connections(),
+            canonical.connections()
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            canonical.compile_work
+        );
+        assert_eq!(
+            composer.current().compiled().compile_instances,
+            canonical.compile_instances
+        );
         composer.register([contribution("readmit")]).unwrap();
         assert_eq!(composer.current().compiled().processes().len(), 7);
         let canonical = composer.current().network().compile().unwrap();
-        assert_eq!(composer.current().compiled().connections(), canonical.connections());
-        assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
+        assert_eq!(
+            composer.current().compiled().connections(),
+            canonical.connections()
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            canonical.compile_work
+        );
     }
 
     #[test]
@@ -1668,7 +1735,10 @@ mod batch_isolated_root_removal_tests {
         for index in 0..33 {
             after.instances.remove(&format!("extra-{index:02}"));
         }
-        assert!(old.reuse_after_batch_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
     }
 }
 
