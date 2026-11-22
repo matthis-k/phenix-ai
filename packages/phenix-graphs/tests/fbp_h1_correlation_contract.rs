@@ -2,11 +2,13 @@
 //! compiled network, scoped admission, cancellation and capture APIs.
 use phenix_graph::{
     Value,
+    connection::ConnectionError,
     interface::{Interface, PortDef},
     network::{CompiledNetwork, NetworkBuilder},
     process::{Process, ProcessContext, ProcessEmission, Step},
     runtime::{
-        Readiness, RequestFailurePolicy, RequestQueuePolicy, RequestStatus, SessionOptions,
+        Readiness, RequestError, RequestFailurePolicy, RequestQueuePolicy, RequestStatus,
+        SessionOptions,
         SessionState,
     },
 };
@@ -275,6 +277,49 @@ fn cancelled_staged_owner_releases_peer_without_losing_its_packets() {
         session.close_input("right").unwrap();
         session.run_until_idle(16);
         assert_ne!(session.state(), SessionState::Failed);
+        assert!(session.failure().is_none(), "{policy:?}");
+    }
+}
+
+#[test]
+fn full_queues_report_backpressure_without_silent_eviction_or_extra_buffers() {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let mut session = network(false).start_with_options(options(policy));
+        let request = session.begin_request(None).unwrap();
+        for value in 0_i64..8 {
+            session
+                .inject_request_local(request, "left", value)
+                .unwrap();
+        }
+        let full = session
+            .inject_request_local(request, "left", 8_i64)
+            .unwrap_err();
+        assert_eq!(full.reason, RequestError::Transport(ConnectionError::Full));
+        assert_eq!(full.value.borrow::<i64>(), Some(&8));
+        assert_eq!(session.request_work(request).unwrap().queued, 8);
+
+        session
+            .inject_request_local(request, "right", 1_i64)
+            .unwrap();
+        // The first correlated pair reserves one left packet and returns
+        // its physical queue credit. No overflow queue or packet eviction.
+        session
+            .inject_request_local(request, "left", 8_i64)
+            .unwrap();
+        let report = session.run_until_idle(16);
+        assert!(!report.budget_exhausted);
+        assert_eq!(captured(&mut session, request), [1], "{policy:?}");
+        assert_eq!(session.request_work(request).unwrap().queued, 8);
+        session.cancel_request(request).unwrap();
+        assert_eq!(
+            session.request_status(request).unwrap(),
+            RequestStatus::Cancelled
+        );
+        assert_eq!(session.request_work(request).unwrap().queued, 0);
+        session.release_request(request).unwrap();
         assert!(session.failure().is_none(), "{policy:?}");
     }
 }
