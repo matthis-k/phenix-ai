@@ -22,7 +22,7 @@ jobs:
         shell: bash
         env:
           CONTROL: 6a95145b7a5f79823d00372830279a4c98fcca3a
-          OPTIMIZED: 9167b253624ada88d9ae7a427513bbb6b600daeb
+          OPTIMIZED: b27648feaf3444e1eefd522f7e365f024d17f146
         run: |
           set -euo pipefail
           mkdir -p artifacts
