@@ -13,7 +13,7 @@ use phenix_graph::{
     process::{ActivationJob, DispatchResult, Process, ProcessContext, ProcessDispatcher, Step},
     runtime::{
         Readiness, ReadinessPolicy, ReadinessSnapshot, RequestFailurePolicy, RequestStatus,
-        SessionNotifier, SessionOptions, SessionState,
+        SessionOptions, SessionState,
     },
 };
 use std::{
@@ -66,7 +66,7 @@ fn probe() -> (PluginLockProbe, Receiver<()>) {
 fn verify_external_lock_order(
     probe: &PluginLockProbe,
     observed: Receiver<()>,
-    notifier: SessionNotifier,
+    notify: impl FnOnce() -> bool + Send + 'static,
     drive: impl FnOnce() + Send + 'static,
 ) {
     let (locked_tx, locked_rx) = mpsc::channel();
@@ -76,7 +76,7 @@ fn verify_external_lock_order(
         let _plugin_guard = external.lock().unwrap();
         locked_tx.send(()).unwrap();
         fire_rx.recv_timeout(DEADLINE).unwrap();
-        assert!(notifier.notify(), "live session notification refused");
+        assert!(notify(), "live session notification refused");
     });
     locked_rx
         .recv_timeout(DEADLINE)
@@ -164,7 +164,7 @@ fn readiness_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
                 .is_none()
         );
         let notifier = session.notifier();
-        verify_external_lock_order(&probe, observed, notifier, move || {
+        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
             session.inject("input", Value::of(11_u64)).unwrap();
             assert_eq!(session.run_until_idle(16).steps, 1);
             assert_eq!(session.state(), SessionState::Quiescent);
@@ -201,7 +201,7 @@ fn dispatcher_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         let mut session = simple_network(|| CompleteInput).start_with_options(options);
         session.inject("input", Value::of(17_u64)).unwrap();
         let notifier = session.notifier();
-        verify_external_lock_order(&probe, observed, notifier, move || {
+        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
             assert_eq!(session.run_until_idle(16).steps, 1);
             assert_eq!(session.state(), SessionState::Quiescent);
             assert!(
@@ -258,7 +258,7 @@ fn recovery_factory_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         let old_wake = session.wake_handle("worker").unwrap();
         let notifier = session.notifier();
 
-        verify_external_lock_order(&probe, observed, notifier, move || {
+        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
             assert!(session.cancel_request(cancelled).unwrap().is_empty());
             assert_eq!(
                 session.request_status(cancelled).unwrap(),
@@ -286,6 +286,49 @@ fn recovery_factory_does_not_hold_wake_mutex_while_entering_plugin_lock() {
                     .map(phenix_graph::Failure::summary)
                     .is_none()
             );
+        });
+    }
+}
+
+#[test]
+fn targeted_process_notification_cannot_deadlock_with_external_readiness_mutex() {
+    for _ in 0..ROUNDS {
+        let (probe, observed) = probe();
+        let mut options = SessionOptions::default();
+        options.readiness.insert(
+            "worker".into(),
+            Readiness::Custom(Arc::new(LockingReadiness {
+                probe: probe.clone(),
+            })),
+        );
+        let mut session = simple_network(|| CompleteInput).start_with_options(options);
+        let notifier = session.process_notifier("worker").unwrap();
+        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
+            session.inject("input", Value::of(23_u64)).unwrap();
+            assert_eq!(session.run_until_idle(16).steps, 1);
+            assert_eq!(session.state(), SessionState::Quiescent);
+            assert!(session.failure().is_none());
+        });
+    }
+}
+
+#[test]
+fn targeted_process_notification_cannot_deadlock_with_external_dispatcher_mutex() {
+    for _ in 0..ROUNDS {
+        let (probe, observed) = probe();
+        let options = SessionOptions {
+            dispatcher: Arc::new(LockingDispatcher {
+                probe: probe.clone(),
+            }),
+            ..SessionOptions::default()
+        };
+        let mut session = simple_network(|| CompleteInput).start_with_options(options);
+        session.inject("input", Value::of(29_u64)).unwrap();
+        let notifier = session.process_notifier("worker").unwrap();
+        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
+            assert_eq!(session.run_until_idle(16).steps, 1);
+            assert_eq!(session.state(), SessionState::Quiescent);
+            assert!(session.failure().is_none());
         });
     }
 }
