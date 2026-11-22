@@ -81,6 +81,10 @@ impl CompiledNetwork {
         compiled
             .sources
             .retain(|index| !removed_indices.contains(index));
+        // Each revoked direct primitive start removes one root-source
+        // declaration and one resolved physical source charge.
+        let saved_work = u64::try_from(removed_indices.len()).ok()?.checked_mul(2)?;
+        compiled.compile_work = compiled.compile_work.checked_sub(saved_work)?;
         Some(compiled)
     }
 
@@ -217,7 +221,13 @@ impl CompiledNetwork {
                 edge.capacity,
             ))
         });
-        (old_count - compiled.connections.len() == removed.len()).then_some(compiled)
+        if old_count - compiled.connections.len() != removed.len() {
+            return None;
+        }
+        // One symbolic root edge and exactly one primitive target per revoke.
+        let saved_work = u64::try_from(removed.len()).ok()?.checked_mul(2)?;
+        compiled.compile_work = compiled.compile_work.checked_sub(saved_work)?;
+        Some(compiled)
     }
 
     /// Monotone root edge additions preserve every flattened process/boundary.
@@ -1066,6 +1076,7 @@ mod isolated_root_addition_tests {
             Some(2)
         );
         assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
