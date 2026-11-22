@@ -17,6 +17,7 @@ pub mod connection;
 pub mod contract;
 pub mod correlation;
 mod failure;
+mod graph_analysis;
 pub mod interface;
 mod limits;
 pub mod network;
