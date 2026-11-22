@@ -390,9 +390,7 @@ impl CompiledNetwork {
             visited
                 .into_iter()
                 .enumerate()
-                .filter_map(|(index, seen)| {
-                    seen.then(|| self.processes[index].path.clone())
-                })
+                .filter_map(|(index, seen)| seen.then(|| self.processes[index].path.clone()))
                 .collect()
         };
         StructuralReachability {

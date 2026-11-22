@@ -10,7 +10,10 @@ fn feedback_cycles_are_classified_by_declared_roots_without_progress_claims() {
     let mut builder = NetworkBuilder::new();
     let primitive = Arc::new(ComponentDef::map(|n: i64| n));
     let source = builder
-        .add("source", Arc::new(ComponentDef::source(|| std::iter::once(7_i64))))
+        .add(
+            "source",
+            Arc::new(ComponentDef::source(|| std::iter::once(7_i64))),
+        )
         .unwrap();
     builder.start(&source).unwrap();
     let a = builder.add("a", primitive.clone()).unwrap();
@@ -42,8 +45,7 @@ fn feedback_cycles_are_classified_by_declared_roots_without_progress_claims() {
         .unwrap();
 
     let compiled = builder.build().unwrap().compile().unwrap();
-    let feedback: BTreeSet<Vec<&str>> =
-        compiled.structural_feedback_cycles().into_iter().collect();
+    let feedback: BTreeSet<Vec<&str>> = compiled.structural_feedback_cycles().into_iter().collect();
     assert_eq!(
         feedback,
         BTreeSet::from([vec!["a", "b"], vec!["c", "d"], vec!["x", "y"]])
@@ -68,10 +70,23 @@ fn feedback_cycles_are_classified_by_declared_roots_without_progress_claims() {
 fn unregistered_zero_input_component_is_not_a_declared_start() {
     let mut builder = NetworkBuilder::new();
     builder
-        .add("implicit", Arc::new(ComponentDef::source(|| std::iter::once(1_i64))))
+        .add(
+            "implicit",
+            Arc::new(ComponentDef::source(|| std::iter::once(1_i64))),
+        )
         .unwrap();
     let compiled = builder.build().unwrap().compile().unwrap();
-    assert!(compiled.structural_reachability().from_declared_starts.is_empty());
-    assert!(compiled.structural_reachability().from_public_ingress.is_empty());
+    assert!(
+        compiled
+            .structural_reachability()
+            .from_declared_starts
+            .is_empty()
+    );
+    assert!(
+        compiled
+            .structural_reachability()
+            .from_public_ingress
+            .is_empty()
+    );
     assert!(compiled.structural_feedback_cycles().is_empty());
 }
