@@ -821,7 +821,7 @@ mod isolated_root_removal_tests {
         let incremental = old.reuse_after_isolated_root_removal(&before, &after).unwrap();
         let canonical = after.compile().unwrap();
         assert_eq!(incremental.processes().len(), 2);
-        assert!(incremental.inspect("middle").is_none());
+        assert!(matches!(incremental.inspect("middle"), Err(NetworkError::UnknownProcess(_))));
         assert_eq!(incremental.inspect("omega").unwrap().physical_index, Some(1));
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
@@ -866,9 +866,10 @@ mod isolated_root_removal_tests {
             capacity: NonZeroUsize::new(1).unwrap(),
         });
         let compiled = connected.compile().unwrap();
+        let connected_before = connected.clone();
         connected.instances.remove("middle");
         assert!(
-            compiled.reuse_after_isolated_root_removal(&before, &connected).is_none()
+            compiled.reuse_after_isolated_root_removal(&connected_before, &connected).is_none()
         );
 
         let mut claimed = before.clone();
@@ -911,7 +912,10 @@ mod isolated_root_removal_tests {
         let previous = composer.current().compiled().bind("omega", &contract)
             .unwrap().output::<i64>("output").unwrap();
         assert_eq!(composer.revoke("orphan").unwrap(), BTreeSet::from(["orphan".into()]));
-        assert!(composer.current().compiled().inspect("middle").is_none());
+        assert!(matches!(
+            composer.current().compiled().inspect("middle"),
+            Err(NetworkError::UnknownProcess(_))
+        ));
         assert_eq!(composer.current().compiled().inspect("omega").unwrap().physical_index, Some(1));
         assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
         assert_eq!(
