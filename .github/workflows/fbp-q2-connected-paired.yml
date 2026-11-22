@@ -23,7 +23,7 @@ jobs:
       - name: Paired production Composer control and Q2 connected root primitive admission
         env:
           CONTROL: e8bf3aad87e294f8b4f0c34a662342de5bddd83d
-          OPTIMIZED: c07ee98903db890880a1bd9038c4dc1994213c3b
+          OPTIMIZED: e0f24b244835ffa499c7d326e3ea1f4692357ce1
         shell: bash
         run: |
           set -euo pipefail
