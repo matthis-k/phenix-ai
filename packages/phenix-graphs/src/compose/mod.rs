@@ -426,9 +426,11 @@ fn compose(
     // declarations and projections are identical, and the original successful
     // compilation already paid the compiler's work/instance/depth limits.
     // This still publishes a *fresh* generation with stale prior bindings.
-    let compiled = match previous
-        .and_then(|previous| previous.compiled.reuse_after_source_pruning(&previous.network, &network))
-    {
+    let compiled = match previous.and_then(|previous| {
+        previous
+            .compiled
+            .reuse_after_source_pruning(&previous.network, &network)
+    }) {
         Some(compiled) => compiled,
         None => network.compile()?,
     };
