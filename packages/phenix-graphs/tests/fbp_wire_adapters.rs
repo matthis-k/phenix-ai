@@ -57,8 +57,7 @@ fn cap() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
 fn adapter() -> ComponentDef {
-    ComponentDef::adapt_wire::<Revision1, Revision2, _>(|old| Ok(Revision2(old.0 + 1)))
-        .unwrap()
+    ComponentDef::adapt_wire::<Revision1, Revision2, _>(|old| Ok(Revision2(old.0 + 1))).unwrap()
 }
 fn spawn(definition: &ComponentDef) -> Box<dyn Process> {
     let Body::Primitive(factory) = definition.body() else {
@@ -80,11 +79,7 @@ fn schema_revisions_remain_strict_but_explicit_adapter_connects_them() {
     );
 
     let definition = adapter();
-    let contract = Contract::new(
-        "test/v1-to-v2",
-        definition.interface().clone(),
-    )
-    .unwrap();
+    let contract = Contract::new("test/v1-to-v2", definition.interface().clone()).unwrap();
     let claimed = definition.claim(&contract).unwrap();
     contract.check_implementation(&claimed).unwrap();
 
@@ -93,24 +88,39 @@ fn schema_revisions_remain_strict_but_explicit_adapter_connects_them() {
     assert!(bridge.wire_input::<Revision2>("input").is_err());
     assert!(bridge.wire_output::<Revision1>("output").is_err());
     builder
-        .expose_input("old", bridge.wire_input::<Revision1>("input").unwrap(), cap())
+        .expose_input(
+            "old",
+            bridge.wire_input::<Revision1>("input").unwrap(),
+            cap(),
+        )
         .unwrap();
     builder
         .expose_output("new", bridge.wire_output::<Revision2>("output").unwrap())
         .unwrap();
     let compiled = builder.build().unwrap().compile().unwrap();
-    compiled.check_implementation("migration", &contract).unwrap();
+    compiled
+        .check_implementation("migration", &contract)
+        .unwrap();
     let mut session = compiled.start();
 
     assert_eq!(
-        session.inject("old", Value::of(Revision2(9))).unwrap_err().reason,
+        session
+            .inject("old", Value::of(Revision2(9)))
+            .unwrap_err()
+            .reason,
         ConnectionError::WrongType
     );
     session.inject("old", Value::of(Revision1(9))).unwrap();
     session.run_until_idle(32);
     let output = session.take_output("new").unwrap().unwrap();
-    assert_eq!(*output.value().decoded::<Revision2>().unwrap(), Revision2(10));
-    assert_eq!(output.value().identity(), PortDef::wire::<Revision2>("output").unwrap().value);
+    assert_eq!(
+        *output.value().decoded::<Revision2>().unwrap(),
+        Revision2(10)
+    );
+    assert_eq!(
+        output.value().identity(),
+        PortDef::wire::<Revision2>("output").unwrap().value
+    );
     assert!(session.take_output("new").unwrap().is_none());
 }
 
@@ -141,9 +151,17 @@ fn output_retains_input_lease_while_conversion_borrows_decoded_wire_value() {
     assert_eq!(counter.load(Ordering::SeqCst), 0);
     drop(output);
     assert_eq!(counter.load(Ordering::SeqCst), 1);
-    assert!(matches!(process.step(&mut ProcessContext::default()).unwrap(), Step::Complete));
     assert!(matches!(
-        process.step(&mut ProcessContext::new(BTreeMap::new(), vec!["input".into()])).unwrap(),
+        process.step(&mut ProcessContext::default()).unwrap(),
+        Step::Complete
+    ));
+    assert!(matches!(
+        process
+            .step(&mut ProcessContext::new(
+                BTreeMap::new(),
+                vec!["input".into()]
+            ))
+            .unwrap(),
         Step::Finished
     ));
 }
