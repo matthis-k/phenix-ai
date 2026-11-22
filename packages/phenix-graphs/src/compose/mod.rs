@@ -657,6 +657,41 @@ mod unchanged_selection_tests {
     }
 
     #[test]
+    fn zero_edit_fast_path_still_obeys_selection_budget_and_atomicity() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer
+            .register([registration("writer", 0, add("worker"))])
+            .unwrap();
+        let old = bound(&composer);
+        composer.set_selection_limits(SelectionLimits { max_work: 0 });
+        assert_eq!(
+            composer
+                .register([registration("empty", 0, NetworkPatch::new([]))])
+                .unwrap_err(),
+            ComposeError::SelectionBudgetExceeded { limit: 0 }
+        );
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
+        assert_eq!(composer.current().active(), &BTreeSet::from(["writer".into()));
+        assert!(composer.revoke("empty").is_err());
+
+        composer.set_selection_limits(SelectionLimits::default());
+        composer
+            .register([registration("empty", 0, NetworkPatch::new([]))])
+            .unwrap();
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["writer".into(), "empty".into()])
+        );
+    }
+
+    #[test]
     fn changed_selected_write_set_creates_fresh_generation() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
         composer
