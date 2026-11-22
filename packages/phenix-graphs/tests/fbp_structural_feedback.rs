@@ -13,7 +13,7 @@ fn compiled_feedback_cycles_include_self_loops_but_not_acyclic_branches() {
     let b = builder.add("b", primitive.clone()).unwrap();
     let c = builder.add("c", primitive.clone()).unwrap();
     let d = builder.add("d", primitive.clone()).unwrap();
-    let e = builder.add("e", primitive.clone()).unwrap();
+    builder.add("e", primitive.clone()).unwrap();
     builder
         .connect(
             a.output::<i64>("output").unwrap(),
