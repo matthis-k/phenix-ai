@@ -733,7 +733,7 @@ mod capacity_reuse_tests {
     fn selected_connect_preemption_and_revoke_updates_capacity_without_transferring_authority() {
         let (network, contract) = base();
         let mut composer = Composer::new(network).unwrap();
-        let registration = |id: &str, priority: i32, capacity| {
+        let registration = |id: &str, priority: i64, capacity| {
             let connection = edge(capacity);
             Registration::new(
                 id, [], priority, GraphOrigin::default(),
