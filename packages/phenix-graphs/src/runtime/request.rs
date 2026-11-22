@@ -537,24 +537,39 @@ impl NetworkSession {
     /// Snapshot only; overdue jobs are applied by a supervision operation.
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
         self.check_request(id)?;
-        let mut work = RequestWork {
-            closure_pending: self.requests[&id]
-                .reachable
-                .iter()
-                .filter(|index| self.closure_obligation(**index, id))
-                .count(),
-            queued: self
+        let scope = &self.requests[&id];
+        // Authenticated ingress and request sources register every downstream
+        // process this request can reach. Foreign processes cannot contain
+        // this request's in-flight activation or block its next activation.
+        let queued = match self.request_queue_policy {
+            RequestQueuePolicy::SharedFifo => self
                 .transport
                 .queues()
                 .iter()
                 .map(|queue| queue.request_count(id))
                 .sum(),
+            RequestQueuePolicy::BoundedLanes => self.request_lanes[&scope.lane]
+                .queues
+                .iter()
+                .map(|queue| self.transport.queues()[*queue].request_count(id))
+                .sum(),
+        };
+        let mut work = RequestWork {
+            closure_pending: scope
+                .reachable
+                .iter()
+                .filter(|index| self.closure_obligation(**index, id))
+                .count(),
+            queued,
             ..Default::default()
         };
-        let blocked_captures: BTreeSet<_> = self
-            .processes
+        let blocked_captures: BTreeSet<_> = scope
+            .reachable
             .iter()
-            .filter(|p| p.request == Some(id) && p.pending.is_some())
+            .filter_map(|index| {
+                let p = &self.processes[*index];
+                (p.request == Some(id) && p.pending.is_some()).then_some(p)
+            })
             .flat_map(|p| p.pending_targets.iter().copied())
             .filter(|queue| {
                 matches!(&self.endpoints[*queue].1, QueueEndpoint::Capture(_))
@@ -562,12 +577,11 @@ impl NetworkSession {
             })
             .collect();
         work.capture_backpressure = blocked_captures.len();
-        // A request may have accepted input but cannot begin an activation
-        // while the same stateful process executes another request. Report
-        // only witnessed packets, never a guessed upstream closure dependency.
-        // SharedFifo and BoundedLanes have different physical input queues.
-        let lane = self.requests[&id].lane;
-        for (index, p) in self.processes.iter().enumerate() {
+        // Inspect only process owners the request could actually encounter;
+        // retain precise queued-packet evidence for foreign single-flight
+        // owners, including both physical input queue layouts.
+        for &index in &scope.reachable {
+            let p = &self.processes[index];
             if p.request == Some(id) {
                 match p.handoff.state() {
                     HandoffState::Ready => work.ready += 1,
@@ -580,7 +594,7 @@ impl NetworkSession {
             } else if p.request.is_some()
                 && p.inputs.iter().enumerate().any(|(port, input)| {
                     let queues = if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
-                        self.request_lanes[&lane]
+                        self.request_lanes[&scope.lane]
                             .input_ports
                             .get(&(index, port))
                             .map(Vec::as_slice)
