@@ -139,6 +139,10 @@ fn crossed_multiplicity_preserves_request_local_fifo_and_settles_both_scopes() {
         }
         session.close_request(a).unwrap();
         session.close_request(b).unwrap();
+        // Global EOS must not overtake already accepted crossed packets.
+        // Closing both writers still permits the two correlated pairs each.
+        session.close_input("left").unwrap();
+        session.close_input("right").unwrap();
         let report = session.run_until_idle(64);
         assert!(!report.budget_exhausted, "{policy:?}");
         assert_eq!(captured(&mut session, a), [11, 15], "{policy:?}");
