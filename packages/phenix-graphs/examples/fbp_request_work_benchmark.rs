@@ -6,12 +6,7 @@ use phenix_graph::{
     network::NetworkBuilder,
     runtime::{RequestQueuePolicy, SessionOptions},
 };
-use std::{
-    hint::black_box,
-    num::NonZeroUsize,
-    sync::Arc,
-    time::Instant,
-};
+use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
 fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, usize, usize) {
     let mut builder = NetworkBuilder::new();
@@ -94,9 +89,7 @@ fn main() {
                 RequestQueuePolicy::SharedFifo => "shared-fifo",
                 RequestQueuePolicy::BoundedLanes => "bounded-lanes",
             };
-            println!(
-                "{name},{unrelated},{mean:.1},{p50:.1},{p95:.1},{queued},{blockers}"
-            );
+            println!("{name},{unrelated},{mean:.1},{p50:.1},{p95:.1},{queued},{blockers}");
         }
     }
 }
