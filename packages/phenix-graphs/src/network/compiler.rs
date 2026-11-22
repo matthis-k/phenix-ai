@@ -277,9 +277,11 @@ impl CompiledNetwork {
             return None;
         }
         let mut physical_edges = Vec::with_capacity(added);
-        for edge in after.connections.iter().filter(|edge| {
-            !old.contains(&(&edge.from, &edge.to, edge.capacity))
-        }) {
+        for edge in after
+            .connections
+            .iter()
+            .filter(|edge| !old.contains(&(&edge.from, &edge.to, edge.capacity)))
+        {
             let from = before.instances.get(&edge.from.process)?;
             let to = before.instances.get(&edge.to.process)?;
             if !matches!(from.body(), Body::Primitive(_))
@@ -1749,7 +1751,6 @@ mod capacity_reuse_tests {
     }
 }
 
-
 #[cfg(test)]
 mod edge_addition_tests {
     use super::*;
@@ -1757,7 +1758,10 @@ mod edge_addition_tests {
     use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
 
     fn endpoint(process: &str, port: &str) -> PortPath {
-        PortPath { process: process.into(), port: port.into() }
+        PortPath {
+            process: process.into(),
+            port: port.into(),
+        }
     }
     fn edge(from: &str, to: &str, capacity: usize) -> ConnectionDef {
         ConnectionDef {
@@ -1769,15 +1773,21 @@ mod edge_addition_tests {
     fn base() -> (NetworkDef, Contract) {
         let mut builder = NetworkBuilder::new();
         let source = builder
-            .add("alpha", Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))))
+            .add(
+                "alpha",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
             .unwrap();
         builder.start(&source).unwrap();
         let worker = crate::ComponentDef::map(|n: i64| n * 2);
-        let contract = Contract::new("test/root-edge-addition", worker.interface().clone()).unwrap();
+        let contract =
+            Contract::new("test/root-edge-addition", worker.interface().clone()).unwrap();
         let omega = builder
             .add("omega", Arc::new(worker.claim(&contract).unwrap()))
             .unwrap();
-        builder.expose_output("out", omega.output::<i64>("output").unwrap()).unwrap();
+        builder
+            .expose_output("out", omega.output::<i64>("output").unwrap())
+            .unwrap();
         (builder.build().unwrap(), contract)
     }
 
@@ -1785,10 +1795,16 @@ mod edge_addition_tests {
     fn monotone_direct_edge_insert_matches_full_compilation_and_execution() {
         let (before, contract) = base();
         let old = before.compile().unwrap();
-        let bound = old.bind("omega", &contract).unwrap().output::<i64>("output").unwrap();
+        let bound = old
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         let mut after = before.clone();
         after.connections.push(edge("alpha", "omega", 5));
-        let incremental = old.reuse_after_root_connection_additions(&before, &after).unwrap();
+        let incremental = old
+            .reuse_after_root_connection_additions(&before, &after)
+            .unwrap();
         let canonical = after.compile().unwrap();
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
@@ -1796,13 +1812,24 @@ mod edge_addition_tests {
         assert_eq!(incremental.outputs(), canonical.outputs());
         assert_eq!(incremental.compile_work, canonical.compile_work);
         assert_eq!(incremental.compile_instances, canonical.compile_instances);
-        assert_eq!(incremental.structural_reachability(), canonical.structural_reachability());
-        assert_eq!(incremental.structural_feedback_cycles(), canonical.structural_feedback_cycles());
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
         assert_eq!(bound.resolve(&incremental), Err(NetworkError::ForeignScope));
         let mut session = incremental.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
     }
@@ -1814,24 +1841,40 @@ mod edge_addition_tests {
         let mut duplicate = before.clone();
         duplicate.connections.push(edge("alpha", "omega", 1));
         duplicate.connections.push(edge("alpha", "omega", 2));
-        assert!(old.reuse_after_root_connection_additions(&before, &duplicate).is_none());
+        assert!(
+            old.reuse_after_root_connection_additions(&before, &duplicate)
+                .is_none()
+        );
 
         let mut changed = before.clone();
         changed.instances.insert(
             "omega".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n * 3).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
         changed.connections.push(edge("alpha", "omega", 1));
-        assert!(old.reuse_after_root_connection_additions(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_additions(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections.push(edge("omega", "alpha", 1));
-        assert!(old.reuse_after_root_connection_additions(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_additions(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections.push(edge("alpha", "omega", 1));
         changed.connections.push(edge("alpha", "missing", 1));
-        assert!(old.reuse_after_root_connection_additions(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_additions(&before, &changed)
+                .is_none()
+        );
 
         let mut original = before.clone();
         original.connections.push(edge("alpha", "omega", 1));
@@ -1839,7 +1882,11 @@ mod edge_addition_tests {
         let mut next = original.clone();
         next.connections[0].capacity = NonZeroUsize::new(2).unwrap();
         next.connections.push(edge("alpha", "omega", 3));
-        assert!(compiled.reuse_after_root_connection_additions(&original, &next).is_none());
+        assert!(
+            compiled
+                .reuse_after_root_connection_additions(&original, &next)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1847,12 +1894,23 @@ mod edge_addition_tests {
         let (before, _) = base();
         let mut after = before.clone();
         after.connections.push(edge("alpha", "omega", 1));
-        let custom = CompileLimits { max_work: 100, ..CompileLimits::default() };
+        let custom = CompileLimits {
+            max_work: 100,
+            ..CompileLimits::default()
+        };
         let compiled = before.compile_with_limits(custom).unwrap();
-        assert!(compiled.reuse_after_root_connection_additions(&before, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_root_connection_additions(&before, &after)
+                .is_none()
+        );
         let mut simulated_full = before.compile().unwrap();
         simulated_full.compile_work = CompileLimits::default().max_work;
-        assert!(simulated_full.reuse_after_root_connection_additions(&before, &after).is_none());
+        assert!(
+            simulated_full
+                .reuse_after_root_connection_additions(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1860,29 +1918,54 @@ mod edge_addition_tests {
         let (base, contract) = base();
         let mut composer = Composer::new(base).unwrap();
         let connection = edge("alpha", "omega", 2);
-        let contribution = |id: &str| Registration::new(
-            id,
-            [],
-            3,
-            GraphOrigin::default(),
-            [Footprint::Connection(ConnectionKey::new(
-                connection.from.clone(), connection.to.clone(),
-            ))],
-            NetworkPatch::new([Edit::Connect(connection.clone())]),
-        );
-        let old = composer.current().compiled().bind("omega", &contract)
-            .unwrap().output::<i64>("output").unwrap();
+        let contribution = |id: &str| {
+            Registration::new(
+                id,
+                [],
+                3,
+                GraphOrigin::default(),
+                [Footprint::Connection(ConnectionKey::new(
+                    connection.from.clone(),
+                    connection.to.clone(),
+                ))],
+                NetworkPatch::new([Edit::Connect(connection.clone())]),
+            )
+        };
+        let old = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         composer.register([contribution("first")]).unwrap();
         assert_eq!(composer.current().compiled().connections().len(), 1);
-        assert_eq!(old.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
-        assert_eq!(composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections());
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
         composer.revoke("first").unwrap();
         assert!(composer.current().compiled().connections().is_empty());
         composer.register([contribution("second")]).unwrap();
         assert_eq!(composer.current().compiled().connections().len(), 1);
-        assert_eq!(composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections());
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
     }
 }
 
