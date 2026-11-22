@@ -164,10 +164,14 @@ impl CompiledNetwork {
         {
             return None;
         }
-        let old: BTreeSet<_> = before.connections.iter()
+        let old: BTreeSet<_> = before
+            .connections
+            .iter()
             .map(|edge| (&edge.from, &edge.to, edge.capacity))
             .collect();
-        let desired: BTreeSet<_> = after.connections.iter()
+        let desired: BTreeSet<_> = after
+            .connections
+            .iter()
             .map(|edge| (&edge.from, &edge.to, edge.capacity))
             .collect();
         if old.len() != before.connections.len()
@@ -177,9 +181,11 @@ impl CompiledNetwork {
             return None;
         }
         let mut removed = BTreeSet::new();
-        for edge in before.connections.iter().filter(|edge| {
-            !desired.contains(&(&edge.from, &edge.to, edge.capacity))
-        }) {
+        for edge in before
+            .connections
+            .iter()
+            .filter(|edge| !desired.contains(&(&edge.from, &edge.to, edge.capacity)))
+        {
             let from = before.instances.get(&edge.from.process)?;
             let to = before.instances.get(&edge.to.process)?;
             if !matches!(from.body(), Body::Primitive(_))
@@ -564,7 +570,6 @@ mod edge_pruning_tests {
     use super::*;
     use crate::compose::{Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration};
     use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
-    use crate::Value;
 
     fn endpoint(process: &str, port: &str) -> PortPath {
         PortPath {
@@ -592,10 +597,9 @@ mod edge_pruning_tests {
         builder.start(&start).unwrap();
         let plain = crate::ComponentDef::map(|n: i64| n * 2);
         let contract = Contract::new("test/edge-worker", plain.interface().clone()).unwrap();
-        let worker = builder.add(
-            "worker",
-            Arc::new(plain.claim(&contract).unwrap()),
-        ).unwrap();
+        let worker = builder
+            .add("worker", Arc::new(plain.claim(&contract).unwrap()))
+            .unwrap();
         builder
             .expose_output("out", worker.output::<i64>("output").unwrap())
             .unwrap();
@@ -608,27 +612,42 @@ mod edge_pruning_tests {
         before.connections.push(edge("source", "worker"));
         let old = before.compile().unwrap();
         assert_eq!(old.connections().len(), 1);
-        let handle = old.bind("worker", &contract).unwrap()
-            .output::<i64>("output").unwrap();
+        let handle = old
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         let mut session = old.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
 
         let mut after = before.clone();
         after.connections.clear();
-        let incremental = old.reuse_after_root_connection_pruning(&before, &after).unwrap();
+        let incremental = old
+            .reuse_after_root_connection_pruning(&before, &after)
+            .unwrap();
         let canonical = after.compile().unwrap();
         assert!(incremental.connections().is_empty());
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
-        assert_eq!(incremental.inspect("worker").unwrap().definition_key,
-                   canonical.inspect("worker").unwrap().definition_key);
-        assert_eq!(handle.resolve(&incremental), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            incremental.inspect("worker").unwrap().definition_key,
+            canonical.inspect("worker").unwrap().definition_key
+        );
+        assert_eq!(
+            handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
         assert!(!Arc::ptr_eq(&old.generation, &incremental.generation));
     }
 
@@ -639,24 +658,40 @@ mod edge_pruning_tests {
         let old = before.compile().unwrap();
         let mut changed = before.clone();
         changed.connections.push(edge("source", "worker"));
-        assert!(old.reuse_after_root_connection_pruning(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections[0].capacity = NonZeroUsize::new(2).unwrap();
-        assert!(old.reuse_after_root_connection_pruning(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections.clear();
         changed.instances.insert(
             "worker".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n * 3).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_root_connection_pruning(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections.clear();
         changed.outputs.clear();
-        assert!(old.reuse_after_root_connection_pruning(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
     }
 
     #[test]
@@ -664,20 +699,31 @@ mod edge_pruning_tests {
         let (network, contract) = source_network();
         let mut composer = Composer::new(network).unwrap();
         let connection = edge("source", "worker");
-        composer.register([Registration::new(
-            "edge",
-            [],
-            3,
-            GraphOrigin::default(),
-            [Footprint::Connection(ConnectionKey::new(
-                connection.from.clone(), connection.to.clone(),
-            ))],
-            NetworkPatch::new([Edit::Connect(connection.clone())]),
-        )]).unwrap();
+        composer
+            .register([Registration::new(
+                "edge",
+                [],
+                3,
+                GraphOrigin::default(),
+                [Footprint::Connection(ConnectionKey::new(
+                    connection.from.clone(),
+                    connection.to.clone(),
+                ))],
+                NetworkPatch::new([Edit::Connect(connection.clone())]),
+            )])
+            .unwrap();
         assert_eq!(composer.current().compiled().connections().len(), 1);
-        let bound = composer.current().compiled().bind("worker", &contract).unwrap()
-            .output::<i64>("output").unwrap();
-        assert_eq!(bound.resolve(composer.current().compiled()), Ok((1, "output")));
+        let bound = composer
+            .current()
+            .compiled()
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            bound.resolve(composer.current().compiled()),
+            Ok((1, "output"))
+        );
         assert_eq!(
             composer.revoke("edge").unwrap(),
             BTreeSet::from(["edge".into()])
@@ -689,18 +735,26 @@ mod edge_pruning_tests {
         );
         assert_eq!(
             composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections()
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
         );
-        composer.register([Registration::new(
-            "edge-again",
-            [],
-            3,
-            GraphOrigin::default(),
-            [Footprint::Connection(ConnectionKey::new(
-                connection.from.clone(), connection.to.clone(),
-            ))],
-            NetworkPatch::new([Edit::Connect(connection)]),
-        )]).unwrap();
+        composer
+            .register([Registration::new(
+                "edge-again",
+                [],
+                3,
+                GraphOrigin::default(),
+                [Footprint::Connection(ConnectionKey::new(
+                    connection.from.clone(),
+                    connection.to.clone(),
+                ))],
+                NetworkPatch::new([Edit::Connect(connection)]),
+            )])
+            .unwrap();
         assert_eq!(composer.current().compiled().connections().len(), 1);
     }
 }
