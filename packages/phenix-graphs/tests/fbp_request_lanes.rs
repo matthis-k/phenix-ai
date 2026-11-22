@@ -878,7 +878,10 @@ fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_poli
         .unwrap();
     let compiled = builder.build().unwrap().compile().unwrap();
 
-    for policy in [RequestQueuePolicy::SharedFifo, RequestQueuePolicy::BoundedLanes] {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
         let mut session = compiled.start_with_options(SessionOptions {
             max_requests: NonZeroUsize::new(2).unwrap(),
             request_queue_policy: policy,
@@ -907,8 +910,14 @@ fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_poli
         assert_eq!(session.request_work(b).unwrap().waiting_wake, 1);
         assert!(session.wake_handle("worker").unwrap().wake());
         assert_eq!(session.run_until_idle(16).steps, 1);
-        assert_eq!(session.request_status(a).unwrap(), RequestStatus::Settled { captures: 0 });
-        assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(
+            session.request_status(a).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
+        assert_eq!(
+            session.request_status(b).unwrap(),
+            RequestStatus::Settled { captures: 0 }
+        );
         session.release_request(a).unwrap();
         session.release_request(b).unwrap();
         assert!(session.failure().is_none());
