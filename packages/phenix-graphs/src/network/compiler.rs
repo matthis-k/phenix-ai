@@ -1796,7 +1796,6 @@ mod batch_isolated_root_removal_tests {
         );
     }
 
-
     #[test]
     fn batch_rebase_refuses_hidden_physical_references_without_mutating_original() {
         let (before, _) = fixture();
@@ -1808,12 +1807,16 @@ mod batch_isolated_root_removal_tests {
         // This must refuse reuse; physical index 1 may never be redirected.
         let mut tampered = before.compile().unwrap();
         let removed_index = tampered.inspect("b0").unwrap().physical_index.unwrap();
-        tampered.outputs.insert("hidden".into(), (removed_index, "output".into()));
+        tampered
+            .outputs
+            .insert("hidden".into(), (removed_index, "output".into()));
         let old_len = tampered.processes().len();
         let old_work = tampered.compile_work;
-        assert!(tampered
-            .reuse_after_batch_isolated_root_removal(&before, &after)
-            .is_none());
+        assert!(
+            tampered
+                .reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
         assert_eq!(tampered.processes().len(), old_len);
         assert_eq!(tampered.compile_work, old_work);
         assert_eq!(tampered.outputs["hidden"].0, removed_index);
