@@ -240,6 +240,18 @@ impl CompiledNetwork {
         before: &NetworkDef,
         after: &NetworkDef,
     ) -> Option<Self> {
+        // Do not clone a compiled topology until the entire edit is accepted.
+        let (edges, work) = self.plan_root_connection_additions(before, after)?;
+        let mut compiled = self.with_fresh_generation();
+        compiled.apply_root_connection_additions(edges, work);
+        Some(compiled)
+    }
+
+    fn plan_root_connection_additions(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<(Vec<FlatConnection>, u64)> {
         if after.connections.len() <= before.connections.len()
             || before.sources != after.sources
             || !same_scope_without_connections(before, after)
@@ -310,14 +322,15 @@ impl CompiledNetwork {
         if physical_edges.len() != added {
             return None;
         }
-        let mut compiled = self.with_fresh_generation();
-        compiled.connections.extend(physical_edges);
-        compiled
-            .connections
-            .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
-        compiled.compile_work = work;
-        Some(compiled)
+        Some((physical_edges, work))
     }
+    fn apply_root_connection_additions(&mut self, edges: Vec<FlatConnection>, work: u64) {
+        self.connections.extend(edges);
+        self.connections
+            .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+        self.compile_work = work;
+    }
+
     /// A selected Connect that changes only the bounded FIFO capacity of an
     /// existing direct root primitive edge does not change graph lowering.
     /// Every declaration, endpoint, projection and compile-work charge stays
@@ -442,8 +455,10 @@ impl CompiledNetwork {
         }
         let mut intermediate = before.clone();
         intermediate.connections = after.connections.clone();
-        let pruned = self.reuse_after_root_connection_pruning(before, &intermediate)?;
-        pruned.reuse_after_isolated_root_removal(&intermediate, after)
+        let mut pruned = self.reuse_after_root_connection_pruning(before, &intermediate)?;
+        let plan = pruned.plan_isolated_root_removal(&intermediate, after)?;
+        pruned.apply_isolated_root_removal(plan);
+        Some(pruned)
     }
     /// Reuse existing, independently bounded lowering steps for a selected
     /// Add + Connect transaction. Only one new root primitive and monotone
@@ -485,8 +500,10 @@ impl CompiledNetwork {
         }
         let mut intermediate = after.clone();
         intermediate.connections = before.connections.clone();
-        let inserted = self.reuse_after_isolated_root_addition(before, &intermediate)?;
-        inserted.reuse_after_root_connection_additions(&intermediate, after)
+        let mut inserted = self.reuse_after_isolated_root_addition(before, &intermediate)?;
+        let (edges, work) = inserted.plan_root_connection_additions(&intermediate, after)?;
+        inserted.apply_root_connection_additions(edges, work);
+        Some(inserted)
     }
     /// Exactly one new, unclaimed, unreferenced root primitive can be inserted
     /// without expanding the existing graph. Reindex all physical references
@@ -652,6 +669,17 @@ impl CompiledNetwork {
         before: &NetworkDef,
         after: &NetworkDef,
     ) -> Option<Self> {
+        let plan = self.plan_isolated_root_removal(before, after)?;
+        let mut compiled = self.with_fresh_generation();
+        compiled.apply_isolated_root_removal(plan);
+        Some(compiled)
+    }
+
+    fn plan_isolated_root_removal(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<(String, usize, u64)> {
         if after.instances.len().checked_add(1) != Some(before.instances.len())
             || before.connections != after.connections
             || before.sources != after.sources
@@ -736,15 +764,20 @@ impl CompiledNetwork {
                 .checked_add(1)?,
         )
         .ok()?;
-        let mut compiled = self.with_fresh_generation();
-        compiled.processes.remove(removed_index);
-        compiled.inspections.remove(name)?;
-        compiled.boundaries.remove(name)?;
-        compiled.shift_physical_indexes(removed_index.checked_add(1)?, false);
-        compiled.compile_work = compiled.compile_work.checked_sub(removed_work)?;
-        compiled.compile_instances = compiled.compile_instances.checked_sub(1)?;
-        Some(compiled)
+        self.compile_work.checked_sub(removed_work)?;
+        self.compile_instances.checked_sub(1)?;
+        Some((name.clone(), removed_index, removed_work))
     }
+    fn apply_isolated_root_removal(&mut self, plan: (String, usize, u64)) {
+        let (name, removed_index, removed_work) = plan;
+        self.processes.remove(removed_index);
+        self.inspections.remove(&name).expect("planned declaration");
+        self.boundaries.remove(&name).expect("planned boundary");
+        self.shift_physical_indexes(removed_index + 1, false);
+        self.compile_work -= removed_work;
+        self.compile_instances -= 1;
+    }
+
 }
 
 /// These fixed fields are verified before any incremental reuse; changing
