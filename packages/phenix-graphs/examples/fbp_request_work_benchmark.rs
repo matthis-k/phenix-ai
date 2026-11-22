@@ -4,11 +4,11 @@
 use phenix_graph::{
     ComponentDef,
     network::NetworkBuilder,
-    runtime::{RequestQueuePolicy, SessionOptions},
+    runtime::{RequestQueuePolicy, RequestStatus, SessionOptions},
 };
 use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
-fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, usize, usize) {
+fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, f64, f64, f64, usize, usize) {
     let mut builder = NetworkBuilder::new();
     let target = builder
         .add("target", Arc::new(ComponentDef::sink(|_: &i64| {})))
@@ -52,6 +52,10 @@ fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, us
             .unwrap();
     }
     let inspected = requests[1];
+    // Status enters the request_live path only for a sealed request. The
+    // foreign owner still holds the process, so it must remain Pending.
+    session.close_request(inspected).unwrap();
+    assert_eq!(session.request_status(inspected).unwrap(), RequestStatus::Pending);
     let before = session.request_work(inspected).unwrap();
     assert_eq!(before.queued, 1);
     assert_eq!(before.single_flight_blockers, 1);
@@ -74,22 +78,45 @@ fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, us
     let mean = samples.iter().sum::<f64>() / BATCHES as f64;
     let p50 = samples[(BATCHES - 1) / 2];
     let p95 = samples[(((BATCHES - 1) as f64) * 0.95).round() as usize];
-    (mean, p50, p95, before.queued, before.single_flight_blockers)
+    let mut status_samples = Vec::with_capacity(BATCHES);
+    for _ in 0..BATCHES {
+        let start = Instant::now();
+        for _ in 0..SNAPSHOTS {
+            black_box(session.request_status(inspected).unwrap());
+        }
+        status_samples.push(start.elapsed().as_nanos() as f64 / SNAPSHOTS as f64);
+    }
+    status_samples.sort_by(|a, b| a.total_cmp(b));
+    let status_mean = status_samples.iter().sum::<f64>() / BATCHES as f64;
+    let status_p50 = status_samples[(BATCHES - 1) / 2];
+    let status_p95 = status_samples[(((BATCHES - 1) as f64) * 0.95).round() as usize];
+    (
+        mean,
+        p50,
+        p95,
+        status_mean,
+        status_p50,
+        status_p95,
+        before.queued,
+        before.single_flight_blockers,
+    )
 }
 
 fn main() {
-    println!("policy,unrelated_roots,mean_ns_per_snapshot,p50_ns,p95_ns,queued,blockers");
+    println!("policy,unrelated_roots,work_mean_ns,work_p50_ns,work_p95_ns,status_mean_ns,status_p50_ns,status_p95_ns,queued,blockers");
     for policy in [
         RequestQueuePolicy::SharedFifo,
         RequestQueuePolicy::BoundedLanes,
     ] {
         for unrelated in [0, 128, 512, 1024] {
-            let (mean, p50, p95, queued, blockers) = benchmark(policy, unrelated);
+            let (mean, p50, p95, status_mean, status_p50, status_p95, queued, blockers) = benchmark(policy, unrelated);
             let name = match policy {
                 RequestQueuePolicy::SharedFifo => "shared-fifo",
                 RequestQueuePolicy::BoundedLanes => "bounded-lanes",
             };
-            println!("{name},{unrelated},{mean:.1},{p50:.1},{p95:.1},{queued},{blockers}");
+            println!(
+                "{name},{unrelated},{mean:.1},{p50:.1},{p95:.1},{status_mean:.1},{status_p50:.1},{status_p95:.1},{queued},{blockers}"
+            );
         }
     }
 }
