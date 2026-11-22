@@ -8,7 +8,9 @@ use phenix_graph::{
 };
 use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
-fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, f64, f64, f64, usize, usize) {
+type SnapshotTimings = (f64, f64, f64, f64, f64, f64, usize, usize);
+
+fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> SnapshotTimings {
     let mut builder = NetworkBuilder::new();
     let target = builder
         .add("target", Arc::new(ComponentDef::sink(|_: &i64| {})))
@@ -103,13 +105,16 @@ fn benchmark(policy: RequestQueuePolicy, unrelated: usize) -> (f64, f64, f64, f6
 }
 
 fn main() {
-    println!("policy,unrelated_roots,work_mean_ns,work_p50_ns,work_p95_ns,status_mean_ns,status_p50_ns,status_p95_ns,queued,blockers");
+    println!(
+        "policy,unrelated_roots,work_mean_ns,work_p50_ns,work_p95_ns,status_mean_ns,status_p50_ns,status_p95_ns,queued,blockers"
+    );
     for policy in [
         RequestQueuePolicy::SharedFifo,
         RequestQueuePolicy::BoundedLanes,
     ] {
         for unrelated in [0, 128, 512, 1024] {
-            let (mean, p50, p95, status_mean, status_p50, status_p95, queued, blockers) = benchmark(policy, unrelated);
+            let (mean, p50, p95, status_mean, status_p50, status_p95, queued, blockers) =
+                benchmark(policy, unrelated);
             let name = match policy {
                 RequestQueuePolicy::SharedFifo => "shared-fifo",
                 RequestQueuePolicy::BoundedLanes => "bounded-lanes",
