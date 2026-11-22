@@ -59,10 +59,7 @@ mod tests {
 
     #[test]
     fn self_loops_and_two_disjoint_cycles_are_deterministic() {
-        let edges = vec![
-            vec![0, 1], vec![2], vec![1, 3],
-            vec![4], vec![3], vec![],
-        ];
+        let edges = vec![vec![0, 1], vec![2], vec![1, 3], vec![4], vec![3], vec![]];
         let mut reverse = vec![vec![]; edges.len()];
         for (from, destinations) in edges.iter().enumerate() {
             for &to in destinations {
