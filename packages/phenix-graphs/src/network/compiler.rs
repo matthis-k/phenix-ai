@@ -1881,9 +1881,14 @@ mod connected_root_admission_tests {
             Err(NetworkError::ForeignScope)
         );
         assert_eq!(
-            incremental.declaration("middle").unwrap().input::<i64>("input")
-                .unwrap().resolve(&incremental),
-            Ok(vec![(1, "input".into())])
+            incremental
+                .declaration("middle")
+                .unwrap()
+                .input::<i64>("input")
+                .unwrap()
+                .resolve(&incremental)
+                .unwrap(),
+            &[(1, "input".into())]
         );
         let mut session = incremental.start();
         session.run_until_idle(64);
@@ -1891,6 +1896,25 @@ mod connected_root_admission_tests {
             session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
             Some(&24)
         );
+    }
+
+
+    #[test]
+    fn existing_root_edge_survives_new_component_reindexing() {
+        let (mut before, _) = base();
+        before.connections.push(edge("alpha", "omega"));
+        let old = before.compile().unwrap();
+        let after = with_chain(before.clone());
+        let incremental = old
+            .reuse_after_connected_root_addition(&before, &after)
+            .unwrap();
+        let canonical = after.compile().unwrap();
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        assert_eq!(incremental.inspect("omega").unwrap().physical_index, Some(2));
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.outputs(), canonical.outputs());
     }
 
     #[test]
