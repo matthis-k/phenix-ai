@@ -38,9 +38,7 @@ impl CompiledNetwork {
         before: &NetworkDef,
         after: &NetworkDef,
     ) -> Option<Self> {
-        if after.sources.len() >= before.sources.len()
-            || !same_compilation_scope(before, after)
-        {
+        if after.sources.len() >= before.sources.len() || !same_compilation_scope(before, after) {
             return None;
         }
         // Replay of the same immutable declaration may produce a new Arc
@@ -490,9 +488,9 @@ impl Compiler {
 #[cfg(test)]
 mod primitive_replacement_tests {
     use super::*;
+    use crate::Value;
     use crate::compose::{Composer, Edit, Footprint, NetworkPatch, Registration};
     use crate::network::NetworkBuilder;
-    use crate::Value;
 
     fn contract() -> Contract {
         let definition = crate::ComponentDef::map(|n: i64| n);
@@ -542,7 +540,9 @@ mod primitive_replacement_tests {
             .unwrap();
 
         let mut after = before.clone();
-        after.instances.insert("worker".into(), worker(7, &contract));
+        after
+            .instances
+            .insert("worker".into(), worker(7, &contract));
         let incremental = original
             .reuse_after_root_primitive_replacements(&before, &after)
             .unwrap();
@@ -553,13 +553,21 @@ mod primitive_replacement_tests {
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
-        assert_eq!(incremental.inspect("worker").unwrap().definition_key,
-                   canonical.inspect("worker").unwrap().definition_key);
-        assert_eq!(incremental.inspect("worker").unwrap().claims,
-                   canonical.inspect("worker").unwrap().claims);
-        assert_eq!(incremental.inspect("worker").unwrap().origin,
-                   canonical.inspect("worker").unwrap().origin);
-        incremental.check_implementation("worker", &contract).unwrap();
+        assert_eq!(
+            incremental.inspect("worker").unwrap().definition_key,
+            canonical.inspect("worker").unwrap().definition_key
+        );
+        assert_eq!(
+            incremental.inspect("worker").unwrap().claims,
+            canonical.inspect("worker").unwrap().claims
+        );
+        assert_eq!(
+            incremental.inspect("worker").unwrap().origin,
+            canonical.inspect("worker").unwrap().origin
+        );
+        incremental
+            .check_implementation("worker", &contract)
+            .unwrap();
         assert_eq!(bound.resolve(&incremental), Err(NetworkError::ForeignScope));
         assert!(!Arc::ptr_eq(&incremental.generation, &original.generation));
         assert!(!Arc::ptr_eq(
@@ -579,93 +587,151 @@ mod primitive_replacement_tests {
             "worker".into(),
             Arc::new(crate::ComponentDef::map(|n: i64| n.to_string())),
         );
-        assert!(old.reuse_after_root_primitive_replacements(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_primitive_replacements(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.instances.insert(
             "worker".into(),
             Arc::new(crate::ComponentDef::map(|n: i64| n * 2)),
         );
-        assert!(old.reuse_after_root_primitive_replacements(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_primitive_replacements(&before, &changed)
+                .is_none()
+        );
         assert!(changed.compile().is_err());
 
         changed = before.clone();
         let mut child = NetworkBuilder::new();
         let nested = child.add("inner", worker(3, &contract)).unwrap();
-        child.expose_input(
-            "input",
-            nested.input::<i64>("input").unwrap(),
-            NonZeroUsize::new(1).unwrap()
-        ).unwrap();
-        child.expose_output(
-            "output",
-            nested.output::<i64>("output").unwrap()
-        ).unwrap();
+        child
+            .expose_input(
+                "input",
+                nested.input::<i64>("input").unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap();
+        child
+            .expose_output("output", nested.output::<i64>("output").unwrap())
+            .unwrap();
         changed.instances.insert(
             "worker".into(),
-            Arc::new(crate::ComponentDef::composite(child.build().unwrap()).claim(&contract).unwrap())
+            Arc::new(
+                crate::ComponentDef::composite(child.build().unwrap())
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_root_primitive_replacements(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_primitive_replacements(&before, &changed)
+                .is_none()
+        );
 
         changed = before.clone();
         changed.connections.push(crate::network::ConnectionDef {
             from: crate::network::PortPath {
-                process: "worker".into(), port: "output".into(),
+                process: "worker".into(),
+                port: "output".into(),
             },
             to: crate::network::PortPath {
-                process: "worker".into(), port: "input".into(),
+                process: "worker".into(),
+                port: "input".into(),
             },
             capacity: NonZeroUsize::new(1).unwrap(),
         });
-        assert!(old.reuse_after_root_primitive_replacements(&before, &changed).is_none());
+        assert!(
+            old.reuse_after_root_primitive_replacements(&before, &changed)
+                .is_none()
+        );
     }
 
     #[test]
     fn composer_priority_preemption_and_revoke_change_actual_code_not_just_metadata() {
         let contract = contract();
         let mut composer = Composer::new(base(&contract)).unwrap();
-        let old_key = composer.current().compiled().inspect("worker").unwrap().definition_key;
-        composer.register([Registration::new(
-            "low", [],
-            1,
-            GraphOrigin::default(),
-            [Footprint::Component("worker".into())],
-            NetworkPatch::new([Edit::Replace {
-                path: "worker".into(),
-                definition: worker(2, &contract),
-            }]),
-        )]).unwrap();
+        let old_key = composer
+            .current()
+            .compiled()
+            .inspect("worker")
+            .unwrap()
+            .definition_key;
+        composer
+            .register([Registration::new(
+                "low",
+                [],
+                1,
+                GraphOrigin::default(),
+                [Footprint::Component("worker".into())],
+                NetworkPatch::new([Edit::Replace {
+                    path: "worker".into(),
+                    definition: worker(2, &contract),
+                }]),
+            )])
+            .unwrap();
         assert_eq!(result(composer.current().compiled(), 6), 12);
-        let previous = composer.current().compiled().bind("worker", &contract).unwrap()
-            .output::<i64>("output").unwrap();
+        let previous = composer
+            .current()
+            .compiled()
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
 
-        composer.register([Registration::new(
-            "high", [],
-            9,
-            GraphOrigin::default(),
-            [Footprint::Component("worker".into())],
-            NetworkPatch::new([Edit::Replace {
-                path: "worker".into(),
-                definition: worker(3, &contract),
-            }]),
-        )]).unwrap();
-        assert_eq!(composer.current().active(), &BTreeSet::from(["high".into()]));
+        composer
+            .register([Registration::new(
+                "high",
+                [],
+                9,
+                GraphOrigin::default(),
+                [Footprint::Component("worker".into())],
+                NetworkPatch::new([Edit::Replace {
+                    path: "worker".into(),
+                    definition: worker(3, &contract),
+                }]),
+            )])
+            .unwrap();
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["high".into()])
+        );
         assert_eq!(result(composer.current().compiled(), 6), 18);
-        assert_eq!(previous.resolve(composer.current().compiled()),
-                   Err(NetworkError::ForeignScope));
-        let selected_key = composer.current().compiled().inspect("worker").unwrap().definition_key;
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        let selected_key = composer
+            .current()
+            .compiled()
+            .inspect("worker")
+            .unwrap()
+            .definition_key;
         assert_ne!(selected_key, old_key);
         assert_eq!(
             selected_key,
-            composer.current().network().compile().unwrap()
-                .inspect("worker").unwrap().definition_key
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .inspect("worker")
+                .unwrap()
+                .definition_key
         );
 
         composer.revoke("high").unwrap();
         assert_eq!(composer.current().active(), &BTreeSet::from(["low".into()]));
         assert_eq!(result(composer.current().compiled(), 6), 12);
-        assert_eq!(composer.current().compiled().source_starts(),
-                   composer.current().network().compile().unwrap().source_starts());
+        assert_eq!(
+            composer.current().compiled().source_starts(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .source_starts()
+        );
     }
 }
 
