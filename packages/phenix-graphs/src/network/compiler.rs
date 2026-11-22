@@ -337,10 +337,14 @@ impl CompiledNetwork {
         // declared inputs/outputs and one physical instance, but no fanouts,
         // root projections, starts, requirements or nested expansion.
         let added_work = u64::try_from(
-            definition.interface().inputs().len()
+            definition
+                .interface()
+                .inputs()
+                .len()
                 .checked_add(definition.interface().outputs().len())?
                 .checked_add(1)?,
-        ).ok()?;
+        )
+        .ok()?;
         let next_work = self.compile_work.checked_add(added_work)?;
         let next_instances = self.compile_instances.checked_add(1)?;
         if next_work > self.compilation_limits.max_work
@@ -358,7 +362,10 @@ impl CompiledNetwork {
         };
         let mut compiled = self.with_fresh_generation();
         compiled.shift_physical_indexes(insertion, true);
-        let origin = definition.origin().cloned().or_else(|| after.origin.clone());
+        let origin = definition
+            .origin()
+            .cloned()
+            .or_else(|| after.origin.clone());
         compiled.processes.insert(
             insertion,
             FlatProcess {
@@ -532,11 +539,15 @@ impl CompiledNetwork {
             return None;
         }
         let removed_work = u64::try_from(
-            definition.interface().inputs().len()
+            definition
+                .interface()
+                .inputs()
+                .len()
                 .checked_add(definition.interface().outputs().len())?
                 .checked_add(definition.claims().len())?
                 .checked_add(1)?,
-        ).ok()?;
+        )
+        .ok()?;
         let mut compiled = self.with_fresh_generation();
         compiled.processes.remove(removed_index);
         compiled.inspections.remove(name)?;
@@ -898,7 +909,6 @@ impl Compiler {
     }
 }
 
-
 #[cfg(test)]
 mod isolated_root_addition_tests {
     use super::*;
@@ -924,8 +934,14 @@ mod isolated_root_addition_tests {
             .unwrap();
         let mut network = builder.build().unwrap();
         network.connections.push(ConnectionDef {
-            from: PortPath { process: "alpha".into(), port: "output".into() },
-            to: PortPath { process: "omega".into(), port: "input".into() },
+            from: PortPath {
+                process: "alpha".into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: "omega".into(),
+                port: "input".into(),
+            },
             capacity: NonZeroUsize::new(1).unwrap(),
         });
         (network, contract)
@@ -943,21 +959,37 @@ mod isolated_root_addition_tests {
     fn isolated_middle_addition_matches_full_compiler_rebases_and_executes() {
         let (before, contract) = base();
         let old = before.compile().unwrap();
-        let old_handle = old.bind("omega", &contract).unwrap().output::<i64>("output").unwrap();
+        let old_handle = old
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         let after = with_middle(before.clone());
         let incremental = old
             .reuse_after_isolated_root_addition(&before, &after)
             .unwrap();
         let canonical = after.compile().unwrap();
         assert_eq!(incremental.processes().len(), 3);
-        assert_eq!(incremental.inspect("middle").unwrap().physical_index, Some(1));
-        assert_eq!(incremental.inspect("omega").unwrap().physical_index, Some(2));
+        assert_eq!(
+            incremental.inspect("middle").unwrap().physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(2)
+        );
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
-        assert_eq!(incremental.structural_reachability(), canonical.structural_reachability());
-        assert_eq!(incremental.structural_feedback_cycles(), canonical.structural_feedback_cycles());
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
         for path in ["", "alpha", "middle", "omega"] {
             let a = incremental.inspect(path).unwrap();
             let b = canonical.inspect(path).unwrap();
@@ -967,13 +999,21 @@ mod isolated_root_addition_tests {
         }
         assert_eq!(incremental.compile_work, canonical.compile_work);
         assert_eq!(incremental.compile_instances, canonical.compile_instances);
-        assert_eq!(old_handle.resolve(&incremental), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            old_handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
         let bound = incremental.declaration("middle").unwrap();
         assert!(bound.input::<i64>("input").is_ok());
         let mut session = incremental.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
     }
@@ -983,39 +1023,84 @@ mod isolated_root_addition_tests {
         let (before, contract) = base();
         let old = before.compile().unwrap();
         let mut after = with_middle(before.clone());
-        after.instances.insert("second".into(), Arc::new(crate::ComponentDef::map(|n: i64| n)));
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
+        after.instances.insert(
+            "second".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
         after = with_middle(before.clone());
         after.instances.insert(
             "middle".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
         after = with_middle(before.clone());
         after.connections.clear();
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
         after = with_middle(before.clone());
-        after.instances.insert("omega".into(), Arc::new(crate::ComponentDef::map(|n: i64| n * 3)));
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
+        after.instances.insert(
+            "omega".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n * 3)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
         after = before.clone();
-        after.instances.insert("../escape".into(), Arc::new(crate::ComponentDef::map(|n: i64| n)));
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
+        after.instances.insert(
+            "../escape".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
     fn custom_limits_and_exhausted_default_limits_fall_back() {
         let (before, _) = base();
-        let limits = CompileLimits { max_instances: 2, ..CompileLimits::default() };
+        let limits = CompileLimits {
+            max_instances: 2,
+            ..CompileLimits::default()
+        };
         let old = before.compile_with_limits(limits).unwrap();
         let after = with_middle(before.clone());
-        assert!(old.reuse_after_isolated_root_addition(&before, &after).is_none());
-        assert!(matches!(after.compile_with_limits(limits), Err(NetworkError::LimitExceeded { .. })));
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        assert!(matches!(
+            after.compile_with_limits(limits),
+            Err(NetworkError::LimitExceeded { .. })
+        ));
         let mut simulated_full = before.compile().unwrap();
         simulated_full.compile_instances = CompileLimits::default().max_instances;
-        assert!(simulated_full.reuse_after_isolated_root_addition(&before, &after).is_none());
+        assert!(
+            simulated_full
+                .reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
         simulated_full = before.compile().unwrap();
         simulated_full.compile_work = CompileLimits::default().max_work;
-        assert!(simulated_full.reuse_after_isolated_root_addition(&before, &after).is_none());
+        assert!(
+            simulated_full
+                .reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1026,30 +1111,80 @@ mod isolated_root_addition_tests {
             path: "middle".into(),
             definition: Arc::new(crate::ComponentDef::map(|n: i64| n)),
         }]);
-        let registration = |id: &str| Registration::new(
-            id,
-            [],
-            1,
-            GraphOrigin::default(),
-            [Footprint::Component("middle".into())],
-            patch.clone(),
-        );
-        let initial = composer.current().compiled().bind("omega", &contract)
-            .unwrap().output::<i64>("output").unwrap();
+        let registration = |id: &str| {
+            Registration::new(
+                id,
+                [],
+                1,
+                GraphOrigin::default(),
+                [Footprint::Component("middle".into())],
+                patch.clone(),
+            )
+        };
+        let initial = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         composer.register([registration("one")]).unwrap();
-        assert_eq!(composer.current().compiled().inspect("middle").unwrap().physical_index, Some(1));
-        assert_eq!(composer.current().compiled().inspect("omega").unwrap().physical_index, Some(2));
-        assert_eq!(initial.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
-        assert_eq!(composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections());
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("middle")
+                .unwrap()
+                .physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("omega")
+                .unwrap()
+                .physical_index,
+            Some(2)
+        );
+        assert_eq!(
+            initial.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
         composer.revoke("one").unwrap();
         assert!(composer.current().compiled().inspect("middle").is_err());
         composer.register([registration("two")]).unwrap();
-        assert_eq!(composer.current().compiled().inspect("middle").unwrap().physical_index, Some(1));
-        assert_eq!(composer.current().compiled().compile_work,
-            composer.current().network().compile().unwrap().compile_work);
-        assert_eq!(composer.current().compiled().compile_instances,
-            composer.current().network().compile().unwrap().compile_instances);
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("middle")
+                .unwrap()
+                .physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            composer.current().network().compile().unwrap().compile_work
+        );
+        assert_eq!(
+            composer.current().compiled().compile_instances,
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .compile_instances
+        );
     }
 }
 
