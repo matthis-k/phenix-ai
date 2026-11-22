@@ -408,6 +408,132 @@ impl Compiler {
 }
 
 #[cfg(test)]
+mod source_pruning_tests {
+    use super::*;
+    use crate::compose::{Composer, Edit, Footprint, NetworkPatch, Registration};
+    use crate::network::NetworkBuilder;
+
+    fn source() -> Arc<crate::ComponentDef> {
+        Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64)))
+    }
+
+    #[test]
+    fn pruning_matches_full_compilation_and_fresh_generation_for_two_sources() {
+        let mut builder = NetworkBuilder::new();
+        let a = builder.add("a", source()).unwrap();
+        let b = builder.add("b", source()).unwrap();
+        builder.start(&a).unwrap();
+        builder.start(&b).unwrap();
+        let before = builder.build().unwrap();
+        let original = before.compile().unwrap();
+        assert_eq!(original.source_starts(), &[0, 1]);
+
+        let mut after = before.clone();
+        after.sources.retain(|path| path != "a");
+        let reused = original.reuse_after_source_pruning(&before, &after).unwrap();
+        let fresh = after.compile().unwrap();
+        assert_eq!(reused.source_starts(), &[1]);
+        assert_eq!(reused.source_starts(), fresh.source_starts());
+        assert_eq!(reused.connections(), fresh.connections());
+        assert_eq!(reused.inputs(), fresh.inputs());
+        assert_eq!(reused.outputs(), fresh.outputs());
+        assert_eq!(reused.processes().len(), fresh.processes().len());
+        assert_eq!(
+            reused.processes().iter().map(|p| p.path()).collect::<Vec<_>>(),
+            fresh.processes().iter().map(|p| p.path()).collect::<Vec<_>>()
+        );
+        assert!(!Arc::ptr_eq(&reused.generation, &original.generation));
+        assert!(Arc::ptr_eq(
+            reused.processes()[1].factory(),
+            original.processes()[1].factory()
+        ));
+
+        after.sources.clear();
+        let reused_again = reused.reuse_after_source_pruning(
+            &NetworkDef {
+                sources: vec!["b".into()],
+                ..before.clone()
+            },
+            &after,
+        ).unwrap();
+        assert!(reused_again.source_starts().is_empty());
+        assert_eq!(reused_again.source_starts(), after.compile().unwrap().source_starts());
+    }
+
+    #[test]
+    fn source_pruning_refuses_growth_changed_definitions_or_contract_obligations() {
+        let mut builder = NetworkBuilder::new();
+        let a = builder.add("a", source()).unwrap();
+        builder.start(&a).unwrap();
+        let before = builder.build().unwrap();
+        let compiled = before.compile().unwrap();
+
+        let mut after = before.clone();
+        after.sources.push("missing".into());
+        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+
+        after = before.clone();
+        after.sources.clear();
+        after.instances.insert("a".into(), source());
+        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+
+        after = before.clone();
+        after.sources.clear();
+        after.requirements.push((
+            "a".into(),
+            Contract::new("test/changed", Arc::new(crate::Interface::default())).unwrap()
+        ));
+        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+    }
+
+    #[test]
+    fn composer_revoke_source_changes_selected_writer_but_keeps_bound_authority_fresh() {
+        let plain = crate::ComponentDef::source(|| std::iter::once(7_i64));
+        let contract = Contract::new("test/source", plain.interface().clone()).unwrap();
+        let mut builder = NetworkBuilder::new();
+        builder.add("source", Arc::new(plain.claim(&contract).unwrap())).unwrap();
+        let mut composer = Composer::new(builder.build().unwrap()).unwrap();
+        assert!(composer.current().compiled().source_starts().is_empty());
+
+        let source_edit = NetworkPatch::new([Edit::AddSource("source".into())]);
+        composer.register([Registration::new(
+            "start",
+            [],
+            0,
+            GraphOrigin::default(),
+            [Footprint::Source("source".into())],
+            source_edit,
+        )]).unwrap();
+        assert_eq!(composer.current().compiled().source_starts(), &[0]);
+        let bound = composer.current().compiled().bind("source", &contract).unwrap()
+            .output::<i64>("output").unwrap();
+        assert_eq!(bound.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert_eq!(composer.revoke("start").unwrap(), BTreeSet::from(["start".into()]));
+        assert!(composer.current().compiled().source_starts().is_empty());
+        assert_eq!(
+            bound.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().source_starts(),
+            composer.current().network().compile().unwrap().source_starts()
+        );
+
+        // Source add is not an eligible pruning operation. It must still
+        // compile and restore the correct automatic start after re-admission.
+        composer.register([Registration::new(
+            "restart",
+            [],
+            0,
+            GraphOrigin::default(),
+            [Footprint::Source("source".into())],
+            NetworkPatch::new([Edit::AddSource("source".into())]),
+        )]).unwrap();
+        assert_eq!(composer.current().compiled().source_starts(), &[0]);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::component::ComponentDef;
