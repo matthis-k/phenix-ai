@@ -445,6 +445,11 @@ fn compose(
                     .compiled
                     .reuse_after_root_connection_capacity_changes(&previous.network, &network)
             })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_removal(&previous.network, &network)
+            })
     }) {
         Some(compiled) => compiled,
         None => network.compile()?,
