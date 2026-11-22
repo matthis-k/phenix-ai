@@ -164,17 +164,22 @@ fn readiness_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
                 .is_none()
         );
         let notifier = session.notifier();
-        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
-            session.inject("input", Value::of(11_u64)).unwrap();
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(
-                session
-                    .failure()
-                    .map(phenix_graph::Failure::summary)
-                    .is_none()
-            );
-        });
+        verify_external_lock_order(
+            &probe,
+            observed,
+            move || notifier.notify(),
+            move || {
+                session.inject("input", Value::of(11_u64)).unwrap();
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert_eq!(session.state(), SessionState::Quiescent);
+                assert!(
+                    session
+                        .failure()
+                        .map(phenix_graph::Failure::summary)
+                        .is_none()
+                );
+            },
+        );
     }
 }
 
@@ -201,16 +206,21 @@ fn dispatcher_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         let mut session = simple_network(|| CompleteInput).start_with_options(options);
         session.inject("input", Value::of(17_u64)).unwrap();
         let notifier = session.notifier();
-        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(
-                session
-                    .failure()
-                    .map(phenix_graph::Failure::summary)
-                    .is_none()
-            );
-        });
+        verify_external_lock_order(
+            &probe,
+            observed,
+            move || notifier.notify(),
+            move || {
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert_eq!(session.state(), SessionState::Quiescent);
+                assert!(
+                    session
+                        .failure()
+                        .map(phenix_graph::Failure::summary)
+                        .is_none()
+                );
+            },
+        );
     }
 }
 
@@ -258,35 +268,40 @@ fn recovery_factory_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         let old_wake = session.wake_handle("worker").unwrap();
         let notifier = session.notifier();
 
-        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
-            assert!(session.cancel_request(cancelled).unwrap().is_empty());
-            assert_eq!(
-                session.request_status(cancelled).unwrap(),
-                RequestStatus::Cancelled
-            );
-            assert!(!old_wake.wake());
-            assert_eq!(spawned.load(Ordering::SeqCst), 2);
-            let fresh = session.begin_request(None).unwrap();
-            session
-                .inject_request(fresh, "input", Value::of(22_u64))
-                .unwrap();
-            session.close_request(fresh).unwrap();
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert!(session.wake_handle("worker").unwrap().wake());
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert_eq!(
-                session.request_status(fresh).unwrap(),
-                RequestStatus::Settled { captures: 0 }
-            );
-            session.release_request(cancelled).unwrap();
-            session.release_request(fresh).unwrap();
-            assert!(
+        verify_external_lock_order(
+            &probe,
+            observed,
+            move || notifier.notify(),
+            move || {
+                assert!(session.cancel_request(cancelled).unwrap().is_empty());
+                assert_eq!(
+                    session.request_status(cancelled).unwrap(),
+                    RequestStatus::Cancelled
+                );
+                assert!(!old_wake.wake());
+                assert_eq!(spawned.load(Ordering::SeqCst), 2);
+                let fresh = session.begin_request(None).unwrap();
                 session
-                    .failure()
-                    .map(phenix_graph::Failure::summary)
-                    .is_none()
-            );
-        });
+                    .inject_request(fresh, "input", Value::of(22_u64))
+                    .unwrap();
+                session.close_request(fresh).unwrap();
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert!(session.wake_handle("worker").unwrap().wake());
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert_eq!(
+                    session.request_status(fresh).unwrap(),
+                    RequestStatus::Settled { captures: 0 }
+                );
+                session.release_request(cancelled).unwrap();
+                session.release_request(fresh).unwrap();
+                assert!(
+                    session
+                        .failure()
+                        .map(phenix_graph::Failure::summary)
+                        .is_none()
+                );
+            },
+        );
     }
 }
 
@@ -303,12 +318,17 @@ fn targeted_process_notification_cannot_deadlock_with_external_readiness_mutex()
         );
         let mut session = simple_network(|| CompleteInput).start_with_options(options);
         let notifier = session.process_notifier("worker").unwrap();
-        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
-            session.inject("input", Value::of(23_u64)).unwrap();
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(session.failure().is_none());
-        });
+        verify_external_lock_order(
+            &probe,
+            observed,
+            move || notifier.notify(),
+            move || {
+                session.inject("input", Value::of(23_u64)).unwrap();
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert_eq!(session.state(), SessionState::Quiescent);
+                assert!(session.failure().is_none());
+            },
+        );
     }
 }
 
@@ -325,10 +345,15 @@ fn targeted_process_notification_cannot_deadlock_with_external_dispatcher_mutex(
         let mut session = simple_network(|| CompleteInput).start_with_options(options);
         session.inject("input", Value::of(29_u64)).unwrap();
         let notifier = session.process_notifier("worker").unwrap();
-        verify_external_lock_order(&probe, observed, move || notifier.notify(), move || {
-            assert_eq!(session.run_until_idle(16).steps, 1);
-            assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(session.failure().is_none());
-        });
+        verify_external_lock_order(
+            &probe,
+            observed,
+            move || notifier.notify(),
+            move || {
+                assert_eq!(session.run_until_idle(16).steps, 1);
+                assert_eq!(session.state(), SessionState::Quiescent);
+                assert!(session.failure().is_none());
+            },
+        );
     }
 }
