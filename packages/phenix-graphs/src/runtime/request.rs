@@ -521,18 +521,30 @@ impl NetworkSession {
         Ok(())
     }
     fn request_live(&self, id: RequestId) -> bool {
-        // Retain the conservative full active-owner check, but never ask
-        // for a request-local closure outside its registered reachability.
-        self.processes.iter().any(|p| p.request == Some(id))
-            || self.requests[&id]
+        // Every authenticated ingress and request-owned source records its
+        // physical downstream reachability before work can be admitted.
+        // Thus neither an active owner nor an unobserved scoped closure can
+        // exist outside this request's reachable processes.
+        let scope = &self.requests[&id];
+        scope
+            .reachable
+            .iter()
+            .any(|index| self.processes[*index].request == Some(id))
+            || scope
                 .reachable
                 .iter()
                 .any(|index| self.closure_obligation(*index, id))
-            || self
-                .transport
-                .queues()
-                .iter()
-                .any(|queue| queue.request_count(id) != 0)
+            || match self.request_queue_policy {
+                RequestQueuePolicy::SharedFifo => self
+                    .transport
+                    .queues()
+                    .iter()
+                    .any(|queue| queue.request_count(id) != 0),
+                RequestQueuePolicy::BoundedLanes => self.request_lanes[&scope.lane]
+                    .queues
+                    .iter()
+                    .any(|queue| self.transport.queues()[*queue].request_count(id) != 0),
+            }
     }
     /// Snapshot only; overdue jobs are applied by a supervision operation.
     pub fn request_work(&self, id: RequestId) -> Result<RequestWork, RequestError> {
