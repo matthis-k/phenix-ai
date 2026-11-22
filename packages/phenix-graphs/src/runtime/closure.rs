@@ -293,3 +293,51 @@ impl NetworkSession {
         }
     }
 }
+
+#[cfg(test)]
+mod closure_visited_tests {
+    use super::ClosureVisited;
+
+    #[test]
+    fn small_graph_walk_deduplicates_cycles_without_allocating() {
+        let mut seen = ClosureVisited::default();
+        for index in [8, 2, 4, 1, 9, 7, 11, 0, 13, 3, 14, 5, 6, 12, 15, 10] {
+            assert!(seen.insert(index, 128, true));
+            assert!(!seen.insert(index, 128, true));
+        }
+        assert!(matches!(seen, ClosureVisited::Small { len: 16, .. }));
+        assert!(!seen.insert(8, 128, false));
+    }
+
+    #[test]
+    fn dense_closure_relocation_remains_exact_across_promotion() {
+        let mut seen = ClosureVisited::default();
+        for index in (0..160).rev() {
+            assert!(seen.insert(index, 192, true));
+            assert!(!seen.insert(index, 192, true));
+        }
+        assert!(matches!(seen, ClosureVisited::Dense(_)));
+        for index in (0..160).rev() {
+            assert!(!seen.insert(index, 192, true));
+        }
+        for index in 160..192 {
+            assert!(seen.insert(index, 192, true));
+        }
+        assert!(!seen.insert(191, 192, true));
+    }
+
+    #[test]
+    fn sparse_closure_does_not_allocate_a_whole_physical_inventory() {
+        let mut seen = ClosureVisited::default();
+        let members: Vec<_> = (0..80).map(|n| n * 1000 + 19).collect();
+        for index in &members {
+            assert!(seen.insert(*index, 100_000, false));
+            assert!(!seen.insert(*index, 100_000, false));
+        }
+        assert!(matches!(seen, ClosureVisited::Sparse(_)));
+        for index in members {
+            assert!(!seen.insert(index, 100_000, false));
+        }
+        assert!(seen.insert(99_999, 100_000, false));
+    }
+}
