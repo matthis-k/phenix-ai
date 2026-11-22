@@ -67,7 +67,10 @@ fn network(staged: bool) -> CompiledNetwork {
             "join",
             Arc::new(
                 Interface::new(
-                    [PortDef::local::<i64>("left"), PortDef::local::<i64>("right")],
+                    [
+                        PortDef::local::<i64>("left"),
+                        PortDef::local::<i64>("right"),
+                    ],
                     [PortDef::local::<i64>("out")],
                 )
                 .unwrap(),
@@ -97,7 +100,9 @@ fn options(queue_policy: RequestQueuePolicy) -> SessionOptions {
         request_queue_policy: queue_policy,
         ..Default::default()
     };
-    options.readiness.insert("join".into(), Readiness::CorrelatedAll);
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
     options
 }
 
