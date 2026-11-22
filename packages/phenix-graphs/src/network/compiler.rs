@@ -1633,6 +1633,75 @@ mod batch_isolated_root_removal_tests {
     }
 
     #[test]
+    fn all_five_root_subsets_match_canonical_lowering() {
+        let (before, _) = fixture();
+        let old = before.compile().unwrap();
+        let names = ["b0", "b1", "b2", "b3", "b4"];
+        for mask in 0_u32..(1 << names.len()) {
+            let removed = mask.count_ones() as usize;
+            if removed < 2 {
+                continue;
+            }
+            let mut after = before.clone();
+            for (bit, name) in names.iter().enumerate() {
+                if mask & (1 << bit) != 0 {
+                    after.instances.remove(*name);
+                }
+            }
+            let incremental = old
+                .reuse_after_batch_isolated_root_removal(&before, &after)
+                .unwrap();
+            let canonical = after.compile().unwrap();
+            let actual_paths: Vec<_> = incremental.processes().iter().map(|p| p.path()).collect();
+            let expected_paths: Vec<_> = canonical.processes().iter().map(|p| p.path()).collect();
+            assert_eq!(actual_paths, expected_paths, "subset {mask:05b}");
+            assert_eq!(incremental.connections(), canonical.connections(), "subset {mask:05b}");
+            assert_eq!(incremental.source_starts(), canonical.source_starts(), "subset {mask:05b}");
+            assert_eq!(incremental.inputs(), canonical.inputs(), "subset {mask:05b}");
+            assert_eq!(incremental.outputs(), canonical.outputs(), "subset {mask:05b}");
+            assert_eq!(incremental.compile_work, canonical.compile_work, "subset {mask:05b}");
+            assert_eq!(incremental.compile_instances, canonical.compile_instances, "subset {mask:05b}");
+            assert_eq!(incremental.structural_reachability(), canonical.structural_reachability(), "subset {mask:05b}");
+            assert_eq!(incremental.structural_feedback_cycles(), canonical.structural_feedback_cycles(), "subset {mask:05b}");
+            for name in actual_paths {
+                let snapshot = incremental.inspect(name).unwrap();
+                let expected = canonical.inspect(name).unwrap();
+                assert_eq!(snapshot.physical_index, expected.physical_index, "subset {mask:05b} {name}");
+                assert_eq!(snapshot.definition_key, expected.definition_key, "subset {mask:05b} {name}");
+            }
+            assert!(!Arc::ptr_eq(&old.generation, &incremental.generation));
+            let mut session = incremental.start();
+            session.run_until_idle(64);
+            assert_eq!(
+                session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+                Some(&14),
+                "subset {mask:05b}"
+            );
+        }
+    }
+
+    #[test]
+    fn monotone_batch_removal_preserves_custom_compiler_limits() {
+        let (before, _) = fixture();
+        let limits = CompileLimits {
+            max_instances: 7,
+            ..CompileLimits::default()
+        };
+        let old = before.compile_with_limits(limits).unwrap();
+        let mut after = before.clone();
+        after.instances.remove("b1");
+        after.instances.remove("b3");
+        let incremental = old
+            .reuse_after_batch_isolated_root_removal(&before, &after)
+            .unwrap();
+        let canonical = after.compile_with_limits(limits).unwrap();
+        assert_eq!(incremental.compilation_limits, limits);
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        assert_eq!(incremental.connections(), canonical.connections());
+    }
+
+    #[test]
     fn rejects_mixed_declarations_exports_wiring_and_claimed_batches() {
         let (before, contract) = fixture();
         let old = before.compile().unwrap();
