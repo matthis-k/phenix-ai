@@ -249,9 +249,12 @@ impl Composition {
     }
 }
 
-/// Every update replays the base and selected plan. Failed updates retain both
-/// registry and published topology. No factories are invoked, and no external
-/// side-effect rollback is promised. Unwinding panics become `Panicked`.
+/// Every update validates a full candidate plan and issues a new compilation
+/// identity. An unchanged selected topology may reuse compiled lowering, but
+/// generation-bound handles are always invalidated on successful publication.
+/// Failed updates retain the previous registry, topology, and identity. No
+/// factories are invoked or external side-effect rollback promised. Panics are
+/// converted to `Panicked`.
 pub struct Composer {
     base: NetworkDef,
     registrations: BTreeMap<String, Registration>,
@@ -387,7 +390,12 @@ fn compose(
     if let Some(previous) = previous
         && plan.active == previous.active
     {
-        return Ok(previous.clone());
+        return Ok(Composition {
+            network: previous.network.clone(),
+            compiled: previous.compiled.with_fresh_generation(),
+            active: plan.active,
+            footprints: previous.footprints.clone(),
+        });
     }
     let mut network = replay::replay_selected(base, registrations, &plan)?;
     network
@@ -497,27 +505,24 @@ mod unchanged_selection_tests {
         )
     }
 
+    fn bound(composer: &Composer) -> crate::network::BoundOutput<i64> {
+        composer.current().compiled()
+            .bind("worker", &identity_contract()).unwrap()
+            .output::<i64>("output").unwrap()
+    }
+
     #[test]
-    fn shadowed_admission_revocation_and_absent_revoke_keep_generation_handles() {
+    fn shadowed_admission_and_revocation_refresh_handle_identity() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
         composer
             .register([registration("winner", 10, add("worker"))])
             .unwrap();
-        let handle = composer
-            .current()
-            .compiled()
-            .bind("worker", &identity_contract())
-            .unwrap()
-            .output::<i64>("output")
-            .unwrap();
-        assert_eq!(
-            handle.resolve(composer.current().compiled()),
-            Ok((0, "output"))
-        );
+        let previous = bound(&composer);
 
         composer
             .register([registration("loser", 0, add("worker"))])
             .unwrap();
+        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
         assert_eq!(
             composer.current().active(),
             &BTreeSet::from(["winner".into()])
@@ -526,29 +531,18 @@ mod unchanged_selection_tests {
             composer.current().footprints()["winner"],
             BTreeSet::from([Footprint::Component("worker".into())])
         );
-        assert_eq!(
-            handle.resolve(composer.current().compiled()),
-            Ok((0, "output"))
-        );
+        let previous = bound(&composer);
         assert_eq!(
             composer.revoke("loser").unwrap(),
             BTreeSet::from(["loser".into()])
         );
-        assert_eq!(
-            handle.resolve(composer.current().compiled()),
-            Ok((0, "output"))
-        );
+        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        let previous = bound(&composer);
         assert!(composer.revoke("missing").unwrap().is_empty());
-        assert_eq!(
-            handle.resolve(composer.current().compiled()),
-            Ok((0, "output"))
-        );
-
+        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        let previous = bound(&composer);
         composer.revoke("winner").unwrap();
-        assert_eq!(
-            handle.resolve(composer.current().compiled()),
-            Err(NetworkError::ForeignScope)
-        );
+        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
         assert!(composer.current().active().is_empty());
     }
 
@@ -579,6 +573,10 @@ mod unchanged_selection_tests {
             Ok((0, "output"))
         );
         assert!(composer.revoke("bad").unwrap().is_empty());
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         // Duplicate registrations must still be rejected before planning.
         assert_eq!(
             composer
