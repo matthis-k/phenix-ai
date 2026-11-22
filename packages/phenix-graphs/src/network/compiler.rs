@@ -327,42 +327,58 @@ impl CompiledNetwork {
             || !definition.claims().is_empty()
             || before.replacement_points.contains(name)
             || before.sources.contains(name)
-            || before.requirements.iter().any(|(path, _)| {
-                path.split('/').next() == Some(name.as_str())
-            })
-            || before.connections.iter().any(|edge| {
-                edge.from.process == *name || edge.to.process == *name
-            })
+            || before
+                .requirements
+                .iter()
+                .any(|(path, _)| path.split('/').next() == Some(name.as_str()))
+            || before
+                .connections
+                .iter()
+                .any(|edge| edge.from.process == *name || edge.to.process == *name)
             || before.inputs.values().any(|projection| {
-                projection.targets.iter().any(|target| target.process == *name)
+                projection
+                    .targets
+                    .iter()
+                    .any(|target| target.process == *name)
             })
-            || before.outputs.values().any(|source| source.process == *name)
+            || before
+                .outputs
+                .values()
+                .any(|source| source.process == *name)
         {
             return None;
         }
         let removed_index = self.inspections.get(name)?.physical_index?;
-        if self.processes.get(removed_index)?.path != *name
-            || !self.boundaries.contains_key(name)
-        {
+        if self.processes.get(removed_index)?.path != *name || !self.boundaries.contains_key(name) {
             return None;
         }
         // Every compiled reference outside the removed declaration must
         // survive reindexing; never silently redirect a former endpoint.
         if self.sources.contains(&removed_index)
-            || self.connections.iter().any(|edge| {
-                edge.from.0 == removed_index || edge.to.0 == removed_index
-            })
-            || self.inputs.values().flatten().any(|(index, _)| {
-                *index == removed_index
-            })
-            || self.outputs.values().any(|(index, _)| *index == removed_index)
+            || self
+                .connections
+                .iter()
+                .any(|edge| edge.from.0 == removed_index || edge.to.0 == removed_index)
+            || self
+                .inputs
+                .values()
+                .flatten()
+                .any(|(index, _)| *index == removed_index)
+            || self
+                .outputs
+                .values()
+                .any(|(index, _)| *index == removed_index)
             || self.boundaries.iter().any(|(path, boundary)| {
                 path != name
-                    && (boundary.inputs.values().flatten().any(|(index, _)| {
-                        *index == removed_index
-                    }) || boundary.outputs.values().any(|(index, _)| {
-                        *index == removed_index
-                    }))
+                    && (boundary
+                        .inputs
+                        .values()
+                        .flatten()
+                        .any(|(index, _)| *index == removed_index)
+                        || boundary
+                            .outputs
+                            .values()
+                            .any(|(index, _)| *index == removed_index))
             })
         {
             return None;
@@ -408,7 +424,6 @@ impl CompiledNetwork {
         }
         Some(compiled)
     }
-
 }
 
 /// These fixed fields are verified before any incremental reuse; changing
@@ -758,7 +773,6 @@ impl Compiler {
     }
 }
 
-
 #[cfg(test)]
 mod isolated_root_removal_tests {
     use super::*;
@@ -818,23 +832,45 @@ mod isolated_root_removal_tests {
             .unwrap();
         let mut after = before.clone();
         after.instances.remove("middle");
-        let incremental = old.reuse_after_isolated_root_removal(&before, &after).unwrap();
+        let incremental = old
+            .reuse_after_isolated_root_removal(&before, &after)
+            .unwrap();
         let canonical = after.compile().unwrap();
         assert_eq!(incremental.processes().len(), 2);
-        assert!(matches!(incremental.inspect("middle"), Err(NetworkError::UnknownProcess(_))));
-        assert_eq!(incremental.inspect("omega").unwrap().physical_index, Some(1));
+        assert!(matches!(
+            incremental.inspect("middle"),
+            Err(NetworkError::UnknownProcess(_))
+        ));
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(1)
+        );
         assert_eq!(incremental.connections(), canonical.connections());
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
-        assert_eq!(incremental.structural_reachability(), canonical.structural_reachability());
-        assert_eq!(incremental.structural_feedback_cycles(), canonical.structural_feedback_cycles());
-        assert_eq!(old_handle.resolve(&incremental), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
+        assert_eq!(
+            old_handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
         assert!(!Arc::ptr_eq(&old.generation, &incremental.generation));
         let mut session = incremental.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
     }
@@ -846,15 +882,25 @@ mod isolated_root_removal_tests {
         let mut after = before.clone();
         after.instances.remove("middle");
         after.connections.clear();
-        assert!(old.reuse_after_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         after = before.clone();
         after.instances.remove("middle");
         after.instances.insert(
             "omega".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n * 3).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_isolated_root_removal(&before, &after).is_none());
+        assert!(
+            old.reuse_after_isolated_root_removal(&before, &after)
+                .is_none()
+        );
 
         let mut connected = before.clone();
         connected.connections.push(ConnectionDef {
@@ -869,18 +915,28 @@ mod isolated_root_removal_tests {
         let connected_before = connected.clone();
         connected.instances.remove("middle");
         assert!(
-            compiled.reuse_after_isolated_root_removal(&connected_before, &connected).is_none()
+            compiled
+                .reuse_after_isolated_root_removal(&connected_before, &connected)
+                .is_none()
         );
 
         let mut claimed = before.clone();
         claimed.instances.insert(
             "middle".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
         let compiled = claimed.compile().unwrap();
         let mut removed = claimed.clone();
         removed.instances.remove("middle");
-        assert!(compiled.reuse_after_isolated_root_removal(&claimed, &removed).is_none());
+        assert!(
+            compiled
+                .reuse_after_isolated_root_removal(&claimed, &removed)
+                .is_none()
+        );
 
         let mut obligated = before.clone();
         obligated.requirements.push(("middle".into(), contract));
@@ -890,7 +946,8 @@ mod isolated_root_removal_tests {
     }
 
     #[test]
-    fn composer_add_and_revoke_isolated_middle_node_preserves_other_bindings_only_in_same_generation() {
+    fn composer_add_and_revoke_isolated_middle_node_preserves_other_bindings_only_in_same_generation()
+     {
         let (base, contract) = fixture(false);
         let mut composer = Composer::new(base).unwrap();
         let patch = NetworkPatch::new([Edit::Add {
@@ -908,22 +965,62 @@ mod isolated_root_removal_tests {
             )
         };
         composer.register([contribution("orphan")]).unwrap();
-        assert_eq!(composer.current().compiled().inspect("omega").unwrap().physical_index, Some(2));
-        let previous = composer.current().compiled().bind("omega", &contract)
-            .unwrap().output::<i64>("output").unwrap();
-        assert_eq!(composer.revoke("orphan").unwrap(), BTreeSet::from(["orphan".into()]));
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("omega")
+                .unwrap()
+                .physical_index,
+            Some(2)
+        );
+        let previous = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            composer.revoke("orphan").unwrap(),
+            BTreeSet::from(["orphan".into()])
+        );
         assert!(matches!(
             composer.current().compiled().inspect("middle"),
             Err(NetworkError::UnknownProcess(_))
         ));
-        assert_eq!(composer.current().compiled().inspect("omega").unwrap().physical_index, Some(1));
-        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("omega")
+                .unwrap()
+                .physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         assert_eq!(
             composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections()
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
         );
         composer.register([contribution("new-orphan")]).unwrap();
-        assert_eq!(composer.current().compiled().inspect("omega").unwrap().physical_index, Some(2));
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("omega")
+                .unwrap()
+                .physical_index,
+            Some(2)
+        );
     }
 }
 
