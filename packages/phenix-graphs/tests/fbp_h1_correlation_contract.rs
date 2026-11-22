@@ -126,7 +126,7 @@ fn crossed_multiplicity_preserves_request_local_fifo_and_settles_both_scopes() {
         // Left A,A,B,B crosses right B,B,A,A. Every admission is bounded:
         // capacity 8, two admitted scopes, no hidden holding queue.
         for (id, port, value) in [
-            (a, "left", 10),
+            (a, "left", 10_i64),
             (a, "left", 11),
             (b, "right", 2),
             (b, "right", 3),
