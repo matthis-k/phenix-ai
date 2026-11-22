@@ -388,9 +388,9 @@ fn compose(
     //
     // Run the complete planner first: even a losing or empty registration may
     // be unauthorized, cyclic, or make global selection ambiguous. Publish the
-    // *new* active manifest and exact footprints, but retain the prior compiled
-    // generation so generation-bound handles remain valid for identical
-    // topology. Every genuine selected write-set change still recompiles.
+    // *new* active manifest and exact footprints with a fresh generation
+    // identity, so old bound handles become stale even when the topology is
+    // unchanged. Every genuine selected write-set change still recompiles.
     if let Some(previous) = previous {
         let before: BTreeSet<&str> = previous
             .footprints
@@ -524,9 +524,13 @@ mod unchanged_selection_tests {
     }
 
     fn bound(composer: &Composer) -> crate::network::BoundOutput<i64> {
-        composer.current().compiled()
-            .bind("worker", &identity_contract()).unwrap()
-            .output::<i64>("output").unwrap()
+        composer
+            .current()
+            .compiled()
+            .bind("worker", &identity_contract())
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap()
     }
 
     #[test]
@@ -540,7 +544,10 @@ mod unchanged_selection_tests {
         composer
             .register([registration("loser", 0, add("worker"))])
             .unwrap();
-        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         assert_eq!(
             composer.current().active(),
             &BTreeSet::from(["winner".into()])
@@ -554,13 +561,22 @@ mod unchanged_selection_tests {
             composer.revoke("loser").unwrap(),
             BTreeSet::from(["loser".into()])
         );
-        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         let previous = bound(&composer);
         assert!(composer.revoke("missing").unwrap().is_empty());
-        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         let previous = bound(&composer);
         composer.revoke("winner").unwrap();
-        assert_eq!(previous.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            previous.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         assert!(composer.current().active().is_empty());
     }
 
