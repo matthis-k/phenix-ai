@@ -694,7 +694,7 @@ mod conflict_index_tests {
 
     #[test]
     fn root_and_nested_footprints_never_alias_and_nested_endpoint_equality_counts() {
-        let registrations = BTreeMap::from([
+        let registrations: BTreeMap<String, Registration> = BTreeMap::from([
             (
                 "a".into(),
                 registration(
@@ -724,7 +724,7 @@ mod conflict_index_tests {
             .collect();
         assert!(conflict_candidates(&registrations, &order, &footprints).is_empty());
 
-        let registrations = BTreeMap::from([
+        let registrations: BTreeMap<String, Registration> = BTreeMap::from([
             (
                 "a".into(),
                 registration(
