@@ -289,6 +289,15 @@ pub struct PhysicalDeclaration {
     pub index: usize,
 }
 impl CompiledNetwork {
+    /// Reuse a fully validated immutable topology while preserving the rule
+    /// that every successful publication owns a fresh binding authority.
+    /// Old bound handles may only resolve against the prior generation.
+    pub(crate) fn with_fresh_generation(&self) -> Self {
+        let mut compiled = self.clone();
+        compiled.generation = Arc::new(());
+        compiled
+    }
+
     /// Clone this generation, retaining host code/resources in every executable
     /// factory, spawned process, and session value. Existing clones are unchanged.
     pub fn with_lease(&self, lease: Arc<dyn Send + Sync>) -> Self {
