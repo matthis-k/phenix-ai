@@ -233,6 +233,15 @@ impl FlatConnection {
         self.capacity
     }
 }
+/// Read-only structural reachability, not proof of runtime execution,
+/// fairness or deadlock. Declared starts can be disabled by session options;
+/// public ingress can remain unused, and hosts can provide other wake paths.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StructuralReachability {
+    pub from_public_ingress: BTreeSet<String>,
+    pub from_declared_starts: BTreeSet<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct CompiledNetwork {
     pub(crate) interface: Arc<Interface>,
@@ -353,5 +362,47 @@ impl CompiledNetwork {
                     .collect()
             })
             .collect()
+    }
+
+    /// Which physical processes have a *topological path* from a declared
+    /// source start or a public root input. Does not inspect pending packets,
+    /// callbacks, readiness, blocked queues or actual SessionOptions.
+    ///
+    /// A feedback SCC absent from both sets has no path from these two
+    /// declaration roots; that is an actionable wiring observation, not a
+    /// universal assertion that the SCC cannot be woken or make progress.
+    /// Uses one iterative graph traversal per root category.
+    pub fn structural_reachability(&self) -> StructuralReachability {
+        let mut downstream = vec![Vec::new(); self.processes.len()];
+        for connection in &self.connections {
+            downstream[connection.from.0].push(connection.to.0);
+        }
+        let reachable = |roots: Vec<usize>| {
+            let mut visited = vec![false; self.processes.len()];
+            let mut pending = roots;
+            while let Some(index) = pending.pop() {
+                if visited[index] {
+                    continue;
+                }
+                visited[index] = true;
+                pending.extend(downstream[index].iter().copied());
+            }
+            visited
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, seen)| {
+                    seen.then(|| self.processes[index].path.clone())
+                })
+                .collect()
+        };
+        StructuralReachability {
+            from_public_ingress: reachable(
+                self.inputs
+                    .values()
+                    .flat_map(|targets| targets.iter().map(|(index, _)| *index))
+                    .collect(),
+            ),
+            from_declared_starts: reachable(self.sources.clone()),
+        }
     }
 }
