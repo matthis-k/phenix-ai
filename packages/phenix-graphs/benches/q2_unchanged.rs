@@ -11,21 +11,25 @@ fn fixture<const N: usize>() -> Composer {
     let mut builder = NetworkBuilder::new();
     let original = Arc::new(ComponentDef::map(|n: i64| n));
     for i in 0..N {
-        builder.add(format!("node{i:04}"), original.clone()).unwrap();
+        builder
+            .add(format!("node{i:04}"), original.clone())
+            .unwrap();
     }
     let mut composer = Composer::new(builder.build().unwrap()).unwrap();
     let patch = NetworkPatch::new([Edit::Replace {
         path: "node0000".into(),
         definition: Arc::new(ComponentDef::map(|n: i64| n + 1)),
     }]);
-    composer.register([Registration::new(
-        "winner",
-        [],
-        10,
-        GraphOrigin::default(),
-        patch.footprints(),
-        patch,
-    )]).unwrap();
+    composer
+        .register([Registration::new(
+            "winner",
+            [],
+            10,
+            GraphOrigin::default(),
+            patch.footprints(),
+            patch,
+        )])
+        .unwrap();
     composer
 }
 
@@ -34,14 +38,16 @@ fn shadowed_update(composer: &mut Composer) {
         path: "node0000".into(),
         definition: Arc::new(ComponentDef::map(|n: i64| n + 2)),
     }]);
-    composer.register([Registration::new(
-        "shadowed",
-        [],
-        0,
-        GraphOrigin::default(),
-        [Footprint::Component("node0000".into())],
-        patch,
-    )]).unwrap();
+    composer
+        .register([Registration::new(
+            "shadowed",
+            [],
+            0,
+            GraphOrigin::default(),
+            [Footprint::Component("node0000".into())],
+            patch,
+        )])
+        .unwrap();
     assert_eq!(composer.current().active().len(), 1);
     let removed = composer.revoke("shadowed").unwrap();
     assert_eq!(removed.len(), 1);
@@ -68,11 +74,16 @@ fn measure<const N: usize>() {
     }
     println!("compose_q2_shadowed{N}_admit_revoke: samples_us={samples:?}");
     samples.sort_unstable();
-    println!("compose_q2_shadowed{N}_admit_revoke: median_us={}", samples[3]);
+    println!(
+        "compose_q2_shadowed{N}_admit_revoke: median_us={}",
+        samples[3]
+    );
 }
 
 fn main() {
-    println!("q2_shadowed: warmup=2x8 samples=7x8; each sample excludes base fixture; no allocator/RSS instrumentation");
+    println!(
+        "q2_shadowed: warmup=2x8 samples=7x8; each sample excludes base fixture; no allocator/RSS instrumentation"
+    );
     measure::<16>();
     measure::<64>();
     measure::<128>();
