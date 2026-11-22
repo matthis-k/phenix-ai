@@ -323,3 +323,67 @@ fn full_queues_report_backpressure_without_silent_eviction_or_extra_buffers() {
         assert!(session.failure().is_none(), "{policy:?}");
     }
 }
+
+#[test]
+fn all_24_two_request_two_port_admission_orders_preserve_exact_pairing() {
+    // Enumerate every arrival permutation, not just the representative
+    // crossed fixture. This is finite admission-order coverage, not a
+    // proof about arbitrary worker timing or infinite request arrivals.
+    const EVENTS: [(bool, &str, i64); 4] = [
+        (true, "left", 10),
+        (true, "right", 1),
+        (false, "left", 20),
+        (false, "right", 2),
+    ];
+    let compiled = network(false);
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let mut schedules = 0;
+        for first in 0..4 {
+            for second in 0..4 {
+                for third in 0..4 {
+                    for fourth in 0..4 {
+                        let order = [first, second, third, fourth];
+                        if order[0] == order[1]
+                            || order[0] == order[2]
+                            || order[0] == order[3]
+                            || order[1] == order[2]
+                            || order[1] == order[3]
+                            || order[2] == order[3]
+                        {
+                            continue;
+                        }
+                        schedules += 1;
+                        let mut session = compiled.start_with_options(options(policy));
+                        let a = session.begin_request(None).unwrap();
+                        let b = session.begin_request(None).unwrap();
+                        for index in order {
+                            let (is_a, port, value) = EVENTS[index];
+                            let request = if is_a { a } else { b };
+                            session
+                                .inject_request_local(request, port, value)
+                                .unwrap();
+                        }
+                        session.close_request(a).unwrap();
+                        session.close_request(b).unwrap();
+                        let report = session.run_until_idle(16);
+                        assert!(!report.budget_exhausted, "{policy:?} {order:?}");
+                        assert_eq!(captured(&mut session, a), [11], "{policy:?} {order:?}");
+                        assert_eq!(captured(&mut session, b), [22], "{policy:?} {order:?}");
+                        for request in [a, b] {
+                            assert_eq!(
+                                session.request_status(request).unwrap(),
+                                RequestStatus::Settled { captures: 1 }
+                            );
+                            session.release_request(request).unwrap();
+                        }
+                        assert!(session.failure().is_none(), "{policy:?} {order:?}");
+                    }
+                }
+            }
+        }
+        assert_eq!(schedules, 24);
+    }
+}
