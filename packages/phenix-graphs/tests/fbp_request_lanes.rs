@@ -889,11 +889,11 @@ fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_poli
         });
         let a = session.begin_request(None).unwrap();
         let b = session.begin_request(None).unwrap();
-        session.inject_request_local(a, "input", 7_i64).unwrap();
+        session.inject_request(a, "input", Value::of(7_i64)).unwrap();
         session.close_request(a).unwrap();
         assert_eq!(session.run_until_idle(16).steps, 1);
         assert_eq!(session.request_work(a).unwrap().waiting_wake, 1);
-        session.inject_request_local(b, "input", 8_i64).unwrap();
+        session.inject_request(b, "input", Value::of(8_i64)).unwrap();
         session.close_request(b).unwrap();
         let a_work = session.request_work(a).unwrap();
         let b_work = session.request_work(b).unwrap();
