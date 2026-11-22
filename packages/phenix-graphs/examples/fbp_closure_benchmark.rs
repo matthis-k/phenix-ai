@@ -192,11 +192,7 @@ fn readiness_options(mode: &str, breadth: usize) -> phenix_graph::runtime::Sessi
 /// Mixed H5/H6 stress: four authenticated sealed scopes coexist throughout
 /// each batch, all with packet-backed roots and request-local Optional
 /// closure obligations. No synthetic closures or manually mutated transport.
-fn measure_overlapping(
-    mode: &str,
-    breadth: usize,
-    iterations: usize,
-) -> (f64, f64, f64, f64) {
+fn measure_overlapping(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64) {
     const ACTIVE: usize = 4;
     let hits = Arc::new(AtomicUsize::new(0));
     let built = Instant::now();
