@@ -54,6 +54,9 @@ pub enum Readiness {
     /// Opt-in request-scoped join. Selects the earliest packet of one request
     /// from each bounded input queue, even behind another request's head.
     /// Preserves order within each request, not global cross-request FIFO.
+    /// An exact WaitInput continuation owned by this policy may also skip
+    /// foreign heads for its next authenticated request packet. It does not
+    /// change head-only staged waits under other readiness policies.
     /// Unscoped packets remain strictly head-only.
     CorrelatedAll,
     AtLeast(NonZeroUsize),
