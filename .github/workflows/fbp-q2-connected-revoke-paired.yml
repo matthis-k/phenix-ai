@@ -23,7 +23,7 @@ jobs:
       - name: Paired production Composer control and Q2 connected root primitive revocation
         env:
           CONTROL: 13dddcc85528525ad57a51b68153c927763e64c2
-          OPTIMIZED: 7f9d42266f8524582929a7dc277706b7b4285723
+          OPTIMIZED: ddf5592897e09d9f60cbbfc746cbbcffcff2326c
         shell: bash
         run: |
           set -euo pipefail
