@@ -273,7 +273,11 @@ impl NetworkSession {
                 }
             }
         }
-        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+        // CorrelatedAll opts in to cross-request head skipping, so an always
+        // ready older request must not permanently win on input queue order.
+        // Reuse the existing bounded active-lane cursor rather than adding a
+        // second request queue or disturbing ordinary SharedFifo policies.
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes || correlated {
             candidates.sort_by_key(|request| {
                 request.map_or(self.max_requests, |id| self.requests[&id].lane)
             });
@@ -511,7 +515,12 @@ impl NetworkSession {
         }
         let request = selected.request;
         self.processes[index].request = request;
-        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+        if self.request_queue_policy == RequestQueuePolicy::BoundedLanes
+            || matches!(
+                self.processes[index].waiting_policy.as_ref().unwrap_or(&self.processes[index].policy),
+                Readiness::CorrelatedAll
+            )
+        {
             self.request_cursors
                 .insert(index, request.map_or(0, |id| self.requests[&id].lane + 1));
         }
