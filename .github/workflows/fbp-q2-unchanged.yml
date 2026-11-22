@@ -1,0 +1,46 @@
+name: "FBP Q2 Unchanged Selection"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/benches/q2_unchanged.rs"
+      - "packages/phenix-graphs/Cargo.toml"
+      - ".github/workflows/fbp-q2-unchanged.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  q2-unchanged:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Record source and runner
+        run: |
+          mkdir -p artifacts
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "workflow_commit=$GITHUB_SHA"
+            date -u +%FT%TZ
+            lscpu | grep -E '^(Architecture|CPU\\(s\\)|Model name|CPU max MHz|CPU min MHz):' || true
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          cat artifacts/environment.txt
+      - name: Three independent release-mode repetitions
+        run: |
+          set -euo pipefail
+          for repetition in 1 2 3; do
+            nix develop --command cargo bench --locked -q -p phenix-graph --bench q2_unchanged > "artifacts/q2-${repetition}.txt"
+            cat "artifacts/q2-${repetition}.txt"
+          done
+      - name: Upload raw benchmark samples
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: q2-unchanged-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: error
