@@ -199,6 +199,11 @@ pub struct RequestWork {
     /// retained, uncommitted publications. Passive snapshot only: the host
     /// must consume or explicitly dispose buffered captures to free capacity.
     pub capture_backpressure: usize,
+    /// Number of physical processes currently owned by a *different* request
+    /// with at least one buffered input belonging to this request. A passive
+    /// lower bound on shared-process single-flight obstruction, not a general
+    /// progress/fairness guarantee. No readiness callbacks are evaluated.
+    pub single_flight_blockers: usize,
     /// Bounded all-optional closure obligations registered by admitted roots.
     pub closure_pending: usize,
 }
@@ -557,14 +562,38 @@ impl NetworkSession {
             })
             .collect();
         work.capture_backpressure = blocked_captures.len();
-        for p in self.processes.iter().filter(|p| p.request == Some(id)) {
-            match p.handoff.state() {
-                HandoffState::Ready => work.ready += 1,
-                HandoffState::Dispatched => work.dispatched += 1,
-                HandoffState::WaitingInput => work.waiting_input += 1,
-                HandoffState::WaitingWake => work.waiting_wake += 1,
-                HandoffState::PublicationPending => work.publication_pending += 1,
-                _ => {}
+        // A request may have accepted input but cannot begin an activation
+        // while the same stateful process executes another request. Report
+        // only witnessed packets, never a guessed upstream closure dependency.
+        // SharedFifo and BoundedLanes have different physical input queues.
+        let lane = self.requests[&id].lane;
+        for (index, p) in self.processes.iter().enumerate() {
+            if p.request == Some(id) {
+                match p.handoff.state() {
+                    HandoffState::Ready => work.ready += 1,
+                    HandoffState::Dispatched => work.dispatched += 1,
+                    HandoffState::WaitingInput => work.waiting_input += 1,
+                    HandoffState::WaitingWake => work.waiting_wake += 1,
+                    HandoffState::PublicationPending => work.publication_pending += 1,
+                    _ => {}
+                }
+            } else if p.request.is_some()
+                && p.inputs.iter().enumerate().any(|(port, input)| {
+                    let queues = if self.request_queue_policy == RequestQueuePolicy::BoundedLanes {
+                        self.request_lanes[&lane]
+                            .input_ports
+                            .get(&(index, port))
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[])
+                    } else {
+                        input.queues.as_slice()
+                    };
+                    queues
+                        .iter()
+                        .any(|queue| self.transport.queues()[*queue].request_count(id) != 0)
+                })
+            {
+                work.single_flight_blockers += 1;
             }
         }
         Ok(work)
