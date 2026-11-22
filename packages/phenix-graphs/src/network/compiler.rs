@@ -819,7 +819,7 @@ impl CompiledNetwork {
                 .values()
                 .any(|(index, _)| *index == removed_index)
             || self.boundaries.iter().any(|(path, boundary)| {
-                path != name
+                path != &name
                     && (boundary
                         .inputs
                         .values()
