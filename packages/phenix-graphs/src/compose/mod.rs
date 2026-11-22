@@ -674,7 +674,7 @@ mod unchanged_selection_tests {
             old.resolve(composer.current().compiled()),
             Ok((0, "output"))
         );
-        assert_eq!(composer.current().active(), &BTreeSet::from(["writer".into()));
+        assert_eq!(composer.current().active(), &BTreeSet::from(["writer".into()]));
         assert!(composer.revoke("empty").is_err());
 
         composer.set_selection_limits(SelectionLimits::default());
