@@ -54,7 +54,10 @@ fn fixture<const N: usize>() -> Composer {
             patch,
         )])
         .unwrap();
-    assert_eq!(composer.current().compiled().processes().len(), N + 2 + BATCH);
+    assert_eq!(
+        composer.current().compiled().processes().len(),
+        N + 2 + BATCH
+    );
     composer
 }
 
