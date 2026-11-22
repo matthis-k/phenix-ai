@@ -845,7 +845,6 @@ fn admission_recycles_lowest_free_correlation_lane_for_both_queue_policies() {
     }
 }
 
-
 #[test]
 fn shared_fifo_correlated_all_round_robins_continuously_ready_requests() {
     use phenix_graph::ComponentDef;
@@ -914,4 +913,3 @@ fn shared_fifo_correlated_all_round_robins_continuously_ready_requests() {
         assert!(session.failure().is_none());
     }
 }
-
