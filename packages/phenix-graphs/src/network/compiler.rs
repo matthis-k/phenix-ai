@@ -39,16 +39,7 @@ impl CompiledNetwork {
         after: &NetworkDef,
     ) -> Option<Self> {
         if after.sources.len() >= before.sources.len()
-            || before.interface != after.interface
-            || before.connections != after.connections
-            || before.inputs != after.inputs
-            || before.outputs != after.outputs
-            || before.claims != after.claims
-            || before.origin != after.origin
-            || before.requirements != after.requirements
-            || before.replacement_points != after.replacement_points
-            || before.extensions_allowed != after.extensions_allowed
-            || before.instances.len() != after.instances.len()
+            || !same_compilation_scope(before, after)
         {
             return None;
         }
@@ -101,6 +92,85 @@ impl CompiledNetwork {
             .retain(|index| !removed_indices.contains(index));
         Some(compiled)
     }
+
+    /// A changed selected root primitive does not require graph flattening
+    /// if *every* other structural field is identical, the port interface and
+    /// semantic claims are unchanged, and the replacement remains primitive.
+    /// Patch only affected physical factories and authoritative declarations.
+    /// No handler is spawned and no old generation binding is transferable.
+    pub(crate) fn reuse_after_root_primitive_replacements(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if before.sources != after.sources || !same_compilation_scope(before, after) {
+            return None;
+        }
+        let mut replacements = Vec::new();
+        for (path, old) in &before.instances {
+            let new = after.instances.get(path)?;
+            if old.definition_key() == new.definition_key()
+                && old.interface() == new.interface()
+                && old.claims() == new.claims()
+                && old.origin() == new.origin()
+            {
+                continue;
+            }
+            // Primitive replacement preserves physical indexing, all port
+            // identities, and the complete contract catalog. Nested modules,
+            // altered claims, and changed interfaces still compile normally.
+            if old.interface() != new.interface() || old.claims() != new.claims() {
+                return None;
+            }
+            if !matches!(old.body(), Body::Primitive(_)) {
+                return None;
+            }
+            let Body::Primitive(factory) = new.body() else {
+                return None;
+            };
+            let index = self.inspections.get(path)?.physical_index?;
+            if self.processes.get(index)?.path != *path {
+                return None;
+            }
+            replacements.push((path.as_str(), new.as_ref(), index, factory.clone()));
+        }
+        if replacements.is_empty() {
+            return None;
+        }
+        let mut compiled = self.with_fresh_generation();
+        for (path, definition, index, factory) in replacements {
+            let process = compiled.processes.get_mut(index)?;
+            process.factory = factory;
+            process.interface = definition.interface().clone();
+            process.origin = definition
+                .origin()
+                .cloned()
+                .or_else(|| after.origin.clone());
+            let declaration = compiled.inspections.get_mut(path)?;
+            declaration.interface = definition.interface().clone();
+            declaration.claims = definition.claims().to_vec();
+            declaration.origin = process.origin.clone();
+            declaration.declared_origin = definition.origin().cloned();
+            declaration.definition_key = Some(definition.definition_key());
+        }
+        Some(compiled)
+    }
+}
+
+/// Structural fields that compilation treats as immutable across both safe
+/// incremental cases. A changed contract obligation, connection, export or
+/// host-authorized extension seam always forces the full compiler.
+fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
+    before.interface == after.interface
+        && before.connections == after.connections
+        && before.inputs == after.inputs
+        && before.outputs == after.outputs
+        && before.claims == after.claims
+        && before.origin == after.origin
+        && before.requirements == after.requirements
+        && before.replacement_points == after.replacement_points
+        && before.extensions_allowed == after.extensions_allowed
+        && before.instances.len() == after.instances.len()
 }
 
 type PhysicalPort = (String, String);
