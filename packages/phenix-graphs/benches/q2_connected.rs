@@ -5,7 +5,7 @@ use phenix_graph::{
     compose::{Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration},
     network::{ConnectionDef, NetworkBuilder, PortPath},
 };
-use std::{hint::black_box, sync::Arc, num::NonZeroUsize, time::Instant};
+use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
 fn edge(from: &str, to: &str) -> ConnectionDef {
     ConnectionDef {
@@ -50,14 +50,8 @@ fn fixture<const N: usize>() -> (Composer, Registration) {
         GraphOrigin::default(),
         [
             Footprint::Component("middle".into()),
-            Footprint::Connection(ConnectionKey::new(
-                from.from.clone(),
-                from.to.clone(),
-            )),
-            Footprint::Connection(ConnectionKey::new(
-                to.from.clone(),
-                to.to.clone(),
-            )),
+            Footprint::Connection(ConnectionKey::new(from.from.clone(), from.to.clone())),
+            Footprint::Connection(ConnectionKey::new(to.from.clone(), to.to.clone())),
         ],
         NetworkPatch::new([
             Edit::Add {
