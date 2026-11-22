@@ -23,7 +23,7 @@ jobs:
       - name: Paired production Composer control and Q2 batch isolated removal
         env:
           CONTROL: b7c917ac78de23ae8741f5a73ee45be2c0314be0
-          OPTIMIZED: 3fb8148ef274536562b6170d2d8e8456376d28cf
+          OPTIMIZED: a6fcead63f249f21608dd124332f1461c42b3875
         shell: bash
         run: |
           set -euo pipefail
