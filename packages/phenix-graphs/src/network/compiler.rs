@@ -777,7 +777,6 @@ impl CompiledNetwork {
         self.compile_work -= removed_work;
         self.compile_instances -= 1;
     }
-
 }
 
 /// These fixed fields are verified before any incremental reuse; changing
@@ -2108,7 +2107,6 @@ mod connected_root_revocation_tests {
                 .borrow::<i64>(),
             Some(&21)
         );
-
     }
 
     #[test]
@@ -2147,15 +2145,36 @@ mod connected_root_revocation_tests {
                 .unwrap();
             composer.register([registration]).unwrap();
             let canonical = composer.current().network().compile().unwrap();
-            assert_eq!(composer.current().compiled().connections(), canonical.connections());
-            assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
-            assert_eq!(composer.current().compiled().compile_instances, canonical.compile_instances);
-            assert_eq!(old.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+            assert_eq!(
+                composer.current().compiled().connections(),
+                canonical.connections()
+            );
+            assert_eq!(
+                composer.current().compiled().compile_work,
+                canonical.compile_work
+            );
+            assert_eq!(
+                composer.current().compiled().compile_instances,
+                canonical.compile_instances
+            );
+            assert_eq!(
+                old.resolve(composer.current().compiled()),
+                Err(NetworkError::ForeignScope)
+            );
             composer.revoke(&id).unwrap();
             let canonical = composer.current().network().compile().unwrap();
-            assert_eq!(composer.current().compiled().connections(), canonical.connections());
-            assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
-            assert_eq!(composer.current().compiled().compile_instances, canonical.compile_instances);
+            assert_eq!(
+                composer.current().compiled().connections(),
+                canonical.connections()
+            );
+            assert_eq!(
+                composer.current().compiled().compile_work,
+                canonical.compile_work
+            );
+            assert_eq!(
+                composer.current().compiled().compile_instances,
+                canonical.compile_instances
+            );
             assert!(composer.current().compiled().inspect("middle").is_err());
         }
     }
