@@ -271,12 +271,15 @@ impl CompiledNetwork {
             {
                 return None;
             }
-            changes.insert((
-                from_index,
-                edge.from.port.as_str(),
-                to_index,
-                edge.to.port.as_str(),
-            ), edge.capacity);
+            changes.insert(
+                (
+                    from_index,
+                    edge.from.port.as_str(),
+                    to_index,
+                    edge.to.port.as_str(),
+                ),
+                edge.capacity,
+            );
         }
         if changes.is_empty() {
             return None;
@@ -296,7 +299,6 @@ impl CompiledNetwork {
         }
         (updated == changes.len()).then_some(compiled)
     }
-
 }
 
 /// These fixed fields are verified before any incremental reuse; changing
@@ -643,7 +645,6 @@ impl Compiler {
     }
 }
 
-
 #[cfg(test)]
 mod capacity_reuse_tests {
     use super::*;
@@ -652,8 +653,14 @@ mod capacity_reuse_tests {
 
     fn edge(capacity: usize) -> ConnectionDef {
         ConnectionDef {
-            from: PortPath { process: "source".into(), port: "output".into() },
-            to: PortPath { process: "worker".into(), port: "input".into() },
+            from: PortPath {
+                process: "source".into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: "worker".into(),
+                port: "input".into(),
+            },
             capacity: NonZeroUsize::new(capacity).unwrap(),
         }
     }
@@ -661,15 +668,21 @@ mod capacity_reuse_tests {
     fn base() -> (NetworkDef, Contract) {
         let mut builder = NetworkBuilder::new();
         let source = builder
-            .add("source", Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))))
+            .add(
+                "source",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
             .unwrap();
         builder.start(&source).unwrap();
         let definition = crate::ComponentDef::map(|n: i64| n * 2);
-        let contract = Contract::new("test/capacity-worker", definition.interface().clone()).unwrap();
+        let contract =
+            Contract::new("test/capacity-worker", definition.interface().clone()).unwrap();
         let worker = builder
             .add("worker", Arc::new(definition.claim(&contract).unwrap()))
             .unwrap();
-        builder.expose_output("out", worker.output::<i64>("output").unwrap()).unwrap();
+        builder
+            .expose_output("out", worker.output::<i64>("output").unwrap())
+            .unwrap();
         (builder.build().unwrap(), contract)
     }
 
@@ -678,7 +691,11 @@ mod capacity_reuse_tests {
         let (mut before, contract) = base();
         before.connections.push(edge(1));
         let old = before.compile().unwrap();
-        let handle = old.bind("worker", &contract).unwrap().output::<i64>("output").unwrap();
+        let handle = old
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         let mut after = before.clone();
         after.connections[0].capacity = NonZeroUsize::new(8).unwrap();
         let incremental = old
@@ -689,14 +706,28 @@ mod capacity_reuse_tests {
         assert_eq!(incremental.source_starts(), canonical.source_starts());
         assert_eq!(incremental.inputs(), canonical.inputs());
         assert_eq!(incremental.outputs(), canonical.outputs());
-        assert_eq!(incremental.connections()[0].capacity(), NonZeroUsize::new(8).unwrap());
-        assert_eq!(old.connections()[0].capacity(), NonZeroUsize::new(1).unwrap());
-        assert_eq!(handle.resolve(&incremental), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            incremental.connections()[0].capacity(),
+            NonZeroUsize::new(8).unwrap()
+        );
+        assert_eq!(
+            old.connections()[0].capacity(),
+            NonZeroUsize::new(1).unwrap()
+        );
+        assert_eq!(
+            handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
         assert!(!Arc::ptr_eq(&old.generation, &incremental.generation));
         let mut session = incremental.start();
         session.run_until_idle(64);
         assert_eq!(
-            session.take_output("out").unwrap().unwrap().value().borrow::<i64>(),
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
             Some(&14)
         );
     }
@@ -707,26 +738,48 @@ mod capacity_reuse_tests {
         before.connections.push(edge(1));
         let old = before.compile().unwrap();
         let mut after = before.clone();
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
         after.connections.push(edge(2));
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
         after = before.clone();
         after.connections.clear();
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
         after = before.clone();
         after.connections[0].to.port = "unknown".into();
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
         after = before.clone();
         after.connections[0].capacity = NonZeroUsize::new(4).unwrap();
         after.instances.insert(
             "worker".into(),
-            Arc::new(crate::ComponentDef::map(|n: i64| n * 3).claim(&contract).unwrap()),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
         );
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
         after = before.clone();
         after.connections[0].capacity = NonZeroUsize::new(4).unwrap();
         after.outputs.clear();
-        assert!(old.reuse_after_root_connection_capacity_changes(&before, &after).is_none());
+        assert!(
+            old.reuse_after_root_connection_capacity_changes(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
@@ -736,31 +789,70 @@ mod capacity_reuse_tests {
         let registration = |id: &str, priority: i64, capacity| {
             let connection = edge(capacity);
             Registration::new(
-                id, [], priority, GraphOrigin::default(),
+                id,
+                [],
+                priority,
+                GraphOrigin::default(),
                 [Footprint::Connection(ConnectionKey::new(
-                    connection.from.clone(), connection.to.clone(),
+                    connection.from.clone(),
+                    connection.to.clone(),
                 ))],
                 NetworkPatch::new([Edit::Connect(connection)]),
             )
         };
         composer.register([registration("low", 1, 1)]).unwrap();
-        let low = composer.current().compiled().bind("worker", &contract)
-            .unwrap().output::<i64>("output").unwrap();
+        let low = composer
+            .current()
+            .compiled()
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
         composer.register([registration("high", 5, 4)]).unwrap();
-        assert_eq!(composer.current().compiled().connections()[0].capacity(), NonZeroUsize::new(4).unwrap());
-        assert_eq!(low.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
         assert_eq!(
-            composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections()
+            composer.current().compiled().connections()[0].capacity(),
+            NonZeroUsize::new(4).unwrap()
         );
-        let high = composer.current().compiled().bind("worker", &contract)
-            .unwrap().output::<i64>("output").unwrap();
-        assert_eq!(composer.revoke("high").unwrap(), BTreeSet::from(["high".into()]));
-        assert_eq!(composer.current().compiled().connections()[0].capacity(), NonZeroUsize::new(1).unwrap());
-        assert_eq!(high.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+        assert_eq!(
+            low.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
         assert_eq!(
             composer.current().compiled().connections(),
-            composer.current().network().compile().unwrap().connections()
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
+        let high = composer
+            .current()
+            .compiled()
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            composer.revoke("high").unwrap(),
+            BTreeSet::from(["high".into()])
+        );
+        assert_eq!(
+            composer.current().compiled().connections()[0].capacity(),
+            NonZeroUsize::new(1).unwrap()
+        );
+        assert_eq!(
+            high.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
         );
     }
 }
