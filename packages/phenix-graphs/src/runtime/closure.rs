@@ -17,6 +17,66 @@ pub enum ClosureWitness {
     ClosureObligation { process: usize },
 }
 
+/// Ephemeral closure DFS membership. A short upstream walk needs no heap
+/// allocation; dense reachable chains use one indexed vector instead of one
+/// tree allocation per ancestor. Sparse scopes avoid a whole-inventory bitset.
+/// The membership set is local to one immutable closure proof (no stale cache).
+enum ClosureVisited {
+    Small { members: [usize; 16], len: usize },
+    Dense(Vec<bool>),
+    Sparse(BTreeSet<usize>),
+}
+
+impl Default for ClosureVisited {
+    fn default() -> Self {
+        Self::Small {
+            members: [usize::MAX; 16],
+            len: 0,
+        }
+    }
+}
+
+impl ClosureVisited {
+    /// Return true for an unseen process. Cycle and diamond deduplication
+    /// remains exact; never omit a producer or reorder the DFS stack.
+    fn insert(&mut self, index: usize, total: usize, use_dense: bool) -> bool {
+        match self {
+            Self::Dense(members) => {
+                if members[index] {
+                    false
+                } else {
+                    members[index] = true;
+                    true
+                }
+            }
+            Self::Sparse(members) => members.insert(index),
+            Self::Small { members, len } => {
+                if members[..*len].contains(&index) {
+                    return false;
+                }
+                if *len < members.len() {
+                    members[*len] = index;
+                    *len += 1;
+                    return true;
+                }
+                if use_dense {
+                    let mut next = vec![false; total];
+                    for &member in members.iter() {
+                        next[member] = true;
+                    }
+                    next[index] = true;
+                    *self = Self::Dense(next);
+                } else {
+                    let mut next = members.iter().copied().collect::<BTreeSet<_>>();
+                    next.insert(index);
+                    *self = Self::Sparse(next);
+                }
+                true
+            }
+        }
+    }
+}
+
 impl NetworkSession {
     pub(super) fn stranded_at_eos(&self, index: usize) -> bool {
         let p = &self.processes[index];
@@ -137,7 +197,7 @@ impl NetworkSession {
                 return ClosureProof::NotProven(ClosureWitness::RequestPacket { queue, count });
             }
         }
-        let mut visited = BTreeSet::new();
+        let mut visited = ClosureVisited::default();
         let mut stack = vec![];
         for queue in queues {
             if let QueueEndpoint::Process { index, .. } = &self.endpoints[*queue].0
@@ -147,7 +207,11 @@ impl NetworkSession {
             }
         }
         while let Some(producer) = stack.pop() {
-            if !visited.insert(producer) {
+            if !visited.insert(
+                producer,
+                self.processes.len(),
+                scope.reachable.len().saturating_mul(4) >= self.processes.len(),
+            ) {
                 continue;
             }
             let p = &self.processes[producer];
