@@ -844,3 +844,73 @@ fn admission_recycles_lowest_free_correlation_lane_for_both_queue_policies() {
         assert!(session.failure().is_none());
     }
 }
+
+#[test]
+fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_policies() {
+    use phenix_graph::process::{Process, ProcessContext, Step};
+
+    struct WaitWakeOnce(bool);
+    impl Process for WaitWakeOnce {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            if self.0 {
+                self.0 = false;
+                return Ok(Step::Complete);
+            }
+            context
+                .take("in")
+                .ok_or_else(|| phenix_graph::Failure::application_message("missing input"))?
+                .get::<i64>()?;
+            self.0 = true;
+            Ok(Step::WaitWake)
+        }
+    }
+
+    let mut builder = NetworkBuilder::new();
+    let node = builder
+        .node(
+            "worker",
+            Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap()),
+            Arc::new(|| WaitWakeOnce(false)),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+
+    for policy in [RequestQueuePolicy::SharedFifo, RequestQueuePolicy::BoundedLanes] {
+        let mut session = compiled.start_with_options(SessionOptions {
+            max_requests: NonZeroUsize::new(2).unwrap(),
+            request_queue_policy: policy,
+            ..Default::default()
+        });
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+        session.inject_request_local(a, "input", 7_i64).unwrap();
+        session.close_request(a).unwrap();
+        assert_eq!(session.run_until_idle(16).steps, 1);
+        assert_eq!(session.request_work(a).unwrap().waiting_wake, 1);
+        session.inject_request_local(b, "input", 8_i64).unwrap();
+        session.close_request(b).unwrap();
+        let a_work = session.request_work(a).unwrap();
+        let b_work = session.request_work(b).unwrap();
+        assert_eq!(a_work.single_flight_blockers, 0);
+        assert_eq!(b_work.single_flight_blockers, 1);
+        assert_eq!(b_work.queued, 1);
+        assert_eq!(b_work.capture_backpressure, 0);
+        assert_eq!(session.run_until_idle(16).steps, 0);
+        assert_eq!(session.request_work(b).unwrap().single_flight_blockers, 1);
+
+        assert!(session.wake_handle("worker").unwrap().wake());
+        assert_eq!(session.run_until_idle(16).steps, 2);
+        assert_eq!(session.request_work(b).unwrap().single_flight_blockers, 0);
+        assert_eq!(session.request_work(b).unwrap().waiting_wake, 1);
+        assert!(session.wake_handle("worker").unwrap().wake());
+        assert_eq!(session.run_until_idle(16).steps, 1);
+        assert_eq!(session.request_status(a).unwrap(), RequestStatus::Settled { captures: 0 });
+        assert_eq!(session.request_status(b).unwrap(), RequestStatus::Settled { captures: 0 });
+        session.release_request(a).unwrap();
+        session.release_request(b).unwrap();
+        assert!(session.failure().is_none());
+    }
+}
