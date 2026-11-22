@@ -985,6 +985,10 @@ fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_poli
             .inject_request(b, "input", Value::of(8_i64))
             .unwrap();
         session.close_request(b).unwrap();
+        // The foreign owner and its queued successor both represent live
+        // request work, despite 128 disconnected graph processes.
+        assert_eq!(session.request_status(a).unwrap(), RequestStatus::Pending);
+        assert_eq!(session.request_status(b).unwrap(), RequestStatus::Pending);
         let a_work = session.request_work(a).unwrap();
         let b_work = session.request_work(b).unwrap();
         assert_eq!(a_work.single_flight_blockers, 0);
