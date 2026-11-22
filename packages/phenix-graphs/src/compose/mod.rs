@@ -500,23 +500,49 @@ mod unchanged_selection_tests {
     #[test]
     fn shadowed_admission_revocation_and_absent_revoke_keep_generation_handles() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
-        composer.register([registration("winner", 10, add("worker"))]).unwrap();
-        let handle = composer.current().compiled()
-            .bind("worker", &identity_contract()).unwrap()
-            .output::<i64>("output").unwrap();
-        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        composer
+            .register([registration("winner", 10, add("worker"))])
+            .unwrap();
+        let handle = composer
+            .current()
+            .compiled()
+            .bind("worker", &identity_contract())
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
 
-        composer.register([registration("loser", 0, add("worker"))]).unwrap();
-        assert_eq!(composer.current().active(), &BTreeSet::from(["winner".into()]));
+        composer
+            .register([registration("loser", 0, add("worker"))])
+            .unwrap();
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["winner".into()])
+        );
         assert_eq!(
             composer.current().footprints()["winner"],
             BTreeSet::from([Footprint::Component("worker".into())])
         );
-        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
-        assert_eq!(composer.revoke("loser").unwrap(), BTreeSet::from(["loser".into()]));
-        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
+        assert_eq!(
+            composer.revoke("loser").unwrap(),
+            BTreeSet::from(["loser".into()])
+        );
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
         assert!(composer.revoke("missing").unwrap().is_empty());
-        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
 
         composer.revoke("winner").unwrap();
         assert_eq!(
@@ -529,18 +555,18 @@ mod unchanged_selection_tests {
     #[test]
     fn unchanged_topology_does_not_bypass_authority_or_registry_rollback() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
-        composer.register([registration("winner", 10, add("worker"))]).unwrap();
-        let handle = composer.current().compiled()
-            .bind("worker", &identity_contract()).unwrap()
-            .output::<i64>("output").unwrap();
-        let unauthorized = Registration::new(
-            "bad",
-            [],
-            0,
-            GraphOrigin::default(),
-            [],
-            add("worker"),
-        );
+        composer
+            .register([registration("winner", 10, add("worker"))])
+            .unwrap();
+        let handle = composer
+            .current()
+            .compiled()
+            .bind("worker", &identity_contract())
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        let unauthorized =
+            Registration::new("bad", [], 0, GraphOrigin::default(), [], add("worker"));
         assert_eq!(
             composer.register([unauthorized]).unwrap_err(),
             ComposeError::Unauthorized {
@@ -548,11 +574,16 @@ mod unchanged_selection_tests {
                 footprint: Footprint::Component("worker".into()),
             }
         );
-        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
         assert!(composer.revoke("bad").unwrap().is_empty());
         // Duplicate registrations must still be rejected before planning.
         assert_eq!(
-            composer.register([registration("winner", 10, add("worker"))]).unwrap_err(),
+            composer
+                .register([registration("winner", 10, add("worker"))])
+                .unwrap_err(),
             ComposeError::DuplicateRegistration("winner".into())
         );
     }
@@ -560,11 +591,19 @@ mod unchanged_selection_tests {
     #[test]
     fn new_selected_registration_still_creates_new_generation() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
-        composer.register([registration("winner", 10, add("worker"))]).unwrap();
-        let handle = composer.current().compiled()
-            .bind("worker", &identity_contract()).unwrap()
-            .output::<i64>("output").unwrap();
-        composer.register([registration("selected_no_op", 0, NetworkPatch::new([]))]).unwrap();
+        composer
+            .register([registration("winner", 10, add("worker"))])
+            .unwrap();
+        let handle = composer
+            .current()
+            .compiled()
+            .bind("worker", &identity_contract())
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        composer
+            .register([registration("selected_no_op", 0, NetworkPatch::new([]))])
+            .unwrap();
         assert_eq!(
             handle.resolve(composer.current().compiled()),
             Err(NetworkError::ForeignScope)
