@@ -428,7 +428,9 @@ mod dependency_order_tests {
 
     /// The old planner swept the BTreeMap once per pass; a newly ready
     /// earlier key could not preempt an already ready later key.
-    fn reference_order(registrations: &BTreeMap<String, Registration>) -> DependencyOrder {
+    fn reference_order(
+        registrations: &BTreeMap<String, Registration>,
+    ) -> (Vec<String>, BTreeMap<String, BTreeSet<String>>) {
         let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut order = Vec::new();
         while order.len() < registrations.len() {
@@ -526,5 +528,213 @@ mod dependency_order_tests {
             dependency_order(&cycle),
             Err(ComposeError::DependencyCycle)
         ));
+    }
+}
+
+#[cfg(test)]
+mod conflict_index_tests {
+    use super::*;
+    use crate::GraphOrigin;
+    use crate::component::ComponentDef;
+    use crate::network::{ConnectionDef, PortPath};
+    use crate::compose::NetworkPatch;
+    use std::{num::NonZeroUsize, sync::Arc};
+
+    fn port(process: &str) -> PortPath {
+        PortPath {
+            process: process.into(),
+            port: "value".into(),
+        }
+    }
+
+    fn edge(from: &str, to: &str) -> ConnectionKey {
+        ConnectionKey::new(port(from), port(to))
+    }
+
+    fn registration(id: &str, edits: Vec<Edit>) -> Registration {
+        let patch = NetworkPatch::new(edits);
+        Registration::new(
+            id,
+            [],
+            0,
+            GraphOrigin::default(),
+            patch.footprints(),
+            patch,
+        )
+    }
+
+    /// Brute-force oracle matching the previous planner's three conflict
+    /// predicates, including splice precedence and directional export checks.
+    fn reference_pairs(
+        registrations: &BTreeMap<String, Registration>,
+        order: &[String],
+        footprints: &BTreeMap<String, BTreeSet<Footprint>>,
+    ) -> BTreeSet<(usize, usize)> {
+        let mut found = BTreeSet::new();
+        for (i, a) in order.iter().enumerate() {
+            for (j, b) in order.iter().enumerate().skip(i + 1) {
+                let splices = registrations[a].patch.edits().iter().any(|edit| {
+                    if let Edit::Splice { anchor, .. } = edit {
+                        registrations[b].patch.edits().iter().any(|other| {
+                            matches!(other, Edit::Splice { anchor: other, .. } if anchor == other)
+                        })
+                    } else {
+                        false
+                    }
+                });
+                if splices
+                    || nested_export_dependency(&registrations[a], &registrations[b]).is_some()
+                    || nested_export_dependency(&registrations[b], &registrations[a]).is_some()
+                    || overlapping_write(&footprints[a], &footprints[b]).is_some()
+                {
+                    found.insert((i, j));
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn path_index_matches_legacy_exhaustive_collision_predicates() {
+        let paths = [
+            "m", "m/inner", "m/inner/a", "m/inner/b", "m/side",
+            "x", "x/y", "x2", "z",
+        ];
+        let one = NonZeroUsize::new(1).unwrap();
+        let definition = Arc::new(ComponentDef::map(|n: i64| n));
+        for seed in 0..256_usize {
+            let mut registrations = BTreeMap::new();
+            for index in 0..12_usize {
+                let name = format!("r{index:02}");
+                let mut edits = Vec::new();
+                for edit_index in 0..2 {
+                    let k = seed * 17 + index * 13 + edit_index * 7;
+                    let path = paths[(k / 3) % paths.len()];
+                    let other = paths[(k / 5 + 2) % paths.len()];
+                    let edit = match k % 9 {
+                        0 => Edit::Add {
+                            path: path.into(),
+                            definition: definition.clone(),
+                        },
+                        1 => Edit::Replace {
+                            path: path.into(),
+                            definition: definition.clone(),
+                        },
+                        2 => Edit::Connect(ConnectionDef {
+                            from: port(path),
+                            to: port(other),
+                            capacity: one,
+                        }),
+                        3 => Edit::Disconnect(edge(path, other)),
+                        4 => Edit::ExposeNestedOutput {
+                            parent: "m/inner".into(),
+                            name: format!("out{edit_index}"),
+                            from: port(path),
+                        },
+                        5 => Edit::ExposeNestedInput {
+                            parent: "m/inner".into(),
+                            name: format!("in{edit_index}"),
+                            targets: vec![port(path), port(other)],
+                            capacity: one,
+                        },
+                        6 => Edit::Splice {
+                            anchor: edge(path, other),
+                            input: port("splice"),
+                            output: port("splice"),
+                        },
+                        7 => Edit::AddSource(path.into()),
+                        _ => Edit::ExposeOutput {
+                            name: path.into(),
+                            from: port(other),
+                        },
+                    };
+                    edits.push(edit);
+                }
+                registrations.insert(name.clone(), registration(&name, edits));
+            }
+            let order: Vec<_> = registrations.keys().cloned().collect();
+            let footprints = order
+                .iter()
+                .map(|id| (id.clone(), registrations[id].patch.footprints()))
+                .collect();
+            assert_eq!(
+                conflict_candidates(&registrations, &order, &footprints),
+                reference_pairs(&registrations, &order, &footprints),
+                "seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn disjoint_and_sibling_writes_need_no_pairwise_planning() {
+        let mut registrations = BTreeMap::new();
+        let definition = Arc::new(ComponentDef::map(|n: i64| n));
+        for i in 0..512 {
+            let id = format!("r{i:04}");
+            registrations.insert(id.clone(), registration(&id, vec![Edit::Add {
+                path: format!("m/sibling{i:04}"),
+                definition: definition.clone(),
+            }]));
+        }
+        let order = registrations.keys().cloned().collect::<Vec<_>>();
+        let footprints = order
+            .iter()
+            .map(|id| (id.clone(), registrations[id].patch.footprints()))
+            .collect();
+        assert!(conflict_candidates(&registrations, &order, &footprints).is_empty());
+    }
+
+    #[test]
+    fn root_and_nested_footprints_never_alias_and_nested_endpoint_equality_counts() {
+        let registrations = BTreeMap::from([
+            (
+                "a".into(),
+                registration(
+                    "a",
+                    vec![Edit::ExposeOutput {
+                        name: "m/inner/telemetry".into(),
+                        from: port("m"),
+                    }],
+                ),
+            ),
+            (
+                "b".into(),
+                registration(
+                    "b",
+                    vec![Edit::ExposeNestedOutput {
+                        parent: "m/inner".into(),
+                        name: "telemetry".into(),
+                        from: port("m/inner/leaf"),
+                    }],
+                ),
+            ),
+        ]);
+        let order = registrations.keys().cloned().collect::<Vec<_>>();
+        let footprints = order
+            .iter()
+            .map(|id| (id.clone(), registrations[id].patch.footprints()))
+            .collect();
+        assert!(conflict_candidates(&registrations, &order, &footprints).is_empty());
+
+        let registrations = BTreeMap::from([
+            ("a".into(), registration("a", vec![Edit::Add {
+                path: "m/inner".into(),
+                definition: Arc::new(ComponentDef::map(|n: i64| n)),
+            }])),
+            ("b".into(), registration("b", vec![Edit::Connect(ConnectionDef {
+                from: port("m/inner"),
+                to: port("m/outer"),
+                capacity: NonZeroUsize::new(1).unwrap(),
+            })])),
+        ]);
+        let order = registrations.keys().cloned().collect::<Vec<_>>();
+        let footprints = order
+            .iter()
+            .map(|id| (id.clone(), registrations[id].patch.footprints()))
+            .collect();
+        assert_eq!(
+            conflict_candidates(&registrations, &order, &footprints),
+            BTreeSet::from([(0, 1)])
+        );
     }
 }
