@@ -945,6 +945,23 @@ fn request_work_identifies_foreign_single_flight_occupancy_under_both_queue_poli
     builder
         .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
         .unwrap();
+    // A sparse authenticated request must not scan or count unrelated
+    // physical owners; both lane layouts retain the same diagnostic counts.
+    for index in 0..128 {
+        let sink = builder
+            .add(
+                format!("unrelated-{index}"),
+                Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})),
+            )
+            .unwrap();
+        builder
+            .expose_input(
+                format!("unrelated-{index}"),
+                sink.input::<i64>("input").unwrap(),
+                one(),
+            )
+            .unwrap();
+    }
     let compiled = builder.build().unwrap().compile().unwrap();
 
     for policy in [
