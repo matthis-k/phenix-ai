@@ -261,7 +261,7 @@ pub struct Composer {
 impl Composer {
     pub fn new(base: NetworkDef) -> Result<Self, ComposeError> {
         let selection_limits = SelectionLimits::default();
-        let current = guarded_compose(&base, &BTreeMap::new(), selection_limits)?;
+        let current = guarded_compose(&base, &BTreeMap::new(), selection_limits, None)?;
         Ok(Self {
             base,
             registrations: BTreeMap::new(),
@@ -288,7 +288,12 @@ impl Composer {
             }
             candidate.insert(registration.id.clone(), registration);
         }
-        let current = guarded_compose(&self.base, &candidate, self.selection_limits)?;
+        let current = guarded_compose(
+            &self.base,
+            &candidate,
+            self.selection_limits,
+            Some(&self.current),
+        )?;
         self.registrations = candidate;
         self.current = current;
         Ok(&self.current)
@@ -303,7 +308,12 @@ impl Composer {
             .filter(|(id, _)| !removed.contains(*id))
             .map(|(id, registration)| (id.clone(), registration.clone()))
             .collect();
-        let current = guarded_compose(&self.base, &candidate, self.selection_limits)?;
+        let current = guarded_compose(
+            &self.base,
+            &candidate,
+            self.selection_limits,
+            Some(&self.current),
+        )?;
         self.registrations = candidate;
         self.current = current;
         Ok(removed)
@@ -346,9 +356,10 @@ fn guarded_compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
     selection_limits: SelectionLimits,
+    previous: Option<&Composition>,
 ) -> Result<Composition, ComposeError> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compose(base, registrations, selection_limits)
+        compose(base, registrations, selection_limits, previous)
     })) {
         Ok(result) => result,
         Err(payload) => {
@@ -362,8 +373,22 @@ fn compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
     selection_limits: SelectionLimits,
+    previous: Option<&Composition>,
 ) -> Result<Composition, ComposeError> {
     let plan = planning::plan(registrations, selection_limits)?;
+    // The Composer can only add new registration IDs or remove IDs plus their
+    // dependents; it cannot mutate an existing registration or the frozen base.
+    // With the same selected set, all selected edits and their relative
+    // dependency replay order are unchanged. Preserve the actual compiled
+    // generation, including existing generation-bound handles and factories.
+    //
+    // Run the complete planner first. Even an unselected new registration can
+    // be unauthorized, malformed, cyclic, or introduce global ambiguity.
+    if let Some(previous) = previous
+        && plan.active == previous.active
+    {
+        return Ok(previous.clone());
+    }
     let mut network = replay::replay_selected(base, registrations, &plan)?;
     network
         .connections
@@ -436,5 +461,114 @@ mod dependent_closure_tests {
             .collect();
         let removed = dependent_closure(&registrations, "0255");
         assert_eq!(removed.len(), 256);
+    }
+}
+
+#[cfg(test)]
+mod unchanged_selection_tests {
+    use super::*;
+    use crate::{component::ComponentDef, contract::Contract, network::NetworkBuilder};
+    use std::sync::Arc;
+
+    fn identity_contract() -> Contract {
+        let interface = ComponentDef::map(|n: i64| n).interface().clone();
+        Contract::new("compose/identity", interface).unwrap()
+    }
+
+    fn add(path: &str) -> NetworkPatch {
+        NetworkPatch::new([Edit::Add {
+            path: path.into(),
+            definition: Arc::new(
+                ComponentDef::map(|n: i64| n)
+                    .claim(&identity_contract())
+                    .unwrap(),
+            ),
+        }])
+    }
+
+    fn registration(id: &str, priority: i64, patch: NetworkPatch) -> Registration {
+        Registration::new(
+            id,
+            [],
+            priority,
+            GraphOrigin::default(),
+            patch.footprints(),
+            patch,
+        )
+    }
+
+    #[test]
+    fn shadowed_admission_revocation_and_absent_revoke_keep_generation_handles() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer.register([registration("winner", 10, add("worker"))]).unwrap();
+        let handle = composer.current().compiled()
+            .bind("worker", &identity_contract()).unwrap()
+            .output::<i64>("output").unwrap();
+        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+
+        composer.register([registration("loser", 0, add("worker"))]).unwrap();
+        assert_eq!(composer.current().active(), &BTreeSet::from(["winner".into()]));
+        assert_eq!(
+            composer.current().footprints()["winner"],
+            BTreeSet::from([Footprint::Component("worker".into())])
+        );
+        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert_eq!(composer.revoke("loser").unwrap(), BTreeSet::from(["loser".into()]));
+        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert!(composer.revoke("missing").unwrap().is_empty());
+        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+
+        composer.revoke("winner").unwrap();
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert!(composer.current().active().is_empty());
+    }
+
+    #[test]
+    fn unchanged_topology_does_not_bypass_authority_or_registry_rollback() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer.register([registration("winner", 10, add("worker"))]).unwrap();
+        let handle = composer.current().compiled()
+            .bind("worker", &identity_contract()).unwrap()
+            .output::<i64>("output").unwrap();
+        let unauthorized = Registration::new(
+            "bad",
+            [],
+            0,
+            GraphOrigin::default(),
+            [],
+            add("worker"),
+        );
+        assert_eq!(
+            composer.register([unauthorized]).unwrap_err(),
+            ComposeError::Unauthorized {
+                registration: "bad".into(),
+                footprint: Footprint::Component("worker".into()),
+            }
+        );
+        assert_eq!(handle.resolve(composer.current().compiled()), Ok((0, "output")));
+        assert!(composer.revoke("bad").unwrap().is_empty());
+        // Duplicate registrations must still be rejected before planning.
+        assert_eq!(
+            composer.register([registration("winner", 10, add("worker"))]).unwrap_err(),
+            ComposeError::DuplicateRegistration("winner".into())
+        );
+    }
+
+    #[test]
+    fn new_selected_registration_still_creates_new_generation() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer.register([registration("winner", 10, add("worker"))]).unwrap();
+        let handle = composer.current().compiled()
+            .bind("worker", &identity_contract()).unwrap()
+            .output::<i64>("output").unwrap();
+        composer.register([registration("selected_no_op", 0, NetworkPatch::new([]))]).unwrap();
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(composer.current().active().len(), 2);
     }
 }
