@@ -13,7 +13,8 @@ use phenix_graph::{
     network::{CompiledNetwork, NetworkBuilder},
     process::{Process, ProcessContext, ProcessEmission, Step},
     runtime::{
-        Readiness, ReadinessPolicy, ReadinessSnapshot, RequestStatus, SessionOptions, SessionState,
+        Readiness, ReadinessPolicy, ReadinessSnapshot, RequestQueuePolicy, RequestStatus,
+        SessionOptions, SessionState,
     },
 };
 use std::{
@@ -371,6 +372,79 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
     (mean, p50, p95, persisted.load(Ordering::Relaxed))
 }
 
+
+fn measure_overlapping(
+    notified: bool,
+    idle: usize,
+    iterations: usize,
+) -> (f64, f64, f64, usize) {
+    const ACTIVE: usize = 4;
+    const WARMUP: usize = 12;
+    let persisted = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(AtomicBool::new(false));
+    let (graph, mut options) = compiled(idle, notified, persisted.clone(), gate.clone());
+    // Every request owns bounded physical ingress/edge FIFOs; the processes
+    // themselves deliberately remain single-flight and stateful.
+    options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    options.max_requests = NonZeroUsize::new(ACTIVE).unwrap();
+    let mut session = graph.start_with_options(options);
+    let notifier = session.process_notifier("tools.local").unwrap();
+    let mut samples = Vec::with_capacity(iterations);
+    for batch in 0..(WARMUP + iterations) {
+        gate.store(false, Ordering::Release);
+        let began = Instant::now();
+        let ids: Vec<_> = (0..ACTIVE)
+            .map(|_| session.begin_request(None).unwrap())
+            .collect();
+        for (offset, request) in ids.iter().enumerate() {
+            session
+                .inject_request(
+                    *request,
+                    "prompt",
+                    Value::of(black_box((batch * ACTIVE + offset) as u64)),
+                )
+                .unwrap();
+        }
+        for request in &ids {
+            session.close_request(*request).unwrap();
+        }
+        let before = session.run_until_idle(256);
+        assert!(!before.budget_exhausted);
+        // Requests 0 and 2 require local permission; 1 and 3 can finish via
+        // the remote tool while the shared local process remains gated.
+        assert_eq!(
+            session.request_status(ids[0]).unwrap(),
+            RequestStatus::Pending
+        );
+        assert_eq!(
+            session.request_status(ids[2]).unwrap(),
+            RequestStatus::Pending
+        );
+        gate.store(true, Ordering::Release);
+        assert!(notifier.notify());
+        let after = session.run_until_idle(256);
+        assert!(!after.budget_exhausted);
+        assert_eq!(before.steps + after.steps, ACTIVE * 11);
+        for id in ids {
+            assert_eq!(
+                session.request_status(id).unwrap(),
+                RequestStatus::Settled { captures: 0 }
+            );
+            session.release_request(id).unwrap();
+        }
+        assert_eq!(session.state(), SessionState::Quiescent);
+        assert_eq!(persisted.load(Ordering::Relaxed), (batch + 1) * ACTIVE);
+        if batch >= WARMUP {
+            samples.push(began.elapsed().as_nanos() as f64 / ACTIVE as f64);
+        }
+    }
+    samples.sort_by(|a, b| a.total_cmp(b));
+    let mean = samples.iter().sum::<f64>() / iterations as f64;
+    let p50 = samples[(iterations - 1) / 2];
+    let p95 = samples[(((iterations - 1) as f64) * 0.95).round() as usize];
+    (mean, p50, p95, persisted.load(Ordering::Relaxed))
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let mode = args.next().expect("mode: polled|notified");
@@ -393,11 +467,31 @@ fn main() {
         let (mean, p50, p95, persisted) = measure(notified, idle, iterations);
         println!("{mode},{idle},{iterations},{mean:.1},{p50:.0},{p95:.0},{persisted}");
     }
+    // Same agent topology, but four live authenticated scopes must complete
+    // without cross-request tool routing or misplaced optional closure.
+    for idle in [0, 16, 64, 128] {
+        let (mean, p50, p95, persisted) = measure_overlapping(notified, idle, iterations.min(80));
+        println!(
+            "{mode}-overlap4,{idle},{},{mean:.1},{p50:.0},{p95:.0},{persisted}",
+            iterations.min(80)
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn four_overlapping_agent_scopes_preserve_optional_joins_and_tool_permissions() {
+        for notified in [false, true] {
+            for idle in [0, 4, 16] {
+                let result = measure_overlapping(notified, idle, 4);
+                assert!(result.0.is_finite());
+                assert_eq!(result.3, 64);
+            }
+        }
+    }
 
     #[test]
     fn mixed_agent_loop_preserves_routing_closure_notification_and_persistence() {
