@@ -2108,6 +2108,56 @@ mod connected_root_revocation_tests {
                 .borrow::<i64>(),
             Some(&21)
         );
+
+    }
+
+    #[test]
+    fn repeated_add_remove_cycles_keep_budget_and_authority_exact() {
+        let (base, contract) = base();
+        let mut composer = Composer::new(base).unwrap();
+        for cycle in 0..4 {
+            let from = edge("alpha", "middle");
+            let to = edge("middle", "omega");
+            let id = format!("cycle-{cycle}");
+            let registration = Registration::new(
+                id.clone(),
+                [],
+                1,
+                GraphOrigin::default(),
+                [
+                    Footprint::Component("middle".into()),
+                    Footprint::Connection(ConnectionKey::new(from.from.clone(), from.to.clone())),
+                    Footprint::Connection(ConnectionKey::new(to.from.clone(), to.to.clone())),
+                ],
+                NetworkPatch::new([
+                    Edit::Add {
+                        path: "middle".into(),
+                        definition: Arc::new(crate::ComponentDef::map(|n: i64| n + 1)),
+                    },
+                    Edit::Connect(from),
+                    Edit::Connect(to),
+                ]),
+            );
+            let old = composer
+                .current()
+                .compiled()
+                .bind("omega", &contract)
+                .unwrap()
+                .output::<i64>("output")
+                .unwrap();
+            composer.register([registration]).unwrap();
+            let canonical = composer.current().network().compile().unwrap();
+            assert_eq!(composer.current().compiled().connections(), canonical.connections());
+            assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
+            assert_eq!(composer.current().compiled().compile_instances, canonical.compile_instances);
+            assert_eq!(old.resolve(composer.current().compiled()), Err(NetworkError::ForeignScope));
+            composer.revoke(&id).unwrap();
+            let canonical = composer.current().network().compile().unwrap();
+            assert_eq!(composer.current().compiled().connections(), canonical.connections());
+            assert_eq!(composer.current().compiled().compile_work, canonical.compile_work);
+            assert_eq!(composer.current().compiled().compile_instances, canonical.compile_instances);
+            assert!(composer.current().compiled().inspect("middle").is_err());
+        }
     }
 }
 
