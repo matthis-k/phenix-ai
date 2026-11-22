@@ -57,7 +57,12 @@ fn add<const N: usize>() -> u128 {
     let elapsed = start.elapsed().as_nanos();
     assert_eq!(composer.current().compiled().processes().len(), N + 3);
     assert_eq!(
-        composer.current().compiled().inspect("middle").unwrap().physical_index,
+        composer
+            .current()
+            .compiled()
+            .inspect("middle")
+            .unwrap()
+            .physical_index,
         Some(1)
     );
     black_box(composer.current().compiled().connections().len());
