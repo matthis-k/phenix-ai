@@ -22,8 +22,8 @@ jobs:
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Paired production Composer control and Q2 connected root primitive admission
         env:
-          CONTROL: e8bf3aad87e294f8b4f0c34a662342de5bddd83d
-          OPTIMIZED: e0f24b244835ffa499c7d326e3ea1f4692357ce1
+          CONTROL: 859e563786489f4c76f9190942550f49a8260e00
+          OPTIMIZED: e0b28189fac3224aec1bbe5a8333ef03115e052c
         shell: bash
         run: |
           set -euo pipefail
