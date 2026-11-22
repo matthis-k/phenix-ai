@@ -24,7 +24,7 @@ jobs:
         env:
           FULL: b107436d7ddc89c46cf91dc770e188328e6947d0
           STAGED: dead3e77b24050f503bee74cb459b87f323230b6
-          OPTIMIZED: 8d7feccd7798a7d59317c12f95ac9a823d32b8c2
+          OPTIMIZED: 572eedbd1e7a1bc4271be12923125271741c6a68
         shell: bash
         run: |
           set -euo pipefail
