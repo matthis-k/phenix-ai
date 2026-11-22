@@ -67,11 +67,19 @@ impl CompiledNetwork {
             return None;
         }
         let remaining: BTreeSet<&str> = after.sources.iter().map(String::as_str).collect();
-        if !after.sources.iter().all(|path| before.sources.contains(path)) {
+        if !after
+            .sources
+            .iter()
+            .all(|path| before.sources.contains(path))
+        {
             return None;
         }
         let mut removed_indices = BTreeSet::new();
-        for path in before.sources.iter().filter(|path| !remaining.contains(path.as_str())) {
+        for path in before
+            .sources
+            .iter()
+            .filter(|path| !remaining.contains(path.as_str()))
+        {
             let definition = before.instances.get(path)?;
             if !matches!(definition.body(), Body::Primitive(_))
                 || !definition.interface().inputs().is_empty()
@@ -88,7 +96,9 @@ impl CompiledNetwork {
             return None;
         }
         let mut compiled = self.with_fresh_generation();
-        compiled.sources.retain(|index| !removed_indices.contains(index));
+        compiled
+            .sources
+            .retain(|index| !removed_indices.contains(index));
         Some(compiled)
     }
 }
@@ -430,7 +440,9 @@ mod source_pruning_tests {
 
         let mut after = before.clone();
         after.sources.retain(|path| path != "a");
-        let reused = original.reuse_after_source_pruning(&before, &after).unwrap();
+        let reused = original
+            .reuse_after_source_pruning(&before, &after)
+            .unwrap();
         let fresh = after.compile().unwrap();
         assert_eq!(reused.source_starts(), &[1]);
         assert_eq!(reused.source_starts(), fresh.source_starts());
@@ -439,8 +451,16 @@ mod source_pruning_tests {
         assert_eq!(reused.outputs(), fresh.outputs());
         assert_eq!(reused.processes().len(), fresh.processes().len());
         assert_eq!(
-            reused.processes().iter().map(|p| p.path()).collect::<Vec<_>>(),
-            fresh.processes().iter().map(|p| p.path()).collect::<Vec<_>>()
+            reused
+                .processes()
+                .iter()
+                .map(|p| p.path())
+                .collect::<Vec<_>>(),
+            fresh
+                .processes()
+                .iter()
+                .map(|p| p.path())
+                .collect::<Vec<_>>()
         );
         assert!(!Arc::ptr_eq(&reused.generation, &original.generation));
         assert!(Arc::ptr_eq(
@@ -449,15 +469,20 @@ mod source_pruning_tests {
         ));
 
         after.sources.clear();
-        let reused_again = reused.reuse_after_source_pruning(
-            &NetworkDef {
-                sources: vec!["b".into()],
-                ..before.clone()
-            },
-            &after,
-        ).unwrap();
+        let reused_again = reused
+            .reuse_after_source_pruning(
+                &NetworkDef {
+                    sources: vec!["b".into()],
+                    ..before.clone()
+                },
+                &after,
+            )
+            .unwrap();
         assert!(reused_again.source_starts().is_empty());
-        assert_eq!(reused_again.source_starts(), after.compile().unwrap().source_starts());
+        assert_eq!(
+            reused_again.source_starts(),
+            after.compile().unwrap().source_starts()
+        );
     }
 
     #[test]
@@ -470,20 +495,32 @@ mod source_pruning_tests {
 
         let mut after = before.clone();
         after.sources.push("missing".into());
-        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_source_pruning(&before, &after)
+                .is_none()
+        );
 
         after = before.clone();
         after.sources.clear();
         after.instances.insert("a".into(), source());
-        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_source_pruning(&before, &after)
+                .is_none()
+        );
 
         after = before.clone();
         after.sources.clear();
         after.requirements.push((
             "a".into(),
-            Contract::new("test/changed", Arc::new(crate::Interface::default())).unwrap()
+            Contract::new("test/changed", Arc::new(crate::Interface::default())).unwrap(),
         ));
-        assert!(compiled.reuse_after_source_pruning(&before, &after).is_none());
+        assert!(
+            compiled
+                .reuse_after_source_pruning(&before, &after)
+                .is_none()
+        );
     }
 
     #[test]
@@ -491,24 +528,39 @@ mod source_pruning_tests {
         let plain = crate::ComponentDef::source(|| std::iter::once(7_i64));
         let contract = Contract::new("test/source", plain.interface().clone()).unwrap();
         let mut builder = NetworkBuilder::new();
-        builder.add("source", Arc::new(plain.claim(&contract).unwrap())).unwrap();
+        builder
+            .add("source", Arc::new(plain.claim(&contract).unwrap()))
+            .unwrap();
         let mut composer = Composer::new(builder.build().unwrap()).unwrap();
         assert!(composer.current().compiled().source_starts().is_empty());
 
         let source_edit = NetworkPatch::new([Edit::AddSource("source".into())]);
-        composer.register([Registration::new(
-            "start",
-            [],
-            0,
-            GraphOrigin::default(),
-            [Footprint::Source("source".into())],
-            source_edit,
-        )]).unwrap();
+        composer
+            .register([Registration::new(
+                "start",
+                [],
+                0,
+                GraphOrigin::default(),
+                [Footprint::Source("source".into())],
+                source_edit,
+            )])
+            .unwrap();
         assert_eq!(composer.current().compiled().source_starts(), &[0]);
-        let bound = composer.current().compiled().bind("source", &contract).unwrap()
-            .output::<i64>("output").unwrap();
-        assert_eq!(bound.resolve(composer.current().compiled()), Ok((0, "output")));
-        assert_eq!(composer.revoke("start").unwrap(), BTreeSet::from(["start".into()]));
+        let bound = composer
+            .current()
+            .compiled()
+            .bind("source", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            bound.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
+        assert_eq!(
+            composer.revoke("start").unwrap(),
+            BTreeSet::from(["start".into()])
+        );
         assert!(composer.current().compiled().source_starts().is_empty());
         assert_eq!(
             bound.resolve(composer.current().compiled()),
@@ -516,19 +568,26 @@ mod source_pruning_tests {
         );
         assert_eq!(
             composer.current().compiled().source_starts(),
-            composer.current().network().compile().unwrap().source_starts()
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .source_starts()
         );
 
         // Source add is not an eligible pruning operation. It must still
         // compile and restore the correct automatic start after re-admission.
-        composer.register([Registration::new(
-            "restart",
-            [],
-            0,
-            GraphOrigin::default(),
-            [Footprint::Source("source".into())],
-            NetworkPatch::new([Edit::AddSource("source".into())]),
-        )]).unwrap();
+        composer
+            .register([Registration::new(
+                "restart",
+                [],
+                0,
+                GraphOrigin::default(),
+                [Footprint::Source("source".into())],
+                NetworkPatch::new([Edit::AddSource("source".into())]),
+            )])
+            .unwrap();
         assert_eq!(composer.current().compiled().source_starts(), &[0]);
     }
 }
