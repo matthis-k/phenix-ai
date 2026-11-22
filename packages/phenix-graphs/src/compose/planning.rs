@@ -272,11 +272,7 @@ impl ConflictIndex {
                     Footprint::Component(path) => {
                         index(&mut result.component_exact, path.clone(), owner);
                         for prefix in path_ancestors(path) {
-                            index(
-                                &mut result.component_descendants,
-                                prefix.to_owned(),
-                                owner,
-                            );
+                            index(&mut result.component_descendants, prefix.to_owned(), owner);
                         }
                     }
                     Footprint::Connection(edge) => {
@@ -297,9 +293,15 @@ impl ConflictIndex {
             }
             for edit in registrations[id].patch.edits() {
                 match edit {
-                    Edit::ExposeNestedInput { parent, targets, .. } => {
+                    Edit::ExposeNestedInput {
+                        parent, targets, ..
+                    } => {
                         for prefix in path_ancestors(parent) {
-                            index(&mut result.nested_export_references, prefix.to_owned(), owner);
+                            index(
+                                &mut result.nested_export_references,
+                                prefix.to_owned(),
+                                owner,
+                            );
                         }
                         for target in targets {
                             index(
@@ -311,9 +313,17 @@ impl ConflictIndex {
                     }
                     Edit::ExposeNestedOutput { parent, from, .. } => {
                         for prefix in path_ancestors(parent) {
-                            index(&mut result.nested_export_references, prefix.to_owned(), owner);
+                            index(
+                                &mut result.nested_export_references,
+                                prefix.to_owned(),
+                                owner,
+                            );
                         }
-                        index(&mut result.nested_export_references, from.process.clone(), owner);
+                        index(
+                            &mut result.nested_export_references,
+                            from.process.clone(),
+                            owner,
+                        );
                     }
                     _ => {}
                 }
@@ -374,7 +384,9 @@ impl ConflictIndex {
         // export and a later registration declares a referenced component.
         for edit in registrations[id].patch.edits() {
             match edit {
-                Edit::ExposeNestedInput { parent, targets, .. } => {
+                Edit::ExposeNestedInput {
+                    parent, targets, ..
+                } => {
                     for prefix in path_ancestors(parent) {
                         from_path(&mut candidates, &self.component_exact, prefix, i);
                     }
@@ -865,7 +877,10 @@ mod conflict_index_tests {
             .map(|id| (id.clone(), registrations[id].patch.footprints()))
             .collect();
         let index = ConflictIndex::new(&registrations, &order, &footprints);
-        assert_eq!(index.after(0, &registrations, &order, &footprints).len(), 255);
+        assert_eq!(
+            index.after(0, &registrations, &order, &footprints).len(),
+            255
+        );
         assert!(matches!(
             plan(&registrations, SelectionLimits::default()),
             Err(ComposeError::Conflict { first, second, .. })
