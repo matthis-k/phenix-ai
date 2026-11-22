@@ -390,7 +390,8 @@ fn compose(
     // be unauthorized, cyclic, or make global selection ambiguous. Publish the
     // *new* active manifest and exact footprints with a fresh generation
     // identity, so old bound handles become stale even when the topology is
-    // unchanged. Every genuine selected write-set change still recompiles.
+    // unchanged. Other selected write-set changes are replayed and compiled,
+    // except the strictly checked source-pruning case below.
     if let Some(previous) = previous {
         let before: BTreeSet<&str> = previous
             .footprints
@@ -421,7 +422,16 @@ fn compose(
         .sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
     network.sources.sort();
     normalize_requirements(&mut network.requirements);
-    let compiled = network.compile()?;
+    // A source-only removal is strictly monotone: all other validated
+    // declarations and projections are identical, and the original successful
+    // compilation already paid the compiler's work/instance/depth limits.
+    // This still publishes a *fresh* generation with stale prior bindings.
+    let compiled = match previous
+        .and_then(|previous| previous.compiled.reuse_after_source_pruning(&previous.network, &network))
+    {
+        Some(compiled) => compiled,
+        None => network.compile()?,
+    };
     let planning::SelectedPlan {
         active,
         mut footprints,

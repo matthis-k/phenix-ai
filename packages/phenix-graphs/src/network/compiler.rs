@@ -25,6 +25,74 @@ impl NetworkDef {
     }
 }
 
+/// Bounded Q2 fast path: a previously valid compilation stays valid when the
+/// *only* change to the frozen network is removal of explicitly started
+/// zero-input root primitives. Every physical index, interface, contract,
+/// requirement, boundary, queue and factory is unchanged; only the list of
+/// automatically scheduled sources shrinks. Removing roots cannot increase
+/// compile work/instance/depth charges, so a previous default-limits success
+/// remains a default-limits success.
+impl CompiledNetwork {
+    pub(crate) fn reuse_after_source_pruning(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if after.sources.len() >= before.sources.len()
+            || before.interface != after.interface
+            || before.connections != after.connections
+            || before.inputs != after.inputs
+            || before.outputs != after.outputs
+            || before.claims != after.claims
+            || before.origin != after.origin
+            || before.requirements != after.requirements
+            || before.replacement_points != after.replacement_points
+            || before.extensions_allowed != after.extensions_allowed
+            || before.instances.len() != after.instances.len()
+        {
+            return None;
+        }
+        // Replay of the same immutable declaration may produce a new Arc
+        // wrapper with the same DefinitionKey (for example, host origin
+        // stamping). Check every author-visible claim and origin as well.
+        // Composite copy-on-write revisions always receive a fresh key.
+        if !before.instances.iter().all(|(name, old)| {
+            after.instances.get(name).is_some_and(|new| {
+                old.definition_key() == new.definition_key()
+                    && old.interface() == new.interface()
+                    && old.claims() == new.claims()
+                    && old.origin() == new.origin()
+            })
+        }) {
+            return None;
+        }
+        let remaining: BTreeSet<&str> = after.sources.iter().map(String::as_str).collect();
+        if !after.sources.iter().all(|path| before.sources.contains(path)) {
+            return None;
+        }
+        let mut removed_indices = BTreeSet::new();
+        for path in before.sources.iter().filter(|path| !remaining.contains(path.as_str())) {
+            let definition = before.instances.get(path)?;
+            if !matches!(definition.body(), Body::Primitive(_))
+                || !definition.interface().inputs().is_empty()
+            {
+                return None;
+            }
+            let index = self.inspections.get(path)?.physical_index?;
+            if !self.sources.contains(&index) {
+                return None;
+            }
+            removed_indices.insert(index);
+        }
+        if removed_indices.len() != before.sources.len() - after.sources.len() {
+            return None;
+        }
+        let mut compiled = self.with_fresh_generation();
+        compiled.sources.retain(|index| !removed_indices.contains(index));
+        Some(compiled)
+    }
+}
+
 type PhysicalPort = (String, String);
 #[derive(Default, Clone)]
 struct Boundary {
