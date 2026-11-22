@@ -66,7 +66,9 @@ fn measure<const N: usize>() {
 }
 
 fn main() {
-    println!("q2_source_prune benchmark: per-source-revoke only, 2 warmup groups + 7 timed groups of 6 calls; every call uses a fresh preregistered fixture; no RSS instrumentation");
+    println!(
+        "q2_source_prune benchmark: per-source-revoke only, 2 warmup groups + 7 timed groups of 6 calls; every call uses a fresh preregistered fixture; no RSS instrumentation"
+    );
     measure::<16>();
     measure::<64>();
     measure::<128>();
