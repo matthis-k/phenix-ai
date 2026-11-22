@@ -45,14 +45,7 @@ impl CompiledNetwork {
         // wrapper with the same DefinitionKey (for example, host origin
         // stamping). Check every author-visible claim and origin as well.
         // Composite copy-on-write revisions always receive a fresh key.
-        if !before.instances.iter().all(|(name, old)| {
-            after.instances.get(name).is_some_and(|new| {
-                old.definition_key() == new.definition_key()
-                    && old.interface() == new.interface()
-                    && old.claims() == new.claims()
-                    && old.origin() == new.origin()
-            })
-        }) {
+        if !same_declarations(before, after) {
             return None;
         }
         let remaining: BTreeSet<&str> = after.sources.iter().map(String::as_str).collect();
@@ -153,14 +146,80 @@ impl CompiledNetwork {
         }
         Some(compiled)
     }
+
+    /// Strictly monotone disconnection of direct root primitive edges. Every
+    /// remaining edge keeps its capacity and ordered physical endpoints; no
+    /// component, boundary, claim, source or requirement changes. Deleting
+    /// edges cannot create an invalid port type or exceed a compiler budget.
+    /// Nested/module edges and any additions always use canonical lowering.
+    pub(crate) fn reuse_after_root_connection_pruning(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if after.connections.len() >= before.connections.len()
+            || before.sources != after.sources
+            || !same_scope_without_connections(before, after)
+            || !same_declarations(before, after)
+        {
+            return None;
+        }
+        let old: BTreeSet<_> = before.connections.iter()
+            .map(|edge| (&edge.from, &edge.to, edge.capacity))
+            .collect();
+        let desired: BTreeSet<_> = after.connections.iter()
+            .map(|edge| (&edge.from, &edge.to, edge.capacity))
+            .collect();
+        if old.len() != before.connections.len()
+            || desired.len() != after.connections.len()
+            || !desired.is_subset(&old)
+        {
+            return None;
+        }
+        let mut removed = BTreeSet::new();
+        for edge in before.connections.iter().filter(|edge| {
+            !desired.contains(&(&edge.from, &edge.to, edge.capacity))
+        }) {
+            let from = before.instances.get(&edge.from.process)?;
+            let to = before.instances.get(&edge.to.process)?;
+            if !matches!(from.body(), Body::Primitive(_))
+                || !matches!(to.body(), Body::Primitive(_))
+            {
+                return None;
+            }
+            let from_index = self.inspections.get(&edge.from.process)?.physical_index?;
+            let to_index = self.inspections.get(&edge.to.process)?.physical_index?;
+            removed.insert((
+                from_index,
+                edge.from.port.as_str(),
+                to_index,
+                edge.to.port.as_str(),
+                edge.capacity,
+            ));
+        }
+        if removed.len() != before.connections.len() - after.connections.len() {
+            return None;
+        }
+        let mut compiled = self.with_fresh_generation();
+        let old_count = compiled.connections.len();
+        compiled.connections.retain(|edge| {
+            !removed.contains(&(
+                edge.from.0,
+                edge.from.1.as_str(),
+                edge.to.0,
+                edge.to.1.as_str(),
+                edge.capacity,
+            ))
+        });
+        (old_count - compiled.connections.len() == removed.len()).then_some(compiled)
+    }
 }
 
-/// Structural fields that compilation treats as immutable across both safe
-/// incremental cases. A changed contract obligation, connection, export or
-/// host-authorized extension seam always forces the full compiler.
-fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
+/// These fixed fields are verified before any incremental reuse; changing
+/// a contract, export, origin or author-approved extension seam is never
+/// eligible. Each supported delta may relax only its own exact dimension.
+fn same_scope_without_connections(before: &NetworkDef, after: &NetworkDef) -> bool {
     before.interface == after.interface
-        && before.connections == after.connections
         && before.inputs == after.inputs
         && before.outputs == after.outputs
         && before.claims == after.claims
@@ -169,6 +228,21 @@ fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
         && before.replacement_points == after.replacement_points
         && before.extensions_allowed == after.extensions_allowed
         && before.instances.len() == after.instances.len()
+}
+
+fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
+    before.connections == after.connections && same_scope_without_connections(before, after)
+}
+
+fn same_declarations(before: &NetworkDef, after: &NetworkDef) -> bool {
+    before.instances.iter().all(|(name, old)| {
+        after.instances.get(name).is_some_and(|new| {
+            old.definition_key() == new.definition_key()
+                && old.interface() == new.interface()
+                && old.claims() == new.claims()
+                && old.origin() == new.origin()
+        })
+    })
 }
 
 type PhysicalPort = (String, String);

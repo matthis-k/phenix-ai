@@ -435,6 +435,11 @@ fn compose(
                     .compiled
                     .reuse_after_root_primitive_replacements(&previous.network, &network)
             })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_root_connection_pruning(&previous.network, &network)
+            })
     }) {
         Some(compiled) => compiled,
         None => network.compile()?,
