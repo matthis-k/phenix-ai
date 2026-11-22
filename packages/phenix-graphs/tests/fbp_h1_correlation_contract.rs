@@ -8,8 +8,7 @@ use phenix_graph::{
     process::{Process, ProcessContext, ProcessEmission, Step},
     runtime::{
         Readiness, RequestError, RequestFailurePolicy, RequestQueuePolicy, RequestStatus,
-        SessionOptions,
-        SessionState,
+        SessionOptions, SessionState,
     },
 };
 use std::{num::NonZeroUsize, sync::Arc};
@@ -362,9 +361,7 @@ fn all_24_two_request_two_port_admission_orders_preserve_exact_pairing() {
                         for index in order {
                             let (is_a, port, value) = EVENTS[index];
                             let request = if is_a { a } else { b };
-                            session
-                                .inject_request_local(request, port, value)
-                                .unwrap();
+                            session.inject_request_local(request, port, value).unwrap();
                         }
                         session.close_request(a).unwrap();
                         session.close_request(b).unwrap();
