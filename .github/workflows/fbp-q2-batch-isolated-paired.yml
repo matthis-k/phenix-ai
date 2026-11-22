@@ -22,8 +22,8 @@ jobs:
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Paired production Composer control and Q2 batch isolated removal
         env:
-          CONTROL: b7c917ac78de23ae8741f5a73ee45be2c0314be0
-          OPTIMIZED: a6fcead63f249f21608dd124332f1461c42b3875
+          CONTROL: b107436d7ddc89c46cf91dc770e188328e6947d0
+          OPTIMIZED: dead3e77b24050f503bee74cb459b87f323230b6
         shell: bash
         run: |
           set -euo pipefail
