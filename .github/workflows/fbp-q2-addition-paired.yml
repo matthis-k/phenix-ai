@@ -22,8 +22,8 @@ jobs:
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Paired production Composer control and Q2 isolated addition
         env:
-          CONTROL: ff4a6844874289704f569c2ebdc6ff7b13eed20f
-          OPTIMIZED: 4d552d06e1366b3cb1b0fdf0049eb53e5f6d1ac4
+          CONTROL: 54e45246c7fb9938a77ab86c24aed461a2d35310
+          OPTIMIZED: bbc1e0307481e167ccb8504bdb8df54fffd3ad7d
         shell: bash
         run: |
           set -euo pipefail
