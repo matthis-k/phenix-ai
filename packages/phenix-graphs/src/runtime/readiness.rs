@@ -517,7 +517,10 @@ impl NetworkSession {
         self.processes[index].request = request;
         if self.request_queue_policy == RequestQueuePolicy::BoundedLanes
             || matches!(
-                self.processes[index].waiting_policy.as_ref().unwrap_or(&self.processes[index].policy),
+                self.processes[index]
+                    .waiting_policy
+                    .as_ref()
+                    .unwrap_or(&self.processes[index].policy),
                 Readiness::CorrelatedAll
             )
         {
