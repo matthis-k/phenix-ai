@@ -1,6 +1,26 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: H1, 2026-11-23
+## Current Acceptance: A1, 2026-11-23
+
+Original A1 is **scoped verified: 18.0% -> 100.0%, +82.0 pp**, source
+`923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` on draft #1388. The
+[acceptance record](fbp-a1-checked-nested-exports-20261123.md) maps the original
+private-extension and executable-agent-loop criteria to real author-opted
+Add/Connect/export replay, exact checked lowering, prepared Kernel integration,
+both queue policies, failed updates, frozen claims and retained generations.
+Independent whole-scope review found no remaining blocker. All six jobs of
+[Flake CI 45249107088](https://github.com/matthis-k/phenix-ai/actions/runs/45249107088)
+and both [Session Ownership 45249106208](https://github.com/matthis-k/phenix-ai/actions/runs/45249106208)
+jobs passed on that exact source. These docs require their own head's CI.
+
+Current counts are **23 scoped verified / 5 partial / 4 open / 1 approved
+exclusion**, with **9 in-scope findings**: H3b/H4/H5/H6/H7 and A2/Q2/Q3/Q4.
+The scorecard owns the sum **2713** and subjective mean **82.2%**. H1 and C7's
+approved exclusion are unchanged. Additive extension is not arbitrary destructive
+rewiring, implicit interface compatibility, independent shared-request process
+state, static liveness, sandboxing, or M7/M8 production completion.
+
+## Previous Acceptance: H1, 2026-11-23
 
 H1 **Shared-session FIFO correlation** is now **scoped verified
 (60.0% -> 100.0%, +40.0 pp)** for the finite, opt-in, authenticated
@@ -147,7 +167,7 @@ core-only stage received no closure credit.
 | C3 retired-generation policy | Open, now scoped verified | User-approved LeasedArchival, with integrated retained request/clone/job authentication and exact leases | Retirement stops host-owned producers, not explicit archived execution; strict revocation not claimed |
 | C6 migration/restart | Open, now scoped verified | User-approved Restart And Persist plus real independent SQLite reopen/CAS/schema/candidate-failure and archived-job proof | Fresh process-private successor state; durable continuity is explicit and no live migration or exclusive writer is claimed |
 | C7 plugin isolation | Open, now excluded | User-approved TrustedNativeScope excludes untrusted native isolation | No OS sandbox was implemented or verified; exclusion earns no numerical implementation credit |
-| A1 private extension | Open | Add a concrete author-approved nested Add/Connect/export seam, exact host grants, conflicts, provenance and failure atomicity | Existing nested replacement seams are not general extension authority |
+| A1 private extension | Open, now scoped verified | Author-approved nested Add/Connect/export, checked bound lowering, prepared Kernel integration and genuine nested agent feedback/stop accepted at `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` after independent whole-scope review and exact-head CI | [Acceptance](fbp-a1-checked-nested-exports-20261123.md); extension and replacement remain separate authorities; exact claimed interfaces cannot silently widen |
 | A2 compatibility | Open | Define the safe compatibility relation with positive/negative examples, then validate adapters/replacement and inherited obligations | Shape agreement alone cannot manufacture semantic contract membership |
 | A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
 | A4 typed authoring | Open, now scoped verified | Canonical authority audit and paired real manual/key/derived executions accepted at `89171a843` | Necessary validated views/convenience APIs retained; no second authoring model or Engine shim introduced |
