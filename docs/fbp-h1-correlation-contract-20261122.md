@@ -103,6 +103,12 @@ ordinary stateful FBP producer processes and their internal queues**, proving
 that correlation metadata and per-request FIFO survive multiple edges rather
 than only direct injection into the join.
 
+A further SharedFifo regression keeps one correlated scope continuously
+refilled while the other has a finite standing backlog. It requires alternating
+owner selection during the complete overlap window, then ordered consumption
+of the refilled remainder. This verifies **cooperative bounded work
+conservation**, not real-time scheduling of infinite arrivals.
+
 The already existing `fbp_request_lanes` regressions separately guard strict
 FIFO `All`, correlated round-robin rotation, bounded unscoped opportunities
 and closure-only request progress.
