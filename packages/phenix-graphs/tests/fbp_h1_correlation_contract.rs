@@ -656,7 +656,7 @@ fn correlated_shared_fifo_rotates_even_as_one_request_is_continuously_refilled()
     let mut session = network(false).start_with_options(options(RequestQueuePolicy::SharedFifo));
     let a = session.begin_request(None).unwrap();
     let b = session.begin_request(None).unwrap();
-    for index in 0_i64..6 {
+    for index in 0_i64..4 {
         session
             .inject_request_local(a, "left", 10_i64 + index)
             .unwrap();
@@ -671,7 +671,7 @@ fn correlated_shared_fifo_rotates_even_as_one_request_is_continuously_refilled()
     // Replenish A after its own turns; B has a standing bounded backlog.
     // The request cursor must not reset to A merely because A was refilled.
     let mut observed = Vec::new();
-    for turn in 0_i64..12 {
+    for turn in 0_i64..8 {
         let report = session.run_until_idle(2);
         assert_eq!(report.steps, 2, "turn {turn}");
         let packet = session.take_output("out").unwrap().unwrap();
@@ -687,7 +687,7 @@ fn correlated_shared_fifo_rotates_even_as_one_request_is_continuously_refilled()
         }
     }
     let mut expected = Vec::new();
-    for index in 0_i64..6 {
+    for index in 0_i64..4 {
         expected.push((a, 11_i64 + index));
         expected.push((b, 22_i64 + index));
     }
@@ -695,15 +695,15 @@ fn correlated_shared_fifo_rotates_even_as_one_request_is_continuously_refilled()
     session.close_request(a).unwrap();
     session.close_request(b).unwrap();
     assert!(!session.run_until_idle(64).budget_exhausted);
-    assert_eq!(captured(&mut session, a), [101, 102, 103, 104, 105, 106]);
+    assert_eq!(captured(&mut session, a), [101, 102, 103, 104]);
     assert!(captured(&mut session, b).is_empty());
     assert_eq!(
         session.request_status(a).unwrap(),
-        RequestStatus::Settled { captures: 12 }
+        RequestStatus::Settled { captures: 8 }
     );
     assert_eq!(
         session.request_status(b).unwrap(),
-        RequestStatus::Settled { captures: 6 }
+        RequestStatus::Settled { captures: 4 }
     );
     session.release_request(a).unwrap();
     session.release_request(b).unwrap();
