@@ -98,6 +98,11 @@ after each injection: `24 * 16 * 2 = 768` bounded execution schedules.
 These are deterministic finite integration executions, not an exhaustive
 Loom concurrency proof or an assertion about unbounded input arrivals.
 
+A separate integration case routes both incoming streams through **two
+ordinary stateful FBP producer processes and their internal queues**, proving
+that correlation metadata and per-request FIFO survive multiple edges rather
+than only direct injection into the join.
+
 The already existing `fbp_request_lanes` regressions separately guard strict
 FIFO `All`, correlated round-robin rotation, bounded unscoped opportunities
 and closure-only request progress.
