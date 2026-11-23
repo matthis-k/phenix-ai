@@ -190,7 +190,16 @@ impl NetworkSession {
                     QueueEndpoint::Input(_) | QueueEndpoint::Capture(_) => true,
                 }
         };
-        let queues = &self.processes[index].inputs[port].queues;
+        // Admission/publication authenticate packets into this request's lane.
+        // Its immutable edge index also preserves canonical producer order;
+        // do not walk canonical or foreign lane copies of the same topology.
+        let lane_inputs = (self.request_queue_policy == RequestQueuePolicy::BoundedLanes)
+            .then(|| &self.request_lanes[&scope.lane].input_ports);
+        let input_queues = |index, port| match lane_inputs {
+            Some(inputs) => inputs.get(&(index, port)).map(Vec::as_slice).unwrap_or(&[]),
+            None => self.processes[index].inputs[port].queues.as_slice(),
+        };
+        let queues = input_queues(index, port);
         for queue in queues.iter().copied().filter(|q| relevant(*q)) {
             let count = self.transport.queues()[queue].request_count(request);
             if count != 0 {
@@ -225,7 +234,7 @@ impl NetworkSession {
                     process: producer,
                 });
             }
-            for queue in p.inputs.iter().flat_map(|port| &port.queues) {
+            for queue in (0..p.inputs.len()).flat_map(|port| input_queues(producer, port)) {
                 if !relevant(*queue) {
                     continue;
                 }
@@ -293,6 +302,9 @@ impl NetworkSession {
         }
     }
 }
+
+#[cfg(test)]
+mod lane_tests;
 
 #[cfg(test)]
 mod closure_visited_tests {

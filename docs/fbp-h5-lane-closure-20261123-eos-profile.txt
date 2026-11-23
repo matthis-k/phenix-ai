@@ -1,0 +1,34 @@
+
+running 1 test
+test runtime::closure::lane_tests::profile_global_eos_scan ... eos,lanes=1,physical_queues=2,sample=0,ns_per_proof=14.29
+eos,lanes=1,physical_queues=2,sample=1,ns_per_proof=13.24
+eos,lanes=1,physical_queues=2,sample=2,ns_per_proof=15.69
+eos,lanes=1,physical_queues=2,sample=3,ns_per_proof=13.64
+eos,lanes=1,physical_queues=2,sample=4,ns_per_proof=12.53
+eos,lanes=1,physical_queues=2,sample=5,ns_per_proof=11.92
+eos,lanes=1,physical_queues=2,sample=6,ns_per_proof=11.99
+eos,lanes=4,physical_queues=5,sample=0,ns_per_proof=16.37
+eos,lanes=4,physical_queues=5,sample=1,ns_per_proof=17.86
+eos,lanes=4,physical_queues=5,sample=2,ns_per_proof=18.08
+eos,lanes=4,physical_queues=5,sample=3,ns_per_proof=16.08
+eos,lanes=4,physical_queues=5,sample=4,ns_per_proof=14.75
+eos,lanes=4,physical_queues=5,sample=5,ns_per_proof=13.41
+eos,lanes=4,physical_queues=5,sample=6,ns_per_proof=15.54
+eos,lanes=16,physical_queues=17,sample=0,ns_per_proof=35.06
+eos,lanes=16,physical_queues=17,sample=1,ns_per_proof=32.35
+eos,lanes=16,physical_queues=17,sample=2,ns_per_proof=39.57
+eos,lanes=16,physical_queues=17,sample=3,ns_per_proof=32.27
+eos,lanes=16,physical_queues=17,sample=4,ns_per_proof=32.02
+eos,lanes=16,physical_queues=17,sample=5,ns_per_proof=31.62
+eos,lanes=16,physical_queues=17,sample=6,ns_per_proof=32.52
+eos,lanes=64,physical_queues=65,sample=0,ns_per_proof=78.29
+eos,lanes=64,physical_queues=65,sample=1,ns_per_proof=72.58
+eos,lanes=64,physical_queues=65,sample=2,ns_per_proof=76.22
+eos,lanes=64,physical_queues=65,sample=3,ns_per_proof=80.34
+eos,lanes=64,physical_queues=65,sample=4,ns_per_proof=73.42
+eos,lanes=64,physical_queues=65,sample=5,ns_per_proof=83.10
+eos,lanes=64,physical_queues=65,sample=6,ns_per_proof=75.80
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 0.98s
+

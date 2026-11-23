@@ -309,7 +309,14 @@ fn measure(mode: &str, breadth: usize, iterations: usize) -> (f64, f64, f64, f64
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let iterations: usize = args.next().unwrap_or_else(|| "250".into()).parse().unwrap();
+    let first = args.next().unwrap_or_else(|| "250".into());
+    if first == "--lane-matrix" {
+        let iterations = args.next().unwrap_or_else(|| "9".into()).parse().unwrap();
+        let breadth = args.next().unwrap_or_else(|| "16".into()).parse().unwrap();
+        measure_lane_matrix(iterations, breadth);
+        return;
+    }
+    let iterations: usize = first.parse().unwrap();
     let breadths: Vec<_> = args.map(|s| s.parse::<usize>().unwrap()).collect();
     let breadths = if breadths.is_empty() {
         vec![0, 16, 64, 128]
@@ -341,6 +348,65 @@ fn main() {
             println!(
                 "{mode}-overlap-4,{count},{overlap_iterations},{compile_ms:.3},{start_ms:.3},{mean:.1},{p50:.0}"
             );
+        }
+    }
+}
+
+/// Time only execution of overlapping closures, not graph/session setup,
+/// admission/sealing, assertions or release. Every sample reuses lane slots.
+fn measure_lane_matrix(iterations: usize, breadth: usize) {
+    use phenix_graph::runtime::{RequestQueuePolicy, SessionOptions};
+    assert!(iterations > 0 && breadth > 0);
+    println!("policy,lanes,chain_nodes,sample,batch_ns,ns_per_request");
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        for lanes in [1, 4, 16, 64] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let network = compiled_with_capacity(
+                "chain",
+                breadth,
+                hits.clone(),
+                NonZeroUsize::new(lanes).unwrap(),
+            );
+            let mut session = network.start_with_options(SessionOptions {
+                max_requests: NonZeroUsize::new(lanes).unwrap(),
+                request_queue_policy: policy,
+                ..readiness_options("chain", breadth)
+            });
+            for sample in 0..iterations + 2 {
+                let ids: Vec<_> = (0..lanes)
+                    .map(|_| session.begin_request(None).unwrap())
+                    .collect();
+                for &id in &ids {
+                    session
+                        .inject_request(id, "trigger", Value::of(1_u64))
+                        .unwrap();
+                    session.close_request(id).unwrap();
+                }
+                let started = Instant::now();
+                let report = session.run_until_idle(lanes * (breadth + 1) * 4 + 32);
+                let elapsed = started.elapsed().as_nanos();
+                assert!(!report.budget_exhausted);
+                assert_eq!(report.steps, lanes * (breadth + 1));
+                for id in ids {
+                    assert_eq!(
+                        session.request_status(id).unwrap(),
+                        RequestStatus::Settled { captures: 0 }
+                    );
+                    session.release_request(id).unwrap();
+                }
+                assert_eq!(session.state(), SessionState::Quiescent);
+                assert_eq!(hits.load(Ordering::Relaxed), (sample + 1) * lanes * breadth);
+                if sample >= 2 {
+                    println!(
+                        "{policy:?},{lanes},{breadth},{},{elapsed},{:.1}",
+                        sample - 2,
+                        elapsed as f64 / lanes as f64
+                    );
+                }
+            }
         }
     }
 }
