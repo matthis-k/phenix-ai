@@ -644,3 +644,62 @@ fn two_real_upstream_producers_preserve_crossed_request_identity_at_join() {
         assert!(session.failure().is_none(), "{policy:?}");
     }
 }
+
+#[test]
+fn correlated_shared_fifo_rotates_even_as_one_request_is_continuously_refilled() {
+    let mut session = network(false).start_with_options(options(RequestQueuePolicy::SharedFifo));
+    let a = session.begin_request(None).unwrap();
+    let b = session.begin_request(None).unwrap();
+    for index in 0_i64..6 {
+        session
+            .inject_request_local(a, "left", 10_i64 + index)
+            .unwrap();
+        session.inject_request_local(a, "right", 1_i64).unwrap();
+        session
+            .inject_request_local(b, "left", 20_i64 + index)
+            .unwrap();
+        session.inject_request_local(b, "right", 2_i64).unwrap();
+    }
+
+    // Both scopes stay eligible through every observed activation.
+    // Replenish A after its own turns; B has a standing bounded backlog.
+    // The request cursor must not reset to A merely because A was refilled.
+    let mut observed = Vec::new();
+    for turn in 0_i64..12 {
+        let report = session.run_until_idle(2);
+        assert_eq!(report.steps, 2, "turn {turn}");
+        let packet = session.take_output("out").unwrap().unwrap();
+        observed.push((
+            packet.metadata().unwrap().request().unwrap(),
+            *packet.value().borrow::<i64>().unwrap(),
+        ));
+        if turn % 2 == 0 {
+            session
+                .inject_request_local(a, "left", 100_i64 + turn / 2)
+                .unwrap();
+            session.inject_request_local(a, "right", 1_i64).unwrap();
+        }
+    }
+    let mut expected = Vec::new();
+    for index in 0_i64..6 {
+        expected.push((a, 11_i64 + index));
+        expected.push((b, 22_i64 + index));
+    }
+    assert_eq!(observed, expected);
+    session.close_request(a).unwrap();
+    session.close_request(b).unwrap();
+    assert!(!session.run_until_idle(64).budget_exhausted);
+    assert_eq!(captured(&mut session, a), [101, 102, 103, 104, 105, 106]);
+    assert!(captured(&mut session, b).is_empty());
+    assert_eq!(
+        session.request_status(a).unwrap(),
+        RequestStatus::Settled { captures: 12 }
+    );
+    assert_eq!(
+        session.request_status(b).unwrap(),
+        RequestStatus::Settled { captures: 6 }
+    );
+    session.release_request(a).unwrap();
+    session.release_request(b).unwrap();
+    assert!(session.failure().is_none());
+}
