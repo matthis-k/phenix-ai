@@ -89,6 +89,7 @@ impl NetworkSession {
     // can reach. Physical packets/EOS and targeted notifications cover those
     // policies outside a sealed scope.
     pub(super) fn unwatch_scoped_readiness(&mut self, reachable: &[usize]) {
+        let was_full = self.prefer_full_refresh();
         for &index in reachable {
             if matches!(&self.processes[index].policy, Readiness::Optional { .. })
                 || self.processes[index].notification_driven
@@ -102,6 +103,19 @@ impl NetworkSession {
                     self.scoped_readiness_poll.remove(&index);
                 }
             }
+        }
+        self.force_full_refresh |= was_full && !self.prefer_full_refresh();
+    }
+
+    pub(super) fn sync_poll(&mut self, index: usize) {
+        if self.processes[index].requires_poll() {
+            self.always_poll.insert(index);
+        } else {
+            let was_full = self.prefer_full_refresh();
+            self.always_poll.remove(&index);
+            // Full mode discards dirty events. A shrinking mandatory set must
+            // resynchronize before sparse scheduling can trust that set again.
+            self.force_full_refresh |= was_full && !self.prefer_full_refresh();
         }
     }
 
@@ -189,6 +203,9 @@ impl NetworkSession {
                 }
                 self.processes[index].waiting = None;
                 self.processes[index].waiting_policy = None;
+                if state == HandoffState::WaitingInput {
+                    self.sync_poll(index);
+                }
             } else if self.idle_completion_after_empty_selection(index) {
                 self.finish(index);
                 if self.terminal.is_some() {
@@ -263,7 +280,7 @@ impl NetworkSession {
             return;
         }
         let mut dirty = std::mem::take(&mut self.dirty_processes);
-        // Legacy Custom/source/staged nodes stay permanently polled.
+        // Legacy Custom/source nodes and unresolved staged waits stay polled.
         // Optional and notified Custom nodes additionally poll for
         // registered sealed scopes reaching them.
         dirty.extend(self.always_poll.iter().copied());
@@ -295,6 +312,9 @@ impl NetworkSession {
         }
     }
 }
+
+#[cfg(test)]
+mod staged_poll_tests;
 
 #[cfg(test)]
 mod indexed_process_paths_tests {

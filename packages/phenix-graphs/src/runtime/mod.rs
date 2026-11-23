@@ -275,6 +275,17 @@ struct RuntimeProcess {
     closed_in_activation: BTreeSet<usize>,
 }
 
+impl RuntimeProcess {
+    fn requires_poll(&self) -> bool {
+        !self.done
+            && (self.source
+                || self.inputs.is_empty()
+                || matches!(&self.policy, Readiness::Custom(_)) && !self.notification_driven
+                || self.waiting.is_some()
+                || self.waiting_policy.is_some())
+    }
+}
+
 struct RequestLane {
     inputs: BTreeMap<String, Vec<usize>>,
     input_ports: BTreeMap<(usize, usize), Vec<usize>>,
