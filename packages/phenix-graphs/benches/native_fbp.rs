@@ -2,11 +2,12 @@
 use phenix_graph::{
     ComponentDef, GraphOrigin, Interface, NetworkBuilder, PortDef, Process, ProcessContext,
     ProcessEmission, Step, Value,
-    compose::{Composer, Edit, Footprint, NetworkPatch, Registration},
+    compose::{ComposeError, Composer, Edit, Footprint, NetworkPatch, Registration},
     connection::{ConnectionError, ConnectionQueue, ConnectionSet, FanoutTarget, Packet},
     runtime::{Readiness, SessionOptions, SessionState},
 };
 use std::{
+    collections::BTreeSet,
     hint::black_box,
     num::NonZeroUsize,
     sync::{
@@ -364,6 +365,128 @@ fn compose_reverse_dependency_chain<const N: usize, const ADD: bool>() {
     black_box(composer.current());
 }
 
+/// Real writes on a wide diamond, or a skewed hub/fan-in followed by a long tail.
+/// Removing one branch must remove the join/tail, but preserve sibling branches.
+fn compose_dependency_fan_in<const N: usize, const SKEWED: bool>() {
+    assert!(N >= 4);
+    let id = |index| format!("node{:04}", N - 1 - index);
+    let join = if SKEWED { N / 2 } else { N - 1 };
+    let definition = Arc::new(ComponentDef::map(|v: i64| v));
+    let mut builder = NetworkBuilder::new();
+    builder.add("anchor", definition.clone()).unwrap();
+    let mut composer = Composer::new(builder.build().unwrap()).unwrap();
+    let registrations = (0..N).map(|index| {
+        let dependencies = if index == 0 {
+            Vec::new()
+        } else if index == join {
+            (1..join).map(id).collect()
+        } else if index > join {
+            // The root is both a high-degree hub and a redundant ancestor.
+            vec![id(0), id(index - 1)]
+        } else {
+            vec![id(0)]
+        };
+        let path = id(index);
+        Registration::new(
+            path.clone(),
+            dependencies,
+            0,
+            GraphOrigin::default(),
+            [Footprint::Component(path.clone())],
+            NetworkPatch::new([Edit::Add {
+                path,
+                definition: definition.clone(),
+            }]),
+        )
+    });
+    composer.register(registrations).unwrap();
+    assert_eq!(composer.current().active(), &(0..N).map(id).collect());
+    assert_eq!(composer.current().compiled().processes().len(), N + 1);
+    for index in 0..N {
+        assert!(composer.current().compiled().inspect(&id(index)).is_ok());
+        assert_eq!(
+            composer.current().footprints()[&id(index)],
+            BTreeSet::from([Footprint::Component(id(index))])
+        );
+    }
+
+    let removed = composer.revoke(&id(1)).unwrap();
+    assert_eq!(removed, std::iter::once(1).chain(join..N).map(id).collect());
+    let remaining: BTreeSet<_> = std::iter::once(0).chain(2..join).map(id).collect();
+    assert_eq!(composer.current().active(), &remaining);
+    assert_eq!(composer.current().compiled().processes().len(), join);
+    for index in 0..N {
+        assert_eq!(
+            composer.current().compiled().inspect(&id(index)).is_ok(),
+            remaining.contains(&id(index))
+        );
+    }
+    assert_eq!(composer.revoke(&id(0)).unwrap(), remaining);
+    assert!(composer.current().active().is_empty());
+    assert!(composer.current().footprints().is_empty());
+    assert_eq!(composer.current().compiled().processes().len(), 1);
+    assert!(composer.current().compiled().inspect("anchor").is_ok());
+    black_box(composer.current());
+}
+
+/// All pairs collide, but the first lexical pair must reject the batch atomically.
+/// This measures early rejection, not dense successful selection or solver search.
+fn compose_dense_equal_priority_conflict<const N: usize>() {
+    assert!(N >= 2);
+    let definition = Arc::new(ComponentDef::map(|v: i64| v));
+    let mut builder = NetworkBuilder::new();
+    builder.add("anchor", definition.clone()).unwrap();
+    let mut composer = Composer::new(builder.build().unwrap()).unwrap();
+    composer
+        .register([Registration::new(
+            "sentinel",
+            [],
+            0,
+            GraphOrigin::default(),
+            [],
+            NetworkPatch::new([]),
+        )])
+        .unwrap();
+    // Reverse admission order makes the expected error independent of insertion.
+    let registrations = (0..N).rev().map(|index| {
+        Registration::new(
+            format!("node{index:04}"),
+            [],
+            0,
+            GraphOrigin::default(),
+            [Footprint::Component("anchor".into())],
+            NetworkPatch::new([Edit::Replace {
+                path: "anchor".into(),
+                definition: definition.clone(),
+            }]),
+        )
+    });
+    assert_eq!(
+        composer.register(registrations).unwrap_err(),
+        ComposeError::Conflict {
+            first: "node0000".into(),
+            second: "node0001".into(),
+            footprint: Box::new(Footprint::Component("anchor".into())),
+        }
+    );
+    assert_eq!(
+        composer.current().active(),
+        &BTreeSet::from(["sentinel".into()])
+    );
+    assert_eq!(composer.current().footprints().len(), 1);
+    assert!(composer.current().footprints()["sentinel"].is_empty());
+    assert_eq!(composer.current().compiled().processes().len(), 1);
+    assert!(composer.current().compiled().inspect("anchor").is_ok());
+    // An absent candidate ID proves failed admission did not publish the registry.
+    assert!(composer.revoke("node0000").unwrap().is_empty());
+    assert_eq!(
+        composer.revoke("sentinel").unwrap(),
+        BTreeSet::from(["sentinel".into()])
+    );
+    assert!(composer.current().active().is_empty());
+    black_box(composer.current());
+}
+
 fn main() {
     println!(
         "native_fbp: warmup=2 samples=7; elapsed includes setup, validation and teardown; no allocation instrumentation"
@@ -398,6 +521,42 @@ fn main() {
         (
             "compose_revlex_add128_register_revoke",
             compose_reverse_dependency_chain::<128, true>,
+        ),
+        (
+            "compose_diamond_add16_register_partial_revoke",
+            compose_dependency_fan_in::<16, false>,
+        ),
+        (
+            "compose_diamond_add64_register_partial_revoke",
+            compose_dependency_fan_in::<64, false>,
+        ),
+        (
+            "compose_diamond_add128_register_partial_revoke",
+            compose_dependency_fan_in::<128, false>,
+        ),
+        (
+            "compose_skewed_add16_register_partial_revoke",
+            compose_dependency_fan_in::<16, true>,
+        ),
+        (
+            "compose_skewed_add64_register_partial_revoke",
+            compose_dependency_fan_in::<64, true>,
+        ),
+        (
+            "compose_skewed_add128_register_partial_revoke",
+            compose_dependency_fan_in::<128, true>,
+        ),
+        (
+            "compose_dense_equal64_reject",
+            compose_dense_equal_priority_conflict::<64>,
+        ),
+        (
+            "compose_dense_equal256_reject",
+            compose_dense_equal_priority_conflict::<256>,
+        ),
+        (
+            "compose_dense_equal1024_reject",
+            compose_dense_equal_priority_conflict::<1024>,
         ),
     ] {
         for _ in 0..2 {
