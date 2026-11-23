@@ -440,6 +440,41 @@ fn compose(
                     .compiled
                     .reuse_after_root_connection_pruning(&previous.network, &network)
             })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_root_connection_capacity_changes(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_root_connection_additions(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_removal(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_batch_isolated_root_removal(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_addition(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_connected_root_addition(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_connected_root_removal(&previous.network, &network)
+            })
     }) {
         Some(compiled) => compiled,
         None => network.compile()?,
