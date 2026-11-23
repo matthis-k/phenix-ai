@@ -82,14 +82,25 @@ never dropped just to create progress.
 
 ## 4. Falsifiable acceptance and remaining boundary
 
-The new public-API regression `fbp_h1_correlation_contract` runs both
-`SharedFifo` and `BoundedLanes` for crossed multiplicity, a foreign-head
-staged wait, unscoped head preservation, and explicit cancellation followed by
-peer execution and EOS. It checks captured request identities and payloads,
-finite driver budgets, settlement/release and no session failure. The already
-existing `fbp_request_lanes` regressions separately guard strict FIFO
-`All`, correlated round-robin rotation, bounded unscoped opportunities and
-closure-only request progress.
+The public-API regression `fbp_h1_correlation_contract` runs both
+`SharedFifo` and `BoundedLanes` for crossed multiplicity, foreign-head
+staged waits (both preloaded and late-arriving own packets), unscoped-head
+preservation, bounded backpressure, and explicit cancellation followed by
+peer execution and EOS. It also challenges ordinary `All` under shared
+FIFO to ensure that an existing exact staged wait is **not** silently made
+correlated. It checks captured request identities and payloads, finite driver
+budgets, settlement/release and no session failure.
+
+In addition to representative tests, **all 24** arrival permutations of two
+authenticated requests on two input ports are checked under both transport
+policies, including **16** patterns that optionally drive one process step
+after each injection: `24 * 16 * 2 = 768` bounded execution schedules.
+These are deterministic finite integration executions, not an exhaustive
+Loom concurrency proof or an assertion about unbounded input arrivals.
+
+The already existing `fbp_request_lanes` regressions separately guard strict
+FIFO `All`, correlated round-robin rotation, bounded unscoped opportunities
+and closure-only request progress.
 
 Accept H1's **bounded supported-scenario** contract only after exact-head
 formatting, default/no-default Graph tests, Flake CI and relevant concurrent
