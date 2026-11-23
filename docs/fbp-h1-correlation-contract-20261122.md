@@ -113,9 +113,14 @@ The already existing `fbp_request_lanes` regressions separately guard strict
 FIFO `All`, correlated round-robin rotation, bounded unscoped opportunities
 and closure-only request progress.
 
-Accept H1's **bounded supported-scenario** contract only after exact-head
-formatting, default/no-default Graph tests, Flake CI and relevant concurrent
-runtime verifiers pass, plus independent code/contract review. This contract
-does not establish universal arbitrary arrival-skew fairness or H7 independent
-process-state isolation. Older issue percentages remain unchanged until the
-authoritative 33-issue scorecard is explicitly reconciled.
+H1's **bounded supported-scenario** contract is **scoped verified** at
+implementation commit `2cda718a723bc51a793c125a0bbc26ba78ecfac5`.
+All eleven implementation-head hosted workflows passed, including six-job Flake
+CI, Graph default/no-default verification, formatting and native concurrency
+checks. A separate adversarial source/contract review is recorded in the
+[final acceptance report](fbp-h1-final-acceptance-20261123.md); it does not
+claim an external human reviewer. The authoritative
+[33-issue scorecard](fbp-issue-progress-estimates-20261113.md) now records
+**100.0% scoped verified** for H1. The report/scorecard edits have separate
+exact-head CI requirements. No universal arbitrary-arrival fairness,
+independent mutable process-state progress or H7 acceptance is claimed.
