@@ -3,6 +3,15 @@
 Base: local `fix/fbp-staged-poll-source-20261123`, `3bdccbe9b`.
 Worktree: `/tmp/opencode/fbp-h5-lane-closure-20261123`.
 
+Current lane benchmark command (after the CI harness separation below):
+
+```sh
+nix develop --command cargo run --locked -j 2 --release -p phenix-graph --example fbp_lane_closure_benchmark -- 21 16
+```
+
+The original combined-harness measurements remain archived below. The extracted
+harness rerun in the final section supersedes them for the current executable.
+
 ## Phase 1: premise and correctness challenge
 
 `scoped_closure_proof` walks canonical plus every allocated request lane at
@@ -110,7 +119,12 @@ scopes' unobserved middle closure obligations. All scopes then settle exactly
 once. The regression runs SharedFifo/BoundedLanes crossed with Optional, polling
 Custom and notification-driven Custom readiness.
 
-## Results: paired measurements
+## Archived: combined-harness measurements
+
+These measurements and hashes describe the original combined executable, not
+the current benchmark source. Its `--lane-matrix` mode has moved to
+`fbp_lane_closure_benchmark`. Retain this evidence unchanged for provenance;
+use the extracted-harness rerun below for current commands, hashes and results.
 
 Local machine: Intel i7-8550U, Linux x86_64, Nix devShell Cargo 1.96.2, default
 release profile, `--locked -j 2`. No extra RUSTFLAGS. Both binaries were built
@@ -235,3 +249,123 @@ and all-target Clippy. All passed. Follow-up logs are
 `/tmp/opencode/fbp-h5-lane-review-default-tests.txt`, and
 `/tmp/opencode/fbp-h5-lane-review-no-default-tests.txt`.
 No commit or push was made.
+
+## CI harness separation and rerun
+
+The original implementation and review follow-up were subsequently published
+as source `34c22302a` in PR #1390. [Run 45260722335](https://github.com/matthis-k/phenix-ai/actions/runs/45260722335)
+failed during compilation of the copied closure benchmark on the workflow's
+historical `516e0883875d5ec483e3595d50b77b3d5e8979c4` baseline. The log shows
+E0432 for RequestQueuePolicy and E0560 for request_queue_policy: that baseline
+predates lane APIs. The existing String-error cfg cannot make those APIs exist.
+
+The correction separates executables, not runtime behavior or compatibility:
+
+- `fbp_closure_benchmark.rs` is restored to its `3bdccbe9b` source except for
+  `pub(crate)` visibility on `compiled_with_capacity` and `readiness_options`
+  (and rustfmt's wrapping of the latter). Its historical standalone main,
+  controls, tests and existing String-error cfg remain intact. There is no
+  lane API, lane CLI mode, or dependency on another source file in that file.
+- `fbp_lane_closure_benchmark.rs` includes the old benchmark through a path
+  module and calls those two constructors. It contains the extracted matrix
+  logic, unchanged timer boundaries and assertions, and a smoke test covering
+  both policies and all four lane counts. A documented module-local
+  `allow(dead_code)` covers the unused standalone main/other benchmark modes.
+- No production source, committed closure test, or workflow changed. No new
+  backward-compatibility cfg, shim, transport state or simulated workload was
+  introduced. This follow-up is uncommitted and has not been pushed.
+
+### Historical workflow reproduction
+
+A fresh detached worktree at `/tmp/opencode/fbp-h5-legacy-516e088-20261123`
+received **only** the corrected `fbp_closure_benchmark.rs`, exactly as the
+workflow copies it. The new lane example/helper support files were not copied
+there. The following build succeeded using that worktree's Nix devShell:
+
+```sh
+RUSTFLAGS="--check-cfg=cfg(fbp_benchmark_baseline_string_error) --cfg=fbp_benchmark_baseline_string_error" CARGO_TARGET_DIR=/tmp/opencode/fbp-h5-legacy-target nix develop --command cargo build --locked -j 2 --release -p phenix-graph --example fbp_closure_benchmark --example fbp_benchmark
+```
+
+The candidate also built both legacy examples with the workflow's candidate
+`RUSTFLAGS="--check-cfg=cfg(fbp_benchmark_baseline_string_error)"`, using
+`/tmp/opencode/fbp-h5-legacy-candidate-target`. One complete execution of each
+legacy workload on each implementation succeeded with the workflow's exact
+arguments, preserving all controls:
+
+```sh
+fbp_closure_benchmark 160 0 16 64 128
+fbp_benchmark 3000 1 16 64 256
+```
+
+[Raw local legacy control output](fbp-h5-lane-closure-20261123-legacy-controls.txt)
+records all isolated/overlap fan-in and chain cases and all sparse-scheduler
+sizes. This verifies build/run compatibility, not a new legacy performance
+claim. It is one local pass per variant, not the workflow's three repetitions
+or a successful remote CI result. Historical build log:
+`/tmp/opencode/fbp-h5-legacy-build.txt`.
+
+### Current paired evidence
+
+A separate fresh baseline worktree at
+`/tmp/opencode/fbp-h5-extracted-baseline-20261123` is exactly `3bdccbe9b` except
+for the two copied example files. It uses the original, unoptimized runtime.
+Candidate source is `34c22302a` plus this example/documentation separation.
+Both examples were copied byte-for-byte from the candidate, including the
+workload module; source hashes match across these two worktrees. The corrected
+legacy file also has that same hash in the historical worktree.
+
+- Lane example SHA-256: `9edafbcec9c35353a4972c02b720864230badbe3487251a938d5289fbe5ecbb0`.
+- Included legacy workload SHA-256: `73510f8d464c02e385c8613583c1cb5004687c0c85b2540a09fd78dadf025b83`.
+- Baseline lane binary SHA-256: `82eceb08bedcd9b4c433821ae6cba234e9d769d2046cd20d13f8174555336938`.
+- Candidate lane binary SHA-256: `d09fb21c88fdd388583449c9a2bd399c18fd2cf358a9155f64b2605082814e93`.
+- Baseline target: `/tmp/opencode/fbp-h5-extracted-baseline-target`.
+- Candidate target: `/tmp/opencode/fbp-h5-extracted-candidate-target`.
+- [Raw extracted-harness samples and RSS](fbp-h5-lane-closure-20261123-extracted-samples.txt).
+
+Both lane binaries were built with Nix Cargo 1.96.2, `--locked -j 2 --release`,
+no extra RUSTFLAGS, on the same i7-8550U host as the archived measurements.
+The new CLI is `<target>/release/examples/fbp_lane_closure_benchmark 21 16`;
+there is no `--lane-matrix` flag. The runner
+`/tmp/opencode/fbp-h5-extracted-measure.sh` pins each process to CPU 2 and uses
+GNU time for RSS. It alternates baseline/candidate in odd rounds and
+candidate/baseline in even rounds, five rounds total. No tests/builds ran
+alongside measurement. The identical setup-excluded matrix still covers
+1/4/16/64 overlapping live, reused lanes, both queue policies and single-lane
+controls. Host frequency/thermal state and other host activity remain
+uncontrolled. Analysis uses the same `/tmp/opencode/fbp-h5-lane-summary.py`.
+
+Pooled medians use 105 raw batch durations divided by live request count.
+Ratios are candidate round-median / corresponding baseline round-median.
+
+| Policy | Live Lanes | Baseline ns/request | Candidate ns/request | Paired Round Ratios (1..5) |
+| --- | ---: | ---: | ---: | --- |
+| SharedFifo | 1 | 164873 | 191594 | 1.048, 0.574, 2.027, 0.989, 0.887 |
+| SharedFifo | 4 | 368133 | 351093 | 0.879, 0.931, 1.169, 0.634, 0.961 |
+| SharedFifo | 16 | 836760 | 823419 | 1.427, 0.869, 1.162, 0.878, 0.842 |
+| SharedFifo | 64 | 1491773 | 1469117 | 1.133, 0.975, 1.047, 1.006, 0.865 |
+| BoundedLanes | 1 | 182595 | 193850 | 0.631, 0.969, 1.620, 1.705, 1.058 |
+| BoundedLanes | 4 | 553947 | 511152 | 1.120, 1.028, 1.201, 0.914, 0.759 |
+| BoundedLanes | 16 | 1794928 | 1190799 | 0.792, 0.653, 0.571, 0.780, 0.651 |
+| BoundedLanes | 64 | 3984133 | 2103610 | 0.654, 0.515, 0.481, 0.527, 0.586 |
+
+High-lane benefit repeats in every pair; small-lane/control variability still
+precludes a small-case speedup or performance acceptance claim. Do not combine
+these samples statistically with the archived executable's samples.
+Maximum process RSS in KiB by round: baseline `[4232, 4312, 4196, 4232, 4168]`,
+candidate `[4168, 4272, 4168, 4124, 4180]`. This is whole-process peak RSS,
+including setup and allocator retention, not per-proof allocation accounting.
+The earlier global EOS cost profile remains relevant: its production path is
+unchanged, and the extracted matrix still usually exits EOS on the first open
+canonical queue rather than exercising a full EOS scan.
+
+### Follow-up verification
+
+Nix devShell, two Cargo build jobs: both example test targets (four legacy
+tests, plus five tests in the lane target including its included workload
+tests), the public `fbp_lane_closure` regression, and the targeted closure unit
+tests (9 passed, 1 intentional manual-profile ignore) passed with default and
+no-default features. `cargo fmt --all --check`, all-target graph Clippy with
+`-D warnings`, and `git diff --check` passed. The closure implementation hash
+remains `b1826d8d4241b01dd62e17024ae85cd3f7077a30fb7b91cc8be79ee416d2f3ec`.
+Existing committed tests and raw measurements were preserved. No workflow
+modification, commit, push, remote rerun or external approval is claimed.
