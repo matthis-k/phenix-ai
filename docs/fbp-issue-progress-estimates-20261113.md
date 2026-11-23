@@ -223,7 +223,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 
 | Issue | Scope | Previous | Current | Δ pp | Status | Evidence |
 | --- | --- | ---: | ---: | ---: | --- | --- |
-| H1 | Shared-session FIFO correlation | 60.0% | 100.0% | +40.0 | Scoped verified | [Bounded authenticated opt-in correlation, crossed/late staged waits, actual producer edges, 768 finite schedules, independent-contract diff pass and all 11 exact-head hosted workflows](fbp-h1-final-acceptance-20261123.md) at `2cda718a723bc51a793c125a0bbc26ba78ecfac5`; H3b and H7 remain separate |
+| H1 | Shared-session FIFO correlation | 60.0% | 100.0% | +40.0 | Scoped verified | [Bounded authenticated opt-in correlation, crossed/late staged waits, actual producer edges, 768 finite schedules, standalone adversarial diff review and all 11 exact-head hosted workflows](fbp-h1-final-acceptance-20261123.md) at `2cda718a723bc51a793c125a0bbc26ba78ecfac5`; H3b and H7 remain separate |
 | H2 | Callback panic containment | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate `worker_guards` |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] |
 | H3b | Session/drain and worker interleavings | 78.0% | 78.0% | +0.0 | Partial | [Baseline][B]; candidate `native_sessions`, `worker_guards` |
