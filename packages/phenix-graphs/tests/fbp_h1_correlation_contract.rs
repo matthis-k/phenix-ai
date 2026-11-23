@@ -281,6 +281,56 @@ fn cancelled_staged_owner_releases_peer_without_losing_its_packets() {
 }
 
 #[test]
+fn staged_continuation_wakes_on_late_owner_packet_behind_foreign_fifo_head() {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let mut session = network(true).start_with_options(options(policy));
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+
+        // B holds the first right packet before A can even begin its
+        // activation. A then enters WaitInput(right) with no own tail queued.
+        session.inject_request_local(b, "right", 200_i64).unwrap();
+        session.inject_request_local(a, "left", 10_i64).unwrap();
+        session.inject_request_local(a, "right", 1_i64).unwrap();
+        assert_eq!(session.run_until_idle(1).steps, 1, "{policy:?}");
+        assert_eq!(session.run_until_idle(8).steps, 0, "{policy:?}");
+        assert!(captured(&mut session, a).is_empty());
+        assert!(captured(&mut session, b).is_empty());
+
+        // Neither a foreign head nor sealing B is evidence that A has
+        // received its own second right packet.
+        session.close_request(b).unwrap();
+        assert_eq!(session.run_until_idle(8).steps, 0, "{policy:?}");
+
+        // Late arrival is a real transport event. Its request-aware
+        // selection must wake the already-owned staged continuation.
+        session.inject_request_local(a, "right", 2_i64).unwrap();
+        session.close_request(a).unwrap();
+        let report = session.run_until_idle(32);
+        assert!(!report.budget_exhausted, "{policy:?}");
+        assert_eq!(captured(&mut session, a), [13], "{policy:?}");
+        assert_eq!(session.request_work(b).unwrap().queued, 1);
+        assert_eq!(
+            session.request_status(a).unwrap(),
+            RequestStatus::Settled { captures: 1 }
+        );
+        session.release_request(a).unwrap();
+
+        // The first packet of B is still intact. B's own counterpart
+        // arrives after its request was sealed? That must fail, so the
+        // canceled B state is disposed, not allowed to fabricate progress.
+        session.cancel_request(b).unwrap();
+        assert_eq!(session.request_status(b).unwrap(), RequestStatus::Cancelled);
+        assert_eq!(session.request_work(b).unwrap().queued, 0);
+        session.release_request(b).unwrap();
+        assert!(session.failure().is_none(), "{policy:?}");
+    }
+}
+
+#[test]
 fn full_queues_report_backpressure_without_silent_eviction_or_extra_buffers() {
     for policy in [
         RequestQueuePolicy::SharedFifo,
