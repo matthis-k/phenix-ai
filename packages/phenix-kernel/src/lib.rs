@@ -316,6 +316,32 @@ impl CandidateContext<'_> {
         phenix_graph::compose::Edit::expose_bound_output(self.compiled, name, from)
     }
 
+    /// Lower imported immediate-child boundaries into an existing nested export edit.
+    pub fn expose_nested_bound_input<T>(
+        &self,
+        parent: impl Into<String>,
+        name: impl Into<String>,
+        targets: &[phenix_graph::BoundInput<T>],
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_nested_bound_input(
+            self.compiled,
+            parent,
+            name,
+            targets,
+            capacity,
+        )
+    }
+
+    pub fn expose_nested_bound_output<T>(
+        &self,
+        parent: impl Into<String>,
+        name: impl Into<String>,
+        from: &phenix_graph::BoundOutput<T>,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_nested_bound_output(self.compiled, parent, name, from)
+    }
+
     /// Connect an imported preview output to a newly authored symbolic input.
     /// The composer validates the destination and the host's exact write grant.
     pub fn connect_bound_output<T>(
