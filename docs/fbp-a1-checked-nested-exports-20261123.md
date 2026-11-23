@@ -1,9 +1,40 @@
 # A1 Checked Nested Exports
 
 Base: `origin/fix/fbp-h1-bounded-correlation-20261122`, `ab7f5e93d`.
-Scope: checked authoring plus original A1 nested-agent acceptance evidence.
-A1 closure still requires exact-head CI and whole-original-scope review; no M7
-completion or percentage is claimed.
+Scope: original A1 additive private-extension finding; not M7/M8 production acceptance.
+
+## Accepted Source
+
+Original A1 is **scoped verified: 18.0% -> 100.0%, +82.0 pp** at
+`923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9`, draft
+[PR #1388](https://github.com/matthis-k/phenix-ai/pull/1388). No merge or rebase.
+The final independent whole-original-scope source review found no blocking
+correctness defects, fixture false positives, or implementation criteria left
+after the actual nested-agent workload was added. This is separate-agent review,
+not external human approval. Earlier local-only/pending statements below describe
+historical stages and are superseded by this acceptance.
+
+All triggered exact-source workflows passed, queried through GitHub:
+
+| Workflow | Exact source | Result |
+| --- | --- | --- |
+| [Flake CI 45249107088](https://github.com/matthis-k/phenix-ai/actions/runs/45249107088) | `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` | All six jobs SUCCESS: inventory, build, Graph, workspace/default/no-default, formatting and aggregate |
+| [Session Ownership Interleavings 45249106208](https://github.com/matthis-k/phenix-ai/actions/runs/45249106208) | Same source | Both actual-source Loom and native ownership jobs SUCCESS |
+
+Inspected Graph job `137954137681`: the new `fbp_a1_nested_agent_loop` matrix
+passed and the three original M8 tests passed. Workspace job `137954138188`
+ran both `checked_nested_exports` tests successfully under default and workspace
+no-default configurations; isolated Graph no-default checks also passed.
+The final evidence-only revision requires its own exact-head CI and cannot inherit
+source acceptance as a claim that its documentation checks have already run.
+
+The accepted contract is opt-in additive editing, same-scope Connect and explicit
+nested exports with exact grants at every ancestor, preserved claims/requirements,
+deterministic conflicts/dependencies, COW generations and failure atomicity.
+Arbitrary destructive private rewiring is not authorized by extension permission.
+This does not infer A2 compatibility, H7 state isolation, Q4 liveness, a native
+sandbox, preemption, bounded arbitrary payload memory, or production model/tool
+integration. These are retained boundaries, not silently removed A1 criteria.
 
 ## Phase 1: Requirements And Constraints
 
@@ -298,9 +329,9 @@ bodies and changes only their test-module visibility/imports.
 | Exact grants and every ancestor opt-in; no implicit descendant authority | Explicit agent-workload grants plus missing-feedback-grant atomic batch rejection; adjacent nested extension/export refusal matrices |
 | Dependencies/conflicts, revoke, copy-on-write, provenance and old generations | Agent tool-to-cycle dependency and transitive revoke; invalid-update identity/topology retention; unchanged original declaration keys/origins; existing conflict matrices and Kernel lifecycle tests |
 | Preserve exact contracts, typed causes and leases | Exact outer agent claim/requirement survives; Kernel exact-INNER growth refusal; typed graph update causes and adjacent Kernel lease/error suites rerun |
-| Final original-scope review and exact changed-head CI | Outstanding: independent review of the complete A1 diff against original requirements, and the repository's exact-head CI matrix after publication is authorized |
+| Final original-scope review and exact changed-head CI | Completed for `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9`; independent whole-scope review and all triggered exact-head CI green, as recorded above |
 
-### Final Diff Review And Gaps
+### Historical Local Review And Limits
 
 Standalone exact-diff review found no new authority, interface relaxation,
 compatibility API, broad inspection permission, or altered replay/lease ownership.

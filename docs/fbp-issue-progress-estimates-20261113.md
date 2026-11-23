@@ -1,6 +1,36 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: H1, 2026-11-23
+## Current Acceptance: A1, 2026-11-23
+
+Original A1 **Private composite extension** is **scoped verified:
+18.0% -> 100.0%, +82.0 pp** on draft
+[PR #1388](https://github.com/matthis-k/phenix-ai/pull/1388), source
+`923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9`. The
+[four-phase design, original-acceptance mapping and final review](fbp-a1-checked-nested-exports-20261123.md)
+combine inherited author-approved Add/Connect/export seams with checked
+generation-bound lowering, actual prepared Kernel private extension and an
+executed nested model/tool/memory feedback loop. Exact grants, ancestor opt-ins,
+conflicts/dependencies, inherited contracts, provenance, failure atomicity,
+revocation and retained old generations are preserved under both queue policies.
+
+Independent whole-original-scope review found no remaining blocking finding.
+All triggered exact-source workflows passed: all six jobs of
+[Flake CI 45249107088](https://github.com/matthis-k/phenix-ai/actions/runs/45249107088)
+and both Loom/native jobs of
+[Session Ownership 45249106208](https://github.com/matthis-k/phenix-ai/actions/runs/45249106208).
+Actual hosted logs include the new agent and Kernel tests. This later
+documentation revision requires its own exact-head checks. No external human
+approval, main merge or rebase is claimed.
+
+Counts are **23 scoped verified / 5 partial / 4 open / 1 approved exclusion**,
+leaving **9 in-scope findings**. The subjective score sum is **2713**, unweighted
+mean **82.2% (2713 / 33 = 82.212...%)**, not product completion or a safety
+probability. Only A1 changes; H1 stays accepted and every other score, including
+C7's unchanged excluded 12.0%, is preserved. A1 does not grant arbitrary private
+destructive rewiring, implicit compatibility, independent request state,
+static liveness, sandboxing or production-agent acceptance.
+
+## Previous Acceptance: H1, 2026-11-23
 
 Original H1 **Shared-session FIFO correlation** is **scoped verified:
 60.0% -> 100.0%, +40.0 percentage points** on draft
@@ -241,7 +271,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | C8 | Code-lease retention | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate admission-error/timeout lease regressions |
 | C9 | Passive session state | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; passive `state(&self)` retained |
 | C10 | Redundant execution API | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; API removal retained by merge |
-| A1 | Private composite extension | 18.0% | 18.0% | +0.0 | Open | [Baseline][B]; general extension API missing |
+| A1 | Private composite extension | 18.0% | 100.0% | +82.0 | Scoped verified | [Author-opted nested Add/Connect/export, checked lowering, real prepared Kernel and nested-agent execution, independent whole-scope review and exact-head CI](fbp-a1-checked-nested-exports-20261123.md) at `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` |
 | A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
 | A3 | Graph/store separation | 20.0% | 100.0% | +80.0 | Scoped verified | [Opaque external capability boundary](fbp-resource-boundary-20261115.md); Graph Store, locks and read/write policy removed; independent review and [exact-head][N] |
 | A4 | Typed authoring consolidation | 30.0% | 100.0% | +70.0 | Scoped verified | [Canonical authority audit and paired executable manual/key/derived equivalence](fbp-authoring-acceptance-20261116.md), real isolated no-default and doctest gates; [exact-head][L] |
