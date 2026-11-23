@@ -179,7 +179,7 @@ fn nested_replacement_checks_exact_grant_shape_and_path_atomically() {
             [Footprint::Component("m/inner/leaf".to_owned())]
         )]),
         Err(ComposeError::Network(
-            phenix_graph::network::NetworkError::InterfaceMismatch(_)
+            phenix_graph::network::NetworkError::Interface(_)
         ))
     ));
     for path in ["m//leaf", "m/../leaf", "m/inner/leaf/"] {

@@ -4,6 +4,7 @@ use super::planning::SelectedPlan;
 use super::{ComposeError, ConnectionKey, Edit, Footprint, InvalidEditReason, Registration};
 use crate::Interface;
 use crate::component::{Body, ComponentDef};
+use crate::interface::InterfacePhase;
 use crate::network::{
     ConnectionDef, InputProjection, NetworkDef, NetworkError, PortPath,
     collect_component_obligations,
@@ -65,9 +66,11 @@ fn replay(
                 let old = network.instances.get(path).ok_or_else(|| {
                     invalid(InvalidEditReason::MissingReplacement { path: path.clone() })
                 })?;
-                if old.interface() != definition.interface() {
-                    return Err(NetworkError::InterfaceMismatch(path.clone()).into());
-                }
+                old.interface()
+                    .check_shape(definition.interface())
+                    .map_err(|e| {
+                        NetworkError::from(e.context(InterfacePhase::Authoring, path, None))
+                    })?;
             }
             network.instances.insert(
                 path.clone(),
@@ -473,9 +476,17 @@ fn replace_nested(
                         },
                     }),
                 })?;
-        if previous.interface() != definition.interface() {
-            return Err(NetworkError::InterfaceMismatch(path.into()).into());
-        }
+        previous
+            .interface()
+            .check_shape(definition.interface())
+            .map_err(|e| {
+                let full_path = if prefix.is_empty() {
+                    path.to_owned()
+                } else {
+                    format!("{prefix}/{path}")
+                };
+                NetworkError::from(e.context(InterfacePhase::Authoring, &full_path, None))
+            })?;
         updated.instances.insert(
             remainder.into(),
             Arc::new(

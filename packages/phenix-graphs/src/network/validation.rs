@@ -154,10 +154,11 @@ pub(super) fn validate_network(network: &NetworkDef) -> Result<(), NetworkError>
     for (name, component) in &network.instances {
         validate_process_name(name)?;
         validate_claims(&component.interface, &component.claims, name)?;
-        if let Body::Composite(child) = &component.body
-            && component.interface != child.interface
-        {
-            return Err(NetworkError::InterfaceMismatch(name.clone()));
+        if let Body::Composite(child) = &component.body {
+            component
+                .interface
+                .check_shape(&child.interface)
+                .map_err(|e| e.context(InterfacePhase::Compiled, name, None))?;
         }
     }
     let mut edges = BTreeSet::new();
@@ -214,4 +215,45 @@ pub(super) fn validate_network(network: &NetworkDef) -> Result<(), NetworkError>
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interface::InterfaceReason;
+    use crate::network::NetworkBuilder;
+
+    #[test]
+    fn malformed_composite_body_retains_canonical_compiled_diagnostic() {
+        // Public composite constructors derive the interface from the body.
+        // Exercise the defensive check with an internally inconsistent payload.
+        let mut network = NetworkBuilder::new().build().unwrap();
+        let mut component = ComponentDef::composite(network.clone());
+        component.interface =
+            Arc::new(Interface::new([PortDef::local::<i64>("required")], []).unwrap());
+        network
+            .instances
+            .insert("broken".into(), Arc::new(component));
+        let mut path = "broken".to_owned();
+        for parent in [None, Some("inner"), Some("outer")] {
+            if let Some(parent) = parent {
+                let mut builder = NetworkBuilder::new();
+                builder.module(parent, network).unwrap();
+                network = builder.build().unwrap();
+                path = format!("{parent}/{path}");
+            }
+            let NetworkError::Interface(error) = network.compile().unwrap_err() else {
+                panic!("expected canonical interface error");
+            };
+            assert_eq!(error.phase, InterfacePhase::Compiled);
+            assert_eq!(error.path.as_ref(), path);
+            assert_eq!(error.endpoint.as_deref(), Some("input required"));
+            assert_eq!(*error.reason, InterfaceReason::MissingPort);
+            assert_eq!(
+                error.expected,
+                Some(PortDef::local::<i64>("required").value)
+            );
+            assert_eq!(error.actual, None);
+        }
+    }
 }

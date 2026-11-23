@@ -335,7 +335,7 @@ fn failed_replacement_is_atomic_and_does_not_revoke_current_handles() {
     let incompatible = Arc::new(ComponentDef::primitive(source_interface(), factory()));
     assert!(matches!(
         builder.replace(&original, incompatible),
-        Err(NetworkError::InterfaceMismatch(_))
+        Err(NetworkError::Interface(_))
     ));
     assert!(original.input::<i64>("in").is_ok());
     assert!(original.output::<i64>("out").is_ok());

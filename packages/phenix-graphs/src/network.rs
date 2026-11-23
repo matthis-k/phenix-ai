@@ -73,7 +73,6 @@ pub enum NetworkError {
     RevisionExhausted,
     ReplacementDuringAdditions,
     BuildDuringAdditions,
-    InterfaceMismatch(String),
     DuplicateConnection {
         from: PortPath,
         to: PortPath,
