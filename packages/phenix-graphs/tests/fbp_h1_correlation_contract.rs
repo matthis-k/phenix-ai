@@ -558,10 +558,16 @@ fn two_real_upstream_producers_preserve_crossed_request_identity_at_join() {
 
     let mut builder = NetworkBuilder::new();
     let left = builder
-        .add("left-producer", Arc::new(ComponentDef::map(|value: i64| value)))
+        .add(
+            "left-producer",
+            Arc::new(ComponentDef::map(|value: i64| value)),
+        )
         .unwrap();
     let right = builder
-        .add("right-producer", Arc::new(ComponentDef::map(|value: i64| value)))
+        .add(
+            "right-producer",
+            Arc::new(ComponentDef::map(|value: i64| value)),
+        )
         .unwrap();
     let join = builder
         .node(
