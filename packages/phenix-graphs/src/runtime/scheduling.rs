@@ -191,7 +191,13 @@ impl NetworkSession {
                 let result = if state == HandoffState::Idle {
                     self.processes[index].handoff.admit(context)
                 } else {
-                    self.processes[index].handoff.resume_input(context)
+                    let result = self.processes[index].handoff.resume_input(context);
+                    if result.is_ok() {
+                        self.processes[index].waiting = None;
+                        self.processes[index].waiting_policy = None;
+                        self.sync_poll(index);
+                    }
+                    result
                 };
                 if let Err((error, _)) = result {
                     self.fail_process(
@@ -200,11 +206,6 @@ impl NetworkSession {
                             .with_kind(FailureKind::Framework),
                     );
                     return None;
-                }
-                self.processes[index].waiting = None;
-                self.processes[index].waiting_policy = None;
-                if state == HandoffState::WaitingInput {
-                    self.sync_poll(index);
                 }
             } else if self.idle_completion_after_empty_selection(index) {
                 self.finish(index);

@@ -73,6 +73,54 @@ publishes no workflow changes and can use the existing verification suite.
 This evidence
 does not close H4/H6, accept wider concurrency schedules, or change percentages.
 
+First source `1a6d702b9` passed all twelve triggered workflows, including all six
+jobs of [Flake CI 45194928320](https://github.com/matthis-k/phenix-ai/actions/runs/45194928320).
+The follow-up moves maintenance into the existing successful staged-resume branch,
+removing the extra ordinary-admission comparison and redundant wait-field stores.
+Initial fields, successful resume and request detachment are the only routes to
+Idle; none can leave an unresolved wait there. Library/H1/lane tests still pass.
+This changed source requires fresh exact-head CI, not the earlier head's results.
+
+## Final Local Paired Measurement
+
+Six alternating baseline/candidate pairs used identical prebuilt harnesses,
+CPU 0 affinity, 30,000 measured turns per case, alternating history order and a
+10-second cooldown before each process. Setup and 64 warmup turns are excluded.
+Baseline is unchanged `ab7f5e93`; candidate scheduler SHA-256 is
+`e7f132aa31753f9398927739ffb4d1ce3063941b8eac57df89238de79281588a`.
+Numbers are medians of run means in microseconds, not pooled turn statistics.
+
+| Driver | Idle pairs | Baseline staged | Candidate staged | Baseline fresh | Candidate fresh |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Jobs | 16 | 2.443 | 1.613 | 1.550 | 1.683 |
+| Jobs | 64 | 5.338 | 1.490 | 1.621 | 1.531 |
+| Jobs | 256 | 24.154 | 1.430 | 1.567 | 1.493 |
+| Report | 16 | 2.597 | 1.616 | 1.805 | 1.734 |
+| Report | 64 | 6.312 | 2.271 | 2.386 | 2.394 |
+| Report | 256 | 28.456 | 6.308 | 6.450 | 6.415 |
+
+Every staged scenario improved in all six pairs. At 256 pairs, reciprocal-mean
+throughput improves about 16.9x for jobs and 4.5x for reports. Jobs staged 256/16
+latency growth falls from 9.89x to 0.89x; reports retain the separate state scan.
+Median peak RSS is 5,884/5,832 KiB baseline/candidate, not live-heap attribution.
+No allocation-event measurements were made for this change.
+
+Fresh jobs/16 is 8.6% slower in aggregate mean (paired median +7.2%, slower in
+four of six pairs). Other mean differences range from -5.6% to +0.3%. This is
+not blanket performance acceptance. Even with no observed compiler processes,
+baseline sampled temperature reached 98 C versus 95 C for candidate; 314 thermal
+throttle events occurred during baseline and none during candidate. These are
+confounds, not grounds to discard results or declare small differences noise.
+Earlier 3,000/100,000-turn experiments showed different adverse controls and are
+retained rather than replaced by a favorable run. No post-hoc product budget is
+introduced. The deterministic acceptance here is removal of historical poll
+membership while preserving readiness/invalidation, not a universal timing SLO.
+
+Raw emitted CSV summaries, resources, provenance, thermal/process snapshots and
+aggregation are in `/tmp/opencode/fbp-staged-poll-final-paired-20261123/`.
+Earlier runs remain in `fbp-staged-poll-paired-local-20261123-1500/` and
+`fbp-staged-poll-paired-highsample-20261123/` under `/tmp/opencode`.
+
 Baseline raw local evidence is in
 `/tmp/opencode/fbp-h4-staged-baseline-20261123/artifacts/`; the paired workflow
 pins the same source and is designed to preserve raw hosted artifacts, affinity,
