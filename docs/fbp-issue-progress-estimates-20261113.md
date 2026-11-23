@@ -30,6 +30,29 @@ C7's unchanged excluded 12.0%, is preserved. A1 does not grant arbitrary private
 destructive rewiring, implicit compatibility, independent request state,
 static liveness, sandboxing or production-agent acceptance.
 
+## Remaining-Finding Reassessment: 2026-11-23
+
+Development continues from the exact #1386 head
+`ab7f5e93de460e6c472f847f7b7dbc62319907e7`, whose eleven hosted workflows
+were independently queried and are green. H1 acceptance and C7's approved
+exclusion are unchanged. The nine remaining estimates remain historical whole-
+finding estimates, not evidence that their implementation is absent.
+
+Priority after source/stack inspection: measured H4/H6 historical staged polling
+and density-transition correctness; A1 existing extension integration; Q3 scale
+coverage; then broader Q2 reuse. H3b/H7 stronger shared-state guarantees and Q4
+behavioral liveness need explicit contracts, not inferred queue/SCC guarantees.
+The [staged-poll design and evidence](fbp-staged-poll-lifecycle-20261123.md)
+records exact-head green implementation and local paired evidence; broader
+performance acceptance remains open. Only A1 receives whole-finding credit.
+
+Already-present bounded work includes A1 nested Add/Connect/export seams, A2
+explicit wire conversion, Q2 unchanged/source/root-replacement/edge-pruning reuse,
+Q3 indexed planning and Q4 SCC/root-reachability observations. The later Q2
+batch-removal optimization lane through #1369 is a sibling, not silently included
+in #1386. Universal incremental compilation, compatibility and static liveness
+are not implemented by those bounded slices.
+
 ## Previous Acceptance: H1, 2026-11-23
 
 Original H1 **Shared-session FIFO correlation** is **scoped verified:
@@ -272,16 +295,16 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | C9 | Passive session state | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; passive `state(&self)` retained |
 | C10 | Redundant execution API | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; API removal retained by merge |
 | A1 | Private composite extension | 18.0% | 100.0% | +82.0 | Scoped verified | [Author-opted nested Add/Connect/export, checked lowering, real prepared Kernel and nested-agent execution, independent whole-scope review and exact-head CI](fbp-a1-checked-nested-exports-20261123.md) at `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` |
-| A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Baseline][B]; existing contract/replacement tests |
+| A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Exact facade/schema replacement execution and canonical typed diagnostics](fbp-a2-adapted-replacement-20261123.md); direct width-satisfaction relation remains a design decision |
 | A3 | Graph/store separation | 20.0% | 100.0% | +80.0 | Scoped verified | [Opaque external capability boundary](fbp-resource-boundary-20261115.md); Graph Store, locks and read/write policy removed; independent review and [exact-head][N] |
 | A4 | Typed authoring consolidation | 30.0% | 100.0% | +70.0 | Scoped verified | [Canonical authority audit and paired executable manual/key/derived equivalence](fbp-authoring-acceptance-20261116.md), real isolated no-default and doctest gates; [exact-head][L] |
 | A5 | Typed vs. string paths | 24.0% | 100.0% | +76.0 | Scoped verified | [Complete compiled-generation binding authority across Graph, composition/final binding, Kernel/Generation and the real StorageGraph query; independent whole-scope review, local/Nix gates and all fifteen exact-head workflows](fbp-bound-handles-20261117.md) at `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`; validated dynamic paths and the separate H7 residual remain |
 | A6 | Admission API ergonomics | 30.0% | 100.0% | +70.0 | Scoped verified | [Typed key admission design/review](fbp-typed-admission-20261115.md); [exact-head acceptance][A]; keys are names, not generation authority |
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 100.0% | +78.0 | Scoped verified | [Original three graph roots decomposed into cohesive private ownership seams](fbp-owned-boundaries-20261116.md), canonical state/drop order/public paths preserved; independent review and [exact-head][O]; broader Kernel concentration remains |
-| Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; not implemented |
+| Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | Bounded compiled-generation reuse with full-compiler fallback implemented; general dependency-aware lowering and scaling acceptance remain |
 | Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Exact unique selection and global host work limits](fbp-selection-correctness-20261115.md), [exact-head][S]; defect fixed, broader ancestor/footprint planning and recomposition scaling remain |
-| Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | [Baseline][B]; explicit blocking limits only |
+| Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | Structural SCC and declared-root reachability observations implemented; no behavioral progress proof |
 | Q5 | Concurrency verification | 74.0% | 100.0% | +26.0 | Scoped verified | [Bounded exact-source ownership and real handoff/public identity composition, independent whole-scope/coverage review, local/Nix snapshot gates and all fifteen exact-head workflows](fbp-q5-protocol-verification-20261117.md) at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`; H3b remains partial and no universal schedule, fairness, liveness or performance proof follows |
 | Q6 | Diagnostic quality | 22.0% | 100.0% | +78.0 | Scoped verified | [Complete bounded current-state explanations](fbp-explanations-20261116.md), shared selector/closure authority, jobs/wakes/publication/request-live accounting and adversarial passivity; [exact-head][L]; not Q4 liveness |
 | Q7 | Typed error consistency | 26.0% | 100.0% | +74.0 | Scoped verified | [Full native typed protocol, framework reasons and plugin lifetime errors; independent whole-slice reviews, local/Nix and all fifteen exact-head workflows](fbp-q7-final-review-20261117.md) at `6f6e751b36f77273da8799900f665bc026447418`; per-handle nonretroactive leases and trusted native limits remain |

@@ -197,6 +197,7 @@ impl NetworkSession {
                 p.queued = false;
                 p.wake.clone()
             };
+            self.sync_poll(*index);
             // A notifier for the old request may race with recovery. Retire
             // under the same lock it uses to publish a process target, before
             // a replacement slot can be installed for this compiled index.
@@ -349,6 +350,7 @@ impl NetworkSession {
                 p.wake.clone(),
             )
         };
+        self.sync_poll(index);
         // Retire before transport closure can dispatch unrelated successors.
         // The notifier check and target removal share the WakeSignal lock.
         self.signal.retire_target(index, &retired_wake);

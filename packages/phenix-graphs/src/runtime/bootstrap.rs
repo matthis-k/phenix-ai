@@ -420,10 +420,7 @@ impl NetworkSession {
                     }
                 }
             }
-            if process.source
-                || process.inputs.is_empty()
-                || matches!(&process.policy, Readiness::Custom(_)) && !process.notification_driven
-            {
+            if process.requires_poll() {
                 always_poll.insert(index);
             }
         }
