@@ -551,3 +551,96 @@ fn admitted_crossed_packets_remain_correct_under_all_bounded_drive_cut_patterns(
     }
     assert_eq!(executions, 768);
 }
+
+#[test]
+fn two_real_upstream_producers_preserve_crossed_request_identity_at_join() {
+    use phenix_graph::ComponentDef;
+
+    let mut builder = NetworkBuilder::new();
+    let left = builder
+        .add("left-producer", Arc::new(ComponentDef::map(|value: i64| value)))
+        .unwrap();
+    let right = builder
+        .add("right-producer", Arc::new(ComponentDef::map(|value: i64| value)))
+        .unwrap();
+    let join = builder
+        .node(
+            "join",
+            Arc::new(
+                Interface::new(
+                    [
+                        PortDef::local::<i64>("left"),
+                        PortDef::local::<i64>("right"),
+                    ],
+                    [PortDef::local::<i64>("out")],
+                )
+                .unwrap(),
+            ),
+            Arc::new(|| Join {
+                staged: false,
+                phase: Phase::Start,
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input("left", left.input::<i64>("input").unwrap(), capacity())
+        .unwrap();
+    builder
+        .expose_input("right", right.input::<i64>("input").unwrap(), capacity())
+        .unwrap();
+    builder
+        .connect(
+            left.output::<i64>("output").unwrap(),
+            join.input::<i64>("left").unwrap(),
+            capacity(),
+        )
+        .unwrap();
+    builder
+        .connect(
+            right.output::<i64>("output").unwrap(),
+            join.input::<i64>("right").unwrap(),
+            capacity(),
+        )
+        .unwrap();
+    builder
+        .expose_output("out", join.output::<i64>("out").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let mut session = compiled.start_with_options(options(policy));
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+        // Each input first passes through a separate stateful FBP node and
+        // internal transport queue before reaching the correlated join.
+        for (id, port, value) in [
+            (a, "left", 10_i64),
+            (a, "left", 11),
+            (b, "right", 2),
+            (b, "right", 3),
+            (b, "left", 20),
+            (b, "left", 21),
+            (a, "right", 1),
+            (a, "right", 4),
+        ] {
+            session.inject_request_local(id, port, value).unwrap();
+        }
+        session.close_request(a).unwrap();
+        session.close_request(b).unwrap();
+        let report = session.run_until_idle(128);
+        assert!(!report.budget_exhausted, "{policy:?}");
+        assert_eq!(captured(&mut session, a), [11, 15], "{policy:?}");
+        assert_eq!(captured(&mut session, b), [22, 24], "{policy:?}");
+        for request in [a, b] {
+            assert_eq!(
+                session.request_status(request).unwrap(),
+                RequestStatus::Settled { captures: 2 }
+            );
+            session.release_request(request).unwrap();
+        }
+        assert!(session.failure().is_none(), "{policy:?}");
+    }
+}
