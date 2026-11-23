@@ -1,6 +1,36 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: Q5, 2026-11-20
+## Current Acceptance: H1, 2026-11-23
+
+H1 **Shared-session FIFO correlation** is now **scoped verified
+(60.0% -> 100.0%, +40.0 pp)** for the finite, opt-in, authenticated
+`CorrelatedAll` contract. The [final standalone source/contract review and
+exact-head verification record](fbp-h1-final-acceptance-20261123.md)
+documents crossed joins, request-local staged waits, EOS, cancellation,
+default strict FIFO, physical-queue backpressure, 11 public H1 tests,
+24 input orders, 768 finite arrival/drive schedules and real producer edges.
+All eleven hosted workflows passed at implementation source
+`2cda718a723bc51a793c125a0bbc26ba78ecfac5`, including six-job Flake
+[45087742886](https://github.com/matthis-k/phenix-ai/actions/runs/45087742886).
+The later evidence-only edits require separate exact-head CI; no code
+was merged or rebased.
+
+Current counts are **22 scoped verified / 5 partial / 5 open /
+1 approved exclusion**, leaving **10 in-scope findings**.
+The [authoritative scorecard](fbp-issue-progress-estimates-20261113.md)
+now totals **2631**, subjective mean **79.7% (2631 / 33)**.
+The five remaining partial findings are **H3b, H4, H5, H6 and H7**,
+and the five open findings remain **A1, A2, Q2, Q3 and Q4**.
+
+H1 does not establish independent progress through shared process state,
+preemption, arbitrary infinite-input scheduling, external plugin lock
+correctness or static liveness. These remain H7/H3b/Q4 boundaries;
+performance acceptance is separately H4/H5/H6. Existing C7
+TrustedNativeScope exclusion and M7/M8 incomplete production status
+are unchanged. The original historical work map below remains for
+traceability and must not override this current classification.
+
+## Previous Acceptance: Q5, 2026-11-20
 
 Original Q5 is **scoped verified: 74.0% -> 100.0%, +26.0 pp** at
 `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`, following independent final
@@ -107,7 +137,7 @@ core-only stage received no closure credit.
 
 | Finding | Starting State | Concrete Next Work / Closure Requirement | Dependency Or Decision |
 | --- | --- | --- | --- |
-| H1 FIFO correlation | Partial | Define arrival skew/multiplicity and demonstrate supported crossed joins, staged waits, EOS and cancellation under those bounds | Strict global FIFO cannot also promise arbitrary crossed-stream progress |
+| H1 FIFO correlation | Partial, now scoped verified | Supported bounded skew/multiplicity and crossed joins, staged waits, EOS, cancellation, continuous refill and real producer edges accepted at `2cda718a723bc51a793c125a0bbc26ba78ecfac5` with all eleven exact-head workflows green; see [final review](fbp-h1-final-acceptance-20261123.md) | Default strict global FIFO still cannot promise arbitrary crossed-stream progress; unbounded fairness and H7 state isolation explicitly excluded |
 | H3b lifecycle interleavings | Partial | Retain accepted Q5 bounded producer/handoff/worker evidence; separately define and verify any broader lifetime schedules before changing H3b | Q5 does not automatically close or credit H3b; arbitrary plugin-owned locks remain outside kernel control |
 | H4 scheduling scans | Partial | Measure supported addressed-event scaling and remove demonstrated unnecessary scans, retaining required global/polled Custom fallbacks | H6; no scheduler rewrite merely to remove every scan |
 | H5 closure analysis | Partial | Meet agreed closure cost/scaling budgets while preserving absence, cycles, observation and deduplication | H6; exact paired current-head measurements before further optimization |
