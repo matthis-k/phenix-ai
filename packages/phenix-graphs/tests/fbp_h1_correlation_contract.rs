@@ -331,6 +331,42 @@ fn staged_continuation_wakes_on_late_owner_packet_behind_foreign_fifo_head() {
 }
 
 #[test]
+fn ordinary_all_staged_wait_remains_head_only_under_shared_fifo() {
+    let mut options = options(RequestQueuePolicy::SharedFifo);
+    options.readiness.insert("join".into(), Readiness::All);
+    options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
+    let mut session = network(true).start_with_options(options);
+    let a = session.begin_request(None).unwrap();
+    let b = session.begin_request(None).unwrap();
+
+    session.inject_request_local(a, "left", 10_i64).unwrap();
+    session.inject_request_local(a, "right", 1_i64).unwrap();
+    assert_eq!(session.run_until_idle(1).steps, 1);
+    session.inject_request_local(b, "right", 200_i64).unwrap();
+    session.inject_request_local(a, "right", 2_i64).unwrap();
+    assert_eq!(session.run_until_idle(8).steps, 0);
+    assert!(captured(&mut session, a).is_empty());
+    assert_eq!(session.request_work(a).unwrap().queued, 1);
+
+    // Only an opt-in CorrelatedAll continuation may bypass B's FIFO head.
+    // Canceling A with the explicit restart policy releases the blocked
+    // single-flight process; B is still intact and can use its two packets.
+    session.cancel_request(a).unwrap();
+    session.release_request(a).unwrap();
+    session.inject_request_local(b, "left", 20_i64).unwrap();
+    session.inject_request_local(b, "right", 201_i64).unwrap();
+    session.close_request(b).unwrap();
+    assert!(!session.run_until_idle(32).budget_exhausted);
+    assert_eq!(captured(&mut session, b), [421]);
+    assert_eq!(
+        session.request_status(b).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    session.release_request(b).unwrap();
+    assert!(session.failure().is_none());
+}
+
+#[test]
 fn full_queues_report_backpressure_without_silent_eviction_or_extra_buffers() {
     for policy in [
         RequestQueuePolicy::SharedFifo,
