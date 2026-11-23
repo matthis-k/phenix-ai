@@ -1,6 +1,45 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: Q5, 2026-11-20
+## Current Acceptance: H1, 2026-11-23
+
+Original H1 **Shared-session FIFO correlation** is **scoped verified:
+60.0% -> 100.0%, +40.0 percentage points** on draft
+[PR #1386](https://github.com/matthis-k/phenix-ai/pull/1386), with
+source implementation `2cda718a723bc51a793c125a0bbc26ba78ecfac5`.
+The [H1 final source/contract review and exact-head acceptance
+record](fbp-h1-final-acceptance-20261123.md) documents the bounded opt-in
+`Readiness::CorrelatedAll` behavior, strict-head-only default,
+same-request exact staged `WaitInput`, request-local FIFO and cancellation,
+sealing/EOS, physical backpressure, and cooperative finite fairness.
+
+The final public H1 suite covers 11 tests, 24 crossed-admission permutations,
+768 finite admission/driver-cut schedules, real internal producer edges,
+delayed staged arrivals, continuous bounded refill, and negative strict-FIFO
+selection. At the implementation source head all **11 hosted workflows
+passed**, including [six-job Flake CI
+45087742886](https://github.com/matthis-k/phenix-ai/actions/runs/45087742886),
+with its Graph shard reporting 11/11 H1 tests and all other Graph tests green.
+This **new scorecard/documentation revision has separate exact-head CI
+requirements** and does not inherit the implementation head's passing jobs.
+
+The 33-finding classification is now **22 scoped verified / 5 partial /
+5 open / 1 approved exclusion**, leaving **10 in-scope findings**. The
+subjective score sum is **2631** and the unweighted mean is **79.7%
+(2631 / 33 = 79.727...%)**, previously 2591 and 78.5%. Neither
+metric is product-completion probability, milestone delivery or evidence
+that any unmerged PR reached main.
+
+The remaining partial findings are **H3b, H4, H5, H6, H7**.
+H1 does **not** grant H3b general lock-order correctness, H7 independent
+process-state progress, Q4 static liveness or H4/H5/H6 performance acceptance.
+It also does not promise infinite-stream fairness, unbounded packet skew,
+forced completion of non-cooperative callbacks, or unbounded queues.
+The separate adversarial final diff pass was performed by the implementation
+assistant; no independent external GitHub reviewer approval is asserted.
+The H1 acceptance applies to the original bounded correlation finding only,
+while its PR remains draft and unmerged.
+
+## Previous Acceptance: Q5, 2026-11-20
 
 Latest accepted implementation: `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`.
 Independent final whole-scope and coverage reviews found no remaining findings.
@@ -184,7 +223,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 
 | Issue | Scope | Previous | Current | Δ pp | Status | Evidence |
 | --- | --- | ---: | ---: | ---: | --- | --- |
-| H1 | Shared-session FIFO correlation | 60.0% | 60.0% | +0.0 | Partial | [Baseline][B]; candidate `fbp_request_lanes` |
+| H1 | Shared-session FIFO correlation | 60.0% | 100.0% | +40.0 | Scoped verified | [Bounded authenticated opt-in correlation, crossed/late staged waits, actual producer edges, 768 finite schedules, independent-contract diff pass and all 11 exact-head hosted workflows](fbp-h1-final-acceptance-20261123.md) at `2cda718a723bc51a793c125a0bbc26ba78ecfac5`; H3b and H7 remain separate |
 | H2 | Callback panic containment | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate `worker_guards` |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] |
 | H3b | Session/drain and worker interleavings | 78.0% | 78.0% | +0.0 | Partial | [Baseline][B]; candidate `native_sessions`, `worker_guards` |
@@ -231,10 +270,10 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 ## Concrete Work And WIP Disposition
 
 Percentages above describe whole findings, not whether any implementation changed.
-The following actual defects/WIP requirements are separately implemented. Latest
-implementation acceptance is exact-head `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`,
-not an older commit's passing run. This evidence-only documentation revision must
-pass its own head's checks.
+The following historical defects/WIP requirements were separately implemented.
+The original Q5 acceptance was exact-head `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`;
+the later H1 acceptance and latest classification are recorded at the top.
+This evidence-only documentation revision must pass its own head's checks.
 
 | Scope | Original Failure | Implemented Resolution | Evidence / Remaining Gate |
 | --- | --- | --- | --- |
