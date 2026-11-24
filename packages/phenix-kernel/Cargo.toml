@@ -16,3 +16,7 @@ tempfile = "3"
 [[bench]]
 name = "callback_lease"
 harness = false
+
+[[bench]]
+name = "composition_planning"
+harness = false

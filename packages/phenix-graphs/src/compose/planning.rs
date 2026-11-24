@@ -1,9 +1,11 @@
 //! Validate the entire candidate registry before selecting an ephemeral plan.
 
 use super::{
-    ComposeError, ConnectionKey, Edit, Footprint, Registration, SelectionLimits, selection,
+    ComposeError, ConnectionKey, Edit, Footprint, PlanningBudget, Registration, SelectionLimits,
+    selection,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound::{Excluded, Unbounded};
 
 /// Per-attempt data only; dependency replay order is not solver influence order.
 pub(super) struct SelectedPlan {
@@ -21,16 +23,28 @@ struct DependencyOrder {
 }
 
 impl DependencyOrder {
-    fn ancestor_mask(&self, index: usize) -> Vec<bool> {
+    fn ancestor_mask(
+        &self,
+        index: usize,
+        budget: &mut PlanningBudget<'_>,
+    ) -> Result<Vec<bool>, ComposeError> {
+        budget.charge(self.order.len())?;
+        #[cfg(test)]
+        {
+            budget.ancestor_cells += self.order.len();
+        }
         let mut seen = vec![false; self.order.len()];
+        budget.charge(self.parents[index].len())?;
         let mut pending = self.parents[index].clone();
         while let Some(parent) = pending.pop() {
+            budget.charge(1)?;
             if !seen[parent] {
                 seen[parent] = true;
+                budget.charge(self.parents[parent].len())?;
                 pending.extend(self.parents[parent].iter().copied());
             }
         }
-        seen
+        Ok(seen)
     }
 }
 
@@ -39,12 +53,20 @@ impl DependencyOrder {
 /// the next sweep; later names can become ready in the current sweep.
 fn dependency_order(
     registrations: &BTreeMap<String, Registration>,
+    budget: &mut PlanningBudget<'_>,
 ) -> Result<DependencyOrder, ComposeError> {
     let mut remaining = BTreeMap::new();
     let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ready = BTreeSet::new();
     for (id, registration) in registrations {
+        budget.charge(1)?;
         for dependency in &registration.dependencies {
+            budget.text(dependency)?;
+            // Diagnostic/copy reservations precede the semantic decision.
+            budget.text(id)?;
+            budget.text(dependency)?;
+            budget.charge(2)?;
+            budget.text(dependency)?;
             if !registrations.contains_key(dependency) {
                 return Err(ComposeError::MissingDependency {
                     registration: id.clone(),
@@ -56,12 +78,19 @@ fn dependency_order(
                 .or_default()
                 .push(id.clone());
         }
+        budget.text(id)?;
+        budget.text(id)?;
+        budget.charge(1)?;
         remaining.insert(id.clone(), registration.dependencies.len());
         if registration.dependencies.is_empty() {
+            budget.text(id)?;
+            budget.text(id)?;
+            budget.charge(1)?;
             ready.insert(id.clone());
         }
     }
 
+    budget.charge(registrations.len())?;
     let mut order = Vec::with_capacity(registrations.len());
     while order.len() < registrations.len() {
         if ready.is_empty() {
@@ -69,12 +98,20 @@ fn dependency_order(
         }
         let mut next_sweep = BTreeSet::new();
         while let Some(id) = ready.pop_first() {
+            budget.text(&id)?;
             order.push(id.clone());
+            budget.text(&id)?;
             if let Some(children) = dependents.get(&id) {
                 for child in children {
+                    budget.text(child)?;
                     let count = remaining.get_mut(child).expect("indexed dependent");
                     *count -= 1;
                     if *count == 0 {
+                        budget.text(child)?;
+                        budget.text(child)?;
+                        budget.text(&id)?;
+                        budget.text(child)?;
+                        budget.charge(1)?;
                         if child > &id {
                             ready.insert(child.clone());
                         } else {
@@ -86,64 +123,104 @@ fn dependency_order(
         }
         ready = next_sweep;
     }
-    let positions: BTreeMap<&str, usize> = order
-        .iter()
-        .enumerate()
-        .map(|(index, id)| (id.as_str(), index))
-        .collect();
-    let parents = order
-        .iter()
-        .map(|id| {
-            registrations[id]
-                .dependencies
-                .iter()
-                .map(|dependency| positions[dependency.as_str()])
-                .collect()
-        })
-        .collect();
+    let mut positions = BTreeMap::new();
+    for (index, id) in order.iter().enumerate() {
+        budget.text(id)?;
+        budget.charge(1)?;
+        positions.insert(id.as_str(), index);
+    }
+    budget.charge(order.len())?;
+    let mut parents = Vec::with_capacity(order.len());
+    for id in &order {
+        budget.text(id)?;
+        let mut row = Vec::new();
+        for dependency in &registrations[id].dependencies {
+            budget.text(dependency)?;
+            budget.charge(1)?;
+            row.push(positions[dependency.as_str()]);
+        }
+        parents.push(row);
+    }
     Ok(DependencyOrder { order, parents })
 }
 
 pub(super) fn plan(
     registrations: &BTreeMap<String, Registration>,
     selection_limits: SelectionLimits,
+    budget: &mut PlanningBudget<'_>,
 ) -> Result<SelectedPlan, ComposeError> {
-    let dependencies = dependency_order(registrations)?;
+    let dependencies = dependency_order(registrations, budget)?;
     let order = &dependencies.order;
+    budget.charge(order.len())?;
     let mut ancestor_cache: Vec<Option<Vec<bool>>> = vec![None; order.len()];
     let mut footprints = BTreeMap::new();
     for (index, id) in order.iter().enumerate() {
-        for edit in registrations[id].patch.edits() {
-            edit.validate_payload(&registrations[id].origin)?;
+        budget.text(id)?;
+        let registration = &registrations[id];
+        for edit in registration.patch.edits() {
+            edit.validate_payload(&registration.origin, budget)?;
         }
-        let mut writes = registrations[id].patch.footprints();
+        let mut writes = BTreeSet::new();
+        let mut has_splice = false;
+        for edit in registration.patch.edits() {
+            // Reserve all possible footprint copies before the public helper
+            // allocates them (Splice repeats its anchor's destination).
+            budget.edit(edit)?;
+            budget.edit(edit)?;
+            if let Edit::Splice { anchor, .. } = edit {
+                budget.port(&anchor.to)?;
+                budget.port(&anchor.to)?;
+            }
+            budget.charge(4)?;
+            writes.extend(edit.footprints());
+            has_splice |= matches!(edit, Edit::Splice { .. });
+        }
         let mut tails = BTreeMap::new();
-        if registrations[id]
-            .patch
-            .edits()
-            .iter()
-            .any(|edit| matches!(edit, Edit::Splice { .. }))
-        {
-            let ancestors =
-                ancestor_cache[index].get_or_insert_with(|| dependencies.ancestor_mask(index));
+        if has_splice && !dependencies.parents[index].is_empty() {
+            if ancestor_cache[index].is_none() {
+                ancestor_cache[index] = Some(dependencies.ancestor_mask(index, budget)?);
+            }
+            let ancestors = ancestor_cache[index].as_ref().expect("ancestor row");
             for (prior, predecessor) in order.iter().enumerate().take(index) {
+                budget.charge(1)?;
                 if ancestors[prior] {
+                    budget.text(predecessor)?;
                     for edit in registrations[predecessor].patch.edits() {
+                        budget.charge(1)?;
                         if let Edit::Splice { anchor, output, .. } = edit {
+                            budget.edge(anchor)?;
+                            budget.edge(anchor)?;
+                            budget.port(output)?;
+                            budget.charge(1)?;
                             tails.insert(anchor.clone(), output.clone());
                         }
                     }
                 }
             }
         }
-        for edit in registrations[id].patch.edits() {
+        for edit in registration.patch.edits() {
+            budget.charge(1)?;
             if let Edit::Splice {
                 anchor,
                 input,
                 output,
             } = edit
             {
-                let from = tails.get(anchor).unwrap_or(&anchor.from).clone();
+                budget.edge(anchor)?;
+                let from = tails.get(anchor).unwrap_or(&anchor.from);
+                budget.port(from)?;
+                budget.port(from)?;
+                budget.port(&anchor.to)?;
+                budget.port(input)?;
+                budget.port(from)?;
+                budget.port(from)?;
+                budget.port(&anchor.to)?;
+                budget.port(input)?;
+                budget.edge(anchor)?;
+                budget.edge(anchor)?;
+                budget.port(output)?;
+                budget.charge(3)?;
+                let from = from.clone();
                 writes.insert(Footprint::Connection(ConnectionKey::new(
                     from.clone(),
                     anchor.to.clone(),
@@ -156,60 +233,92 @@ pub(super) fn plan(
             }
         }
         for footprint in &writes {
-            if !registrations[id].grants.contains(footprint) {
+            budget.footprint(footprint)?;
+            budget.footprint(footprint)?;
+            budget.text(id)?;
+            if !registration.grants.contains(footprint) {
                 return Err(ComposeError::Unauthorized {
                     registration: id.clone(),
                     footprint: footprint.clone(),
                 });
             }
         }
+        budget.text(id)?;
+        budget.text(id)?;
+        budget.charge(1)?;
         footprints.insert(id.clone(), writes);
     }
     // Fail closed on ambiguities, even when a third registration could defeat
     // one participant. Dependency ordering is the only splice ordering key.
     let mut blockers = Vec::new();
-    let collisions = ConflictIndex::new(registrations, order, &footprints);
+    let collisions = ConflictIndex::new(registrations, order, &footprints, budget)?;
     for i in 0..order.len() {
-        for j in collisions.after(i, registrations, order, &footprints) {
+        budget.charge(1)?;
+        for j in collisions.after(i, registrations, order, &footprints, budget)? {
+            budget.charge(1)?;
             // The topological replay order forbids j being an ancestor of i.
             // Cache closures only for registrations with a potential collision.
-            if ancestor_cache[j].get_or_insert_with(|| dependencies.ancestor_mask(j))[i] {
-                continue;
+            if !dependencies.parents[j].is_empty() {
+                if ancestor_cache[j].is_none() {
+                    ancestor_cache[j] = Some(dependencies.ancestor_mask(j, budget)?);
+                }
+                if ancestor_cache[j].as_ref().expect("ancestor row")[i] {
+                    continue;
+                }
             }
             let a = &order[i];
             let b = &order[j];
+            budget.text(a)?;
+            budget.text(b)?;
+            budget.charge(1)?;
             let left = &footprints[a];
             let right = &footprints[b];
+            budget.text(a)?;
+            budget.text(b)?;
+            let ra = &registrations[a];
+            let rb = &registrations[b];
+            // Reserve ID diagnostic copies before any conflict decision.
+            budget.text(a)?;
+            budget.text(b)?;
             // Check all anchors, not just the first colliding footprint: the
             // patches may also collide on an added component declaration.
-            for edit in registrations[a].patch.edits() {
-                if let Edit::Splice { anchor, .. } = edit
-                    && registrations[b].patch.edits().iter().any(
-                        |other| matches!(other, Edit::Splice { anchor: other, .. } if other == anchor),
-                    )
-                {
-                    return Err(ComposeError::Conflict {
-                        first: a.clone(),
-                        second: b.clone(),
-                        footprint: Box::new(Footprint::Connection(anchor.clone())),
-                    });
+            for edit in ra.patch.edits() {
+                budget.charge(1)?;
+                if let Edit::Splice { anchor, .. } = edit {
+                    for other in rb.patch.edits() {
+                        budget.charge(1)?;
+                        if let Edit::Splice { anchor: other, .. } = other {
+                            budget.edge(anchor)?;
+                            budget.edge(other)?;
+                            budget.edge(anchor)?;
+                            if other == anchor {
+                                return Err(ComposeError::Conflict {
+                                    first: a.clone(),
+                                    second: b.clone(),
+                                    footprint: Box::new(Footprint::Connection(anchor.clone())),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             // New nested exports may depend on a declaration introduced by
             // another plugin. Reject undeclared dependencies regardless of
             // lexical replay order, and reject an independent ancestor revision
             // that would overwrite the exported port.
-            if let Some(path) = nested_export_dependency(&registrations[a], &registrations[b])
-                .or_else(|| nested_export_dependency(&registrations[b], &registrations[a]))
-            {
+            let mut nested = nested_export_dependency(ra, rb, budget)?;
+            if nested.is_none() {
+                nested = nested_export_dependency(rb, ra, budget)?;
+            }
+            if let Some(path) = nested {
                 return Err(ComposeError::Conflict {
                     first: a.clone(),
                     second: b.clone(),
                     footprint: Box::new(Footprint::Component(path)),
                 });
             }
-            if let Some(footprint) = overlapping_write(left, right) {
-                match registrations[a].priority.cmp(&registrations[b].priority) {
+            if let Some(footprint) = overlapping_write(left, right, budget)? {
+                match ra.priority.cmp(&rb.priority) {
                     std::cmp::Ordering::Equal => {
                         return Err(ComposeError::Conflict {
                             first: a.clone(),
@@ -217,19 +326,37 @@ pub(super) fn plan(
                             footprint: Box::new(footprint.clone()),
                         });
                     }
-                    std::cmp::Ordering::Greater => blockers.push((i, j)),
-                    std::cmp::Ordering::Less => blockers.push((j, i)),
+                    std::cmp::Ordering::Greater => {
+                        budget.charge(3)?;
+                        #[cfg(test)]
+                        {
+                            budget.blockers += 1;
+                        }
+                        blockers.push((i, j));
+                    }
+                    std::cmp::Ordering::Less => {
+                        budget.charge(3)?;
+                        #[cfg(test)]
+                        {
+                            budget.blockers += 1;
+                        }
+                        blockers.push((j, i));
+                    }
                 }
             }
         }
     }
     let selected = selection::select(registrations, order, &blockers, selection_limits)?;
-    let active: BTreeSet<String> = order
-        .iter()
-        .zip(selected)
-        .filter(|(_, selected)| *selected)
-        .map(|(id, _)| id.clone())
-        .collect();
+    let mut active = BTreeSet::new();
+    for (id, selected) in order.iter().zip(selected) {
+        budget.charge(1)?;
+        if selected {
+            budget.text(id)?;
+            budget.text(id)?;
+            budget.charge(1)?;
+            active.insert(id.clone());
+        }
+    }
     Ok(SelectedPlan {
         order: dependencies.order,
         active,
@@ -259,26 +386,45 @@ impl ConflictIndex {
         registrations: &BTreeMap<String, Registration>,
         order: &[String],
         footprints: &BTreeMap<String, BTreeSet<Footprint>>,
-    ) -> Self {
+        budget: &mut PlanningBudget<'_>,
+    ) -> Result<Self, ComposeError> {
         fn index<K: Ord>(map: &mut BTreeMap<K, BTreeSet<usize>>, key: K, owner: usize) {
             map.entry(key).or_default().insert(owner);
         }
 
         let mut result = Self::default();
         for (owner, id) in order.iter().enumerate() {
+            budget.text(id)?;
             for write in &footprints[id] {
+                budget.footprint(write)?;
+                budget.footprint(write)?;
+                budget.charge(2)?;
                 index(&mut result.exact, write.clone(), owner);
                 match write {
                     Footprint::Component(path) => {
+                        budget.text(path)?;
+                        budget.text(path)?;
+                        budget.charge(2)?;
                         index(&mut result.component_exact, path.clone(), owner);
+                        budget.text(path)?;
                         for prefix in path_ancestors(path) {
+                            budget.text(prefix)?;
+                            budget.text(prefix)?;
+                            budget.charge(2)?;
                             index(&mut result.component_descendants, prefix.to_owned(), owner);
                         }
                     }
                     Footprint::Connection(edge) => {
                         for endpoint in [&edge.from.process, &edge.to.process] {
+                            budget.text(endpoint)?;
                             for prefix in path_ancestors(endpoint) {
+                                budget.text(prefix)?;
+                                budget.text(endpoint)?;
+                                budget.text(endpoint)?;
                                 if prefix != endpoint || endpoint.contains('/') {
+                                    budget.text(prefix)?;
+                                    budget.text(prefix)?;
+                                    budget.charge(2)?;
                                     index(
                                         &mut result.connection_descendants,
                                         prefix.to_owned(),
@@ -291,12 +437,18 @@ impl ConflictIndex {
                     _ => {}
                 }
             }
+            budget.text(id)?;
             for edit in registrations[id].patch.edits() {
+                budget.charge(1)?;
                 match edit {
                     Edit::ExposeNestedInput {
                         parent, targets, ..
                     } => {
+                        budget.text(parent)?;
                         for prefix in path_ancestors(parent) {
+                            budget.text(prefix)?;
+                            budget.text(prefix)?;
+                            budget.charge(2)?;
                             index(
                                 &mut result.nested_export_references,
                                 prefix.to_owned(),
@@ -304,6 +456,9 @@ impl ConflictIndex {
                             );
                         }
                         for target in targets {
+                            budget.text(&target.process)?;
+                            budget.text(&target.process)?;
+                            budget.charge(2)?;
                             index(
                                 &mut result.nested_export_references,
                                 target.process.clone(),
@@ -312,13 +467,20 @@ impl ConflictIndex {
                         }
                     }
                     Edit::ExposeNestedOutput { parent, from, .. } => {
+                        budget.text(parent)?;
                         for prefix in path_ancestors(parent) {
+                            budget.text(prefix)?;
+                            budget.text(prefix)?;
+                            budget.charge(2)?;
                             index(
                                 &mut result.nested_export_references,
                                 prefix.to_owned(),
                                 owner,
                             );
                         }
+                        budget.text(&from.process)?;
+                        budget.text(&from.process)?;
+                        budget.charge(2)?;
                         index(
                             &mut result.nested_export_references,
                             from.process.clone(),
@@ -329,7 +491,7 @@ impl ConflictIndex {
                 }
             }
         }
-        result
+        Ok(result)
     }
 
     fn after(
@@ -338,41 +500,72 @@ impl ConflictIndex {
         registrations: &BTreeMap<String, Registration>,
         order: &[String],
         footprints: &BTreeMap<String, BTreeSet<Footprint>>,
-    ) -> BTreeSet<usize> {
+        budget: &mut PlanningBudget<'_>,
+    ) -> Result<BTreeSet<usize>, ComposeError> {
         fn from_path(
             destinations: &mut BTreeSet<usize>,
             map: &BTreeMap<String, BTreeSet<usize>>,
             path: &str,
             after: usize,
-        ) {
+            budget: &mut PlanningBudget<'_>,
+        ) -> Result<(), ComposeError> {
+            budget.text(path)?;
             if let Some(owners) = map.get(path) {
-                destinations.extend(owners.iter().copied().filter(|owner| *owner > after));
+                for &owner in owners.range((Excluded(after), Unbounded)) {
+                    budget.charge(2)?;
+                    #[cfg(test)]
+                    {
+                        budget.posting_owners += 1;
+                    }
+                    destinations.insert(owner);
+                }
             }
+            Ok(())
         }
         let id = &order[i];
         let mut candidates = BTreeSet::new();
+        budget.text(id)?;
         for write in &footprints[id] {
+            budget.footprint(write)?;
             if let Some(owners) = self.exact.get(write) {
-                candidates.extend(owners.iter().copied().filter(|owner| *owner > i));
+                for &owner in owners.range((Excluded(i), Unbounded)) {
+                    budget.charge(2)?;
+                    #[cfg(test)]
+                    {
+                        budget.posting_owners += 1;
+                    }
+                    candidates.insert(owner);
+                }
             }
             match write {
                 Footprint::Component(path) => {
+                    budget.text(path)?;
                     for prefix in path_ancestors(path) {
-                        from_path(&mut candidates, &self.component_exact, prefix, i);
+                        from_path(&mut candidates, &self.component_exact, prefix, i, budget)?;
                     }
                     for map in [
                         &self.component_descendants,
                         &self.connection_descendants,
                         &self.nested_export_references,
                     ] {
-                        from_path(&mut candidates, map, path, i);
+                        from_path(&mut candidates, map, path, i, budget)?;
                     }
                 }
                 Footprint::Connection(edge) => {
                     for endpoint in [&edge.from.process, &edge.to.process] {
+                        budget.text(endpoint)?;
                         for prefix in path_ancestors(endpoint) {
+                            budget.text(prefix)?;
+                            budget.text(endpoint)?;
+                            budget.text(endpoint)?;
                             if prefix != endpoint || endpoint.contains('/') {
-                                from_path(&mut candidates, &self.component_exact, prefix, i);
+                                from_path(
+                                    &mut candidates,
+                                    &self.component_exact,
+                                    prefix,
+                                    i,
+                                    budget,
+                                )?;
                             }
                         }
                     }
@@ -382,28 +575,44 @@ impl ConflictIndex {
         }
         // The reverse direction matters when the earlier registration is an
         // export and a later registration declares a referenced component.
+        budget.text(id)?;
         for edit in registrations[id].patch.edits() {
+            budget.charge(1)?;
             match edit {
                 Edit::ExposeNestedInput {
                     parent, targets, ..
                 } => {
+                    budget.text(parent)?;
                     for prefix in path_ancestors(parent) {
-                        from_path(&mut candidates, &self.component_exact, prefix, i);
+                        from_path(&mut candidates, &self.component_exact, prefix, i, budget)?;
                     }
                     for target in targets {
-                        from_path(&mut candidates, &self.component_exact, &target.process, i);
+                        from_path(
+                            &mut candidates,
+                            &self.component_exact,
+                            &target.process,
+                            i,
+                            budget,
+                        )?;
                     }
                 }
                 Edit::ExposeNestedOutput { parent, from, .. } => {
+                    budget.text(parent)?;
                     for prefix in path_ancestors(parent) {
-                        from_path(&mut candidates, &self.component_exact, prefix, i);
+                        from_path(&mut candidates, &self.component_exact, prefix, i, budget)?;
                     }
-                    from_path(&mut candidates, &self.component_exact, &from.process, i);
+                    from_path(
+                        &mut candidates,
+                        &self.component_exact,
+                        &from.process,
+                        i,
+                        budget,
+                    )?;
                 }
                 _ => {}
             }
         }
-        candidates
+        Ok(candidates)
     }
 }
 
@@ -415,11 +624,20 @@ fn conflict_candidates(
     order: &[String],
     footprints: &BTreeMap<String, BTreeSet<Footprint>>,
 ) -> BTreeSet<(usize, usize)> {
-    let index = ConflictIndex::new(registrations, order, footprints);
+    let mut used = 0;
+    let mut budget = PlanningBudget::new(
+        super::PlanningLimits {
+            max_units: usize::MAX,
+        },
+        &mut used,
+    )
+    .unwrap();
+    let index = ConflictIndex::new(registrations, order, footprints, &mut budget).unwrap();
     (0..order.len())
         .flat_map(|i| {
             index
-                .after(i, registrations, order, footprints)
+                .after(i, registrations, order, footprints, &mut budget)
+                .unwrap()
                 .into_iter()
                 .map(move |j| (i, j))
         })
@@ -433,14 +651,23 @@ fn conflict_candidates(
 fn overlapping_write<'a>(
     left: &'a BTreeSet<Footprint>,
     right: &BTreeSet<Footprint>,
-) -> Option<&'a Footprint> {
-    left.iter().find(|write| {
-        right.iter().any(|other| {
-            if *write == other {
-                return true;
+    budget: &mut PlanningBudget<'_>,
+) -> Result<Option<&'a Footprint>, ComposeError> {
+    for write in left {
+        for other in right {
+            // Reserve operands and a possible diagnostic clone before deciding.
+            budget.footprint(write)?;
+            budget.footprint(other)?;
+            budget.footprint(write)?;
+            if write == other {
+                return Ok(Some(write));
             }
-            match (write, other) {
+            let overlaps = match (write, other) {
                 (Footprint::Component(a), Footprint::Component(b)) => {
+                    budget.text(a)?;
+                    budget.text(b)?;
+                    budget.text(a)?;
+                    budget.text(b)?;
                     b.strip_prefix(a)
                         .is_some_and(|suffix| suffix.starts_with('/'))
                         || a.strip_prefix(b)
@@ -451,51 +678,87 @@ fn overlapping_write<'a>(
                     // Mutating an ancestor replaces its entire nested body.
                     // Connecting to a new nested declaration also requires
                     // dependency ordering, never incidental replay ordering.
-                    [&edge.from.process, &edge.to.process]
-                        .into_iter()
-                        .any(|endpoint| {
-                            endpoint
-                                .strip_prefix(path)
-                                .is_some_and(|suffix| suffix.starts_with('/'))
-                                || (path.contains('/') && endpoint == path)
-                        })
+                    let mut found = false;
+                    for endpoint in [&edge.from.process, &edge.to.process] {
+                        budget.text(endpoint)?;
+                        budget.text(path)?;
+                        budget.text(path)?;
+                        budget.text(endpoint)?;
+                        budget.text(path)?;
+                        if endpoint
+                            .strip_prefix(path)
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                            || (path.contains('/') && endpoint == path)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
                 }
                 _ => false,
+            };
+            if overlaps {
+                return Ok(Some(write));
             }
-        })
-    })
+        }
+    }
+    Ok(None)
 }
 
 /// An export may refer to a component written by another registration only
 /// when that registration is an explicit dependency. Parent replacements also
 /// conflict with any independently published nested export.
-fn nested_export_dependency(declaration: &Registration, export: &Registration) -> Option<String> {
+fn nested_export_dependency(
+    declaration: &Registration,
+    export: &Registration,
+    budget: &mut PlanningBudget<'_>,
+) -> Result<Option<String>, ComposeError> {
     for edit in declaration.patch.edits() {
+        budget.charge(1)?;
         let path = match edit {
             Edit::Add { path, .. } | Edit::Replace { path, .. } => path,
             _ => continue,
         };
         for edit in export.patch.edits() {
+            budget.charge(1)?;
             match edit {
                 Edit::ExposeNestedInput {
                     parent, targets, ..
                 } => {
-                    if nested_under(parent, path)
-                        || targets.iter().any(|target| target.process == *path)
-                    {
-                        return Some(path.clone());
+                    budget.text(path)?;
+                    budget.text(parent)?;
+                    budget.text(path)?;
+                    let mut found = nested_under(parent, path);
+                    if !found {
+                        for target in targets {
+                            budget.text(&target.process)?;
+                            budget.text(path)?;
+                            if target.process == *path {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if found {
+                        return Ok(Some(path.clone()));
                     }
                 }
-                Edit::ExposeNestedOutput { parent, from, .. }
-                    if nested_under(parent, path) || from.process == *path =>
-                {
-                    return Some(path.clone());
+                Edit::ExposeNestedOutput { parent, from, .. } => {
+                    budget.text(path)?;
+                    budget.text(parent)?;
+                    budget.text(path)?;
+                    budget.text(&from.process)?;
+                    budget.text(path)?;
+                    if nested_under(parent, path) || from.process == *path {
+                        return Ok(Some(path.clone()));
+                    }
                 }
                 _ => {}
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn nested_under(parent: &str, path: &str) -> bool {
@@ -509,6 +772,21 @@ mod dependency_order_tests {
     use super::*;
     use crate::GraphOrigin;
     use crate::compose::NetworkPatch;
+
+    fn dependency_order(
+        registrations: &BTreeMap<String, Registration>,
+    ) -> Result<DependencyOrder, ComposeError> {
+        super::dependency_order(
+            registrations,
+            &mut PlanningBudget::new(
+                super::super::PlanningLimits {
+                    max_units: usize::MAX,
+                },
+                &mut 0,
+            )
+            .unwrap(),
+        )
+    }
 
     fn registration(id: &str, dependencies: Vec<String>) -> Registration {
         Registration::new(
@@ -562,7 +840,18 @@ mod dependency_order_tests {
         let result = dependency_order(&registrations).unwrap();
         assert_eq!(result.order, ["b", "c", "a", "d"]);
         let d = result.order.iter().position(|id| id == "d").unwrap();
-        let ancestors = result.ancestor_mask(d);
+        let ancestors = result
+            .ancestor_mask(
+                d,
+                &mut PlanningBudget::new(
+                    super::super::PlanningLimits {
+                        max_units: usize::MAX,
+                    },
+                    &mut 0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
         assert_eq!(
             result
                 .order
@@ -602,7 +891,20 @@ mod dependency_order_tests {
                 let found = actual
                     .order
                     .iter()
-                    .zip(actual.ancestor_mask(index))
+                    .zip(
+                        actual
+                            .ancestor_mask(
+                                index,
+                                &mut PlanningBudget::new(
+                                    super::super::PlanningLimits {
+                                        max_units: usize::MAX,
+                                    },
+                                    &mut 0,
+                                )
+                                .unwrap(),
+                            )
+                            .unwrap(),
+                    )
                     .filter_map(|(ancestor, included)| included.then_some(ancestor.clone()))
                     .collect::<BTreeSet<_>>();
                 assert_eq!(found, expected_ancestors[name], "seed {seed}, {name}");
@@ -637,6 +939,38 @@ mod conflict_index_tests {
     use crate::compose::NetworkPatch;
     use crate::network::{ConnectionDef, PortPath};
     use std::{num::NonZeroUsize, sync::Arc};
+
+    fn nested_export_dependency(a: &Registration, b: &Registration) -> Option<String> {
+        super::nested_export_dependency(
+            a,
+            b,
+            &mut PlanningBudget::new(
+                super::super::PlanningLimits {
+                    max_units: usize::MAX,
+                },
+                &mut 0,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+    fn overlapping_write<'a>(
+        a: &'a BTreeSet<Footprint>,
+        b: &BTreeSet<Footprint>,
+    ) -> Option<&'a Footprint> {
+        super::overlapping_write(
+            a,
+            b,
+            &mut PlanningBudget::new(
+                super::super::PlanningLimits {
+                    max_units: usize::MAX,
+                },
+                &mut 0,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
 
     fn port(process: &str) -> PortPath {
         PortPath {
@@ -876,15 +1210,249 @@ mod conflict_index_tests {
             .iter()
             .map(|id| (id.clone(), registrations[id].patch.footprints()))
             .collect();
-        let index = ConflictIndex::new(&registrations, &order, &footprints);
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        let index = ConflictIndex::new(&registrations, &order, &footprints, &mut budget).unwrap();
         assert_eq!(
-            index.after(0, &registrations, &order, &footprints).len(),
+            index
+                .after(0, &registrations, &order, &footprints, &mut budget)
+                .unwrap()
+                .len(),
             255
         );
         assert!(matches!(
-            plan(&registrations, SelectionLimits::default()),
+            plan(&registrations, SelectionLimits::default(), &mut budget),
             Err(ComposeError::Conflict { first, second, .. })
                 if first == "r0000" && second == "r0001"
         ));
+    }
+
+    #[test]
+    fn successful_dense_plan_has_no_ancestor_cells_and_suffix_queries_skip_earlier_owners() {
+        let n = 32;
+        let definition = Arc::new(ComponentDef::map(|n: i64| n));
+        let registrations: BTreeMap<_, _> = (0..n)
+            .map(|i| {
+                let id = format!("r{i:03}");
+                let mut registration = registration(
+                    &id,
+                    vec![Edit::Replace {
+                        path: "shared".into(),
+                        definition: definition.clone(),
+                    }],
+                );
+                registration.priority = i as i64;
+                (id, registration)
+            })
+            .collect();
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        let plan = super::plan(&registrations, SelectionLimits::default(), &mut budget).unwrap();
+        assert_eq!(plan.active, BTreeSet::from(["r031".into()]));
+        assert_eq!(budget.ancestor_cells, 0);
+        assert_eq!(budget.blockers, n * (n - 1) / 2);
+        assert_eq!(budget.posting_owners, 3 * n * (n - 1) / 2);
+        println!(
+            "dense32: ancestor_cells={} blockers={} posting_owners={} units={}",
+            budget.ancestor_cells, budget.blockers, budget.posting_owners, used
+        );
+
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits { max_units: 10_000 },
+            &mut used,
+        )
+        .unwrap();
+        assert!(matches!(
+            super::plan(&registrations, SelectionLimits { max_work: 0 }, &mut budget),
+            Err(ComposeError::PlanningBudgetExceeded { limit: 10_000 })
+        ));
+        assert!(budget.blockers < n * (n - 1) / 2);
+        assert_eq!(budget.ancestor_cells, 0);
+
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        let index =
+            ConflictIndex::new(&registrations, &plan.order, &plan.footprints, &mut budget).unwrap();
+        let mut query_used = 0;
+        let mut query = PlanningBudget::new(
+            super::super::PlanningLimits { max_units: 128 },
+            &mut query_used,
+        )
+        .unwrap();
+        assert!(
+            index
+                .after(
+                    n - 1,
+                    &registrations,
+                    &plan.order,
+                    &plan.footprints,
+                    &mut query
+                )
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(query.posting_owners, 0);
+    }
+
+    #[test]
+    fn ancestry_storage_is_reserved_before_initialization_and_pending_growth() {
+        let order = DependencyOrder {
+            order: vec!["a".into(), "b".into()],
+            parents: vec![vec![], vec![0]],
+        };
+        for (limit, cells) in [(1, 0), (2, 2), (3, 2)] {
+            let mut used = 0;
+            let mut budget =
+                PlanningBudget::new(super::super::PlanningLimits { max_units: limit }, &mut used)
+                    .unwrap();
+            assert_eq!(
+                order.ancestor_mask(1, &mut budget),
+                Err(ComposeError::PlanningBudgetExceeded { limit })
+            );
+            assert_eq!(budget.ancestor_cells, cells);
+        }
+        let mut used = 0;
+        let mut budget =
+            PlanningBudget::new(super::super::PlanningLimits { max_units: 4 }, &mut used).unwrap();
+        assert_eq!(order.ancestor_mask(1, &mut budget).unwrap(), [true, false]);
+        assert_eq!(used, 4);
+    }
+
+    #[test]
+    fn long_prefix_queries_and_predicates_reserve_text_before_decisions() {
+        let parent = "p".repeat(512);
+        let definition = Arc::new(ComponentDef::map(|n: i64| n));
+        let registrations: BTreeMap<_, _> = (0..2)
+            .map(|i| {
+                let id = format!("r{i}");
+                (
+                    id.clone(),
+                    registration(
+                        &id,
+                        vec![Edit::Replace {
+                            path: format!("{parent}/c{i}"),
+                            definition: definition.clone(),
+                        }],
+                    ),
+                )
+            })
+            .collect();
+        let order: Vec<_> = registrations.keys().cloned().collect();
+        let footprints = registrations
+            .iter()
+            .map(|(id, r)| (id.clone(), r.patch.footprints()))
+            .collect();
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        let index = ConflictIndex::new(&registrations, &order, &footprints, &mut budget).unwrap();
+        let mut used = 0;
+        let mut budget =
+            PlanningBudget::new(super::super::PlanningLimits { max_units: 511 }, &mut used)
+                .unwrap();
+        assert_eq!(
+            index.after(0, &registrations, &order, &footprints, &mut budget),
+            Err(ComposeError::PlanningBudgetExceeded { limit: 511 })
+        );
+        assert_eq!(budget.posting_owners, 0);
+        let left = BTreeSet::from([Footprint::Component(parent.clone())]);
+        let right = BTreeSet::from([Footprint::Component(format!("{parent}/child"))]);
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        assert!(
+            super::overlapping_write(&left, &right, &mut budget)
+                .unwrap()
+                .is_some()
+        );
+        let cost = used;
+        assert!(cost > 4 * 512);
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: cost - 1,
+            },
+            &mut used,
+        )
+        .unwrap();
+        assert_eq!(
+            super::overlapping_write(&left, &right, &mut budget),
+            Err(ComposeError::PlanningBudgetExceeded { limit: cost - 1 })
+        );
+    }
+
+    #[test]
+    fn connection_queries_pay_separately_for_comparison_and_contains_scans() {
+        let path = format!("{}/child", "p".repeat(512));
+        let key = ConnectionKey::new(
+            PortPath {
+                process: path.clone(),
+                port: "output".into(),
+            },
+            PortPath {
+                process: path,
+                port: "input".into(),
+            },
+        );
+        let registrations: BTreeMap<String, Registration> =
+            BTreeMap::from([("r0".into(), registration("r0", vec![Edit::Disconnect(key)]))]);
+        let order = vec!["r0".into()];
+        let footprints = registrations
+            .iter()
+            .map(|(id, r)| (id.clone(), r.patch.footprints()))
+            .collect();
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits {
+                max_units: usize::MAX,
+            },
+            &mut used,
+        )
+        .unwrap();
+        let index = ConflictIndex::new(&registrations, &order, &footprints, &mut budget).unwrap();
+        // ID queries/visit + full edge query + two nested endpoint scans.
+        let exact = 21 + 16 * 519 + 4 * 513;
+        for limit in [exact - 1, exact] {
+            let mut used = 0;
+            let mut budget =
+                PlanningBudget::new(super::super::PlanningLimits { max_units: limit }, &mut used)
+                    .unwrap();
+            let result = index.after(0, &registrations, &order, &footprints, &mut budget);
+            if limit == exact {
+                assert!(result.unwrap().is_empty());
+                assert_eq!(used, exact);
+            } else {
+                assert_eq!(result, Err(ComposeError::PlanningBudgetExceeded { limit }));
+            }
+        }
     }
 }
