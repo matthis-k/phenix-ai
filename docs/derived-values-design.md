@@ -1,6 +1,6 @@
 # Phenix — Graph-native derived values
 
-**Status:** Historical wave-era V1 design and acceptance at implementation commit `465033b2835c`. Section 17 records that historical implementation, not the current native FBP API or its acceptance. See `packages/phenix-storage-graph/src/derived/` and [native boundary corrections](fbp-quick-boundaries-20261115.md) for the current lookup-error contract.
+**Status:** Historical wave-era V1 design and acceptance at implementation commit `465033b2835c`. Section 17 records that historical implementation, not the current native FBP API or its acceptance. See `packages/phenix-storage-graph/src/derived/` and [native boundary corrections](https://github.com/matthis-k/phenix-ai/blob/1d4f85713b984c7c269e0cabaff37479e74a7947/docs/fbp-quick-boundaries-20261115.md) for the current lookup-error contract.
 **Date:** 2026-11-08  
 **Repository:** `matthis-k/phenix-ai`  
 **Inspected implementation:** `impl/scoped-storage-resources-20261108` @ `86c29792f4f33eea58736a9c19d5f0a299fcc128` (base `rewrite/clean-foundation` @ `b53f5be1ca83a7208568e8d891eaa2e2b9ec30e5`)  

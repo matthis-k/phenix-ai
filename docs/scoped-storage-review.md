@@ -82,7 +82,7 @@ let next: Revision = kv.compare_exchange("default", expected, &replacement)?;
 ```
 
 `put` remains unconditional. Read authority does not imply write authority; CAS
-requires `Write`. The later [capability correction](fbp-storage-capabilities-20261114.md)
+requires `Write`. The later [capability correction](https://github.com/matthis-k/phenix-ai/blob/1d4f85713b984c7c269e0cabaff37479e74a7947/docs/fbp-storage-capabilities-20261114.md)
 restores plain `get` and makes revisioned/batch/CAS requirements independent;
 explicit revision consumers declare `RevisionedRead`. Tokens are opaque and key-local, not integers, grants or
 snapshot IDs. SQLite clock persistence and immediate transactions prevent normal
