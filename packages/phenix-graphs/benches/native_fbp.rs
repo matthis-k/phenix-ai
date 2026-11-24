@@ -18,6 +18,10 @@ use std::{
 };
 
 const ITEMS: usize = 1_000;
+#[path = "support/composition_cases.rs"]
+mod composition_cases;
+#[path = "support/planning_policy.rs"]
+mod planning_policy;
 fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
@@ -488,6 +492,10 @@ fn compose_dense_equal_priority_conflict<const N: usize>() {
 }
 
 fn main() {
+    let filter = std::env::args()
+        .skip(1)
+        .find(|argument| !argument.starts_with("--"))
+        .unwrap_or_default();
     println!(
         "native_fbp: warmup=2 samples=7; elapsed includes setup, validation and teardown; no allocation instrumentation"
     );
@@ -558,7 +566,52 @@ fn main() {
             "compose_dense_equal1024_reject",
             compose_dense_equal_priority_conflict::<1024>,
         ),
+        ("q3_dense32", || {
+            composition_cases::dense(32, false, planning_policy::configure)
+        }),
+        ("q3_dense64", || {
+            composition_cases::dense(64, false, planning_policy::configure)
+        }),
+        ("q3_dense128", || {
+            composition_cases::dense(128, false, planning_policy::configure)
+        }),
+        ("q3_dense256", || {
+            composition_cases::dense(256, false, planning_policy::configure)
+        }),
+        ("q3_dense_reverse128", || {
+            composition_cases::dense(128, true, planning_policy::configure)
+        }),
+        ("q3_defeat4", || {
+            composition_cases::defeat(4, planning_policy::configure)
+        }),
+        ("q3_defeat16", || {
+            composition_cases::defeat(16, planning_policy::configure)
+        }),
+        ("q3_defeat32", || {
+            composition_cases::defeat(32, planning_policy::configure)
+        }),
+        ("q3_splices16", || {
+            composition_cases::splices(16, planning_policy::configure)
+        }),
+        ("q3_splices64", || {
+            composition_cases::splices(64, planning_policy::configure)
+        }),
+        ("q3_splices128", || {
+            composition_cases::splices(128, planning_policy::configure)
+        }),
+        ("q3_hierarchical16", || {
+            composition_cases::hierarchical(16, planning_policy::configure)
+        }),
+        ("q3_hierarchical64", || {
+            composition_cases::hierarchical(64, planning_policy::configure)
+        }),
+        ("q3_hierarchical128", || {
+            composition_cases::hierarchical(128, planning_policy::configure)
+        }),
     ] {
+        if !name.contains(&filter) {
+            continue;
+        }
         for _ in 0..2 {
             run();
         }

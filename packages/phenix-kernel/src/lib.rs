@@ -10,7 +10,7 @@ pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
     Value,
-    compose::{Composer, Footprint, NetworkPatch, Registration, SelectionLimits},
+    compose::{Composer, Footprint, NetworkPatch, PlanningLimits, Registration, SelectionLimits},
     contract::Contract,
     network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
     process::{ProcessDispatcher, ProcessExecutionGuard},
@@ -577,6 +577,9 @@ pub struct BuildOptions {
     pub imports: ImportPolicy,
     /// Host-owned selection budget per composer update, including self-import previews.
     pub selection_limits: SelectionLimits,
+    /// Cumulative logical composition planning policy for this entire build,
+    /// including every prefix and self-import preview. Not a total work/time cap.
+    pub planning_limits: PlanningLimits,
     /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.

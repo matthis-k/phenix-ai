@@ -341,6 +341,7 @@ impl Kernel {
         dispatcher: Arc<dyn ProcessDispatcher>,
         mut options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
+        let mut planning_used = 0;
         let snapshots: Vec<_> = snapshots.into_iter().collect();
         // Composition can temporarily inspect every candidate revision, but
         // emitted packets and detached graph handles must retain only selected
@@ -382,6 +383,7 @@ impl Kernel {
         let mut composer = Composer::new(base)
             .map_err(|cause| ResolutionError::CompositionSetup(Box::new(cause)))?;
         composer.set_selection_limits(options.selection_limits);
+        composer.set_planning_limits(options.planning_limits);
         let registration_ids: BTreeMap<_, _> = keys
             .iter()
             .enumerate()
@@ -404,15 +406,19 @@ impl Kernel {
                         }
                     })?;
                 preview.set_selection_limits(options.selection_limits);
+                preview.set_planning_limits(options.planning_limits);
                 preview
-                    .register([Registration::new(
-                        "self",
-                        [],
-                        authority.priority,
-                        origins[key].clone(),
-                        authority.grants.clone(),
-                        contribution.patch.clone(),
-                    )])
+                    .register_with_planning_usage(
+                        [Registration::new(
+                            "self",
+                            [],
+                            authority.priority,
+                            origins[key].clone(),
+                            authority.grants.clone(),
+                            contribution.patch.clone(),
+                        )],
+                        &mut planning_used,
+                    )
                     .map_err(|cause| ResolutionError::Composition {
                         contribution: key.clone(),
                         cause: Box::new(cause),
@@ -456,16 +462,19 @@ impl Kernel {
                 .unwrap_or_else(|| contribution.patch.clone());
             artifacts.insert(key.clone(), owned);
             composer
-                .register([Registration::new(
-                    registration_ids[key].clone(),
-                    dependencies[key]
-                        .iter()
-                        .map(|dependency| registration_ids[dependency].clone()),
-                    authority.priority,
-                    origins[key].clone(),
-                    authority.grants,
-                    patch,
-                )])
+                .register_with_planning_usage(
+                    [Registration::new(
+                        registration_ids[key].clone(),
+                        dependencies[key]
+                            .iter()
+                            .map(|dependency| registration_ids[dependency].clone()),
+                        authority.priority,
+                        origins[key].clone(),
+                        authority.grants,
+                        patch,
+                    )],
+                    &mut planning_used,
+                )
                 .map_err(|cause| match cause {
                     phenix_graph::compose::ComposeError::Network(cause) => {
                         ResolutionError::Compilation { cause }

@@ -66,6 +66,23 @@ unique valid selection. Budget exhaustion remains a typed `ComposeError` source
 in `ResolutionError::Composition`. Limits do not preempt all callbacks: ordinary
 preparation runs before main registration; self-import preview failure runs before
 that contribution's preparation. External callback effects are not rolled back.
+Host `planning_limits: phenix_graph::compose::PlanningLimits` defaults to
+`max_units: 1_000_000`. Unlike selection, its consumed counter is shared across
+ALL main prefix admissions and self-import previews in one build. This is a new
+resource/admission policy; previously valid unbounded inputs can now require an
+explicitly larger finite allowance. Default success is pinned for 16/32-contribution
+real-write prefixes, self-previews and dense priorities, with 16-contribution
+preview rebuilds. A 64-contribution preview fixture needs a larger allowance.
+Logical units include composition registry/text/dependency/footprint/index,
+ancestry/blocker and manifest construction, with charges before growth. They
+exclude incoming registration construction, catalog/import matching, callback and
+artifact/lease bookkeeping, final offer validation, replay, base/network copying
+and compiler work. This is not a total build-work, byte or wall-clock cap.
+`PlanningBudgetExceeded` is preserved as a typed composition error. Planning
+exhaustion during build/host preparation precedes publication and producer
+activation; prepared artifacts are disposed. Retry is an explicit new build scope, not an
+internal counter reset. Prefix validation and callback observations remain intact;
+later contributions cannot repair an invalid prefix by batching the build.
 The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code
 lease is added without discarding an application-provided lease.
 

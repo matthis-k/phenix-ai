@@ -204,6 +204,44 @@ Changing limits alone leaves current bindings/topology intact. This allowance
 does not bound dependency/footprint planning, replay, compilation or total build
 time. Kernel hosts configure both composer paths through `BuildOptions::selection_limits`.
 
+Composition planning has a separate `PlanningLimits { max_units: 1_000_000 }`
+default. Configure future `register`/`revoke` updates with
+`composer.set_planning_limits(...)`. This is a deliberate new host admission
+policy, not compatibility for all formerly unbounded valid inputs: 2,048
+independent 512-byte registration IDs reject at the default and can be admitted
+with a larger finite allowance. The pinned default success envelope includes
+real-write chains/diamonds/skew through 128 registrations, dense priorities and
+ordered splice/hierarchical cases through 32, plus Kernel prefixes/self-previews
+through 32 contributions. These are tested examples, not universal capacity promises.
+
+Units reserve logical planning operations/storage and symbolic query/copy/scan
+bytes before work. Blockers reserve two index cells, ancestor rows their full
+logical Boolean length, and generated paths their bytes before allocation.
+Explicit predicate operands and possible diagnostic copies are preflighted;
+internal BTree comparison multiplicity is excluded. Reservations are conservative
+and never refunded. First denied reservation returns `PlanningBudgetExceeded`
+before any later semantic error; with sufficient allowance semantic order remains
+unchanged. Selection is still independently budgeted per attempt. Incoming owned
+input construction, opaque payloads, replay/network copying/compiler work,
+arbitrary callbacks/destructors and allocation failure are outside this logical
+allowance. It is not a wall-clock/allocator-byte/total-work guarantee.
+
+For a synchronous host scope, `register_with_planning_usage(registrations,
+&mut used_units)` consumes an ordinary caller-owned counter, including on failed
+attempts. Use the same counter and configured limit on all participating
+Composers; the borrow is not retained. Ordinary `register`/`revoke` start fresh
+per-update counters. There is no public meter, cross-thread sharing, or cumulative
+revoke API. Kernel configures `BuildOptions::planning_limits` and shares one
+counter across the complete build's main prefixes and static self-import previews.
+
+Updates prepare before committing. `into_iter`, `next`, iterator Drop, and
+rejected candidate cleanup are caught before publication; cleanup cannot replace
+an established semantic/budget error. Only nondropping field replacements commit
+registry and composition. A catchable retired-state Drop panic after commit is
+suppressed and the published update remains successful. Failed attempts keep
+old registry/topology/generation; successful unchanged topology still refreshes
+generation. Abort, double panic and nontermination are outside the native boundary.
+
 ### Programs
 
 - `cargo run -p phenix-graph --example basic_fbp --locked`: source, map, sink.
