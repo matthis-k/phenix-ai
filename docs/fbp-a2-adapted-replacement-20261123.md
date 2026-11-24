@@ -3,7 +3,83 @@
 Base: local A1 `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9`.
 Branch/worktree: `feat/fbp-a2-adapted-replacement-20261123`,
 `/tmp/opencode/fbp-a2-adapted-replacement-20261123`. A1 is not edited.
-This is a bounded A2 improvement, not full A2 acceptance or a percentage claim.
+The implementation stages below are historical; original A2 acceptance is
+reconciled here on 2026-11-24.
+
+## Original A2 Acceptance
+
+Original A2 is **scoped verified: 16.0% -> 100.0%, +84.0 pp**, accepted source
+`1589ad0d2828fecea99f784ac8e64fe952e821bc` on draft
+[PR #1392](https://github.com/matthis-k/phenix-ai/pull/1392).
+Two separate whole-original-scope audits found no remaining production or
+acceptance gap. Both traced the actual original criteria rather than treating
+later residual descriptions as new requirements. No external human approval
+is asserted.
+
+The original ledger at `cf62add61` requires "design compatibility/projection only
+with evidence for real use cases". The introducing work map at `026cfbe05`
+requires "Define the safe compatibility relation with positive/negative examples,
+then validate adapters/replacement and inherited obligations". The original
+native design at `16e77f6c6` already required exact public boundaries and explicit
+claims. None requires implicit or direct width-subtyped replacement, preserving
+the raw provider's declaration identity, or zero-cost adaptation. The later claim
+below that such a relation was an original requirement was unsupported and is
+corrected, not waived.
+
+### Accepted Compatibility Relation
+
+Provider N is usable at old boundary E through an explicit ordinary composite A
+only when all these obligations hold:
+
+- `interface(A) == E`, including complete named input/output sets, direction and
+  exact local or full wire identity. The internal provider need not expose E.
+- Internal adapters explicitly convert different representations. Extra outputs
+  have explicit consumers; additional required inputs need explicit provision.
+  No implicit schema rule, layout reinterpretation, supply or discard is added.
+- A explicitly claims the identical required semantic contracts, and every
+  inherited frozen public/private path obligation remains valid. Shape or a
+  converter cannot manufacture membership or erase an old private obligation.
+- Existing grants, ancestor opt-ins, origins, conflict/dependency ordering and
+  atomic fresh-generation publication remain authoritative. Failed candidates
+  preserve old bindings; retained jobs/sessions keep their original topology.
+- The application defines and tests the supported behavior, conversion failures
+  and effects. A conversion domain cannot retrospectively exclude an input an
+  actual old application contract promised to accept. Structural checks do not
+  prove arbitrary semantic equivalence, effect rollback or state migration.
+
+This is a nontrivial compositional relation, not renamed raw interface equality:
+the executable witness contains a differently named/framed V2 provider, real
+input/tool/final conversion and an explicit usage consumer, yet replaces the
+unchanged exact nested boundary. It also carries real stage, queue and codec
+costs; it is not advertised as zero-cost projection.
+
+### Whole-Finding Evidence
+
+All seven `fbp_a2_adapted_replacement` tests pass on the accepted source under
+default Graph, workspace no-default and isolated Graph no-default. Actual logs
+also execute the three combined A1/A2/Q2 reindex regressions and the preserved
+contract, obligation, adapter and lease suites. The tests cover positive provider
+upgrade/feedback/stop, both queue policies, actual capture backpressure, failed
+updates/revoke, handed old-generation work, final detached lease ownership,
+conversion failure after a committed tool effect, canonical diagnostics and
+negative direct width/claim/catalog/private-obligation cases.
+
+All **17 exact-head workflows** are SUCCESS. In
+[Flake CI 45305279532](https://github.com/matthis-k/phenix-ai/actions/runs/45305279532),
+all six jobs succeeded and aggregate `138150837134` reports ten exact-head Nix
+checks across three shards. Graph job `138147799388` and workspace/isolation job
+`138147799303` explicitly run all seven A2 cases. The
+[integration record](fbp-foundation-integration-20261123.md) and
+[final exact-head run table](https://github.com/matthis-k/phenix-ai/pull/1392#issuecomment-7119326069)
+retain every source/workflow SHA and run link. This documentation reconciliation
+requires its own exact-head checks; prior source passes are not relabeled as
+later-head results.
+
+Direct raw width-compatible binding remains unimplemented and unclaimed; it is
+an optional different capability, not an unsatisfied original A2 criterion.
+The deterministic provider is not a production LLM/tool system. C7, H1 and A1
+are unchanged; no sandbox, universal behavioral equivalence, arbitrary fairness,
+static liveness, rollback or migration credit follows.
 
 ## Phase 1: Requirements
 
@@ -44,7 +120,7 @@ workload evidence for the claim, not a compiler proof of arbitrary semantics.
 | Alternative | Decision / cost |
 | --- | --- |
 | Global width/subtyping or implicit conversion | Reject: changes accepted exact contracts and hides policy |
-| Separate, explicit direct width-satisfaction relation | Outstanding A2 design/acceptance decision, not implemented or waived by this work |
+| Separate, explicit direct width-satisfaction relation | Not needed for original A2; optional capability remains unimplemented, not inferred from facade compatibility |
 | New replacement wrapper/API | Reject: ordinary `NetworkBuilder` and `adapt_wire` already express the relation |
 | Facade with explicit translations and usage sink | Select: extra stages, queue slots and codec work, but visible and testable policy |
 | Delete old private requirements to accept V2 | Reject: use a genuinely stable seam instead |
@@ -62,7 +138,7 @@ No task/subagent tool or installed `opencode` executable is available for a new
 independent critique. The following is standalone reasoning, not independent
 review or approval; the integrating owner will independently review the result.
 
-After the initial implementation, the user relayed an independent review finding
+After the initial implementation, the integrating owner obtained an independent review finding
 one P3 source issue (nested compiled body-interface diagnostics lost ancestors)
 and verification gaps for detached leases, in-flight old requests, failure after
 a real tool effect, and obligation deduplication. Those findings were accepted.
@@ -188,12 +264,13 @@ configurations; normalization was not modified.
 
 ### Acceptance Limits
 
-Full A2's original direct width-relation requirement remains an explicit
-acceptance/design decision; this facade approach does not implement that relation
-or close all A2 scope. Exact checker semantics must not be silently relaxed to
-obtain it. Independent re-review of this follow-up and exact-head CI remain
-outstanding.
-No full-workspace tests, doctests, hosted CI or performance measurements were run.
+At the initial implementation stage, direct width satisfaction was incorrectly
+treated as a mandatory remaining A2 requirement. The original-record audits and
+accepted compatibility relation above supersede that interpretation. Direct
+width satisfaction is not implemented, and exact checking is not relaxed.
+The local commands in the historical section did not include whole-workspace
+or hosted acceptance; the later exact-source full gates above do. No performance
+claim follows from these correctness/compatibility tests.
 
 The deterministic provider and tool are real ordinary processes in an executable
 feedback cycle, not network LLM/tool integrations. The context stage is stateless;

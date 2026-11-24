@@ -1,6 +1,35 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: A1, 2026-11-23
+## Current Acceptance: A2, 2026-11-24
+
+Original A2 **Interface compatibility** is **scoped verified:
+16.0% -> 100.0%, +84.0 pp**, accepted source
+`1589ad0d2828fecea99f784ac8e64fe952e821bc` on draft #1392. The
+[acceptance record](fbp-a2-adapted-replacement-20261123.md) defines explicit
+application-authored compatibility through an ordinary exact-boundary composite,
+with real schema conversion/projection, explicit semantic claims, preserved
+private obligations, exact authority and atomic replacement/revoke.
+
+Two independent whole-original-scope audits found no remaining blocker. The
+original ledger/work-map required a safe relation and positive/negative real-use
+evidence, not raw direct width subtyping. Earlier residual descriptions added
+that unsupported prerequisite; correcting it neither waives an original use case
+nor weakens exact interfaces/claims. Direct width binding remains unimplemented
+and unclaimed, as do universal behavioral equivalence and zero-cost adaptation.
+
+All 17 workflows on the accepted source are SUCCESS, including all six jobs of
+[Flake CI 45305279532](https://github.com/matthis-k/phenix-ai/actions/runs/45305279532).
+Actual default/workspace/isolated-no-default logs run all seven A2 cases, including
+backpressure, in-flight old work, detached leases and failure after a tool effect.
+The later reconciliation head requires its own checks; no external human approval,
+main merge or rebase is claimed.
+
+Counts are **24 scoped verified / 5 partial / 3 open / 1 approved exclusion**,
+leaving **8 in-scope findings**. Score sum **2797**, subjective mean **84.8%
+(2797 / 33 = 84.757...%)**. Only A2 changes; A1/H1 stay accepted, C7 stays
+excluded at its unchanged historical 12.0%, and no other score changes.
+
+## Previous Acceptance: A1, 2026-11-23
 
 Original A1 **Private composite extension** is **scoped verified:
 18.0% -> 100.0%, +82.0 pp** on draft
@@ -306,7 +335,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | C9 | Passive session state | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; passive `state(&self)` retained |
 | C10 | Redundant execution API | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; API removal retained by merge |
 | A1 | Private composite extension | 18.0% | 100.0% | +82.0 | Scoped verified | [Author-opted nested Add/Connect/export, checked lowering, real prepared Kernel and nested-agent execution, independent whole-scope review and exact-head CI](fbp-a1-checked-nested-exports-20261123.md) at `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` |
-| A2 | Interface compatibility | 16.0% | 16.0% | +0.0 | Open | [Exact facade/schema replacement execution and canonical typed diagnostics](fbp-a2-adapted-replacement-20261123.md); direct width-satisfaction relation remains a design decision |
+| A2 | Interface compatibility | 16.0% | 100.0% | +84.0 | Scoped verified | [Original-scope explicit adapted compatibility, exact claims/obligations, real provider feedback/replacement, independent whole-finding review and exact-head CI](fbp-a2-adapted-replacement-20261123.md) at `1589ad0d2828fecea99f784ac8e64fe952e821bc` |
 | A3 | Graph/store separation | 20.0% | 100.0% | +80.0 | Scoped verified | [Opaque external capability boundary](fbp-resource-boundary-20261115.md); Graph Store, locks and read/write policy removed; independent review and [exact-head][N] |
 | A4 | Typed authoring consolidation | 30.0% | 100.0% | +70.0 | Scoped verified | [Canonical authority audit and paired executable manual/key/derived equivalence](fbp-authoring-acceptance-20261116.md), real isolated no-default and doctest gates; [exact-head][L] |
 | A5 | Typed vs. string paths | 24.0% | 100.0% | +76.0 | Scoped verified | [Complete compiled-generation binding authority across Graph, composition/final binding, Kernel/Generation and the real StorageGraph query; independent whole-scope review, local/Nix gates and all fifteen exact-head workflows](fbp-bound-handles-20261117.md) at `45c2dfb6f9089fb4b2f25bd102a37d2181e44eaf`; validated dynamic paths and the separate H7 residual remain |

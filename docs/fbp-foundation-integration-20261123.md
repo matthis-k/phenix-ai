@@ -61,9 +61,16 @@ One ignored manual EOS profile is not an unexecuted correctness gate.
 
 ## Acceptance And Remaining Decisions
 
-Only A1 receives whole-finding closure: 18 -> 100, with exact-source independent
+At the original 2026-11-23 integration checkpoint, only A1 received whole-finding closure: 18 -> 100, with exact-source independent
 whole-scope review and hosted verification. Nine findings remain. H1 stays 100
 and C7 remains excluded at its unchanged historical 12, not sandbox credit.
+
+The 2026-11-24 [original-A2 reconciliation](fbp-a2-adapted-replacement-20261123.md)
+supersedes A2's decision label below: two independent original-record audits
+confirm that explicit exact-boundary adaptation satisfies the original criterion,
+and no original direct-width prerequisite was waived. A2 is now scoped verified
+on exact-green `1589ad0d2`; eight in-scope findings remain. All other rows retain
+their bounded implementation and unresolved acceptance status.
 
 | Finding | Implemented Boundary | Remaining Acceptance Or Decision |
 | --- | --- | --- |
@@ -72,14 +79,16 @@ and C7 remains excluded at its unchanged historical 12, not sandbox credit.
 | H5 | Adaptive visited membership, authenticated reachability and own-lane closure DFS | Repeated upstream proofs and full global-EOS checks remain; agree closure scaling budgets |
 | H6 | Paired latency/throughput, allocator-event harnesses, RSS and workload controls | Local thermal/noise controls are not non-inferiority proof; portable product latency, live-memory and concurrency budgets remain unaccepted |
 | H7 | Authenticated FIFO/lane queues, explicit credit/cancellation and passive witnessed single-flight blockers | Choose independent sessions versus opt-in per-request process instances versus a cooperative shared-state contract; stalled process ownership cannot be bypassed without defining state/effect continuity |
-| A2 | Exact public facade, explicit schema conversions, canonical replacement diagnostics and executed versioned provider feedback | Decide whether explicit adaptation suffices or direct opt-in width satisfaction is required; never weaken existing exact claims or silently supply missing inputs/discard outputs |
+| A2 | Exact public facade, explicit schema conversions, canonical replacement diagnostics and executed versioned provider feedback | Original criterion accepted on 2026-11-24; optional direct width satisfaction is unimplemented, not an original acceptance blocker |
 | Q2 | Fresh generation authority with bounded root-delta reuse and canonical fallback/oracles | General nested/dependency-aware invalidation, persistent host reload reuse and whole-recomposition scaling remain; do not add another unmeasured ad hoc fast path |
 | Q3 | Exact unique selection, indexed planning, chain/diamond/skew/early-conflict evidence | Dense successful priority graphs, total planning work and recomposition budgets remain; selector allowance does not bound all planner work |
 | Q4 | Static wiring SCCs and declared-root reachability facts | Arbitrary callback termination/output/wake behavior cannot be proved from wiring; a restricted declared process model with explicit environment assumptions is needed for sound progress/reject/unknown results |
 
-These decisions are not waived by the integration. Explicit adaptation only,
-shared-state cooperative progress, or structural reachability alone must not be
-silently relabeled as the broader A2/H7/Q4 guarantee. Independent unblocked work
+These decisions are not waived by the integration. Shared-state cooperative
+progress or structural reachability alone must not be silently relabeled as
+the broader H7/Q4 guarantee. A2's independently audited exact-boundary relation
+does satisfy its original criterion without promising raw width subtyping.
+Independent unblocked work
 has continued while those contracts remain open.
 
 ## Publishing And Verification

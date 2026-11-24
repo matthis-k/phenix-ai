@@ -1,6 +1,25 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: A1, 2026-11-23
+## Current Acceptance: A2, 2026-11-24
+
+Original A2 is **scoped verified: 16.0% -> 100.0%, +84.0 pp**, accepted source
+`1589ad0d2828fecea99f784ac8e64fe952e821bc`. Two independent original-record
+audits found that explicit exact-boundary compositional adaptation satisfies
+the original compatibility/projection criterion; the later alleged mandatory
+direct-width requirement had no original source. The
+[A2 record](fbp-a2-adapted-replacement-20261123.md) defines the safe relation and
+maps real positive/negative replacement, schema conversion, claims/obligations,
+backpressure, failed updates, old jobs and detached leases to hosted evidence.
+All 17 exact-source workflows passed; this reconciliation head has separate
+checks. No accepted invariant or original application promise is waived.
+
+Current counts: **24 scoped verified / 5 partial / 3 open / 1 approved exclusion**,
+**8 remaining in-scope findings**: H3b/H4/H5/H6/H7 and Q2/Q3/Q4. Scorecard sum
+**2797**, subjective mean **84.8%**. A1/H1 and C7's unchanged exclusion remain.
+Raw width binding, arbitrary semantics, static liveness, native sandboxing and
+production-agent completion are not claimed.
+
+## Previous Acceptance: A1, 2026-11-23
 
 Original A1 is **scoped verified: 18.0% -> 100.0%, +82.0 pp**, source
 `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` on draft #1388. The
@@ -172,7 +191,7 @@ core-only stage received no closure credit.
 | C6 migration/restart | Open, now scoped verified | User-approved Restart And Persist plus real independent SQLite reopen/CAS/schema/candidate-failure and archived-job proof | Fresh process-private successor state; durable continuity is explicit and no live migration or exclusive writer is claimed |
 | C7 plugin isolation | Open, now excluded | User-approved TrustedNativeScope excludes untrusted native isolation | No OS sandbox was implemented or verified; exclusion earns no numerical implementation credit |
 | A1 private extension | Open, now scoped verified | Author-approved nested Add/Connect/export, checked bound lowering, prepared Kernel integration and genuine nested agent feedback/stop accepted at `923ccd6376b4cd8e3980b61ae26ad78c08e9c6a9` after independent whole-scope review and exact-head CI | [Acceptance](fbp-a1-checked-nested-exports-20261123.md); extension and replacement remain separate authorities; exact claimed interfaces cannot silently widen |
-| A2 compatibility | Open | Exact facade/V2 schema replacement executes through feedback, failure, backpressure, revoke and detached leases; canonical typed replacement errors implemented in #1391, exact-head green | Decide explicit adaptation versus direct opt-in width satisfaction; exact claims and frozen obligations cannot be erased |
+| A2 compatibility | Open, now scoped verified | Original safe compatibility relation, exact facade/V2 schema replacement and positive/negative real feedback evidence accepted at `1589ad0d2828fecea99f784ac8e64fe952e821bc` after independent whole-scope review and exact-head CI | [Acceptance](fbp-a2-adapted-replacement-20261123.md); exact claims and frozen obligations preserved; optional raw width binding is not an original prerequisite |
 | A3 graph/store separation | Open, now scoped verified | Concrete storage/permission/synchronization authority removed from Graph; capability identity, attenuation and cleanup/leases preserved | Exact-head acceptance at `026cfbe05`; no Graph-to-Storage dependency or relocated duplicate Store |
 | A4 typed authoring | Open, now scoped verified | Canonical authority audit and paired real manual/key/derived executions accepted at `89171a843` | Necessary validated views/convenience APIs retained; no second authoring model or Engine shim introduced |
 | A5 physical paths | Open, now scoped verified | Coherent compiled-generation handles now cover required Graph basic/internal execution, configuration/wake/source/closure, preview/final compilation and binding, Kernel/Generation and the actual StorageGraph query at `45c2dfb6f` | Independent whole-scope review and all local/Nix/exact-head gates passed; necessary validated dynamic paths remain, and H7 older-capture/shared-process limitations stay outside A5 |
