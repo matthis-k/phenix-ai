@@ -86,8 +86,12 @@ has continued while those contracts remain open.
 
 No workflow modifications are included. The current OAuth credential lacks
 `workflow` scope. Prepared broader Q3 triggers/paired reference and the new H4
-paired workflow remain in `/tmp/opencode/fbp-foundation-20261123`, with the H4
-workflow also preserved in local commit `2c379943`. Existing Q3's benchmark-file
+paired workflow are preserved together in local-only workflow commit
+`b720f243a6006f9b7603576eef9a823862494948` on
+`ci/fbp-paired-gates-20261123`, worktree `/tmp/opencode/fbp-paired-gates-20261123`.
+The workflow-only delta contains no runtime changes, passes pinned actionlint,
+and its Q3 identical harness compiles on both sources. It has not been pushed
+or hosted-verified. Existing Q3's benchmark-file
 trigger covers #1389, but planner-only changes still need manual dispatch until
 the trigger fix is authorized. No hosted execution of unpublished workflows is
 claimed.
@@ -98,5 +102,38 @@ current lane executable, reuses workload constructors, and successfully compiles
 the historical standalone example without extending compatibility code. Fresh
 exact-head H5 CI is green; the earlier failed source is not accepted.
 
-The assembled integration head still requires its own full exact-head suite.
-Component run links above are provenance, not substitution for that result.
+## Verified Integration Source
+
+The assembled source **`8e96b31213e0ae9623f06814f45226db227d0b46`** passed
+**all 17 existing workflows**, independently queried through GitHub. All six
+Flake jobs are SUCCESS, including full default/no-default workspace, isolated
+Graph, documentation and formatting checks. Graph job `138143059407` explicitly
+ran all three new combined regressions successfully. A separate final source
+review found no remaining actionable finding after the single-target delivery
+test and workflow-count correction. No external human approval is claimed.
+
+| Workflow | Exact-Source Run | Result |
+| --- | --- | --- |
+| Flake CI, six jobs | [45303859971](https://github.com/matthis-k/phenix-ai/actions/runs/45303859971) | SUCCESS |
+| Q5 actual wake Loom | [45303859178](https://github.com/matthis-k/phenix-ai/actions/runs/45303859178) | SUCCESS |
+| Q5 session ownership, Loom/native | [45303944988](https://github.com/matthis-k/phenix-ai/actions/runs/45303944988) | SUCCESS |
+| Q5 notifier retirement | [45303944626](https://github.com/matthis-k/phenix-ai/actions/runs/45303944626) | SUCCESS |
+| Q5 in-flight worker recovery | [45303859314](https://github.com/matthis-k/phenix-ai/actions/runs/45303859314) | SUCCESS |
+| H7 request-work paired | [45303944761](https://github.com/matthis-k/phenix-ai/actions/runs/45303944761) | SUCCESS |
+| H4 targeted wake paired | [45303859274](https://github.com/matthis-k/phenix-ai/actions/runs/45303859274) | SUCCESS |
+| H4 sparse live requests paired | [45303859129](https://github.com/matthis-k/phenix-ai/actions/runs/45303859129) | SUCCESS |
+| H4 EOS endpoints paired | [45303859149](https://github.com/matthis-k/phenix-ai/actions/runs/45303859149) | SUCCESS |
+| H4 scoped Optional paired | [45303859484](https://github.com/matthis-k/phenix-ai/actions/runs/45303859484) | SUCCESS |
+| H4 mixed agent | [45303859533](https://github.com/matthis-k/phenix-ai/actions/runs/45303859533) | SUCCESS |
+| H4 notified Custom | [45303859249](https://github.com/matthis-k/phenix-ai/actions/runs/45303859249) | SUCCESS |
+| H5 scoped closure paired | [45303859127](https://github.com/matthis-k/phenix-ai/actions/runs/45303859127) | SUCCESS |
+| H5 request-index paired | [45303860295](https://github.com/matthis-k/phenix-ai/actions/runs/45303860295) | SUCCESS |
+| H6 allocation events | [45303859263](https://github.com/matthis-k/phenix-ai/actions/runs/45303859263) | SUCCESS |
+| Q3 composition scale | [45303859460](https://github.com/matthis-k/phenix-ai/actions/runs/45303859460) | SUCCESS |
+| Native runtime benchmark | [45303859163](https://github.com/matthis-k/phenix-ai/actions/runs/45303859163) | SUCCESS |
+
+This evidence-only revision is subject to its own exact-head checks; the source
+table is not a claim that later checks have already run. Final-head run links
+are maintained on draft [PR #1392](https://github.com/matthis-k/phenix-ai/pull/1392).
+Green integration verifies the assembled bounded changes, not the nine open
+findings' full acceptance or the unpublished workflow delta.

@@ -34,8 +34,12 @@ static liveness, sandboxing or production-agent acceptance.
 
 The [assembled foundation record](fbp-foundation-integration-20261123.md) includes
 the reviewed H4/H5, A1/A2 and Q3 lanes together with the later Q2 sibling through
-#1371. Combined nested-reindex/handle/runtime regressions pass locally; exact-head
-integration CI remains a separate gate. A1's final acceptance documentation head
+#1371. Combined source `8e96b31213e0ae9623f06814f45226db227d0b46` passes all
+17 existing exact-head workflows, including all six jobs of
+[Flake CI 45303859971](https://github.com/matthis-k/phenix-ai/actions/runs/45303859971).
+Actual hosted logs include all three new nested-reindex/handle/runtime regressions.
+The integration record contains every run URL; later evidence-only edits require
+their own head's checks. A1's final acceptance documentation head
 `4f59a52cdc6aad1d10938d5de640e8ffa1379c4b` also passed all six Flake jobs and
 its wake/session Loom/native workflows, independently of its source-head passes.
 

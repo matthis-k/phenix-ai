@@ -15,6 +15,10 @@ jobs passed on that exact source. These docs require their own head's CI.
 
 Current counts are **23 scoped verified / 5 partial / 4 open / 1 approved
 exclusion**, with **9 in-scope findings**: H3b/H4/H5/H6/H7 and A2/Q2/Q3/Q4.
+The [assembled integration source](fbp-foundation-integration-20261123.md)
+`8e96b31213e0ae9623f06814f45226db227d0b46` passes all 17 existing workflows,
+including six-job Flake CI and the additional manually dispatched lifetime/H7
+gates. This verifies the combined bounded source, not closure of those nine.
 The scorecard owns the sum **2713** and subjective mean **82.2%**. H1 and C7's
 approved exclusion are unchanged. Additive extension is not arbitrary destructive
 rewiring, implicit interface compatibility, independent shared-request process
