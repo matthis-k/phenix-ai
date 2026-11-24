@@ -1,6 +1,33 @@
 # FBP 33-Issue Progress Estimates
 
-## Current Acceptance: A2, 2026-11-24
+## Current Acceptance: H3b, 2026-11-24
+
+Original H3b **Session/drain and worker interleavings** is **scoped verified:
+78.0% -> 100.0%, +22.0 pp**, accepted source
+`e166656379ac8837c7a51e1e0a3e84752ad42e85` on draft #1392. The
+[whole-original acceptance map](fbp-h3b-whole-acceptance-20261124.md) covers
+fail-fast session reentry/contention, queued drain/driver ownership, Busy/Full
+retention, external and eager-readiness self-retirement, driver wait ordering,
+unwind restoration, reused-worker identity cleanup and code/event lifetimes.
+
+Independent whole-scope source review and exact-head evidence review found no
+remaining original acceptance gap. All 17 workflows and six Flake jobs passed;
+[Flake 45312546532](https://github.com/matthis-k/phenix-ai/actions/runs/45312546532)
+and [session Loom/native 45312546093](https://github.com/matthis-k/phenix-ai/actions/runs/45312546093)
+explicitly execute the new actual-source regressions. Session Loom now has
+12 properties / 488 schedules, all conclusive; unchanged wake Loom has five
+properties / 231 schedules. Bounded models, native witnesses and source-order
+arguments are distinguished; no whole-driver Loom or arbitrary-plugin lock
+proof is claimed. This later reconciliation requires separate exact-head CI.
+
+Counts: **25 scoped verified / 4 partial / 3 open / 1 approved exclusion**,
+**7 in-scope findings remain**: H4/H5/H6/H7 and Q2/Q3/Q4. Score sum **2819**,
+subjective mean **85.4% (2819 / 33 = 85.424...%)**. Only H3b changes relative
+to accepted A2; H1/A1/A2 stay verified and C7's historical excluded 12.0% stays
+unchanged. Kernel-owned defects remain in scope; existing trusted-native,
+cooperative and coordinated-wake assumptions do not become sandbox credit.
+
+## Previous Acceptance: A2, 2026-11-24
 
 Original A2 **Interface compatibility** is **scoped verified:
 16.0% -> 100.0%, +84.0 pp**, accepted source
@@ -319,7 +346,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | H1 | Shared-session FIFO correlation | 60.0% | 100.0% | +40.0 | Scoped verified | [Bounded authenticated opt-in correlation, crossed/late staged waits, actual producer edges, 768 finite schedules, standalone adversarial diff review and all 11 exact-head hosted workflows](fbp-h1-final-acceptance-20261123.md) at `2cda718a723bc51a793c125a0bbc26ba78ecfac5`; H3b and H7 remain separate |
 | H2 | Callback panic containment | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate `worker_guards` |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] |
-| H3b | Session/drain and worker interleavings | 78.0% | 78.0% | +0.0 | Partial | [Baseline][B]; candidate `native_sessions`, `worker_guards` |
+| H3b | Session/drain and worker interleavings | 78.0% | 100.0% | +22.0 | Scoped verified | [Whole-original kernel lifecycle/error boundary, native compositions, exact-source models, independent review and all 17 exact-head workflows](fbp-h3b-whole-acceptance-20261124.md) at `e166656379ac8837c7a51e1e0a3e84752ad42e85` |
 | H4 | Scheduling scans | 76.0% | 76.0% | +0.0 | Partial | [Finite staged polling and density-transition correctness](fbp-staged-poll-lifecycle-20261123.md), exact-head #1387 green; broader budgets remain |
 | H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Lane-local traversal, exact witness oracles and paired measurements](fbp-h5-lane-closure-20261123.md), corrected #1390 exact-head green; broader budgets remain |
 | H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | Exact paired baseline and regression evidence retained; no production acceptance |
@@ -473,7 +500,7 @@ Candidate changes are tracked in [the campaign design](fbp-hardening-campaign-20
 
 | Issues | Candidate implementation/evidence | Closure gap |
 | --- | --- | --- |
-| H3b, Q5 | Original Q5 bounded owner/handoff/public identity scope accepted at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`, with exact-source models and retained native/wake evidence | Q5 scoped verified; H3b remains 78.0% partial because broader lifetime schedules, arbitrary plugin-created thread/lock cycles and universal deadlock freedom are outside this acceptance |
+| H3b, Q5 | Original Q5 accepted at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`; later independent whole-original H3b compositions and source-order map accepted at `e166656379ac8837c7a51e1e0a3e84752ad42e85` | Both scoped verified on their own evidence; no universal arbitrary-plugin thread/lock, fairness or whole-driver model proof follows |
 | C5 | Approved cooperative watchdog contract and complete ticket/deadline/policy evidence at `89171a843` | Scoped verified; no abandoned-host autonomous service, callback preemption or worker/effect reclamation |
 | C6 | Approved Restart And Persist, independent SQLite reopen/schema/CAS and archived jobs at `89171a843` | Scoped verified; no live process-state migration or exclusive successor writer |
 | C3 | Approved LeasedArchival with integrated retained generation/session/request/job authentication and leases | Scoped verified; producer retirement does not revoke explicit retained capabilities |

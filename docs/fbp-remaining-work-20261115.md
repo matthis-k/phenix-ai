@@ -1,6 +1,24 @@
 # Remaining Finding And WIP Work Map
 
-## Current Acceptance: A2, 2026-11-24
+## Current Acceptance: H3b, 2026-11-24
+
+Original H3b is **scoped verified: 78.0% -> 100.0%, +22.0 pp**, accepted
+source `e166656379ac8837c7a51e1e0a3e84752ad42e85`. The
+[whole-original record](fbp-h3b-whole-acceptance-20261124.md) maps the actual
+kernel-owned reentrancy/lifecycle criteria to production ownership, five new
+native composition tests, the reused OS-worker matrix, bounded exact-source
+models and explicit wait-order reasoning. Independent whole-scope and exact-head
+reviews found no remaining blocker. All 17 workflows pass, including six Flake
+jobs and 12 session properties / 488 conclusive schedules. Later edits have
+their own head's CI requirement, not inherited acceptance.
+
+Current counts: **25 scoped verified / 4 partial / 3 open / 1 approved exclusion**,
+**7 remaining findings**: H4/H5/H6/H7 and Q2/Q3/Q4. Sum **2819**, subjective
+mean **85.4%**. H1/A1/A2 and C7's unchanged exclusion remain intact. Arbitrary
+plugin-owned lock cycles were not the selected H3b contract and are not kernel
+defects being waived.
+
+## Previous Acceptance: A2, 2026-11-24
 
 Original A2 is **scoped verified: 16.0% -> 100.0%, +84.0 pp**, accepted source
 `1589ad0d2828fecea99f784ac8e64fe952e821bc`. Two independent original-record
@@ -181,7 +199,7 @@ core-only stage received no closure credit.
 | Finding | Starting State | Concrete Next Work / Closure Requirement | Dependency Or Decision |
 | --- | --- | --- | --- |
 | H1 FIFO correlation | Partial, now scoped verified | Supported bounded skew/multiplicity and crossed joins, staged waits, EOS, cancellation, continuous refill and real producer edges accepted at `2cda718a723bc51a793c125a0bbc26ba78ecfac5` with all eleven exact-head workflows green; see [final review](fbp-h1-final-acceptance-20261123.md) | Default strict global FIFO still cannot promise arbitrary crossed-stream progress; unbounded fairness and H7 state isolation explicitly excluded |
-| H3b lifecycle interleavings | Partial | Retain accepted Q5 bounded producer/handoff/worker evidence; separately define and verify any broader lifetime schedules before changing H3b | Q5 does not automatically close or credit H3b; arbitrary plugin-owned locks remain outside kernel control |
+| H3b lifecycle interleavings | Partial, now scoped verified | Whole original error/execution-boundary and lifecycle map, native composition regressions, reused-worker cleanup and exact-source ownership accepted at `e166656379ac8837c7a51e1e0a3e84752ad42e85` | [Acceptance](fbp-h3b-whole-acceptance-20261124.md); independent H3b evidence, not automatic Q5 credit; existing native/cooperative assumptions unchanged |
 | H4 scheduling scans | Partial | Historical staged polling removed with mandatory-set density resynchronization; exact-head #1387 green, local paired evidence recorded; broader addressed-event scaling acceptance remains | [Staged lifecycle evidence](fbp-staged-poll-lifecycle-20261123.md); H6; retain required global/polled Custom fallbacks |
 | H5 closure analysis | Partial | Own-lane scoped traversal plus exact witness/oracle and public owner/obligation regressions; corrected #1390 exact-head green; meet broader closure budgets | [Lane closure evidence](fbp-h5-lane-closure-20261123.md); repeated proofs/full global EOS scan remain |
 | H6 profiling acceptance | Partial | Representative latency/throughput, allocation/live-memory and concurrency budgets with exact comparable sources | Runtime acceptance is distinct from missing production model/tool integration |

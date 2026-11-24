@@ -1,11 +1,43 @@
-# H3b Whole Original Acceptance Candidate
+# H3b Whole Original Acceptance
 
 Base: local `integrate/fbp-foundation-acceptance-20261123` at
 `1589ad0d2828fecea99f784ac8e64fe952e821bc`. Worktree:
 `/tmp/opencode/fbp-h3b-closure-20261124`, branch
-`test/fbp-h3b-whole-acceptance-20261124`. No commit or hosted CI is claimed.
-Main's independent final review and exact committed-candidate CI remain required.
-No classification, percentage, scorecard, or A2 acceptance change is made here.
+`test/fbp-h3b-whole-acceptance-20261124`. The implementation-stage statements
+below are superseded by the final acceptance recorded here.
+
+## Accepted Source
+
+Original H3b is **scoped verified: 78.0% -> 100.0%, +22.0 pp**, accepted source
+`e166656379ac8837c7a51e1e0a3e84752ad42e85` on existing draft #1392.
+Independent whole-original-scope source review and a separate exact-head
+verification pass found no remaining actionable defect or acceptance gap.
+This is separate-agent review, not external human approval or a main merge.
+
+All **17 existing workflows**, **23 job/check records** and **six Flake jobs**
+are successful on that exact source, all on attempt one. Key hosted evidence:
+
+| Gate | Run | Actual Evidence |
+| --- | --- | --- |
+| Full exact-head Nix matrix | [45312546532](https://github.com/matthis-k/phenix-ai/actions/runs/45312546532) | All six jobs; aggregate `138174823760`: ten exact-head checks across three shards |
+| Session ownership Loom/native | [45312546093](https://github.com/matthis-k/phenix-ai/actions/runs/45312546093) | Loom job `138171572121`: 12 properties / 488 schedules, all `inconclusive=false`; native job `138171572324`: all five new library tests pass |
+| Actual wake Loom | [45312546117](https://github.com/matthis-k/phenix-ai/actions/runs/45312546117) | Unchanged five properties / 231 schedules |
+| Native notifier retirement | [45312585335](https://github.com/matthis-k/phenix-ai/actions/runs/45312585335) | Exact-source repeated real-thread tests pass |
+| In-flight worker recovery | [45312546149](https://github.com/matthis-k/phenix-ai/actions/runs/45312546149) | Exact-source cancellation/replacement/late-return tests pass |
+
+Hosted default Kernel job `138171882984` and integration/no-default job
+`138171883344` explicitly run all five `host::h3b_closure_tests` and the new
+reused-worker test successfully. The latter executes 20 real jobs on one OS
+worker, not 20 workflow repetitions. Separate isolated Graph no-default tests
+and doctests pass; workspace feature unification is not mistaken for isolation.
+The source, schedule counts and test-to-invariant map were independently
+inspected rather than inferred from green aggregate status.
+
+The original kernel-owned error/execution boundary and its lifecycle refinements
+are accepted, not universal native deadlock freedom. The exclusions below are
+the existing coordinated-native assumptions and do not excuse any kernel-owned
+lock, lease, notifier, identity or TLS bug. C7 remains unchanged and gains no
+sandbox credit. Later reconciliation edits require their own exact-head checks.
 
 ## Phase 0: Constraints
 
@@ -222,7 +254,7 @@ using `--locked`, with native and Loom Rust flags kept separate.
 | Strict wake verifier Clippy, tests, locked/offline/no-deps | Pass |
 | Formatting: workspace and both independent verifier manifests | Pass |
 | New native unit tests and reused-worker integration test, repeated 20 times | Pass; 120 test invocations, not exhaustive interleaving enumeration |
-| Independent whole-original-scope review and exact committed-candidate CI | **Pending main; not replaceable by this author's checks** |
+| Independent whole-original-scope review and exact committed-candidate CI | Completed on `e166656379ac8837c7a51e1e0a3e84752ad42e85`; final evidence above supersedes this implementation-stage gate |
 
 Reproduction uses `nix develop --command` before each Cargo command:
 
@@ -242,15 +274,13 @@ cargo fmt --manifest-path verification/fbp-session-loom/Cargo.toml -- --check
 cargo fmt --manifest-path verification/fbp-wake-loom/Cargo.toml -- --check
 ```
 
-### Remaining Criterion
+### Final Disposition
 
-No production defect has been exposed. The finite kernel-owned compositions
-above have candidate evidence, not final independent acceptance. Main must
-independently accept or challenge the whole-original map and source-order proof,
-and run all required exact committed-candidate CI gates after integration.
-No final percentage or closure classification is justified before that review
-and CI. This turn cannot supply its own independent reviewer or exact-head CI
-without the requested separate review and a committed head.
+No production defect was exposed. The whole-original map, finite kernel-owned
+compositions and source-order proof received independent acceptance, followed
+by all required exact-source gates. No broader lifetime criterion is deferred
+under the original H3b label; arbitrary native-lock and universal schedule
+proofs were never the selected error/execution-boundary contract.
 
 Retained exclusions are arbitrary plugin-owned thread/join/mutex cycles,
 nonreturning callbacks, preemption/rollback of started native external effects,

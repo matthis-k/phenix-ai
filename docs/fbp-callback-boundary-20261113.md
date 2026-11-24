@@ -81,8 +81,10 @@ competing exclusive owners, busy/no-theft plus retry, and early release. The
 and the seven producer-owner properties (ten / 472 schedules), and adds mutated
 lease unwind/concurrent retry and old-release/Drop versus a live successor:
 current twelve properties / 488 measured schedules, all `inconclusive=false`.
-Independent review and exact committed-candidate CI are still required; this is
-bounded ownership evidence, not whole-Kernel or arbitrary-plugin lock proof.
+Independent whole-original review and all 17 exact-source workflows pass on
+`e166656379ac8837c7a51e1e0a3e84752ad42e85`. Original H3b is scoped verified;
+the models remain bounded ownership evidence, not whole-Kernel or arbitrary-plugin
+lock proof. Later evidence-only edits require their own exact-head checks.
 
 Timeout changes reuse only `SessionOptions.deferred_timeout` and existing
 `overdue_jobs(now)` / `supervise_deferred(now)`. C9 `state(&self)` remains passive:
