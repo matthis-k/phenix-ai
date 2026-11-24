@@ -4083,3 +4083,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod integrated_reindex_tests;

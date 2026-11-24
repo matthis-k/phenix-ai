@@ -32,6 +32,13 @@ static liveness, sandboxing or production-agent acceptance.
 
 ## Remaining-Finding Reassessment: 2026-11-23
 
+The [assembled foundation record](fbp-foundation-integration-20261123.md) includes
+the reviewed H4/H5, A1/A2 and Q3 lanes together with the later Q2 sibling through
+#1371. Combined nested-reindex/handle/runtime regressions pass locally; exact-head
+integration CI remains a separate gate. A1's final acceptance documentation head
+`4f59a52cdc6aad1d10938d5de640e8ffa1379c4b` also passed all six Flake jobs and
+its wake/session Loom/native workflows, independently of its source-head passes.
+
 Development continues from the exact #1386 head
 `ab7f5e93de460e6c472f847f7b7dbc62319907e7`, whose eleven hosted workflows
 were independently queried and are green. H1 acceptance and C7's approved
@@ -280,8 +287,8 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | H2 | Callback panic containment | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B]; candidate `worker_guards` |
 | H3a | Inventory lock inversion | 100.0% | 100.0% | +0.0 | Scoped verified | [Baseline][B] |
 | H3b | Session/drain and worker interleavings | 78.0% | 78.0% | +0.0 | Partial | [Baseline][B]; candidate `native_sessions`, `worker_guards` |
-| H4 | Scheduling scans | 76.0% | 76.0% | +0.0 | Partial | [Baseline][B]; dirty scheduler retained; paired workload assessment |
-| H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Profiled closure correction](fbp-closure-overhead-20261114.md); same-head timing required |
+| H4 | Scheduling scans | 76.0% | 76.0% | +0.0 | Partial | [Finite staged polling and density-transition correctness](fbp-staged-poll-lifecycle-20261123.md), exact-head #1387 green; broader budgets remain |
+| H5 | Closure analysis | 71.0% | 71.0% | +0.0 | Partial | [Lane-local traversal, exact witness oracles and paired measurements](fbp-h5-lane-closure-20261123.md), corrected #1390 exact-head green; broader budgets remain |
 | H6 | Performance profiling | 70.0% | 70.0% | +0.0 | Partial | Exact paired baseline and regression evidence retained; no production acceptance |
 | H7 | Request isolation and fairness | 56.0% | 56.0% | +0.0 | Partial | [Baseline][B]; candidate `fbp_request_lanes`, bounded RR |
 | C1 | Terminal transition precedence | 100.0% | 100.0% | +0.0 | Scoped verified | Session-level precedence retained; [approved request disposal preserves inherited outcomes and original causes](fbp-terminal-cleanup-20261115.md), [exact-head][N] |
@@ -303,7 +310,7 @@ supplies no unbounded real-interleaving proof; H3b remains partial.
 | A7 | Identifier bounds | 100.0% | 100.0% | +0.0 | Scoped verified | Existing bounds retained; double-`id()` validation gap fixed with stateful-ID regression; [exact-head][A] |
 | Q1 | Responsibility concentration | 22.0% | 100.0% | +78.0 | Scoped verified | [Original three graph roots decomposed into cohesive private ownership seams](fbp-owned-boundaries-20261116.md), canonical state/drop order/public paths preserved; independent review and [exact-head][O]; broader Kernel concentration remains |
 | Q2 | Incremental compilation | 10.0% | 10.0% | +0.0 | Open | Bounded compiled-generation reuse with full-compiler fallback implemented; general dependency-aware lowering and scaling acceptance remain |
-| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | [Exact unique selection and global host work limits](fbp-selection-correctness-20261115.md), [exact-head][S]; defect fixed, broader ancestor/footprint planning and recomposition scaling remain |
+| Q3 | Dependency scaling | 14.0% | 14.0% | +0.0 | Open | Exact selection/indexed planning plus [chain/diamond/skew/early-conflict scale coverage](fbp-q3-scale-coverage-20261123.md), exact-head #1389 green; total-planning/recomposition budgets remain |
 | Q4 | Static liveness guarantees | 10.0% | 10.0% | +0.0 | Open | Structural SCC and declared-root reachability observations implemented; no behavioral progress proof |
 | Q5 | Concurrency verification | 74.0% | 100.0% | +26.0 | Scoped verified | [Bounded exact-source ownership and real handoff/public identity composition, independent whole-scope/coverage review, local/Nix snapshot gates and all fifteen exact-head workflows](fbp-q5-protocol-verification-20261117.md) at `4b765ddfbabf334895147c1f7bf8b5accfb96ee1`; H3b remains partial and no universal schedule, fairness, liveness or performance proof follows |
 | Q6 | Diagnostic quality | 22.0% | 100.0% | +78.0 | Scoped verified | [Complete bounded current-state explanations](fbp-explanations-20261116.md), shared selector/closure authority, jobs/wakes/publication/request-live accounting and adversarial passivity; [exact-head][L]; not Q4 liveness |
