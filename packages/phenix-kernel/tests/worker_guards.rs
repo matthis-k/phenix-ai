@@ -236,6 +236,180 @@ fn panic_payload_drop_reentry_is_rejected_and_session_failure_is_contained() {
     check_worker_reentry(Mode::PanicPayloadDrop);
 }
 
+#[test]
+fn reused_os_worker_clears_failed_guards_without_removing_inherited_identity() {
+    #[derive(Clone, Copy, Debug)]
+    enum Exit {
+        Reject,
+        EnterPanic,
+        DropReentry,
+        DropPanic,
+        Clean,
+    }
+    struct Token(Probe, Probe, bool);
+    impl Drop for Token {
+        fn drop(&mut self) {
+            self.0.attempt();
+            self.1.attempt();
+            if self.2 {
+                panic!("application token teardown panic");
+            }
+        }
+    }
+    struct ExitGuard(Probe, Probe, Exit);
+    impl ProcessExecutionGuard for ExitGuard {
+        fn enter(&self) -> Result<Box<dyn Any>, phenix_graph::Failure> {
+            self.0.attempt();
+            self.1.attempt();
+            match self.2 {
+                Exit::Reject => Err(phenix_graph::Failure::application_message(
+                    "application guard rejected",
+                )),
+                Exit::EnterPanic => {
+                    std::panic::panic_any(Token(self.0.clone(), self.1.clone(), false))
+                }
+                Exit::DropReentry | Exit::DropPanic => Ok(Box::new(Token(
+                    self.0.clone(),
+                    self.1.clone(),
+                    matches!(self.2, Exit::DropPanic),
+                ))),
+                Exit::Clean => Ok(Box::new(())),
+            }
+        }
+    }
+
+    let mut independent =
+        Kernel::build("independent-worker", [], Arc::new(LocalProcessDispatcher)).unwrap();
+    independent.start().unwrap();
+    let independent = Arc::new(independent);
+    let independent_probe = Probe::default();
+    *independent_probe.kernel.lock().unwrap() = Some(Arc::downgrade(&independent));
+    let (send, receive) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+    let worker = thread::spawn(move || {
+        for task in receive {
+            task();
+        }
+    });
+    let worker_id = worker.thread().id();
+    for inherited in [false, true] {
+        for exit in [
+            Exit::Reject,
+            Exit::EnterPanic,
+            Exit::DropReentry,
+            Exit::DropPanic,
+            Exit::Clean,
+        ] {
+            // A fresh real job follows each failed job on the same OS worker.
+            // The session itself may remain Failed; TLS must not outlive run().
+            for current in [exit, Exit::Clean] {
+                let independent_before = independent_probe.attempts.lock().unwrap().len();
+                let probe = Probe::default();
+                let mut options = BuildOptions::default();
+                support::grant(
+                    &mut options,
+                    Key::new("worker", "worker"),
+                    [
+                        Footprint::Component("worker".into()),
+                        Footprint::Source("worker".into()),
+                    ],
+                );
+                options.execution.execution_guards.push(Arc::new(ExitGuard(
+                    probe.clone(),
+                    independent_probe.clone(),
+                    current,
+                )));
+                let snapshot = support::snapshot(
+                    "worker",
+                    WorkerPlugin {
+                        probe: probe.clone(),
+                        mode: Mode::Process,
+                    },
+                );
+                let mut kernel = Kernel::build_with_options(
+                    "reused-worker",
+                    [snapshot],
+                    Arc::new(LocalProcessDispatcher),
+                    options,
+                )
+                .unwrap();
+                kernel.start().unwrap();
+                let kernel = Arc::new(kernel);
+                *probe.kernel.lock().unwrap() = Some(Arc::downgrade(&kernel));
+                let (_, job) = kernel.with_session(|s| s.next_job().unwrap()).unwrap();
+                let (done, completion) = mpsc::channel();
+                let worker_kernel = kernel.clone();
+                let independent = independent.clone();
+                send.send(Box::new(move || {
+                    assert_eq!(thread::current().id(), worker_id);
+                    let result = if inherited {
+                        worker_kernel
+                            .with_session(|_| {
+                                let completion = job.run();
+                                // KernelExecutionGuard::inherit did not own this
+                                // outer marker and must not remove it on teardown.
+                                assert_eq!(
+                                    worker_kernel.with_session(|_| ()),
+                                    Err(phenix_kernel::SessionAccessError::Reentrant)
+                                );
+                                independent.with_session(|_| ()).unwrap();
+                                completion
+                            })
+                            .unwrap()
+                    } else {
+                        job.run()
+                    };
+                    worker_kernel.with_session(|_| ()).unwrap();
+                    independent.with_session(|_| ()).unwrap();
+                    done.send(result).unwrap();
+                }))
+                .unwrap();
+                let completion = completion
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("reused worker failed to finish guard cleanup");
+                kernel
+                    .with_session(|s| s.complete_job(completion).unwrap())
+                    .unwrap();
+                let failed = kernel.with_session(|s| s.failure().is_some()).unwrap();
+                assert_eq!(
+                    failed,
+                    matches!(current, Exit::Reject | Exit::EnterPanic | Exit::DropPanic),
+                    "{current:?}, inherited={inherited}"
+                );
+                let attempts = probe.attempts.lock().unwrap();
+                assert_eq!(
+                    attempts.len(),
+                    match current {
+                        Exit::Reject => 1,
+                        Exit::EnterPanic | Exit::Clean => 2,
+                        Exit::DropReentry | Exit::DropPanic => 3,
+                    }
+                );
+                for (thread, result) in attempts.iter() {
+                    assert_eq!(*thread, worker_id);
+                    assert_eq!(*result, Err(phenix_kernel::SessionAccessError::Reentrant));
+                }
+                // Keep callback observations outside the contained panic path:
+                // an independent-kernel failure must not look like the expected
+                // application guard rejection or teardown panic.
+                let independent_attempts = independent_probe.attempts.lock().unwrap();
+                assert_eq!(
+                    independent_attempts.len() - independent_before,
+                    match current {
+                        Exit::Reject | Exit::Clean => 1,
+                        Exit::EnterPanic | Exit::DropReentry | Exit::DropPanic => 2,
+                    }
+                );
+                for (thread, result) in independent_attempts.iter() {
+                    assert_eq!(*thread, worker_id);
+                    assert_eq!(*result, Ok(()));
+                }
+            }
+        }
+    }
+    drop(send);
+    worker.join().unwrap();
+}
+
 #[derive(Clone, Default)]
 struct Drops {
     application: Arc<AtomicUsize>,

@@ -172,6 +172,102 @@ mod tests {
     }
 
     #[test]
+    fn mutated_lease_unwind_restores_state_for_a_rejected_concurrent_caller() {
+        bounded_model(
+            "mutated exclusive-lease unwind and concurrent retry",
+            2,
+            || {
+                let session = Arc::new(ExclusiveSlot::new(1_usize));
+                let mut lease = session.try_take().unwrap();
+                *lease = 7;
+                let phase = Arc::new((Mutex::new(0), Condvar::new()));
+                let contender = {
+                    let session = session.clone();
+                    let phase = phase.clone();
+                    thread::spawn(move || {
+                        assert!(session.try_take().is_none());
+                        let (lock, changed) = &*phase;
+                        let mut state = lock.lock().unwrap();
+                        *state = 1;
+                        changed.notify_one();
+                        while *state != 2 {
+                            state = changed.wait(state).unwrap();
+                        }
+                        drop(state);
+                        let mut lease = session.try_take().expect("retry after unwind");
+                        assert_eq!(*lease, 7);
+                        *lease = 11;
+                    })
+                };
+                assert!(session.try_take().is_none());
+                let (lock, changed) = &*phase;
+                let mut state = lock.lock().unwrap();
+                while *state != 1 {
+                    state = changed.wait(state).unwrap();
+                }
+                let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    let _lease = lease;
+                    panic!("restore mutated owner during unwind");
+                }));
+                assert!(panic.is_err());
+                *state = 2;
+                changed.notify_one();
+                drop(state);
+                contender.join().unwrap();
+                assert_eq!(*session.try_take().unwrap(), 11);
+            },
+        );
+    }
+
+    #[test]
+    fn early_release_and_drop_cannot_overwrite_a_concurrent_successor() {
+        bounded_model("early release cannot republish over successor", 2, || {
+            let session = Arc::new(ExclusiveSlot::new(1_usize));
+            let mut first = session.try_take().unwrap();
+            *first = 7;
+            first.release();
+            let phase = Arc::new((Mutex::new(0), Condvar::new()));
+            let successor = {
+                let session = session.clone();
+                let phase = phase.clone();
+                thread::spawn(move || {
+                    let mut lease = session
+                        .try_take()
+                        .expect("early release published ownership");
+                    assert_eq!(*lease, 7);
+                    *lease = 11;
+                    let (lock, changed) = &*phase;
+                    let mut state = lock.lock().unwrap();
+                    *state = 1;
+                    changed.notify_one();
+                    while *state != 2 {
+                        state = changed.wait(state).unwrap();
+                    }
+                    drop(state);
+                    assert!(session.try_take().is_none());
+                })
+            };
+            let (lock, changed) = &*phase;
+            let mut state = lock.lock().unwrap();
+            while *state != 1 {
+                state = changed.wait(state).unwrap();
+            }
+            assert!(session.try_take().is_none());
+            first.release();
+            drop(first);
+            assert!(
+                session.try_take().is_none(),
+                "old Drop republished ownership"
+            );
+            *state = 2;
+            changed.notify_one();
+            drop(state);
+            successor.join().unwrap();
+            assert_eq!(*session.try_take().unwrap(), 11);
+        });
+    }
+
+    #[test]
     fn two_direct_scopes_remain_admitted_until_the_last_release() {
         let overlaps = std::sync::Arc::new(ScheduleCount::new(0));
         let observed_overlaps = overlaps.clone();

@@ -75,10 +75,14 @@ historical and superseded: a caller holding a plugin lock must not wait behind a
 callback that needs it. Arbitrary plugin-vs-plugin lock freedom is not claimed.
 
 `ExclusiveSlot` uses only `Mutex<Option<T>>`, `try_take` and idempotent release/RAII
-restoration, with no Condvar or waiters. Three revised bounded Loom properties
-cover competing exclusive owners, busy/no-theft plus successful retry after
-release, and idempotent early release publishing state; exact-head acceptance is
-still required.
+restoration, with no Condvar or waiters. The original three slot properties cover
+competing exclusive owners, busy/no-theft plus retry, and early release. The
+[whole-original H3b candidate](fbp-h3b-whole-acceptance-20261124.md) retains those
+and the seven producer-owner properties (ten / 472 schedules), and adds mutated
+lease unwind/concurrent retry and old-release/Drop versus a live successor:
+current twelve properties / 488 measured schedules, all `inconclusive=false`.
+Independent review and exact committed-candidate CI are still required; this is
+bounded ownership evidence, not whole-Kernel or arbitrary-plugin lock proof.
 
 Timeout changes reuse only `SessionOptions.deferred_timeout` and existing
 `overdue_jobs(now)` / `supervise_deferred(now)`. C9 `state(&self)` remains passive:

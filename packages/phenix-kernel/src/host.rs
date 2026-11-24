@@ -506,6 +506,10 @@ impl Drop for KernelHost {
 }
 
 #[cfg(test)]
+#[path = "h3b_closure_tests.rs"]
+mod h3b_closure_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{CandidateArtifacts, Contribution, InputEvent, Producer};
