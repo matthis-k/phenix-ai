@@ -1,39 +1,61 @@
-use std::sync::{
-    Arc, Condvar, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
 use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+#[derive(Default)]
+struct WakeState {
+    // Every targeted and generic notification advances this epoch, preserving
+    // WakeListener's observed-generation contract.
+    epoch: u64,
+    // Only an unaddressed notifier requires a graph-wide scheduler refresh.
+    global_epoch: u64,
+    active: bool,
+    targets: BTreeSet<usize>,
+}
 
 #[derive(Default)]
 pub(super) struct WakeSignal {
-    state: Mutex<(u64, bool)>,
+    state: Mutex<WakeState>,
     changed: Condvar,
 }
 impl WakeSignal {
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new((0, true)),
+            state: Mutex::new(WakeState {
+                active: true,
+                ..WakeState::default()
+            }),
             changed: Condvar::new(),
         })
     }
-    // An epoch read before scheduling ensures that a concurrent external wake
-    // cannot be silently acknowledged after its process was already scanned.
-    pub(super) fn epoch(&self) -> u64 {
-        self.state.lock().unwrap().0
+
+    // Drain before scanning. A targeted wake arriving after this lock is
+    // released remains in targets for the next driver refresh.
+    pub(super) fn take_scheduler_wakes(&self) -> (u64, BTreeSet<usize>) {
+        let mut state = self.state.lock().unwrap();
+        (state.global_epoch, std::mem::take(&mut state.targets))
     }
 
+    // SessionNotifier has no process identity: retain full-scan semantics.
     fn notify(&self) -> bool {
         let mut state = self.state.lock().unwrap();
-        if !state.1 {
+        if !state.active {
             return false;
         }
-        state.0 = state.0.wrapping_add(1);
+        state.epoch = state.epoch.wrapping_add(1);
+        state.global_epoch = state.global_epoch.wrapping_add(1);
         self.changed.notify_all();
         true
     }
     pub(super) fn invalidate(&self) {
         let mut state = self.state.lock().unwrap();
-        state.1 = false;
+        state.active = false;
+        state.targets.clear();
         self.changed.notify_all();
     }
 }
@@ -53,17 +75,22 @@ impl Default for WakeSlot {
 pub struct WakeHandle {
     pub(super) slot: Arc<WakeSlot>,
     pub(super) signal: Arc<WakeSignal>,
+    pub(super) process: usize,
 }
 impl WakeHandle {
     /// False means the registration was invalidated by finish/cancellation/drop.
     pub fn wake(&self) -> bool {
-        let state = self.signal.state.lock().unwrap();
-        if !state.1 || !self.slot.active.load(Ordering::Acquire) {
+        let mut state = self.signal.state.lock().unwrap();
+        if !state.active || !self.slot.active.load(Ordering::Acquire) {
             return false;
         }
+        // The pending flag and target index are published atomically with
+        // respect to scheduler draining under this same signal lock.
         self.slot.pending.store(true, Ordering::Release);
-        drop(state);
-        self.signal.notify()
+        state.targets.insert(self.process);
+        state.epoch = state.epoch.wrapping_add(1);
+        self.signal.changed.notify_all();
+        true
     }
 }
 /// Register before checking session state or a completion channel, then wait.
@@ -74,7 +101,7 @@ pub struct WakeListener {
 }
 impl WakeListener {
     pub(super) fn new(signal: Arc<WakeSignal>) -> Self {
-        let observed = signal.state.lock().unwrap().0;
+        let observed = signal.state.lock().unwrap().epoch;
         Self { signal, observed }
     }
     pub fn wait_timeout(&mut self, timeout: Duration) -> bool {
@@ -82,10 +109,10 @@ impl WakeListener {
         let (state, _) = self
             .signal
             .changed
-            .wait_timeout_while(state, timeout, |s| s.1 && s.0 == self.observed)
+            .wait_timeout_while(state, timeout, |s| s.active && s.epoch == self.observed)
             .unwrap();
-        let notified = !state.1 || state.0 != self.observed;
-        self.observed = state.0;
+        let notified = !state.active || state.epoch != self.observed;
+        self.observed = state.epoch;
         notified
     }
 }

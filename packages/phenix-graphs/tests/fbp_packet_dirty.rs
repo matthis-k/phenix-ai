@@ -130,6 +130,75 @@ impl Process for WaitOnWake {
 }
 
 #[test]
+fn targeted_wakes_preserve_process_identity_and_listener_notifications() {
+    use std::time::Duration;
+
+    let left_count = Arc::new(AtomicUsize::new(0));
+    let right_count = Arc::new(AtomicUsize::new(0));
+    let mut builder = NetworkBuilder::new();
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+
+    for (path, count) in [("left", left_count.clone()), ("right", right_count.clone())] {
+        let node = builder
+            .node(
+                path,
+                iface.clone(),
+                Arc::new(move || WaitOnWake {
+                    stage: 0,
+                    resumed: count.clone(),
+                }),
+            )
+            .unwrap();
+        builder
+            .expose_input(path, node.wire_input::<i64>("in").unwrap(), one())
+            .unwrap();
+    }
+
+    // An unrelated large packet-driven inventory must not be a prerequisite
+    // for either targeted wake to make progress.
+    let sink = Arc::new(ComponentDef::sink(|value: &u64| {
+        std::hint::black_box(*value);
+    }));
+    for index in 0..64 {
+        let node = builder.add(format!("idle-{index}"), sink.clone()).unwrap();
+        builder
+            .expose_input(
+                format!("idle-in-{index}"),
+                node.input::<u64>("input").unwrap(),
+                one(),
+            )
+            .unwrap();
+    }
+
+    let mut session = builder.build().unwrap().compile().unwrap().start();
+    let left = session.wake_handle("left").unwrap();
+    let right = session.wake_handle("right").unwrap();
+    let mut listener = session.wake_listener();
+    session.inject("left", Value::of(1_i64)).unwrap();
+    session.inject("right", Value::of(2_i64)).unwrap();
+    assert_eq!(session.run_until_idle(32).steps, 2);
+
+    assert!(left.wake());
+    assert!(listener.wait_timeout(Duration::ZERO));
+    assert_eq!(session.run_until_idle(32).steps, 1);
+    assert_eq!(left_count.load(Ordering::SeqCst), 1);
+    assert_eq!(right_count.load(Ordering::SeqCst), 0);
+
+    // The generic notifier has no process identity. It must not synthesize a
+    // wake for the still-waiting right process.
+    assert!(session.notifier().notify());
+    assert!(listener.wait_timeout(Duration::ZERO));
+    assert_eq!(session.run_until_idle(32).steps, 0);
+    assert_eq!(right_count.load(Ordering::SeqCst), 0);
+
+    assert!(right.wake());
+    assert!(listener.wait_timeout(Duration::ZERO));
+    assert_eq!(session.run_until_idle(32).steps, 1);
+    assert_eq!(right_count.load(Ordering::SeqCst), 1);
+    assert_eq!(session.state(), SessionState::Quiescent);
+}
+
+#[test]
 fn external_wake_epoch_resumes_waiting_packet_driven_process() {
     let resumed = Arc::new(AtomicUsize::new(0));
     let mut builder = NetworkBuilder::new();
