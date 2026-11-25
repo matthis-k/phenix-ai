@@ -276,6 +276,9 @@ impl KernelHost {
         let previous = self.active.replace(candidate.generation.clone());
         drop(drain);
         drop(drain_scope);
+        if let Some(generation) = &retiring {
+            generation.kernel.notify_driver_retirement();
+        }
         drop(producers);
         // Detached producers may execute plugin code in Drop. Retain the old
         // kernel and its leases until all producer destructors have completed.
@@ -300,6 +303,7 @@ impl Drop for KernelHost {
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
                     .retired = true;
+                generation.kernel.notify_driver_retirement();
                 return;
             }
             let drain = generation
@@ -316,6 +320,7 @@ impl Drop for KernelHost {
             let producers = std::mem::take(&mut state.producers);
             drop(state);
             drop(drain);
+            generation.kernel.notify_driver_retirement();
             drop(producers);
         }
     }
@@ -393,6 +398,10 @@ mod tests {
                     // The in-flight producer cannot be destroyed until its
                     // callback returns and the whole drain gate is released.
                     assert_eq!(self.drops.load(Ordering::SeqCst), 0);
+                    return Ok(Some(InputEvent {
+                        input: "in".into(),
+                        value: Value::local(7_i64),
+                    }));
                 }
                 Ok(None)
             }
@@ -450,9 +459,10 @@ mod tests {
 
                 if matches!(
                     trigger,
-                    Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
+                    Trigger::Poll | Trigger::Wake | Trigger::WakeUnsupported | Trigger::WakePanics
                 ) {
-                    // Wake registration is skipped on a Completed network.
+                    // Both producer admission and wake registration need live
+                    // ingress to prove no packet is admitted after retirement.
                     // Construct a live ingress so the callback really runs.
                     let mut builder = phenix_graph::network::NetworkBuilder::new();
                     let sink = builder
@@ -472,6 +482,10 @@ mod tests {
                         Mutex::new(builder.build().unwrap().compile().unwrap().start());
                 }
 
+                kernel.routes.insert(
+                    Key::new("test", "destroy-host"),
+                    std::collections::BTreeSet::from(["in".to_owned()]),
+                );
                 kernel.producers.get_mut().unwrap().producers = vec![
                     (
                         Key::new("test", "destroy-host"),
@@ -512,7 +526,9 @@ mod tests {
                     wake.shutdown();
                     let outcome = generation.kernel.run_until(&wake, |_| {});
                     match outcome {
-                        Ok(()) => assert!(matches!(trigger, Trigger::Wake)),
+                        Err(crate::DriverError::Retired) => {
+                            assert!(matches!(trigger, Trigger::Wake));
+                        }
                         Err(crate::DriverError::UnsupportedWake { .. }) => {
                             assert!(matches!(trigger, Trigger::WakeUnsupported));
                         }
@@ -527,6 +543,15 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(other_calls.load(Ordering::SeqCst), 0);
             assert_eq!(drops.load(Ordering::SeqCst), 2);
+            assert!(
+                generation.kernel.driver_wake.lock().unwrap().is_none(),
+                "driver wake registration must be released on every exit"
+            );
+            assert_eq!(
+                generation.with_session(|session| session.state()).unwrap(),
+                phenix_graph::runtime::SessionState::Quiescent,
+                "an event returned after self-retirement must never enter the session"
+            );
             let state = generation.kernel.producers.lock().unwrap();
             assert!(state.retired);
             assert!(state.producers.is_empty());
@@ -536,6 +561,110 @@ mod tests {
             // callbacks or prevent immediate producer cleanup.
             assert!(generation.drain(2).is_empty());
             assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn externally_retired_live_driver_exits_without_shutdown_and_preserves_session() {
+        use std::sync::{Mutex, mpsc};
+        use std::time::Duration;
+
+        struct Idle {
+            registered: mpsc::Sender<()>,
+            polled: mpsc::Sender<()>,
+        }
+
+        impl Producer for Idle {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polled.send(()).unwrap();
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: crate::WakeHandle) -> bool {
+                self.registered.send(()).unwrap();
+                true
+            }
+        }
+
+        for replace in [false, true] {
+            let (registered, registration) = mpsc::channel();
+            let (polled, poll) = mpsc::channel();
+            let mut kernel =
+                Kernel::build("live-retirement", [], Arc::new(LocalProcessDispatcher)).unwrap();
+            kernel.start().unwrap();
+
+            let mut builder = phenix_graph::network::NetworkBuilder::new();
+            let sink = builder
+                .add(
+                    "sink",
+                    Arc::new(phenix_graph::ComponentDef::sink(|_: &i64| {})),
+                )
+                .unwrap();
+            builder
+                .expose_input(
+                    "input",
+                    sink.input::<i64>("input").unwrap(),
+                    std::num::NonZeroUsize::new(1).unwrap(),
+                )
+                .unwrap();
+            kernel.session = Mutex::new(builder.build().unwrap().compile().unwrap().start());
+            kernel.producers.get_mut().unwrap().producers.push((
+                Key::new("test", "idle"),
+                Some(Box::new(Idle { registered, polled })),
+                None,
+            ));
+
+            let generation = Arc::new(Generation { epoch: 1, kernel });
+            let mut host = KernelHost::new(PluginCatalog::new().instance());
+            host.epoch = 1;
+            host.active = Some(generation.clone());
+
+            let wake = crate::WakeHandle::default();
+            let worker_wake = wake.clone();
+            let worker_generation = generation.clone();
+            let (result_tx, result_rx) = mpsc::channel();
+            let driver = std::thread::spawn(move || {
+                let outcome = worker_generation.kernel.run_until(&worker_wake, |_| {});
+                result_tx.send(outcome).unwrap();
+            });
+            registration.recv_timeout(Duration::from_secs(2)).unwrap();
+            poll.recv_timeout(Duration::from_secs(2)).unwrap();
+
+            if replace {
+                let candidate = host
+                    .prepare(
+                        vec![],
+                        BuildOptions::default(),
+                        Arc::new(LocalProcessDispatcher),
+                        "replacement",
+                        |_| Ok(()),
+                    )
+                    .unwrap();
+                host.publish(candidate).unwrap();
+            } else {
+                drop(host);
+            }
+
+            // A regression cannot hang CI for the driver wait interval:
+            // shutdown is a fallback only, never part of the success path.
+            let outcome = result_rx.recv_timeout(Duration::from_secs(2));
+            if outcome.is_err() {
+                wake.shutdown();
+            }
+            driver.join().unwrap();
+            assert_eq!(outcome.unwrap(), Err(crate::DriverError::Retired));
+            assert!(generation.kernel.driver_wake.lock().unwrap().is_none());
+            assert!(generation.kernel.producers.lock().unwrap().retired);
+
+            // Retired producer admission is revoked, but the retained
+            // generation's explicit native session remains operational.
+            generation.inject("input", Value::local(7_i64)).unwrap();
+            generation.run_steps(32).unwrap();
+            assert!(
+                generation
+                    .with_session(|session| session.failure().is_none())
+                    .unwrap()
+            );
         }
     }
 

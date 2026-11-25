@@ -66,6 +66,25 @@ impl Drop for DriverScope<'_> {
     }
 }
 
+// The exclusive blocking driver temporarily registers its wake handle for
+// retirement notifications. The scope clears it before releasing the driver's
+// atomic lease, including when returning through errors or unwinding.
+struct DriverWakeScope<'a>(&'a Mutex<Option<WakeHandle>>);
+impl<'a> DriverWakeScope<'a> {
+    fn register(slot: &'a Mutex<Option<WakeHandle>>, wake: &WakeHandle) -> Self {
+        *slot.lock().unwrap_or_else(|error| error.into_inner()) = Some(wake.clone());
+        Self(slot)
+    }
+}
+impl Drop for DriverWakeScope<'_> {
+    fn drop(&mut self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+    }
+}
+
 /// Globally qualified contribution identity, ordered lexically by owner then id.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Key {
@@ -481,6 +500,7 @@ pub enum DriverError {
     ReentrantSession,
     ReentrantDrain,
     AlreadyRunning,
+    Retired,
     UnsupportedWake {
         producer: Key,
     },
@@ -503,6 +523,7 @@ impl std::fmt::Display for DriverError {
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
+            Self::Retired => f.write_str("generation producers retired while driver was active"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
@@ -572,6 +593,7 @@ pub struct Kernel {
     // mutations use a separate short lock; no user poll/readiness runs under it.
     producer_drain: Mutex<()>,
     driver_active: AtomicBool,
+    driver_wake: Mutex<Option<WakeHandle>>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
     keys: Vec<Key>,
@@ -1020,6 +1042,7 @@ impl Kernel {
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
             driver_active: AtomicBool::new(false),
+            driver_wake: Mutex::new(None),
             artifacts,
             _leases: leases,
             keys,
@@ -1141,6 +1164,26 @@ impl Kernel {
         Ok(session.run_until_idle(budget))
     }
 
+    fn producers_retired(&self) -> bool {
+        self.producers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retired
+    }
+
+    // Do not acquire the native session lock: host retirement can happen
+    // while another thread owns that session and is waiting on producer code.
+    fn notify_driver_retirement(&self) {
+        if let Some(wake) = self
+            .driver_wake
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+        {
+            wake.wake();
+        }
+    }
+
     // Called only while holding producer_drain. Reentrant host destruction
     // marks retirement while its callback's producer is still checked out;
     // detach that restored slot only at the enclosing drain/registration exit.
@@ -1205,7 +1248,12 @@ impl Kernel {
             let outcome = match polled {
                 Ok(None) => None,
                 Ok(Some(event)) => {
-                    if !self.routes[&key].contains(&event.input) {
+                    // A producer may retire its own host while polled. Even
+                    // the event returned by that in-flight callback must not
+                    // enter the retired generation's native session.
+                    if self.producers_retired() {
+                        None
+                    } else if !self.routes[&key].contains(&event.input) {
                         Some(Err(ProducerError::UndeclaredRoute(event.input)))
                     } else {
                         // Session access stays nonblocking. On contention or
@@ -1300,6 +1348,7 @@ impl Kernel {
             return Err(DriverError::ReentrantDrain);
         }
         let _driver = DriverScope::enter(&self.driver_active).ok_or(DriverError::AlreadyRunning)?;
+        let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
         let (mut listener, notifier, initial_state, cause) = self
             .with_session(|session| {
                 (
@@ -1321,6 +1370,9 @@ impl Kernel {
                 state: initial_state,
                 cause,
             });
+        }
+        if self.producers_retired() {
+            return Err(DriverError::Retired);
         }
         // Enter producer-drain scope only after the blocking session preflight.
         // Callback session operations under this scope use try_lock and cannot
@@ -1388,11 +1440,17 @@ impl Kernel {
         if let Some(error) = registration_error {
             return Err(error);
         }
+        if self.producers_retired() {
+            return Err(DriverError::Retired);
+        }
         loop {
             {
                 if *wake.0.shutdown.lock().unwrap() {
                     return Ok(());
                 }
+            }
+            if self.producers_retired() {
+                return Err(DriverError::Retired);
             }
             let mut active = false;
             let count = self
@@ -1404,6 +1462,9 @@ impl Kernel {
             for _ in 0..count {
                 if *wake.0.shutdown.lock().unwrap() {
                     return Ok(());
+                }
+                if self.producers_retired() {
+                    return Err(DriverError::Retired);
                 }
                 for event in self.drain(1) {
                     active = true;
@@ -1428,7 +1489,12 @@ impl Kernel {
                 });
             }
             active |= report.steps > 0 || report.publications > 0;
+            if self.producers_retired() {
+                return Err(DriverError::Retired);
+            }
             if !active {
+                // Retirement notifications share the native epoch-latched
+                // listener, including the race between this check and wait.
                 listener.wait_timeout(std::time::Duration::from_secs(60));
             }
         }
