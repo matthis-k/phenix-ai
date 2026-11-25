@@ -54,6 +54,9 @@ pub enum Readiness {
     /// Opt-in request-scoped join. Selects the earliest packet of one request
     /// from each bounded input queue, even behind another request's head.
     /// Preserves order within each request, not global cross-request FIFO.
+    /// An exact WaitInput continuation owned by this policy may also skip
+    /// foreign heads for its next authenticated request packet. It does not
+    /// change head-only staged waits under other readiness policies.
     /// Unscoped packets remain strictly head-only.
     CorrelatedAll,
     AtLeast(NonZeroUsize),
@@ -209,7 +212,16 @@ impl NetworkSession {
                 .iter()
                 .position(|port| &port.name == waiting)
                 .unwrap();
-            let queue = self.packet_for(index, port, p.request, false);
+            // A continuation owned by CorrelatedAll may take the first
+            // packet of its authenticated request behind foreign FIFO heads.
+            // Without this, a crossed peer head can indefinitely strand an
+            // already-owned WaitInput even when its own next packet is queued.
+            // All other policies retain strict head-only staged reservations.
+            let correlated = matches!(
+                p.waiting_policy.as_ref().unwrap_or(&p.policy),
+                Readiness::CorrelatedAll
+            );
+            let queue = self.packet_for(index, port, p.request, correlated);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
                 return Err(ReadinessError::RepeatedClosure {
