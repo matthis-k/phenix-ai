@@ -295,3 +295,89 @@ fn mixed_custom_node_is_polled_without_disabling_unrelated_packet_nodes() {
     assert_eq!(session.run_until_idle(32).steps, 1);
     assert_eq!(session.state(), SessionState::Quiescent);
 }
+
+struct FinishOnEos(Arc<AtomicUsize>);
+impl Process for FinishOnEos {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+        if !cx.is_eos("in") {
+            return Err("EOS was not delivered".into());
+        }
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Step::Finished)
+    }
+}
+
+#[test]
+fn eos_closes_only_affected_queues_even_for_reverse_ordered_chains() {
+    for (length, reverse) in [(1, false), (32, false), (32, true), (64, true)] {
+        let count = Arc::new(AtomicUsize::new(0));
+        let iface = Arc::new(
+            Interface::new(
+                [PortDef::wire::<i64>("in").unwrap()],
+                [PortDef::wire::<i64>("out").unwrap()],
+            )
+            .unwrap(),
+        );
+        let factory = {
+            let count = count.clone();
+            Arc::new(move || FinishOnEos(count.clone()))
+        };
+        let mut builder = NetworkBuilder::new();
+        let mut nodes = Vec::new();
+        for index in 0..length {
+            nodes.push(
+                builder
+                    .node(format!("finish-{index}"), iface.clone(), factory.clone())
+                    .unwrap(),
+            );
+        }
+        for index in 1..length {
+            let (producer, consumer) = if reverse {
+                (index, index - 1)
+            } else {
+                (index - 1, index)
+            };
+            builder
+                .connect(
+                    nodes[producer].wire_output::<i64>("out").unwrap(),
+                    nodes[consumer].wire_input::<i64>("in").unwrap(),
+                    one(),
+                )
+                .unwrap();
+        }
+        let root = if reverse { length - 1 } else { 0 };
+        let tail = if reverse { 0 } else { length - 1 };
+        builder
+            .expose_input("seed", nodes[root].wire_input::<i64>("in").unwrap(), one())
+            .unwrap();
+        builder
+            .expose_output("tail", nodes[tail].wire_output::<i64>("out").unwrap())
+            .unwrap();
+
+        // Keep many unrelated writer-open branches in the same network to
+        // detect accidental full EOS propagation into independent inputs.
+        let sink = Arc::new(ComponentDef::sink(|value: &u64| {
+            std::hint::black_box(*value);
+        }));
+        for index in 0..64 {
+            let idle = builder.add(format!("idle-{index}"), sink.clone()).unwrap();
+            builder
+                .expose_input(
+                    format!("idle-in-{index}"),
+                    idle.input::<u64>("input").unwrap(),
+                    one(),
+                )
+                .unwrap();
+        }
+
+        let mut session = builder.build().unwrap().compile().unwrap().start();
+        session.close_input("seed").unwrap();
+        let report = session.run_until_idle(length + 16);
+        assert_eq!(report.steps, length, "reverse={reverse}, length={length}");
+        assert!(!report.budget_exhausted);
+        assert_eq!(count.load(Ordering::SeqCst), length);
+        assert!(session.output_closed("tail").unwrap());
+        assert_eq!(session.run_until_idle(16).steps, 0);
+        assert_eq!(session.state(), SessionState::Quiescent);
+    }
+}
