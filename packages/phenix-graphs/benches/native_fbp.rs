@@ -324,6 +324,46 @@ fn compose_replace() {
     }
 }
 
+/// Composer end-to-end planning and revocation on a reverse-lexical chain.
+/// The ADD variant also replays N real component writes and their exact grants.
+/// Both include validation, selection, replay and compilation; these are not
+/// planner-only measurements.
+fn compose_reverse_dependency_chain<const N: usize, const ADD: bool>() {
+    assert!(N > 0);
+    let mut builder = NetworkBuilder::new();
+    builder
+        .add("anchor", Arc::new(ComponentDef::map(|v: i64| v)))
+        .unwrap();
+    let mut composer = Composer::new(builder.build().unwrap()).unwrap();
+    let definition = Arc::new(ComponentDef::map(|v: i64| v));
+    let registrations = (0..N).map(|index| {
+        let id = format!("node{index:04}");
+        let dependencies = if index + 1 < N {
+            vec![format!("node{:04}", index + 1)]
+        } else {
+            Vec::new()
+        };
+        let (grants, patch) = if ADD {
+            (
+                vec![Footprint::Component(id.clone())],
+                NetworkPatch::new([Edit::Add {
+                    path: id.clone(),
+                    definition: definition.clone(),
+                }]),
+            )
+        } else {
+            (Vec::new(), NetworkPatch::new(Vec::<Edit>::new()))
+        };
+        Registration::new(id, dependencies, 0, GraphOrigin::default(), grants, patch)
+    });
+    composer.register(registrations).unwrap();
+    assert_eq!(composer.current().active().len(), N);
+    let removed = composer.revoke(&format!("node{:04}", N - 1)).unwrap();
+    assert_eq!(removed.len(), N);
+    assert!(composer.current().active().is_empty());
+    black_box(composer.current());
+}
+
 fn main() {
     println!(
         "native_fbp: warmup=2 samples=7; elapsed includes setup, validation and teardown; no allocation instrumentation"
@@ -335,6 +375,30 @@ fn main() {
         ("finite_feedback_1001", finite_feedback),
         ("nested16_compile_inspect_x20", nested_compile),
         ("compose16_replace_revoke_x20", compose_replace),
+        (
+            "compose_revlex_chain16_register_revoke",
+            compose_reverse_dependency_chain::<16, false>,
+        ),
+        (
+            "compose_revlex_chain64_register_revoke",
+            compose_reverse_dependency_chain::<64, false>,
+        ),
+        (
+            "compose_revlex_chain128_register_revoke",
+            compose_reverse_dependency_chain::<128, false>,
+        ),
+        (
+            "compose_revlex_add16_register_revoke",
+            compose_reverse_dependency_chain::<16, true>,
+        ),
+        (
+            "compose_revlex_add64_register_revoke",
+            compose_reverse_dependency_chain::<64, true>,
+        ),
+        (
+            "compose_revlex_add128_register_revoke",
+            compose_reverse_dependency_chain::<128, true>,
+        ),
     ] {
         for _ in 0..2 {
             run();
