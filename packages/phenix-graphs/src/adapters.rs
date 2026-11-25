@@ -2,7 +2,7 @@
 use super::ComponentDef;
 use crate::{
     Failure, Value, ValueError,
-    interface::{Interface, PortDef},
+    interface::{Interface, InterfaceError, PortDef},
     process::{Process, ProcessContext, ProcessEmission, Step},
 };
 use std::sync::Arc;
@@ -71,6 +71,62 @@ impl ComponentDef {
                 })
             }),
         )
+    }
+
+    /// Explicit semantic conversion between two *wire* schemas. The input and
+    /// output keep their own complete versioned identities; an incompatible
+    /// direct connection is never made compatible by a matching Rust layout,
+    /// a contract claim, or an implicit schema-version rule.
+    ///
+    /// The caller supplies the conversion code and must consciously place
+    /// this ordinary, bounded process in the network. Both schemas are
+    /// validated before returning the definition. A failing conversion fails
+    /// the activation instead of silently dropping or reinterpreting a value.
+    /// Input leases remain held during decode and handler execution, and are
+    /// retained by the encoded output. A panic is converted to a process
+    /// failure through the same callback cleanup path as local adapters.
+    ///
+    /// The handler borrows `T` rather than requiring `Clone` or granting bare
+    /// ownership of a decoded leased value.
+    pub fn adapt_wire<T, U, F>(handler: F) -> Result<Self, InterfaceError>
+    where
+        T: crate::ContractValue,
+        U: crate::ContractValue,
+        F: Fn(&T) -> Result<U, Failure> + Send + Sync + 'static,
+    {
+        let interface = Arc::new(Interface::new(
+            [PortDef::wire::<T>("input")?],
+            [PortDef::wire::<U>("output")?],
+        )?);
+        let handler = Arc::new(handler);
+        Ok(Self::primitive(
+            interface,
+            Arc::new(move || {
+                let handler = handler.clone();
+                let mut emitted = false;
+                Adapter(move |cx: &mut ProcessContext| {
+                    if emitted {
+                        emitted = false;
+                        return Ok(Step::Complete);
+                    }
+                    let Some(value) = cx.take("input") else {
+                        return Ok(if cx.is_eos("input") {
+                            Step::Finished
+                        } else {
+                            Step::Complete
+                        });
+                    };
+                    let output = value.map_callback(|| {
+                        let input = value.decoded::<T>()?;
+                        let converted = handler(&input)?;
+                        Ok(Value::of(converted))
+                    });
+                    let output = value.finish_owned(output)?;
+                    emitted = true;
+                    Ok(Step::Emit(ProcessEmission::new("output", output)))
+                })
+            }),
+        ))
     }
 
     /// Emit one local `output` per step until the fresh per-spawn iterator ends.
