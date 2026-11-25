@@ -1,0 +1,63 @@
+name: "FBP Q2 Source-Pruning Paired A/B"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/benches/q2_source_prune.rs"
+      - "packages/phenix-graphs/Cargo.toml"
+      - ".github/workflows/fbp-q2-source-prune-paired.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-source-prune:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Paired production Composer control and optimized on same CPU
+        env:
+          CONTROL: d85ffd5544ebd2f9317c94a961593e83d067038a
+          OPTIMIZED: ba6b062eca2c50aeed90b1cf6426cc72c6222fd9
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git fetch --no-tags origin "$CONTROL" "$OPTIMIZED"
+          BENCH="packages/phenix-graphs/benches/q2_source_prune.rs"
+          test "$(git rev-parse "$CONTROL:$BENCH")" = "$(git rev-parse "$OPTIMIZED:$BENCH")"
+          test "$(git rev-parse "$CONTROL:packages/phenix-graphs/Cargo.toml")" = "$(git rev-parse "$OPTIMIZED:packages/phenix-graphs/Cargo.toml")"
+          {
+            echo "control=$CONTROL"
+            echo "optimized=$OPTIMIZED"
+            echo "benchmark_blob=$(git rev-parse "$CONTROL:$BENCH")"
+            date -u +%FT%TZ
+            lscpu | grep -E '^(Architecture|CPU\\(s\\)|Model name|CPU max MHz|CPU min MHz):' || true
+            nix --version
+          } | tee artifacts/environment.txt
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order="control optimized"
+            else
+              order="optimized control"
+            fi
+            for variant in $order; do
+              if [ "$variant" = "control" ]; then sha="$CONTROL"; else sha="$OPTIMIZED"; fi
+              git -c advice.detachedHead=false checkout --force "$sha"
+              test "$(git rev-parse HEAD)" = "$sha"
+              echo "=== run=$repetition variant=$variant source=$sha ==="
+              nix develop --command cargo bench --locked -q -p phenix-graph --bench q2_source_prune | tee "artifacts/${variant}-${repetition}.txt"
+            done
+          done
+      - name: Preserve raw per-sample output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: q2-source-prune-paired-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: error
