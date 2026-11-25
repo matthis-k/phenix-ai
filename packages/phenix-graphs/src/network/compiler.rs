@@ -299,6 +299,161 @@ impl CompiledNetwork {
         }
         (updated == changes.len()).then_some(compiled)
     }
+
+    /// Exactly one new, unclaimed, unreferenced root primitive can be inserted
+    /// without expanding the existing graph. Reindex all physical references
+    /// and pay the *exact* new compiler charges against stored default limits.
+    /// Never accept mixed changes, already claimed contracts, custom-limit
+    /// baselines, or a change to an existing declaration.
+    pub(crate) fn reuse_after_isolated_root_addition(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if after.instances.len() != before.instances.len().checked_add(1)?
+            || before.connections != after.connections
+            || before.sources != after.sources
+            || !same_scope_except_instances(before, after)
+            || !same_declarations(before, after)
+            || self.compilation_limits != CompileLimits::default()
+        {
+            return None;
+        }
+        let mut added = after
+            .instances
+            .iter()
+            .filter(|(name, _)| !before.instances.contains_key(*name));
+        let (name, definition) = added.next()?;
+        if added.next().is_some()
+            || !matches!(definition.body(), Body::Primitive(_))
+            || !definition.claims().is_empty()
+        {
+            return None;
+        }
+        super::validation::validate_process_name(name).ok()?;
+        // The old successful graph already validated every connection, source,
+        // boundary and obligation, and those declarations are *identical*.
+        // One isolated primitive changes root instance charge (+1), its own
+        // declared inputs/outputs and one physical instance, but no fanouts,
+        // root projections, starts, requirements or nested expansion.
+        let added_work = u64::try_from(
+            definition
+                .interface()
+                .inputs()
+                .len()
+                .checked_add(definition.interface().outputs().len())?
+                .checked_add(1)?,
+        )
+        .ok()?;
+        let next_work = self.compile_work.checked_add(added_work)?;
+        let next_instances = self.compile_instances.checked_add(1)?;
+        if next_work > self.compilation_limits.max_work
+            || next_instances > self.compilation_limits.max_instances
+            || self.compilation_limits.max_depth == 0
+        {
+            return None;
+        }
+        let insertion = self
+            .processes
+            .binary_search_by(|process| process.path.as_str().cmp(name.as_str()))
+            .err()?;
+        let Body::Primitive(factory) = definition.body() else {
+            return None;
+        };
+        let mut compiled = self.with_fresh_generation();
+        compiled.shift_physical_indexes(insertion, true);
+        let origin = definition
+            .origin()
+            .cloned()
+            .or_else(|| after.origin.clone());
+        compiled.processes.insert(
+            insertion,
+            FlatProcess {
+                path: name.clone(),
+                interface: definition.interface().clone(),
+                factory: factory.clone(),
+                origin: origin.clone(),
+            },
+        );
+        compiled.inspections.insert(
+            name.clone(),
+            ComponentSnapshot {
+                interface: definition.interface().clone(),
+                claims: Vec::new(),
+                origin: origin.clone(),
+                declared_origin: definition.origin().cloned(),
+                definition_key: Some(definition.definition_key()),
+                physical_index: Some(insertion),
+                path: name.clone(),
+            },
+        );
+        compiled.boundaries.insert(
+            name.clone(),
+            ResolvedBoundary {
+                inputs: definition
+                    .interface()
+                    .inputs()
+                    .keys()
+                    .map(|port| (port.clone(), vec![(insertion, port.clone())]))
+                    .collect(),
+                outputs: definition
+                    .interface()
+                    .outputs()
+                    .keys()
+                    .map(|port| (port.clone(), (insertion, port.clone())))
+                    .collect(),
+            },
+        );
+        compiled.compile_work = next_work;
+        compiled.compile_instances = next_instances;
+        Some(compiled)
+    }
+
+    /// Rebase every stored physical reference (including composite public
+    /// projections) after one insertion or one already-checked removal.
+    /// Removal callers guarantee no surviving reference equals the removed
+    /// index; therefore they shift only later indexes.
+    fn shift_physical_indexes(&mut self, start: usize, insertion: bool) {
+        let shift = |index: &mut usize| {
+            if *index >= start {
+                if insertion {
+                    *index += 1;
+                } else {
+                    *index -= 1;
+                }
+            }
+        };
+        for snapshot in self.inspections.values_mut() {
+            if let Some(index) = &mut snapshot.physical_index {
+                shift(index);
+            }
+        }
+        for edge in &mut self.connections {
+            shift(&mut edge.from.0);
+            shift(&mut edge.to.0);
+        }
+        for targets in self.inputs.values_mut() {
+            for (index, _) in targets {
+                shift(index);
+            }
+        }
+        for (index, _) in self.outputs.values_mut() {
+            shift(index);
+        }
+        for index in &mut self.sources {
+            shift(index);
+        }
+        for boundary in self.boundaries.values_mut() {
+            for targets in boundary.inputs.values_mut() {
+                for (index, _) in targets {
+                    shift(index);
+                }
+            }
+            for (index, _) in boundary.outputs.values_mut() {
+                shift(index);
+            }
+        }
+    }
     /// A selected, isolated root primitive can be revoked without flattening
     /// unchanged declarations. Remove its one physical process and rebase all
     /// later physical indexes, preserving exact compiled order. Reject claims,
@@ -383,45 +538,23 @@ impl CompiledNetwork {
         {
             return None;
         }
+        let removed_work = u64::try_from(
+            definition
+                .interface()
+                .inputs()
+                .len()
+                .checked_add(definition.interface().outputs().len())?
+                .checked_add(definition.claims().len())?
+                .checked_add(1)?,
+        )
+        .ok()?;
         let mut compiled = self.with_fresh_generation();
         compiled.processes.remove(removed_index);
         compiled.inspections.remove(name)?;
         compiled.boundaries.remove(name)?;
-        let rebase = |index: &mut usize| {
-            if *index > removed_index {
-                *index -= 1;
-            }
-        };
-        for snapshot in compiled.inspections.values_mut() {
-            if let Some(index) = &mut snapshot.physical_index {
-                rebase(index);
-            }
-        }
-        for edge in &mut compiled.connections {
-            rebase(&mut edge.from.0);
-            rebase(&mut edge.to.0);
-        }
-        for targets in compiled.inputs.values_mut() {
-            for (index, _) in targets {
-                rebase(index);
-            }
-        }
-        for (index, _) in compiled.outputs.values_mut() {
-            rebase(index);
-        }
-        for index in &mut compiled.sources {
-            rebase(index);
-        }
-        for boundary in compiled.boundaries.values_mut() {
-            for targets in boundary.inputs.values_mut() {
-                for (index, _) in targets {
-                    rebase(index);
-                }
-            }
-            for (index, _) in boundary.outputs.values_mut() {
-                rebase(index);
-            }
-        }
+        compiled.shift_physical_indexes(removed_index.checked_add(1)?, false);
+        compiled.compile_work = compiled.compile_work.checked_sub(removed_work)?;
+        compiled.compile_instances = compiled.compile_instances.checked_sub(1)?;
         Some(compiled)
     }
 }
@@ -611,6 +744,9 @@ impl Compiler {
                 .into_iter()
                 .map(|path| indexes[&path])
                 .collect(),
+            compilation_limits: self.limits,
+            compile_work: self.work,
+            compile_instances: self.instances,
         })
     }
     fn expand(
@@ -770,6 +906,285 @@ impl Compiler {
         }
         self.active.remove(&identity);
         Ok(boundary)
+    }
+}
+
+#[cfg(test)]
+mod isolated_root_addition_tests {
+    use super::*;
+    use crate::compose::{Composer, Edit, Footprint, NetworkPatch, Registration};
+    use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
+
+    fn base() -> (NetworkDef, Contract) {
+        let mut builder = NetworkBuilder::new();
+        let source = builder
+            .add(
+                "alpha",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
+            .unwrap();
+        builder.start(&source).unwrap();
+        let worker = crate::ComponentDef::map(|n: i64| n * 2);
+        let contract = Contract::new("test/add-root-omega", worker.interface().clone()).unwrap();
+        let omega = builder
+            .add("omega", Arc::new(worker.claim(&contract).unwrap()))
+            .unwrap();
+        builder
+            .expose_output("out", omega.output::<i64>("output").unwrap())
+            .unwrap();
+        let mut network = builder.build().unwrap();
+        network.connections.push(ConnectionDef {
+            from: PortPath {
+                process: "alpha".into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: "omega".into(),
+                port: "input".into(),
+            },
+            capacity: NonZeroUsize::new(1).unwrap(),
+        });
+        (network, contract)
+    }
+
+    fn with_middle(mut network: NetworkDef) -> NetworkDef {
+        network.instances.insert(
+            "middle".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        );
+        network
+    }
+
+    #[test]
+    fn isolated_middle_addition_matches_full_compiler_rebases_and_executes() {
+        let (before, contract) = base();
+        let old = before.compile().unwrap();
+        let old_handle = old
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        let after = with_middle(before.clone());
+        let incremental = old
+            .reuse_after_isolated_root_addition(&before, &after)
+            .unwrap();
+        let canonical = after.compile().unwrap();
+        assert_eq!(incremental.processes().len(), 3);
+        assert_eq!(
+            incremental.inspect("middle").unwrap().physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(2)
+        );
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
+        for path in ["", "alpha", "middle", "omega"] {
+            let a = incremental.inspect(path).unwrap();
+            let b = canonical.inspect(path).unwrap();
+            assert_eq!(a.physical_index, b.physical_index);
+            assert_eq!(a.definition_key, b.definition_key);
+            assert_eq!(a.origin, b.origin);
+        }
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        assert_eq!(
+            old_handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
+        let bound = incremental.declaration("middle").unwrap();
+        assert!(bound.input::<i64>("input").is_ok());
+        let mut session = incremental.start();
+        session.run_until_idle(64);
+        assert_eq!(
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
+            Some(&14)
+        );
+    }
+
+    #[test]
+    fn rejects_claims_multiple_additions_declaration_mixed_and_invalid_name() {
+        let (before, contract) = base();
+        let old = before.compile().unwrap();
+        let mut after = with_middle(before.clone());
+        after.instances.insert(
+            "second".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        after = with_middle(before.clone());
+        after.instances.insert(
+            "middle".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        after = with_middle(before.clone());
+        after.connections.clear();
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        after = with_middle(before.clone());
+        after.instances.insert(
+            "omega".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n * 3)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        after = before.clone();
+        after.instances.insert(
+            "../escape".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        );
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn custom_limits_and_exhausted_default_limits_fall_back() {
+        let (before, _) = base();
+        let limits = CompileLimits {
+            max_instances: 2,
+            ..CompileLimits::default()
+        };
+        let old = before.compile_with_limits(limits).unwrap();
+        let after = with_middle(before.clone());
+        assert!(
+            old.reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        assert!(matches!(
+            after.compile_with_limits(limits),
+            Err(NetworkError::LimitExceeded { .. })
+        ));
+        let mut simulated_full = before.compile().unwrap();
+        simulated_full.compile_instances = CompileLimits::default().max_instances;
+        assert!(
+            simulated_full
+                .reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+        simulated_full = before.compile().unwrap();
+        simulated_full.compile_work = CompileLimits::default().max_work;
+        assert!(
+            simulated_full
+                .reuse_after_isolated_root_addition(&before, &after)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn real_composer_add_revoke_and_readmit_isolated_root() {
+        let (before, contract) = base();
+        let mut composer = Composer::new(before).unwrap();
+        let patch = NetworkPatch::new([Edit::Add {
+            path: "middle".into(),
+            definition: Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        }]);
+        let registration = |id: &str| {
+            Registration::new(
+                id,
+                [],
+                1,
+                GraphOrigin::default(),
+                [Footprint::Component("middle".into())],
+                patch.clone(),
+            )
+        };
+        let initial = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        composer.register([registration("one")]).unwrap();
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("middle")
+                .unwrap()
+                .physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("omega")
+                .unwrap()
+                .physical_index,
+            Some(2)
+        );
+        assert_eq!(
+            initial.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
+        composer.revoke("one").unwrap();
+        assert!(composer.current().compiled().inspect("middle").is_err());
+        composer.register([registration("two")]).unwrap();
+        assert_eq!(
+            composer
+                .current()
+                .compiled()
+                .inspect("middle")
+                .unwrap()
+                .physical_index,
+            Some(1)
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            composer.current().network().compile().unwrap().compile_work
+        );
+        assert_eq!(
+            composer.current().compiled().compile_instances,
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .compile_instances
+        );
     }
 }
 

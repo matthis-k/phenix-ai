@@ -251,6 +251,11 @@ pub struct CompiledNetwork {
     pub(crate) ingress_capacities: BTreeMap<String, NonZeroUsize>,
     pub(crate) outputs: BTreeMap<String, (usize, String)>,
     pub(crate) sources: Vec<usize>,
+    // The successful compiler's bounded charges. Retained across incremental
+    // publications so additions cannot bypass work or instance budgets.
+    pub(crate) compilation_limits: crate::CompileLimits,
+    pub(crate) compile_work: u64,
+    pub(crate) compile_instances: u64,
     inspections: BTreeMap<String, ComponentSnapshot>,
     boundaries: BTreeMap<String, ResolvedBoundary>,
     contracts: Vec<Contract>,

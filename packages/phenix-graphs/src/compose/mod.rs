@@ -450,6 +450,11 @@ fn compose(
                     .compiled
                     .reuse_after_isolated_root_removal(&previous.network, &network)
             })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_addition(&previous.network, &network)
+            })
     }) {
         Some(compiled) => compiled,
         None => network.compile()?,
