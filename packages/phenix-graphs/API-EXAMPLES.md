@@ -92,4 +92,4 @@ claim. Values carrying plugin/resource leases reject bare owned extraction;
 Kernel owns producer lifecycle and selection policy. StorageGraph observes
 authorized subscriptions and uses native request scopes; neither owns another
 scheduler. Native behavior and migration coverage are recorded in
-`docs/fbp-regression-ledger.md` at the workspace root.
+the regression ledger in Git history. Durable requirements are in `docs/fbp-design.md`.
