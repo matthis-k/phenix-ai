@@ -12,7 +12,6 @@ on:
       - "verification/fbp-session-loom/**"
       - "flake.nix"
       - "flake.lock"
-      - "docs/fbp-hardening-campaign-20261114.md"
       - ".github/workflows/fbp-q5-session-ownership.yml"
   workflow_dispatch:
 
