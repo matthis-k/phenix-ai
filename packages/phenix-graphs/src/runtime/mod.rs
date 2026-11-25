@@ -24,6 +24,9 @@ mod diagnostics;
 mod readiness;
 mod recovery;
 mod request;
+// The external Loom verifier recompiles wake.rs with instrumented sync types.
+// Production builds retain std types and the unchanged public runtime API.
+#[allow(unexpected_cfgs)]
 mod wake;
 pub use diagnostics::{BlockedCycle, CorrelationBlock};
 pub use readiness::{InputHead, Readiness, ReadinessPolicy, ReadinessSnapshot};

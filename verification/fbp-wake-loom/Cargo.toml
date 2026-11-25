@@ -1,0 +1,12 @@
+[package]
+name = "phenix-wake-loom"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately not a member of the production FBP Cargo workspace. Only
+# the dedicated Q5 workflow compiles this verifier and downloads Loom.
+[workspace]
+
+[dependencies]
+loom = "=0.7.2"
