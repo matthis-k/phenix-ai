@@ -14,3 +14,11 @@ phenix_port_args_derive = { path = "port-args-derive", optional = true }
 [[bench]]
 name = "native_fbp"
 harness = false
+
+[[bench]]
+name = "q2_connected"
+harness = false
+
+[[bench]]
+name = "q2_connected_revoke"
+harness = false
