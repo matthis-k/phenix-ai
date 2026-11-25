@@ -399,6 +399,52 @@ impl CompiledNetwork {
         (updated == changes.len()).then_some(compiled)
     }
 
+    /// Symmetric mixed revocation: a selected root primitive and only its
+    /// direct incident root edges are removed in one transaction. First prune
+    /// connections while the old primitive still exists; then revoke its
+    /// isolated declaration. Both existing bounded Q2 validators must accept.
+    /// This is not a general graph-cut or arbitrary multi-component deletion.
+    pub(crate) fn reuse_after_connected_root_removal(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if before.instances.len() != after.instances.len().checked_add(1)?
+            || before.connections.len() <= after.connections.len()
+        {
+            return None;
+        }
+        let mut removed = before
+            .instances
+            .keys()
+            .filter(|name| !after.instances.contains_key(*name));
+        let name = removed.next()?;
+        if removed.next().is_some() {
+            return None;
+        }
+        let after_edges: BTreeSet<_> = after
+            .connections
+            .iter()
+            .map(|edge| (&edge.from, &edge.to, edge.capacity))
+            .collect();
+        let mut found = false;
+        for edge in &before.connections {
+            if after_edges.contains(&(&edge.from, &edge.to, edge.capacity)) {
+                continue;
+            }
+            if edge.from.process != *name && edge.to.process != *name {
+                return None;
+            }
+            found = true;
+        }
+        if !found {
+            return None;
+        }
+        let mut intermediate = before.clone();
+        intermediate.connections = after.connections.clone();
+        let pruned = self.reuse_after_root_connection_pruning(before, &intermediate)?;
+        pruned.reuse_after_isolated_root_removal(&intermediate, after)
+    }
     /// Reuse existing, independently bounded lowering steps for a selected
     /// Add + Connect transaction. Only one new root primitive and monotone
     /// direct edges are eligible; at least one edge must attach to that new
@@ -1790,6 +1836,244 @@ mod capacity_reuse_tests {
                 .compile()
                 .unwrap()
                 .connections()
+        );
+    }
+}
+
+#[cfg(test)]
+mod connected_root_revocation_tests {
+    use super::*;
+    use crate::compose::{Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration};
+    use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
+
+    fn edge(from: &str, to: &str) -> ConnectionDef {
+        ConnectionDef {
+            from: PortPath {
+                process: from.into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: to.into(),
+                port: "input".into(),
+            },
+            capacity: NonZeroUsize::new(2).unwrap(),
+        }
+    }
+
+    fn base() -> (NetworkDef, Contract) {
+        let mut builder = NetworkBuilder::new();
+        let source = builder
+            .add(
+                "alpha",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
+            .unwrap();
+        builder.start(&source).unwrap();
+        let worker = crate::ComponentDef::map(|n: i64| n * 3);
+        let contract = Contract::new("test/connected-remove", worker.interface().clone()).unwrap();
+        let omega = builder
+            .add("omega", Arc::new(worker.claim(&contract).unwrap()))
+            .unwrap();
+        builder
+            .expose_output("out", omega.output::<i64>("output").unwrap())
+            .unwrap();
+        let mut network = builder.build().unwrap();
+        network.connections.push(edge("alpha", "omega"));
+        (network, contract)
+    }
+
+    fn with_chain(mut base: NetworkDef) -> NetworkDef {
+        base.instances.insert(
+            "middle".into(),
+            Arc::new(crate::ComponentDef::map(|n: i64| n + 1)),
+        );
+        base.connections.push(edge("alpha", "middle"));
+        base.connections.push(edge("middle", "omega"));
+        base
+    }
+
+    #[test]
+    fn removing_connected_middle_preserves_unrelated_edge_and_rebases_indexes() {
+        let (after, contract) = base();
+        let before = with_chain(after.clone());
+        let old = before.compile().unwrap();
+        let bound = old
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        let incremental = old
+            .reuse_after_connected_root_removal(&before, &after)
+            .unwrap();
+        let canonical = after.compile().unwrap();
+        assert_eq!(incremental.processes().len(), 2);
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(1)
+        );
+        assert!(incremental.inspect("middle").is_err());
+        assert_eq!(bound.resolve(&incremental), Err(NetworkError::ForeignScope));
+        let mut session = incremental.start();
+        session.run_until_idle(64);
+        assert_eq!(
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
+            Some(&21)
+        );
+    }
+
+    #[test]
+    fn unrelated_edge_change_and_mixed_components_bypass_reuse() {
+        let (after, contract) = base();
+        let before = with_chain(after.clone());
+        let old = before.compile().unwrap();
+
+        let mut different = after.clone();
+        different.connections[0].capacity = NonZeroUsize::new(5).unwrap();
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &different)
+                .is_none()
+        );
+
+        different = after.clone();
+        different.instances.insert(
+            "omega".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 4)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &different)
+                .is_none()
+        );
+
+        different = after.clone();
+        different.instances.remove("alpha");
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &different)
+                .is_none()
+        );
+
+        different = after.clone();
+        different.outputs.clear();
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &different)
+                .is_none()
+        );
+
+        let mut claimed = before.clone();
+        claimed.instances.insert(
+            "middle".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n + 1)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        let compiled = claimed.compile().unwrap();
+        assert!(
+            compiled
+                .reuse_after_connected_root_removal(&claimed, &after)
+                .is_none()
+        );
+
+        let mut unrelated = before.clone();
+        unrelated.connections.push(edge("omega", "alpha"));
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &unrelated)
+                .is_none()
+        );
+
+        let mut without_edges = before.clone();
+        without_edges.connections = after.connections.clone();
+        assert!(
+            old.reuse_after_connected_root_removal(&before, &without_edges)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn actual_composer_revocation_cleans_edges_and_component_atomically() {
+        let (base, contract) = base();
+        let from = edge("alpha", "middle");
+        let to = edge("middle", "omega");
+        let patch = NetworkPatch::new([
+            Edit::Add {
+                path: "middle".into(),
+                definition: Arc::new(crate::ComponentDef::map(|n: i64| n + 1)),
+            },
+            Edit::Connect(from.clone()),
+            Edit::Connect(to.clone()),
+        ]);
+        let grants = [
+            Footprint::Component("middle".into()),
+            Footprint::Connection(ConnectionKey::new(from.from.clone(), from.to.clone())),
+            Footprint::Connection(ConnectionKey::new(to.from.clone(), to.to.clone())),
+        ];
+        let registration = Registration::new("chain", [], 1, GraphOrigin::default(), grants, patch);
+        let mut composer = Composer::new(base).unwrap();
+        composer.register([registration]).unwrap();
+        let old = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(composer.current().compiled().connections().len(), 3);
+        assert_eq!(
+            composer.revoke("chain").unwrap(),
+            BTreeSet::from(["chain".into()])
+        );
+        assert!(composer.current().compiled().inspect("middle").is_err());
+        assert_eq!(composer.current().compiled().connections().len(), 1);
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        let canonical = composer.current().network().compile().unwrap();
+        assert_eq!(
+            composer.current().compiled().connections(),
+            canonical.connections()
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            canonical.compile_work
+        );
+        assert_eq!(
+            composer.current().compiled().compile_instances,
+            canonical.compile_instances
+        );
+        let mut session = composer.current().compiled().start();
+        session.run_until_idle(64);
+        assert_eq!(
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
+            Some(&21)
         );
     }
 }
