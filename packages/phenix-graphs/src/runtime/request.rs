@@ -68,6 +68,49 @@ impl CaptureMetadata {
     }
 }
 
+/// Deterministic lowest-free correlation lane; only admitted requests reserve.
+#[derive(Default)]
+pub(super) struct LaneAllocator {
+    next_unused: usize,
+    recycled: BTreeSet<usize>,
+}
+
+impl LaneAllocator {
+    pub(super) fn candidate(&self, capacity: usize) -> usize {
+        self.recycled.iter().next().copied().unwrap_or_else(|| {
+            assert!(
+                self.next_unused < capacity,
+                "request credit reserves a free lane"
+            );
+            self.next_unused
+        })
+    }
+
+    pub(super) fn reserve(&mut self, lane: usize) {
+        if lane == self.next_unused {
+            self.next_unused += 1;
+        } else {
+            assert!(self.recycled.remove(&lane), "recycled request lane is free");
+        }
+    }
+
+    pub(super) fn recycle(&mut self, lane: usize) {
+        assert!(
+            lane < self.next_unused,
+            "released request lane was reserved"
+        );
+        assert!(
+            self.recycled.insert(lane),
+            "request lane was not already released"
+        );
+        // Reclaim trailing free slots so transient peak concurrency does not
+        // permanently retain an oversized allocator.
+        while self.next_unused > 0 && self.recycled.remove(&(self.next_unused - 1)) {
+            self.next_unused -= 1;
+        }
+    }
+}
+
 pub(super) struct RequestScope {
     pub(super) lane: usize,
     pub(super) sealed: bool,
@@ -187,9 +230,7 @@ impl NetworkSession {
         if self.requests.len() == self.max_requests {
             return Err(RequestError::Full);
         }
-        let lane = (0..self.max_requests)
-            .find(|lane| self.requests.values().all(|scope| scope.lane != *lane))
-            .expect("request credit reserves a free lane");
+        let lane = self.lane_allocator.candidate(self.max_requests);
         let mut closure_ports = BTreeMap::new();
         for &index in &self.custom_readiness {
             let process = &self.processes[index];
@@ -234,6 +275,7 @@ impl NetworkSession {
             generation: self.generation,
             sequence: self.next_request,
         };
+        self.lane_allocator.reserve(lane);
         self.requests.insert(
             id,
             RequestScope {
@@ -469,7 +511,8 @@ impl NetworkSession {
             let reachable: Vec<_> = scope.reachable.iter().copied().collect();
             self.unwatch_scoped_readiness(&reachable);
         }
-        self.requests.remove(&id);
+        let scope = self.requests.remove(&id).expect("validated live request");
+        self.lane_allocator.recycle(scope.lane);
         Ok(())
     }
     fn request_live(&self, id: RequestId) -> bool {
@@ -754,5 +797,48 @@ mod queue_request_index_tests {
         assert!(transport.detach_request(b).is_empty());
         assert_eq!(transport.detach_request(a).len(), 1);
         assert_eq!(transport.queues()[0].request_count(a), 0);
+    }
+}
+
+#[cfg(test)]
+mod lane_allocator_tests {
+    use super::LaneAllocator;
+
+    #[test]
+    fn lowest_free_lane_and_high_watermark_compaction() {
+        let mut allocator = LaneAllocator::default();
+        for i in 0..5 {
+            let lane = allocator.candidate(5);
+            assert_eq!(lane, i);
+            allocator.reserve(lane);
+        }
+        allocator.recycle(1);
+        allocator.recycle(4);
+        allocator.recycle(3);
+        assert_eq!(allocator.next_unused, 3);
+        assert_eq!(allocator.candidate(5), 1);
+        allocator.reserve(1);
+        assert_eq!(allocator.candidate(5), 3);
+        allocator.reserve(3);
+        assert_eq!(allocator.candidate(5), 4);
+        allocator.reserve(4);
+        for lane in [2, 1, 0, 4, 3] {
+            allocator.recycle(lane);
+        }
+        assert_eq!(allocator.next_unused, 0);
+        assert!(allocator.recycled.is_empty());
+    }
+
+    #[test]
+    fn failed_admission_does_not_reserve_candidate() {
+        let mut allocator = LaneAllocator::default();
+        assert_eq!(allocator.candidate(2), 0);
+        // A failed readiness callback never calls reserve.
+        assert_eq!(allocator.candidate(2), 0);
+        allocator.reserve(0);
+        let next = allocator.candidate(2);
+        allocator.reserve(next);
+        allocator.recycle(0);
+        assert_eq!(allocator.candidate(2), 0);
     }
 }

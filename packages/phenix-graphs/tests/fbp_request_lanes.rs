@@ -773,3 +773,74 @@ fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
     assert_eq!(session.run_until_idle(8).steps, 0);
     session.release_request(a).unwrap();
 }
+
+#[test]
+fn admission_recycles_lowest_free_correlation_lane_for_both_queue_policies() {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut options = lane_options();
+        options.max_requests = NonZeroUsize::new(4).unwrap();
+        options.request_queue_policy = policy;
+        let mut session = record_network(&["input"], NonZeroUsize::new(16).unwrap(), seen.clone())
+            .start_with_options(options);
+        assert_eq!(
+            session.begin_request(Some("missing")),
+            Err(RequestError::UnknownOutput)
+        );
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+        let c = session.begin_request(None).unwrap();
+        let d = session.begin_request(None).unwrap();
+        assert_eq!(session.begin_request(None), Err(RequestError::Full));
+        for (request, value) in [(a, 10_i64), (b, 20), (c, 30), (d, 40)] {
+            session
+                .inject_request(request, "input", Value::local(value))
+                .unwrap();
+        }
+        assert_eq!(session.run_until_idle(64).steps, 4);
+        for request in [a, b, c, d] {
+            session.close_request(request).unwrap();
+        }
+        for request in [d, b] {
+            assert_eq!(
+                session.request_status(request).unwrap(),
+                RequestStatus::Settled { captures: 0 }
+            );
+            session.release_request(request).unwrap();
+        }
+        let e = session.begin_request(None).unwrap();
+        let f = session.begin_request(None).unwrap();
+        assert_eq!(session.begin_request(None), Err(RequestError::Full));
+        for (request, value) in [(e, 50_i64), (f, 60)] {
+            session
+                .inject_request(request, "input", Value::local(value))
+                .unwrap();
+        }
+        assert_eq!(session.run_until_idle(64).steps, 2);
+        for request in [a, c, e, f] {
+            session.close_request(request).unwrap();
+            assert_eq!(
+                session.request_status(request).unwrap(),
+                RequestStatus::Settled { captures: 0 }
+            );
+            session.release_request(request).unwrap();
+        }
+        let mut observations = seen.lock().unwrap().clone();
+        observations.sort_by_key(|(_, value)| *value);
+        assert_eq!(
+            observations,
+            [
+                (Some(0), 10),
+                (Some(1), 20),
+                (Some(2), 30),
+                (Some(3), 40),
+                (Some(1), 50),
+                (Some(3), 60),
+            ]
+        );
+        assert!(session.failure().is_none());
+    }
+}
