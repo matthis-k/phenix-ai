@@ -844,3 +844,72 @@ fn admission_recycles_lowest_free_correlation_lane_for_both_queue_policies() {
         assert!(session.failure().is_none());
     }
 }
+
+#[test]
+fn shared_fifo_correlated_all_round_robins_continuously_ready_requests() {
+    use phenix_graph::ComponentDef;
+
+    let mut builder = NetworkBuilder::new();
+    let echo = builder
+        .add("echo", Arc::new(ComponentDef::map(|value: i64| value)))
+        .unwrap();
+    builder
+        .expose_input(
+            "input",
+            echo.input::<i64>("input").unwrap(),
+            NonZeroUsize::new(8).unwrap(),
+        )
+        .unwrap();
+    builder
+        .expose_output("output", echo.output::<i64>("output").unwrap())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+
+    for (policy, expect_fair) in [(Readiness::All, false), (Readiness::CorrelatedAll, true)] {
+        let mut options = SessionOptions {
+            max_requests: NonZeroUsize::new(2).unwrap(),
+            capture_capacity: NonZeroUsize::new(16).unwrap(),
+            request_queue_policy: RequestQueuePolicy::SharedFifo,
+            ..Default::default()
+        };
+        options.readiness.insert("echo".into(), policy);
+        let mut session = compiled.start_with_options(options);
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+        for value in [10_i64, 11, 12] {
+            session.inject_request_local(a, "input", value).unwrap();
+        }
+        for value in [20_i64, 21, 22] {
+            session.inject_request_local(b, "input", value).unwrap();
+        }
+        session.run_until_idle(128);
+        let mut sequence = Vec::new();
+        let mut values = Vec::new();
+        while let Some(packet) = session.take_output("output").unwrap() {
+            sequence.push(packet.metadata().unwrap().request().unwrap());
+            values.push(*packet.value().borrow::<i64>().unwrap());
+        }
+        assert_eq!(values.len(), 6);
+        if expect_fair {
+            assert_eq!(sequence, [a, b, a, b, a, b]);
+            assert_eq!(values, [10, 20, 11, 21, 12, 22]);
+        } else {
+            assert_eq!(sequence, [a, a, a, b, b, b]);
+            assert_eq!(values, [10, 11, 12, 20, 21, 22]);
+        }
+        session.close_request(a).unwrap();
+        session.close_request(b).unwrap();
+        session.run_until_idle(64);
+        assert_eq!(
+            session.request_status(a).unwrap(),
+            RequestStatus::Settled { captures: 3 }
+        );
+        assert_eq!(
+            session.request_status(b).unwrap(),
+            RequestStatus::Settled { captures: 3 }
+        );
+        session.release_request(a).unwrap();
+        session.release_request(b).unwrap();
+        assert!(session.failure().is_none());
+    }
+}
