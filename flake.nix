@@ -2,7 +2,7 @@
   description = "Phenix graph, storage, plugin, and kernel foundation";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3";
-  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/e83c6029afc0140a242ae8240dbff6efe5979725";
+  inputs.phenix-flake-ci.url = "github:matthis-k/phenix-flake-ci/39acf9aa98cd9cff011d39abc04d4610e96b7c0c";
 
   outputs =
     {
@@ -116,28 +116,42 @@
         name:
         lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
       ) allPackages;
+      # The runtime pilot intentionally reuses the existing kernel-smoke
+      # package and leaves its original build-time check in place.
+      # No second Cargo compilation or test inventory is introduced.
+      runtimeSuite = phenix-flake-ci.lib.mkSuite {
+        inherit pkgs;
+        tests.kernel-smoke = {
+          command.program = lib.getExe' self.packages.${system}.kernel-smoke "kernel-smoke";
+          expect.exitCode = 0;
+        };
+      };
       checkConfig = import ./ci/flake-check-config.nix;
     in
     {
-      lib.flakeCiWorkflow = phenix-flake-ci.lib.mkFlakeCiWorkflow {
+      lib.flakeCiWorkflows = phenix-flake-ci.lib.mkFlakeCiWorkflows {
         ci = checkConfig.ci;
         configPath = "ci/flake-check-config.nix";
         libraryRef = phenix-flake-ci.rev;
       };
-      packages.${system}.kernel-smoke = mkRust {
-        name = "kernel-smoke";
-        packages = [ "phenix-kernel" ];
-        release = true;
-        command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
-        installPhase = ''
-          mkdir -p "$out/bin"
-          install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
-          "$out/bin/kernel-smoke"
-        '';
+      packages.${system} = {
+        kernel-smoke = mkRust {
+          name = "kernel-smoke";
+          packages = [ "phenix-kernel" ];
+          release = true;
+          command = "cargo build --locked --offline -p phenix-kernel --release --example basic";
+          installPhase = ''
+            mkdir -p "$out/bin"
+            install -m755 target/release/examples/basic "$out/bin/kernel-smoke"
+            "$out/bin/kernel-smoke"
+          '';
+        };
+        "test.kernel-smoke" = runtimeSuite.packages."test.kernel-smoke";
       };
       checks.${system} = {
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
-          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
+          diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflows.trusted} ${./.github/workflows/flake-ci.yml}
+          diff -u ${pkgs.writeText "flake-ci-pr.yml" self.lib.flakeCiWorkflows.pullRequest} ${./.github/workflows/flake-ci-pr.yml}
           touch $out
         '';
         kernel-smoke = self.packages.${system}.kernel-smoke;
