@@ -3613,3 +3613,66 @@ fn staged_global_optional_eos_waits_for_required_data_and_exhausted_required_eos
     assert_eq!(resumed.load(Ordering::SeqCst), 0);
     assert!(missing.failure().unwrap().contains("required input b"));
 }
+
+#[test]
+fn idle_input_prefilter_preserves_eos_and_custom_policy_rechecks() {
+    use phenix_graph::component::ComponentDef;
+
+    let mut builder = NetworkBuilder::new();
+    let idle = builder
+        .add("idle", Arc::new(ComponentDef::sink(|_: &i64| {})))
+        .unwrap();
+    builder
+        .expose_input("input", idle.input::<i64>("input").unwrap(), one())
+        .unwrap();
+    let compiled = builder.build().unwrap().compile().unwrap();
+
+    let mut session = compiled.start();
+    for _ in 0..3 {
+        let report = session.run_until_idle(5);
+        assert_eq!(report.steps, 0);
+        assert_eq!(report.state, SessionState::Quiescent);
+    }
+    session.close_input("input").unwrap();
+    assert_eq!(session.run_until_idle(16).state, SessionState::Completed);
+
+    // Custom readiness only runs when an actual packet/request candidate
+    // exists. Keep a packet pending under a closed policy, then open the
+    // policy without admitting another packet: the next driver pass retries.
+    struct CountCalls(Arc<AtomicUsize>, Arc<AtomicBool>);
+    impl ReadinessPolicy for CountCalls {
+        fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if !self.1.load(Ordering::SeqCst) {
+                return vec![];
+            }
+            snapshot
+                .heads
+                .iter()
+                .filter(|head| head.available)
+                .map(|head| head.port.clone())
+                .collect()
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let enabled = Arc::new(AtomicBool::new(false));
+    let mut options = SessionOptions::default();
+    options.readiness.insert(
+        "idle".into(),
+        Readiness::Custom(Arc::new(CountCalls(calls.clone(), enabled.clone()))),
+    );
+    let mut custom = compiled.start_with_options(options);
+    custom.inject_local("input", 17_i64).unwrap();
+    let before = calls.load(Ordering::SeqCst);
+    let blocked = custom.run_until_idle(5);
+    assert_eq!(blocked.steps, 0);
+    assert_eq!(blocked.state, SessionState::Waiting);
+    assert!(calls.load(Ordering::SeqCst) > before);
+    let before = calls.load(Ordering::SeqCst);
+    enabled.store(true, Ordering::SeqCst);
+    let resumed = custom.run_until_idle(5);
+    assert!(resumed.steps > 0);
+    assert_eq!(resumed.state, SessionState::Quiescent);
+    assert!(calls.load(Ordering::SeqCst) > before);
+}

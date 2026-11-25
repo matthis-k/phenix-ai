@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "packages/phenix-graphs/examples/fbp_benchmark.rs"
+      - "packages/phenix-graphs/src/runtime/mod.rs"
       - ".github/workflows/fbp-benchmark.yml"
   workflow_dispatch:
 
