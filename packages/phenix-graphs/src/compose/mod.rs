@@ -379,23 +379,41 @@ fn compose(
     previous: Option<&Composition>,
 ) -> Result<Composition, ComposeError> {
     let plan = planning::plan(registrations, selection_limits)?;
-    // The Composer can only add new registration IDs or remove IDs plus their
-    // dependents; it cannot mutate an existing registration or the frozen base.
-    // With the same selected set, all selected edits and their relative
-    // dependency replay order are unchanged. Reuse the validated flattened
-    // structure, but always mint fresh generation-bound handle authority.
+    // Composer edits are monotonic per operation: a registration can only be
+    // added under a fresh ID or removed together with its dependents; an
+    // existing registration and the frozen base cannot be replaced in place.
+    // If all *writing* registrations remain selected, their edits and relative
+    // dependency replay order are unchanged. Selected zero-edit registrations
+    // can be added/removed without changing the network or its code leases.
     //
-    // Run the complete planner first. Even an unselected new registration can
-    // be unauthorized, malformed, cyclic, or introduce global ambiguity.
-    if let Some(previous) = previous
-        && plan.active == previous.active
-    {
-        return Ok(Composition {
-            network: previous.network.clone(),
-            compiled: previous.compiled.with_fresh_generation(),
-            active: plan.active,
-            footprints: previous.footprints.clone(),
-        });
+    // Run the complete planner first: even a losing or empty registration may
+    // be unauthorized, cyclic, or make global selection ambiguous. Publish the
+    // *new* active manifest and exact footprints with a fresh generation
+    // identity, so old bound handles become stale even when the topology is
+    // unchanged. Every genuine selected write-set change still recompiles.
+    if let Some(previous) = previous {
+        let before: BTreeSet<&str> = previous
+            .footprints
+            .iter()
+            .filter(|(_, writes)| !writes.is_empty())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let after: BTreeSet<&str> = plan
+            .active
+            .iter()
+            .filter(|id| !plan.footprints[*id].is_empty())
+            .map(String::as_str)
+            .collect();
+        if before == after {
+            let mut footprints = plan.footprints;
+            footprints.retain(|id, _| plan.active.contains(id));
+            return Ok(Composition {
+                network: previous.network.clone(),
+                compiled: previous.compiled.with_fresh_generation(),
+                active: plan.active,
+                footprints,
+            });
+        }
     }
     let mut network = replay::replay_selected(base, registrations, &plan)?;
     network
@@ -603,7 +621,7 @@ mod unchanged_selection_tests {
     }
 
     #[test]
-    fn new_selected_registration_still_creates_new_generation() {
+    fn selected_empty_patch_updates_manifest_without_recompiling() {
         let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
         composer
             .register([registration("winner", 10, add("worker"))])
@@ -622,6 +640,88 @@ mod unchanged_selection_tests {
             handle.resolve(composer.current().compiled()),
             Err(NetworkError::ForeignScope)
         );
-        assert_eq!(composer.current().active().len(), 2);
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["winner".into(), "selected_no_op".into()])
+        );
+        assert!(composer.current().footprints()["selected_no_op"].is_empty());
+        assert_eq!(
+            composer.revoke("selected_no_op").unwrap(),
+            BTreeSet::from(["selected_no_op".into()])
+        );
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["winner".into()])
+        );
+    }
+
+    #[test]
+    fn zero_edit_fast_path_still_obeys_selection_budget_and_atomicity() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer
+            .register([registration("writer", 0, add("worker"))])
+            .unwrap();
+        let old = bound(&composer);
+        composer.set_selection_limits(SelectionLimits { max_work: 0 });
+        assert_eq!(
+            composer
+                .register([registration("empty", 0, NetworkPatch::new([]))])
+                .unwrap_err(),
+            ComposeError::SelectionBudgetExceeded { limit: 0 }
+        );
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Ok((0, "output"))
+        );
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["writer".into()])
+        );
+        assert!(composer.revoke("empty").is_err());
+
+        composer.set_selection_limits(SelectionLimits::default());
+        composer
+            .register([registration("empty", 0, NetworkPatch::new([]))])
+            .unwrap();
+        assert_eq!(
+            old.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().active(),
+            &BTreeSet::from(["writer".into(), "empty".into()])
+        );
+    }
+
+    #[test]
+    fn changed_selected_write_set_creates_fresh_generation() {
+        let mut composer = Composer::new(NetworkBuilder::new().build().unwrap()).unwrap();
+        composer
+            .register([registration("winner", 10, add("worker"))])
+            .unwrap();
+        let handle = composer
+            .current()
+            .compiled()
+            .bind("worker", &identity_contract())
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        composer
+            .register([registration("new_writer", 0, add("second"))])
+            .unwrap();
+        assert_eq!(
+            handle.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(composer.current().compiled().processes().len(), 2);
+        assert_eq!(
+            composer.revoke("new_writer").unwrap(),
+            BTreeSet::from(["new_writer".into()])
+        );
+        assert_eq!(composer.current().compiled().processes().len(), 1);
     }
 }
