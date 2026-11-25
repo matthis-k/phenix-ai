@@ -340,6 +340,11 @@ impl NetworkSession {
         }
         Ok(work)
     }
+    /// Read this request's first buffered capture, even when an unrelated
+    /// request precedes it in the shared output queue. Global take_output
+    /// retains strict FIFO, while scoped reads preserve FIFO within each
+    /// request. This cannot bypass a full queue that has not published the
+    /// requested packet yet.
     pub fn take_request_output(
         &mut self,
         id: RequestId,
@@ -350,14 +355,20 @@ impl NetworkSession {
             return Err(RequestError::Stale);
         }
         let queue = *self.captures.get(name).ok_or(RequestError::UnknownOutput)?;
-        if self.transport.queues()[queue]
-            .head()
-            .is_none_or(|p| p.metadata().and_then(|m| m.request()) != Some(id))
-        {
+        let Some((offset, packet)) = self.transport.queues()[queue]
+            .packets()
+            .enumerate()
+            .find(|(_, packet)| packet.metadata().and_then(|m| m.request()) == Some(id))
+        else {
             return Ok(None);
-        }
-        self.validate_capture(id, name, self.transport.queues()[queue].head().unwrap())?;
-        self.take_output(name).map_err(RequestError::Transport)
+        };
+        // Check the exact original packet before any ownership transfer. A
+        // malformed matching capture must not be removed or skipped.
+        self.validate_capture(id, name, packet)?;
+        let packet = self.transport.pop_at(queue, offset).unwrap();
+        self.observe_capture(name, &packet);
+        self.refresh();
+        Ok(Some(packet))
     }
     pub fn validate_capture(
         &self,

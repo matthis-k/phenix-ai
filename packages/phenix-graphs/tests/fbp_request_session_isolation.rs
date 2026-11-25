@@ -252,3 +252,100 @@ fn cancelling_queued_shared_request_preserves_other_correlated_work() {
     session.release_request(cancelled).unwrap();
     session.release_request(survivor).unwrap();
 }
+
+#[test]
+fn request_scoped_capture_skips_unrelated_buffered_head_without_reordering_global_fifo() {
+    let compiled = compiled_join(Arc::new(AtomicUsize::new(0)), NonZeroUsize::new(2).unwrap());
+    let mut options = SessionOptions {
+        capture_capacity: NonZeroUsize::new(2).unwrap(),
+        ..Default::default()
+    };
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
+    let mut session = compiled.start_with_options(options);
+    let first = session.begin_request(Some("out")).unwrap();
+    let second = session.begin_request(Some("out")).unwrap();
+    session
+        .inject_request(first, "a", Value::of(1_i64))
+        .unwrap();
+    session
+        .inject_request(first, "b", Value::of(2_i64))
+        .unwrap();
+    session
+        .inject_request(second, "a", Value::of(10_i64))
+        .unwrap();
+    session
+        .inject_request(second, "b", Value::of(20_i64))
+        .unwrap();
+    session.close_request(first).unwrap();
+    session.close_request(second).unwrap();
+    let report = session.run_until_idle(128);
+    assert!(!report.budget_exhausted);
+    assert!(session.failure().is_none());
+
+    // A is still the physical head. B's explicitly scoped read must not
+    // consume A, and global reads must still see A in FIFO order.
+    let b = session.take_request_output(second, "out").unwrap().unwrap();
+    assert_eq!(b.value().get::<i64>().unwrap(), 30);
+    assert_eq!(b.metadata().unwrap().request(), Some(second));
+    assert_eq!(
+        session.request_status(second).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    assert!(
+        session
+            .take_request_output(second, "out")
+            .unwrap()
+            .is_none()
+    );
+    let a = session.take_output("out").unwrap().unwrap();
+    assert_eq!(a.value().get::<i64>().unwrap(), 3);
+    assert_eq!(a.metadata().unwrap().request(), Some(first));
+    assert_eq!(
+        session.request_status(first).unwrap(),
+        RequestStatus::Settled { captures: 1 }
+    );
+    session.release_request(first).unwrap();
+    session.release_request(second).unwrap();
+}
+
+#[test]
+fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication() {
+    let compiled = compiled_join(Arc::new(AtomicUsize::new(0)), NonZeroUsize::new(2).unwrap());
+    let mut options = SessionOptions {
+        capture_capacity: NonZeroUsize::new(2).unwrap(),
+        ..Default::default()
+    };
+    options
+        .readiness
+        .insert("join".into(), Readiness::CorrelatedAll);
+    let mut session = compiled.start_with_options(options.clone());
+    let mut other = compiled.start_with_options(options);
+    let own = session.begin_request(None).unwrap();
+    // A foreign handle cannot read the head, even when it knows the name.
+    let foreign = other.begin_request(None).unwrap();
+
+    for (a, b) in [(1_i64, 2_i64), (10_i64, 20_i64)] {
+        session.inject_request(own, "a", Value::of(a)).unwrap();
+        session.inject_request(own, "b", Value::of(b)).unwrap();
+    }
+    session.close_request(own).unwrap();
+    let report = session.run_until_idle(128);
+    assert!(!report.budget_exhausted);
+    assert!(session.failure().is_none());
+    assert!(matches!(
+        session.take_request_output(foreign, "out"),
+        Err(RequestError::Foreign)
+    ));
+    for expected in [3_i64, 30_i64] {
+        let packet = session.take_request_output(own, "out").unwrap().unwrap();
+        assert_eq!(packet.value().get::<i64>().unwrap(), expected);
+        assert_eq!(packet.metadata().unwrap().request(), Some(own));
+    }
+    assert_eq!(
+        session.request_status(own).unwrap(),
+        RequestStatus::Settled { captures: 2 }
+    );
+    session.release_request(own).unwrap();
+}
