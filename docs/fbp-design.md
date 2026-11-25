@@ -1,201 +1,86 @@
-# Phenix Native FBP Design
+# Foundation specification
 
-Status: implemented in the current uncommitted worktree, 2026-11-11. The old graph
-engine has been removed; Kernel, Plugin and StorageGraph use native networks.
-Implementation and review/local verification are not a final commit or CI result.
-Local verification and immutable Nix snapshot checks are recorded in the final report. See
-[migration](fbp-migration.md), [review](fbp-critique.md), and the executable
-[API examples](../packages/phenix-graphs/API-EXAMPLES.md).
+Build independently usable Rust libraries that compose into an agent application. Use flow-based programming (FBP) for work and data flows. Use ordinary library calls for storage, authorization, configuration, and other work that does not need a flow. Maintain one current API.
 
-## Historical Baseline
+Read the [glossary](../GLOSSARY.md) for domain terms. The sections below specify required behavior, not implementation status.
 
-Inspected clean checkout `32bbe60e6cd2ebd34a705486b4ef96e85245ee42`, branch
-`impl/graph-consolidation-20261110`. PR #1260 was rechecked using GitHub and still
-had head `671956269a2655084ae90eb0b1e09e506177d71c`. The checkout is six commits
-ahead of that reference. It already includes action/state consolidation and
-checked matching projections; those changes must not be replaced with the older
-PR implementation.
+## Library boundaries
 
-This paragraph records the initial inspection, not the present worktree. Exact
-baseline measurements and CI provenance remain in the migration ledger.
+| Library | Responsibility |
+| --- | --- |
+| `phenix-graph` | Author, compose, compile, execute, and inspect bounded networks. |
+| `phenix-plugin` | Register contributions and retain plugin revisions and code. |
+| `phenix-kernel` | Resolve host-approved contributions, prepare and publish generations, and manage host producers. |
+| `phenix-schema` | Identify portable schemas shared by Graph and Storage. |
+| `phenix-storage` | Authorize resource access, persist values, and publish invalidations. |
+| `phenix-storage-plugin` | Bind plugin resource requests to host-approved storage. |
+| `phenix-storage-graph` | Connect storage observations and derived values to networks. |
 
-## Implemented Model
+Graph, Plugin, Storage, and Schema work without Kernel. Graph has no dependency on Storage or Kernel. Bridges depend on the libraries they connect. The agent application owns product policy. Graph accepts opaque capabilities; the resource library enforces their authority.
 
-The package remains `phenix-graph` in `packages/phenix-graphs`. It has one native
-definition/compiler/composer/runtime path, not an FBP adapter over waves. Core has
-no Kernel, Plugin, Storage or DFIR backend dependency. Distributed execution,
-durable transport, live state migration and automatic cycle recovery are excluded.
+## Network semantics
 
-| Authority | Current contract |
-|---|---|
-| `Interface` / `PortDef` | One canonical named input/output boundary; exact sets and identities, including zero ports |
-| `ComponentDef` / `Body` | Primitive immutable factory or composite immutable `NetworkDef`, with explicit claims and origin |
-| `NetworkBuilder` / `ComponentRef` | `node`, `module` and `add` return the same erased handle; typed endpoints are checked against actual scope, revision, direction and type |
-| `NetworkDef::compile` | Validates and flattens nested projections to deterministic physical processes/connections with compile limits; no executable module wrapper |
-| `Contract` | Explicit semantic membership, exact definition equality and restricted binding; matching shape never supplies a claim |
-| `Composer` | Replays owned edits from frozen base plus trusted registrations, validates/compiles the candidate, then publishes atomically |
-| `NetworkSession` | Persistent bounded FIFO transport, owned cooperative jobs, request accounting, captures, wakes and cancellation |
+- Primitives and composites expose the same interface. The compiler flattens composites. One runtime executes the resulting processes.
+- Typed and dynamic authoring share one declaration model. Local type, portable schema, contract, provenance, and authority remain distinct. Validate dynamic lookups.
+- Processes run cooperatively and hold state within a session. Factories create fresh process state. Support bounded FIFO connections, branches, joins, feedback, and explicit sources and closure. Permit network cycles and reject recursive definitions.
+- Compile deterministically under finite limits. Authenticate each bound handle against its exact declaration and compiled network. Authenticate each request against its network session.
+- Inspection is passive. Process readiness callbacks run through the runtime, not through inspection. A process instance runs one activation at a time.
+- Keep the common component library small. Express application-specific behavior through composition.
 
-`ComponentRef<Ports>` was a proposal, not the implemented type. `InputKey<T>`,
-`OutputKey<T>`, typed refs and `Ports` descriptors encode payload/direction and
-names, not a generic owner proof. Keys cannot grant builder or runtime authority.
-Typed `connect` unifies the Rust payload type. Independently declared portable
-types use `connect_dynamic` and complete schema validation. Local `TypeId`, wire
-schema name/revision/structure/codec, semantic claims and contributor origin remain
-separate checks. Plugin snapshots are Rust objects, not a dynamic-library ABI.
+## Composition and authority
 
-## Process And Publication
+- The host selects plugin revisions and issues exact grants, origins, and priorities. Contributions declare patches, dependencies, offers, and imports. Shape equality establishes neither a contract claim nor authority.
+- Compose from a frozen base. Require one consistent selection. Reject missing dependencies, ambiguous conflicts, invalid grants, and invalid origins. Replay without executing process factories. Preserve the published composition on failure.
+- Treat private replacement and additive extension as separate permissions. Require author opt-in and exact grants at each applicable boundary for nested additions, connections, and exports. Preserve existing claims and inherited obligations. Grant neither descendant nor incident-edge authority implicitly.
+- Replace a component only through its exact public interface. A different provider may use an explicit composite with the old interface. The composite handles conversions, supplies additional inputs, and consumes additional outputs. Implicit width subtyping is out of scope.
+- Bound selection work per attempt and logical planning work across the entire Kernel build, including self-import previews. The limits cover neither total build work nor wall-clock time or allocated bytes. Incremental compilation must match full compilation, retain projections, and produce fresh compiled authority. Fall back to full compilation for unsupported edits.
+- Prepare and validate candidates before publishing. Preview bindings cannot authorize final execution. Hold code and resource leases through the destruction of every independently retained executable value, job, and failure. Release inventory and ownership locks before invoking plugin code. Candidate rejection does not undo external effects.
 
-`Process: Send` implements `step(&mut self, &mut ProcessContext) -> Result<Step,
-String>`; `Sync` is not required. `ProcessFactory: Send + Sync` spawns fresh process
-state per physical instance/session. Captured shared capabilities remain explicit
-application sharing; factories cannot prove their captures are isolated.
+## Execution and lifecycle
 
-`Step` is `Emit`, `Yield`, `WaitInput`, `WaitInputs`, `WaitWake`, `Complete` or
-`Finished`. One logical activation retains its reservation across continuation
-steps. `Emit` transfers one publication, not activation success; `Complete`
-settles success. The process cannot resume while its emission is pending. No
-unbounded emission batch, context-owned output queue, alternate futures API or
-callback replay path is retained. Steps must return cooperatively; cancellation
-cannot preempt application code or undo external effects.
+- Admit one pending emission per process. Prepare and commit selected fanout atomically. Retry blocked publication without replaying process effects.
+- Authenticate owned work tickets. Return refused jobs and completions intact. Preserve the primary typed failure and ordered cleanup failures. Carry execution context across worker handoff.
+- Admit, close, settle, capture, and release request scopes explicitly. Default to shared FIFO and head-only readiness. Opt-in `CorrelatedAll` matches request packets across foreign heads while preserving their per-request order. Unscoped packets remain head-only. Bounded lanes isolate queue and capture capacity, not process state or effects.
+- Respect queue capacity. Drain accepted packets before end of stream (EOS). Account for disposal separately from success. Prove request-local absence from upstream work rather than from global idleness. Distinguish runnable, waiting, quiescent, and terminal states. Current inspection is not a proof of future progress.
+- Fail fast on session contention and callback or worker reentry. Make whole producer drains and blocking-driver ownership exclusive. Publication coordinates retirement with admitted drains. The host cannot prevent application-owned lock cycles or non-yielding callbacks.
 
-`ComponentDef::source`, `map` and `sink` use this same path. A source creates a
-fresh iterator and emits at most one item per step; `NetworkBuilder::start`
-selects its instance explicitly. A map clones a borrowed local `T` (`T: Clone`)
-once per activation, emits, then completes. A sink borrows `&T` and has no output.
-Custom processes support move-only inputs and stateful continuation.
+### Lifecycle decisions
 
-An `ActivationJob` owns the process and prepared inputs, not borrowed session
-queues. `ProcessDispatcher` returns the same owned protocol locally or later from
-an external runner. Tickets prevent foreign/stale completion and same-process
-reentry. `take_dispatch_return` recovers a refused foreign completion/rejected job
-after a dispatcher protocol violation; the session stays failed. Shutdown of
-abandoned external jobs remains the runner's responsibility. Execution guards
-cover delegated work, including StorageGraph worker-thread query execution.
+| Policy | Requirement |
+| --- | --- |
+| Leased archival | Stop host-owned producer polling at retirement. Retained generation, session, and job capabilities remain valid under their leases. |
+| Cooperative supervision | Supervise optional deferred-job deadlines while the session is driven. Do not promise an autonomous watchdog, worker preemption, effect rollback, or forced reclamation. |
+| Restart and persist | Start a successor with fresh process state. Preserve continuity through compatible durable grants. Reject incompatible schemas. Live migration, fencing, and exclusive successor writers are out of scope. |
+| Trusted native code | Run trusted Rust plugins in-process. Neither untrusted-code isolation nor a dynamic-library ABI is in scope. |
 
-Each connection is a nonzero-capacity FIFO. Publication validates the entire
-selected fanout and prepares it once before committing to all destinations.
-Full waits without repeating process effects or preparation callbacks. One
-pending emission per process bounds scheduler retention; earlier committed
-emissions survive a later failure. Queue item counts do not bound arbitrary
-payload bytes or process-private allocations.
+## Storage
 
-`ProcessEmission::new` broadcasts; `select` chooses existing input `PortPath`s,
-including flattened module aliases, never new edges or process calls. Invalid,
-duplicate, overlapping or unconnected selections fail atomically. Captures remain
-observations even for an empty process selection. Unconnected emissions require
-an exported capture, explicit discard permission, or intentional empty selection.
-`Option`, `Result` and `()` are data, not control signals.
+Issue stable logical identities independent of physical paths. Resolve them to authorized resources explicitly. Support versioned reads, atomic compare-and-exchange, and revisions that cannot be reused after deletion and recreation within a backend lifetime. Validate durable schema compatibility. Publish invalidations only after successful writes or commits. Bound observation queues and report overflow explicitly. Let consumers decide how to refresh. A resource request does not grant access.
 
-## Layout And Typed Ports
+## Agent composition
 
-`#[derive(Ports)]` describes the same canonical interface as manual `PortDef`s.
-Renamed/raw fields, generic records and nested `#[input(flatten)]` input records
-produce selectable named leaf ports, not hidden grouped queue slots or another
-interface authority. `InputGroup<T>` namespaces leaves; `InputRecord` and
-`ProcessContext::input_record` reconstruct only reserved leaves.
+Start with executable mocks. Exercise real contribution selection, nested extension, replacement, event attachment, cancellation, failure, feedback, and generation ownership before integrating production tools or models.
 
-The private `Value::map_local` helper
-attaches source leases to the returned envelope and supports moving a unique
-leased, move-only leaf. Shared move-only leaves fail rather than clone. Explicit
-Arc leaves and encoded reconstruction retain source envelopes. This is scoped
-reconstruction, not permission to detach raw payloads via callback side effects.
-Typed Ports rename/nested-inputrecord and leased ownership regressions pass. Generic
-flattening is limited to input-record leaves; arbitrary old recursive layout
-syntax and output-record reconstruction are not promised.
+- Basic harness: accept requests, invoke a model, stream output, dispatch tools, return tool results to the model, and observe completion. Compose the agent loop as a network rather than an opaque process.
+- Advanced harness: extend the same contracts with tool environment selection, state, context, observers, and additional flows. Neither preset has privileged runtime access.
+- Agent Client Protocol (ACP): make it an optional plugin for both harnesses. Translate incoming protocol events into authorized graph inputs and observe outgoing graph events. Keep protocol handling outside the scheduler.
 
-## Closure, Requests And Recovery
+Keep provider selection, credentials, and durable application state outside Graph.
 
-Closing ingress/outgoing connections preserves accepted queued packets for drain.
-EOS is empty-and-closed across all feeding connections, not a synthetic packet or
-global idleness. Readers wake for EOS without a data reservation. Early reader
-finish and impossible required joins fail/account accepted undelivered packets;
-explicit disposal is not processing success. Pending fanout to a closed reader
-fails without partial delivery. Cancellation invalidates tickets/wakes and
-accounts disposed queued/pending packets; committed effects do not roll back.
+## Performance and progress requirements
 
-`begin_request`, `inject_request`, `start_request_source`, `close_request`,
-`request_status`, `take_request_output`, `validate_capture` and `release_request`
-make request admission/closure explicit. Session/generation-qualified request IDs
-cannot be manufactured from labels. Settlement accounts for queued, reserved,
-dispatched, continuation and pending-publication work, not just the first capture.
-Capture identity includes the exact export and actual producer origin.
+These requirements retain the scope of the original acceptance findings. Track implementation status in issues and PRs, not here.
 
-Head-only correlation preserves FIFO, including head blocking on crossed requests.
-There is no silent deeper-candidate search or general arrival-skew equivalence.
-Request-local optional absence and staged closure are tested against conservative
-reachable upstream-work accounting. A live required producer must not be replaced
-by optional EOS; exhausted required groups fail. General cycle absence/progress
-proofs and a production arbitrary-skew demultiplexing guarantee remain pending.
-The historical fixed-lane probes establish limits, not a shipped adapter promise.
+| Finding | Acceptance requirement |
+| --- | --- |
+| H4 | Measure scheduling work and latency on representative workloads. Change mandatory source, custom, staged, or global scans only with sound invalidation. |
+| H5 | Measure repeated upstream closure proofs and global EOS. Preserve exact closure results and witnesses. |
+| H6 | Establish representative latency, throughput, allocation, live-memory, and concurrency budgets. Local measurements alone do not establish a portable service-level objective. |
+| H7 | Define supported independent progress, state and effect continuity, capture backpressure, and resource bounds before choosing shared state, independent sessions, or request-local process instances. |
+| Q2 | Measure dependency-aware recompilation and recomposition. Preserve canonical fallback and fresh authority. |
+| Q3 | Verify planning limits and Kernel prefixes and previews. Measure dense priorities, defeat and recovery, skew, diamonds, hierarchical edits, and ordered splices. |
+| Q4 | Define a structural subset and sound reject, unknown, and progress outcomes under explicit environment assumptions. Arbitrary native callbacks and cycles have no universal static liveness guarantee. |
 
-`RequestFailurePolicy::FailSession` is the default. Opt-in
-`RestartAffectedProcess` respawns affected active process state on request failure
-or cancellation, without resetting unrelated state, resources or external effects.
-Budget exhaustion is resumable. `SessionState` (not proposed `NetworkState`)
-distinguishes `Runnable`, `Quiescent`, `Waiting`, `Completed`, `Cancelled`, `Failed`.
-Open idle ingress is not completion. Physical cycles are legal; recursive
-definitions are not. Blocked queue/cycle diagnostics are not progress guarantees.
+## Acceptance
 
-## Composition And Replacement
-
-`NetworkPatch` owns immutable `Edit`s, not callbacks. Trusted host `Registration`
-separately supplies ID, dependency set, integer priority, exact origin and grants.
-Only root public declarations are editable; private nested writes reject even
-with an exact-looking grant. Grants name a component, exact connection endpoints,
-directional export or source start; they never imply incident edges, descendants,
-namespace prefixes or semantic membership. Payload origins, including nested
-definitions, must be absent or exactly the registration origin.
-
-Dependencies must exist and form a DAG. They order writes; independent overlapping
-writes require unequal priorities, otherwise reject. Higher-priority selection
-defeats the losing registration as a whole; defeated prerequisites deactivate
-dependents, which cannot suppress eligible independent patches. Independent
-splices of one anchor remain ambiguous even with priorities. Ordered splices
-require explicit grants for the anchor and every removed/generated edge.
-
-Replacement changes the definition at a stable symbolic path, preserving adjacent
-edges/exports but revoking old authoring revisions. Full public interface equality
-and inherited explicit obligations are required in both body directions. Every
-Add/Replace checkpoints claims/private requirements, even within one patch.
-Candidate errors/panics cannot publish partial topology or registry changes.
-Replay never spawns factories or executes processes. `Composer::revoke` recomposes
-from base and deactivates transitive dependents, not inverse-edit callbacks.
-
-Kernel binds selected plugin revisions, approved grants, exact offers/imports and
-leases outside patch payloads. Retirement stops old producer admission without
-pretending to unload code retained by old compiled handles, sessions or jobs.
-StorageGraph preserves one bounded pending producer notice, explicit overflow/
-rescan semantics, subscribe-before-bootstrap, exact query origin and dispatch guards.
-
-## Leases And Inspection
-
-Compiled clones, detached factories, directly spawned processes, jobs, emissions,
-captures, typed payloads and retained producer/plugin failures pin their code and
-application owners through destruction. `Value` representation and `Packet`
-payload mutation are private. `borrow` exposes only a borrow; owning typed
-extraction uses `Leased<T>`, not a bare `T`/`Arc<T>` escape. Private reconstruction
-preserves leases on success, error and unwind. Cloning application data through a
-borrow remains the application's responsibility.
-
-Captures are bounded FIFOs (`SessionOptions::capture_capacity`) that must be
-drained to release publication credit. Native metadata inspection does not spawn
-factories. `RunReport` exposes state, steps, publications, disposed packets,
-discarded emissions and budget exhaustion, with queue/wait/last-step diagnostics.
-Legacy wildcard/full-payload tracing, wave reports and exact baseline report
-counters are not retained. No unbounded trace history, complete event ledger or
-performance-equivalent telemetry is claimed; those telemetry limits are accepted.
-
-## References And Evidence
-
-Morrison FBP motivates stateful processes and bounded FIFO packets; NoFlo motivates
-one primitive/composite boundary; NiFi motivates capacity diagnostics; Timely
-motivates explicit work accounting, not invented global frontier guarantees.
-DFIR inspired validate-once lowering, but no DFIR backend dependency or experimental
-spike was adopted. The native engine is the chosen implementation. No measured
-throughput, allocation or performance improvement is claimed.
-
-The [regression ledger](fbp-regression-ledger.md) records M6 removals and named
-native tests, including independent randomized composition models. Final counts
-belong to [measurements](fbp-measurements.md), not estimates here. Remaining gaps
-and final verification status are recorded in the migration/review documents.
+Use tests for public contracts, actual mock networks, negative paths, stale authority, backpressure, cancellation, cleanup, and retained generations. Use oracles for compiler and selector equivalence, bounded interleaving models for concurrency, and paired benchmarks for performance claims. Exercise default and no-default feature builds. Do not claim more than the tests and exact-head CI establish.
