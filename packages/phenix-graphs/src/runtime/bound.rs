@@ -272,6 +272,34 @@ impl NetworkSession {
         self.take_output(capture.name())
             .map(|packet| packet.map(|packet| capture.retain_packet(packet)))
     }
+    /// Relieve only unscoped observation backpressure. A packet owned by any
+    /// live request remains available for its authenticated scoped capture read,
+    /// even when the caller is trying to make progress on another request.
+    ///
+    /// This examines only the canonical FIFO head. Never skip or discard a
+    /// request-owned packet to free capacity for an unrelated demand.
+    pub fn take_bound_unscoped_output(
+        &mut self,
+        capture: &CaptureHandle,
+    ) -> Result<Option<Packet>, ConnectionError> {
+        capture
+            .validate(&self.compiled)
+            .map_err(|_| ConnectionError::ForeignTopology)?;
+        self.supervise_configured_deferred();
+        let index = *self
+            .captures
+            .get(capture.name())
+            .ok_or(ConnectionError::InvalidDestination)?;
+        if self.transport.queues()[index]
+            .head()
+            .is_some_and(|packet| packet.metadata().and_then(|meta| meta.request()).is_some())
+        {
+            return Ok(None);
+        }
+        self.take_capture(capture.name(), index)
+            .map(|packet| packet.map(|packet| capture.retain_packet(packet)))
+    }
+
     pub fn take_bound_request_output(
         &mut self,
         id: RequestId,

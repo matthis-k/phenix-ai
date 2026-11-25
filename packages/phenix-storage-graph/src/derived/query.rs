@@ -274,7 +274,7 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 let mut drained = false;
                                 for output in &self.binding.captures {
                                     while session
-                                        .take_bound_output(&output.handle)
+                                        .take_bound_unscoped_output(&output.handle)
                                         .map_err(Error::Transport)?
                                         .is_some()
                                     {
@@ -323,15 +323,15 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                         }
                         let mut drained = false;
                         for output in &self.binding.captures {
-                            // Drain older observation captures too: they cannot satisfy
-                            // this request, and retaining them would block its fanout.
+                            // Only unscoped observations are expendable. Another
+                            // live request's capture must remain under its owner.
                             loop {
                                 let packet = match session
                                     .take_bound_request_output(request, &output.handle)?
                                 {
                                     Some(packet) => packet,
                                     None => match session
-                                        .take_bound_output(&output.handle)
+                                        .take_bound_unscoped_output(&output.handle)
                                         .map_err(Error::Transport)?
                                     {
                                         Some(packet) => packet,
