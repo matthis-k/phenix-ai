@@ -172,6 +172,13 @@ limits and examples. Add to this document only when requirements, library
 boundaries or product-level architecture actually change. Historical design and
 acceptance records are available in [the pre-consolidation tree](https://github.com/matthis-k/phenix-ai/tree/1d4f85713b984c7c269e0cabaff37479e74a7947/docs).
 
+Storage requirements: stable host-issued identities independent of physical paths,
+explicit grants, versioned CAS with no ABA, atomic commit/invalidation, bounded
+lossy observation with explicit overflow, and explicit durable schema compatibility.
+See the current [Storage guide](storage.md) and [scoped resource guide](scoped-storage.md)
+for the remaining storage-specific API reference. [CI operations](infrastructure.md)
+are separate from architecture.
+
 Source entry points: [Graph](../packages/phenix-graphs/src/lib.rs),
 [Kernel](../packages/phenix-kernel/src/lib.rs),
 [Plugin](../packages/phenix-plugins/src/lib.rs),

@@ -1,12 +1,9 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
 //!
-//! # Native Network Kernel
-//!
 //! The kernel resolves plugin contributions, builds host-authorized native network
 //! patches, and leases a persistent `NetworkSession` without holding the ownership
 //! mutex through plugin callbacks. Contending Kernel session access fails fast.
-//! It adds no scheduler or
-//! legacy execution adapter. Native Rust plugins are not a sandbox or a dynamic ABI.
+//! It adds no scheduler or legacy execution adapter. Native Rust plugins are not a sandbox or a dynamic ABI.
 //!
 //! ## Composer Registration
 //!
@@ -70,11 +67,8 @@
 //! that contribution's preparation. External callback effects are not rolled back.
 //! Host `planning_limits: phenix_graph::compose::PlanningLimits` defaults to
 //! `max_units: 1_000_000`. Unlike selection, its consumed counter is shared across
-//! ALL main prefix admissions and self-import previews in one build. This is a new
-//! resource/admission policy; previously valid unbounded inputs can now require an
-//! explicitly larger finite allowance. Default success is pinned for 16/32-contribution
-//! real-write prefixes, self-previews and dense priorities, with 16-contribution
-//! preview rebuilds. A 64-contribution preview fixture needs a larger allowance.
+//! all main prefix admissions and self-import previews in one build. A larger
+//! finite allowance may be required; consult `phenix_graph::compose::PlanningLimits`.
 //! Logical units include composition registry/text/dependency/footprint/index,
 //! ancestry/blocker and manifest construction, with charges before growth. They
 //! exclude incoming registration construction, catalog/import matching, callback and
@@ -132,8 +126,8 @@
 //! - `inject_key(&self, InputKey<T>, T)` pairs a public input name with its payload;
 //!   local and encoded keys preserve their modes. Conversion precedes session access,
 //!   and failure returns the constructed Value. Generation forwards the same method.
-//! - `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, String>` permits native requests, captures, completions and wakes only after start.
-//! - `run_steps(&self, budget: usize) -> Result<RunReport, String>` executes bounded native steps through the actual dispatcher and worker execution guards.
+//! - `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, SessionAccessError>` permits native requests, captures, completions and wakes only after start.
+//! - `run_steps(&self, budget: usize) -> Result<RunReport, SessionAccessError>` executes bounded native steps through the actual dispatcher and worker execution guards.
 //! - `drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError>` only
 //!   polls/admits events; it never runs process steps. A live blocking driver owns
 //!   polling exclusively. `ProducerEvent.result` is `Result<(), ProducerError>`.
@@ -165,65 +159,8 @@
 //! cause drops before its lease. Retaining an error intentionally delays plugin code
 //! teardown even after its failed candidate and owned producers have been released.
 //!
-//! ## Host Publication
 //!
-//! `KernelHost::prepare(stages, options, dispatcher, name, bind)` builds the exact
-//! candidate inventory, invokes the nonadmitting binding hook, then activates producers
-//! without polling. The hook receives only:
-//!
-//! ```rust,ignore
-//! Binding::export::<T>(&Key) -> Option<&T>
-//! Binding::inspect(&str) -> Result<ComponentSnapshot, NetworkError>
-//! Binding::lookup_definition(DefinitionKey) -> Result<PhysicalDeclaration, NetworkError>
-//! Binding::input_targets(&str) -> Option<&[(usize, String)]>
-//! Binding::output_source(&str) -> Option<(usize, &str)>
-//! ```
-//!
-//! There is no session or startable compiled-network getter on `Binding`.
-//! Use opaque `DefinitionKey` identities, not factory/action pointer equality.
-//! `publish(candidate)` rejects foreign/stale hosts and epochs, commits the plugin
-//! batch, retires old owned producers and replaces the generation. Publication waits
-//! only for producer drains, never old explicit session work. Old `Generation` handles
-//! retain `inject`, `with_session`, `run_steps`, `compiled`, `with_kernel` and exports;
-//! their retired producer drains remain empty. Candidate drop releases artifacts and
-//! producers before their plugin leases. Native callback external effects are not
-//! sandboxed or rolled back. Typed callback errors preserve their exact source.
-//!
-//! Run `cargo test -p phenix-plugin -p phenix-kernel`. Storage integration targets also
-//! require the independently migrated StorageGraph adapter.
-//!
-//! ## Host Wake Hints
-//!
-//! `KernelHost::with_wake(plugins, wake.clone())` opts into producer/publication
-//! notifications; `new` remains manual. Preparation builds, binds, and starts before
-//! registering producer wakers, with shutdown checks on either side of registration.
-//! It never polls or runs candidate process steps or installs a session notifier.
-//! Unsupported/panicking registration and shutdown return `LifecycleError::Driver`.
-//! Activation/subscription may perform I/O, and failed candidates may signal hints;
-//! these external effects and wake versions are not rolled back. Shutdown checks
-//! are not atomic publication revocation of an already prepared candidate.
-//!
-//! `WakeHandle::version()` snapshots a wrapping change hint. Snapshot before work
-//! inspection, then `wait_since(version)` waits for a different version or sticky
-//! shutdown, looping through spurious wakes. `is_shutdown()` must also be checked
-//! during busy iterations. Wakes notify all waiters before forwarding to the native
-//! driver notifier, without holding the epoch mutex during forwarding. Versions
-//! are neither event counts nor generation IDs. Publication signals after the new
-//! active pointer is visible and the old drain gate is released, before old producer
-//! destructors, including on first publication.
-//!
-//! This is **source/publication-driven only**, not a general scheduler. An empty
-//! bounded drain is not idle: finish a sweep using an application-known producer
-//! bound, execute bounded steps, drain captures/backpressure, and retry after
-//! progress or exhausted budgets. Graph process wakes, worker completion, deadlines,
-//! explicit injection, and session-lease release do not automatically advance the
-//! host version. Keep native `run_until` or coordinate those sources independently.
-//! Never hold a host mutex while processing or waiting. Mixing host-reactor and
-//! static-driver modes with different wake handles, including handover back to the
-//! host after static registration, is unsupported: producer wakers are not restored.
-//!
-//! `DerivedHost::with_wake` forwards this opt-in without changing mandatory storage
-//! guards. Wake hints are advisory; publication and session ownership remain independent of readiness notification.
+//! See [host] for publication and wake hints.
 mod bound;
 mod build;
 mod config_error;

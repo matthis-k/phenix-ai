@@ -253,7 +253,7 @@ explicit integration task: poll/drain at synchronous scheduling boundaries, map
 notices to dependent graph inputs, and rescan on overflow. No callbacks execute
 from the notification path.
 
-## Limits And Verification
+## Limits
 
 Each mount has its own mutex. Recursive same-mount entry returns
 `Error::Reentrant` on the same thread. Nested cross-mount transactions can
@@ -273,107 +273,10 @@ Drain does not wait for an event; it may briefly contend with queue publication.
 Registry registration and grant issuance
 are not concurrency-restricted after startup, so the host should own their policy.
 
-Tests cover strict parsing, duplicates, missing resources, authority isolation,
-each schema field, memory KV, queue ordering/overflow/scope, concurrent writes,
-native SQLite types and parameterization, SQL authority, transaction-control
-denial, rollback, deferred commit failure, implicit rollback, and panic behavior.
-Tests also cover observation metadata, closed subscriptions, PRAGMA and pragma
-function denial, VACUUM/ATTACH file escape attempts, codec failures and structured
-SQL errors. The kernel integration tests exercise both backends through real
-plugin contributions, separate bounded notification waves, schema rejection and
-overflow delivery. Run from the workspace with `cargo test --locked -p
-phenix-storage`, `cargo test --locked -p phenix-kernel`, and `cargo run --locked -p
-phenix-kernel --example storage`.
-
 The bundled backends are memory and SQLite, but external typed-KV backends
 can implement the object-safe `Backend` interface and be contributed through
 `phenix-storage-plugin`. Native `SqlBackend` still exposes rusqlite and is
 not PostgreSQL-neutral. Canonical structural schema support exists in
 `phenix-schema`; a hand-written codec may still falsely claim compatible bytes.
 No arbitrary codec is proven correct by the descriptor alone. SQL registration
-metadata does not type-check SQL rows. The [scoped review](scoped-storage-review.md)
-records provider-validation limits and verification status, not a claim of green CI.
-
-## Public Abstraction Review
-
-Each row answers six questions: who owns it, what invariant it enforces, what
-existing facility it uses, why it exists, which phase it simplifies, and whether
-it can be replaced. Phase describes current use, not a promised roadmap.
-
-| Public abstraction | Ownership | Invariant | Existing facility | Reason | Simplifies phase | Replaceability |
-| --- | --- | --- | --- | --- | --- | --- |
-| `Address` | Host/plugin value | Canonical logical mount/dataset, never a path | Strings and strict byte validation | Stable resource identity | Provisioning and lookup | Grammar is public; parser internals replaceable |
-| `Schema` | Host registers; codec author declares | Four fields must compare equal | Owned strings and revision | Reject declared schema/codec mismatch, not prove structure | Registration and typed access | Descriptor convention is application-owned; no migration |
-| `Codec` | Application author | Typed value/bytes boundary with declared schema | Associated type and byte vectors | Avoid mandatory serialization format | Memory encode/decode | Application can replace implementation if metadata and bytes remain truthful |
-| `Operation` | Host grant policy | Independent KV/subscription operations; SQL transaction levels explicitly interpreted | Closed enum | Explicit permission vocabulary | Authorization | New operations require API/policy changes |
-| `Scope` | Host grants; plugin subscriptions | Exact dataset or whole mount, no prefixes | `Address`/mount string | Align authority and invalidation scope | Authorization and delivery | Closed enum; changing scope semantics affects policy |
-| `Grant` | Host declaration, copied into session | Declaration alone conveys no authority | Set of operations | Explicit session provisioning | Host setup | Host policy replaceable; issuance remains trusted |
-| `Registry` | Trusted host; shared handles | Unique mounts/datasets, trusted issuance, per-mount mutation | Registry map plus per-mount `Arc<Mutex<_>>` | Resource and authority root | Provisioning and commit | Object-safe external backend support; plugin bridge optional |
-| `Session` | Host issues; plugin holds/clones | Immutable explicit grants; authorize before lookup | Shared registry and grant vector | Separate use from provisioning authority | Plugin execution | Internal authorization replaceable, public semantics must hold |
-| `Capabilities` | Adapter returns to authorized caller | Features, including atomic CAS, are not permissions | Booleans and `Observation` | Report supported access modes | Binding setup | Closed report; provider declarations are separate |
-| `Capability` | Adapter error metadata | Unsupported identifies `TypedKv`, `Sql` or `CompareExchange` | Closed enum | Machine-readable failure | Access failure handling | Additions require API review |
-| `Observation` | Adapter constructs; consumer reads | Source, coverage and delivery travel together | Three closed enums | Make invalidation limits explicit | Binding and rescan policy | Representation replaceable only preserving stated guarantees |
-| `ObservationSource` | Adapter metadata | Only `RegistryWrites`, not external changes | Closed enum | Prevent change-capture assumptions | Observation interpretation | New source needs real implementation |
-| `ObservationCoverage` | Backend metadata | `Key` for memory, `Mount` for SQLite | Closed enum | Avoid fake row/table precision | Dependency invalidation | New precision needs evidence and implementation |
-| `ObservationDelivery` | Queue contract | Only `BoundedNonDurableWithOverflow` | Closed enum | State loss and overflow behavior | Consumer recovery | Durable delivery is not a drop-in claim |
-| `Sql` | Adapter lends to callback | Connection cannot escape; transaction state checked | rusqlite prepare/transaction/authorizer | Native SQL without a new SQL language | SQLite execution | Facade internals replaceable; SQLite semantics remain exposed |
-| `Row` | Adapter lends to decoder | Borrowed row cannot escape; typed indexed reads | rusqlite `Row` and `FromSql` | Decode without exposing connection/raw row | Result decoding | Thin facade replaceable within lifetime contract |
-| `ToSql` (re-export) | rusqlite; caller implements/borrows | Native parameter conversion | rusqlite trait | Reuse maintained binding API | Parameter binding | Deliberate driver coupling, not backend-neutral |
-| `FromSql` (re-export) | rusqlite; decoder chooses type | Native result conversion | rusqlite trait | Reuse maintained decoding API | Row decoding | Deliberate driver coupling |
-| `Value` (re-export) | Caller-owned SQL value | Native SQLite value variants | rusqlite enum | Dynamic values without JSON | Binding/decoding | Driver type, not a universal storage value |
-| `Invalidation` | Registry emits; consumer owns | Ordered registry-local metadata, not row values | Sequence, scope, key, observation | Identify what to re-read conservatively | Cache/graph binding | Consumer mapping replaceable; not a durable event format |
-| `Notice` | Queue emits; consumer owns | Change or explicit overflow watermark | Closed enum | Never silently hide queue overflow | Drain and recovery | New outcomes require consumer review |
-| `Subscription` | Plugin/consumer; weak registry reference | Bounded queue; drop cancels; closed differs from empty | `Weak`, `VecDeque`, mutex | Pull delivery without callback/channel sends | Polling and teardown | Queue internals replaceable within loss/closure contract |
-| `Error` | Library returns; caller handles | Distinguish denial, unsupported, closed and structured SQL failure | Closed enum and rusqlite error source | Actionable failures without string matching | Failure handling | Variants are public; driver coupling is explicit |
-| `Result<T>` | Library/caller | Common error channel | Standard `Result<T, Error>` alias | Consistent signatures | All fallible phases | Alias only, no new runtime abstraction |
-
-## Research Links
-
-- [SpacetimeDB repository](https://github.com/clockworklabs/SpacetimeDB)
-- [SpacetimeDB documentation](https://spacetimedb.com/docs/)
-- [SurrealDB repository](https://github.com/surrealdb/surrealdb)
-- [SurrealDB LIVE SELECT](https://surrealdb.com/docs/surrealql/statements/live)
-- [SQLx repository and runtime support](https://github.com/launchbadge/sqlx)
-- [SQLx documentation](https://docs.rs/sqlx/latest/sqlx/)
-- [SeaQuery repository](https://github.com/SeaQL/sea-query)
-- [SeaQuery SQL builders and values](https://docs.rs/sea-query/latest/sea_query/)
-- [redb repository](https://github.com/cberner/redb)
-- [redb documentation](https://docs.rs/redb/latest/redb/)
-- [PostgreSQL LISTEN](https://www.postgresql.org/docs/current/sql-listen.html)
-- [PostgreSQL NOTIFY](https://www.postgresql.org/docs/current/sql-notify.html)
-
-- [rusqlite API and maintained repository](https://github.com/rusqlite/rusqlite)
-- [rusqlite bundled feature and SQLite build](https://docs.rs/rusqlite/latest/rusqlite/#notes-on-building-rusqlite-and-libsqlite3-sys)
-- [rusqlite transactions](https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html)
-- [rusqlite FromSql](https://docs.rs/rusqlite/latest/rusqlite/types/trait.FromSql.html)
-- [SQLite parameter binding](https://www.sqlite.org/c3ref/bind_blob.html)
-- [SQLite authorizer](https://www.sqlite.org/c3ref/set_authorizer.html)
-- [SQLite transaction semantics and automatic rollback](https://www.sqlite.org/lang_transaction.html)
-- [SQLite update-hook limitations](https://www.sqlite.org/c3ref/update_hook.html)
-- [SQLite commit-hook restrictions](https://www.sqlite.org/c3ref/commit_hook.html)
-
-SQLite update hooks alone do not establish commit success and do not cover all
-changes. This implementation deliberately tracks writes at its facade and emits
-conservative invalidation only after commit, instead of advertising hook-based
-metadata as complete database change capture.
-
-SpacetimeDB's subscription model combines an initial query result snapshot with
-ongoing matching changes maintained in a client cache. An initial snapshot alone
-is not a live subscription. This crate provides neither that snapshot/live handoff
-nor maintained query results: callers read explicitly and drain lossy invalidation
-notices. It does not embed SpacetimeDB, and its registry sequence is not a database
-snapshot token. SurrealDB's LIVE SELECT is likewise a database-managed live-query
-facility, not equivalent to these mount/key notices; no SurrealDB adapter exists.
-
-SQLx is absent deliberately: this synchronous, SQLite-only implementation uses
-rusqlite's native binding, typed decoding, transactions and authorizer hooks without
-requiring an async runtime or introducing a second driver API. This is a scope
-choice, not a claim that SQLx is unmaintained or unsuitable for other applications.
-An application author can use SeaQuery to build SQLite SQL and supply the resulting
-SQL text and rusqlite-compatible bound parameters to `Sql`. Builder values need
-appropriate conversion; there is no built-in SeaQuery adapter. No additional SQL
-parser is required: SQLite parses and the authorizer enforces the connection
-boundary. A builder neither creates authority nor makes identifiers value parameters.
-
-No redb, PostgreSQL or SurrealDB backend is implemented. The research links do not
-imply adapters, durable observation, replay or automatic graph binding.
+metadata does not type-check SQL rows.

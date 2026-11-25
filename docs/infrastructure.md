@@ -16,6 +16,7 @@
 | `integration` | Integration workspace packages when present; otherwise kernel/storage integration target |
 | `kernel-smoke` | Build, install, and execute the release kernel example |
 | `workflow` | Generated GitHub caller matches the committed file |
+| `docs` | Repository-relative Markdown link targets exist |
 
 `packages.x86_64-linux.kernel-smoke` installs `bin/kernel-smoke`, not Rust
 compiler intermediates. There is intentionally no default package. The smoke

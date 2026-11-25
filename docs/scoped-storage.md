@@ -2,8 +2,7 @@
 
 Implemented in `phenix_storage::scoped` and the optional
 `phenix-storage-plugin` host bridge. See [Storage](storage.md) for the low-level
-contract and [Review](scoped-storage-review.md) for the exact `eeb39b64` baseline
-comparison, architecture assessment, review fixes and verification status.
+contract.
 The [bridge README](../packages/phenix-storage-plugin/README.md) describes the
 same public API in more detail.
 
@@ -224,7 +223,7 @@ writer, observer and SQL code-index plugins into **one PluginSet**, collects and
 later composes the same snapshots, activates host-approved storage, then injects
 each view exactly once through `Arc<OnceLock<Arc<Storage>>>`. Deferred graph
 composition reads the injected views; there is no reload/second contribution pass.
-The observer uses `StorageBinding` for bounded invalidation waves. The kernel owns
+The observer uses `StorageBinding` for bounded invalidation events. The kernel owns
 neither domain logic nor storage policy. Overflow still requires consumer rescan.
 
 Blob/search adapters, secrets storage, durable observation and snapshot/subscription

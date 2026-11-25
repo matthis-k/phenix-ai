@@ -5,6 +5,87 @@
 //! Per-emission destination selection narrows existing process connections only.
 //! Exported captures observe every committed emission, even an empty process
 //! selection; use separate output ports when different observations are desired.
+//!
+//! # Streams and ownership
+//!
+//! `inject` returns the original value on `Full`, type mismatch or closure. A retained
+//! emission waits for all selected destinations without rerunning its action.
+//! `run_until_idle(budget)` yields at quiescence, delayed work or backpressure; it
+//! does not imply completion. Close public inputs and drain captures to complete.
+//! Feedback is legal, but full queue cycles can deadlock and are diagnostic.
+//!
+//! Custom `Process::step` implementations return one `Step::Emit` at a time.
+//! `Step::Complete` settles an activation; `Step::Finished` terminates the process.
+//! `WaitInput`, `WaitInputs` and `WaitWake` preserve its continuation. Typed `Ports`
+//! keys and input-record reconstruction are optional; manual interfaces use the
+//! same representation and do not require derive support.
+//!
+//! Local values use `TypeId`; encoded values use the complete versioned schema and
+//! codec identity. Structural compatibility never establishes a semantic `Contract`
+//! claim. Values carrying plugin/resource leases reject bare owned extraction;
+//! `borrow`, `leased_shared` and `decoded` preserve the ownership boundary.
+//!
+
+//!
+//! # Independent request queues
+//!
+//! Shared FIFO is the default. Opt-in bounded lanes keep FIFO within each request and
+//! separate ingress, internal edges and captures, without duplicating process state.
+//! Use request-specific capture reads in this mode; `take_output` reads unscoped traffic.
+//! A process holding a staged continuation or blocked publication still serializes
+//! other requests. Queue capacities bound packet counts, not arbitrary payload bytes.
+//!
+//! ```rust
+//! use phenix_graph::{ComponentDef, InputKey, NetworkBuilder, SessionOptions};
+//! use phenix_graph::runtime::{RequestQueuePolicy, RequestStatus};
+//! use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+//! let mut network = NetworkBuilder::new();
+//! let map = network.add("map", Arc::new(ComponentDef::map(|n: i64| n + 1)))?;
+//! network.expose_input("input", map.input::<i64>("input")?, NonZeroUsize::new(1).unwrap())?;
+//! network.expose_output("output", map.output::<i64>("output")?)?;
+//! let mut session = network.build()?.compile()?.start_with_options(SessionOptions {
+//!     max_requests: NonZeroUsize::new(2).unwrap(),
+//!     capture_capacity: NonZeroUsize::new(1).unwrap(),
+//!     request_queue_policy: RequestQueuePolicy::BoundedLanes,
+//!     deferred_timeout: Some(Duration::from_secs(30)),
+//!     ..Default::default()
+//! });
+//! let slow = session.begin_request(Some("output"))?;
+//! let fast = session.begin_request(Some("output"))?;
+//! session.inject_request_key(slow, InputKey::<i64>::new("input"), 1)?;
+//! session.inject_request_key(fast, InputKey::<i64>::new("input"), 2)?;
+//! session.close_request(slow)?;
+//! session.close_request(fast)?;
+//! session.run_until_idle(16);
+//! let packet = session.take_request_output(fast, "output")?.unwrap();
+//! assert_eq!(packet.value().borrow::<i64>(), Some(&3));
+//! assert_eq!(session.request_status(fast)?, RequestStatus::Settled { captures: 1 });
+//! session.release_request(fast)?;
+//! assert!(session.take_request_output(slow, "output")?.is_some());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Deferred timeouts are cooperative ticket invalidation, not worker preemption.
+//! The built-in driver times only jobs whose dispatcher returns `Deferred`; manual
+//! `next_job` handoff starts its timer immediately. Status queries are snapshots until
+//! the session is supervised/driven via `supervise_deferred(Instant::now())` or a driver
+//! operation. `overdue_jobs(now)` is passive; `RunReport::next_deferred_timeout` bounds
+//! the driver's next wait. Execution guards are an ordered
+//! `SessionOptions::execution_guards` list; `ActivationJob::with_guard` appends rather
+//! than replacing installed guards, and guard teardown happens in reverse order.
+//!
+//! `inject_key` and `inject_request_key` pair an existing typed input key with its
+//! payload. `InputKey::new` constructs a local Value; `encoded` uses the canonical
+//! wire codec/schema. Keys name public exports and grant no authority or topology
+//! identity. Conversion runs before admission checks, and failures retain the
+//! constructed Value. Runtime-discovered inputs continue using raw `inject`.
+//!
+//! For a pending request, `request_blocked_queues(id)` passively reports its exact
+//! full publication destinations, including occupancy/capacity. Attribution follows
+//! the pending producer request, not the request owning older buffered packets.
+//! Foreign/released request IDs reject; the query neither supervises deadlines nor
+//! proves deadlock or progress. `blocked_queues()` remains the session-wide view.
+//!
 use crate::connection::{
     ConnectionError, ConnectionQueue, ConnectionSet, FanoutTarget, Packet, PreparedFanout,
 };

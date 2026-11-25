@@ -11,6 +11,7 @@ Document durable knowledge, not the process of acquiring it.
 - Keep design exploration, alternatives, critique, implementation reports and review findings in PR descriptions/discussions or temporary working files outside the committed tree. Preserve the design and review process, not its intermediate paperwork.
 - Track outstanding work in issues and verification in CI. Keep raw benchmark samples and logs in CI artifacts. Do not commit rolling issue ledgers, subjective completion percentages, dated acceptance diaries or CI transcripts.
 - Change the central specification only when durable requirements or architecture change; implementation progress alone is not a specification change.
+- Do not recreate deleted historical design notes, or restore superseded APIs from Git history. Link directly to the historical revision when context is needed.
 - During review, check that changed code has accurate documentation, examples compile, obsolete documentation is removed, and no new duplicate authority or broken reference is introduced.
 - Documentation is not a substitute for implementation or verification. Do not use code-to-documentation ratios or line quotas as quality targets.
 

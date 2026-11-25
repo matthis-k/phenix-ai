@@ -137,6 +137,22 @@
         '';
       };
       checks.${system} = {
+        docs =
+          pkgs.runCommand "phenix-doc-links"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+            }
+            ''
+              python3 ${./ci/check-doc-links.py} ${lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./AGENTS.md
+                  ./docs
+                  ./packages
+                ];
+              }}
+              touch $out
+            '';
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
           touch $out
