@@ -418,9 +418,22 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
             (
                 "incompatible interface",
                 ResolutionError::Compilation {
-                    cause: NetworkError::InterfaceMismatch(_),
+                    cause: NetworkError::Interface(error),
                 },
-            ) => {}
+            ) => {
+                assert_eq!(error.path.as_ref(), LEAF_PATH);
+                assert_eq!(
+                    error.phase,
+                    phenix_graph::interface::InterfacePhase::Authoring
+                );
+                assert_eq!(error.endpoint.as_deref(), Some("output value"));
+                assert_eq!(
+                    *error.reason,
+                    phenix_graph::interface::InterfaceReason::MissingPort
+                );
+                assert!(error.expected.is_some());
+                assert!(error.actual.is_none());
+            }
             (
                 "frozen contract",
                 ResolutionError::Compilation {

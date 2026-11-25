@@ -756,7 +756,7 @@ fn keys_do_not_grant_scope_revision_claim_or_compiled_generation_authority() {
                     echo()
                 ))
             ),
-            Err(NetworkError::InterfaceMismatch(_))
+            Err(NetworkError::Interface(_))
         ));
         assert!(builder.replace(&node, definition).is_err());
         // Failure must not revoke the original scope, endpoint, or bound view.

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::component::ComponentDef;
 use crate::contract::{Contract, catalog};
-use crate::interface::{Interface, PortDef};
+use crate::interface::{Interface, InterfacePhase, PortDef};
 use crate::process::ProcessFactory;
 use crate::{ContractValue, GraphOrigin, TypeIdentity};
 use std::any::TypeId;
@@ -409,9 +409,9 @@ impl NetworkBuilder {
         }
         self.check_component(current)?;
         let old = &self.instances[&current.process];
-        if old.interface != definition.interface {
-            return Err(NetworkError::InterfaceMismatch(current.process.clone()));
-        }
+        old.interface
+            .check_shape(&definition.interface)
+            .map_err(|e| e.context(InterfacePhase::Authoring, &current.process, None))?;
         validate_claims(&definition.interface, &definition.claims, &current.process)?;
         let mut obligations = Vec::new();
         collect_component_obligations(old, &current.process, &mut obligations);

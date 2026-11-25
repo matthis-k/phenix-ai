@@ -425,7 +425,12 @@ impl Compiler {
         for projection in network.inputs.values() {
             self.charge(projection.targets.len(), prefix)?;
         }
-        validate_network(network)?;
+        validate_network(network).map_err(|mut error| {
+            if let NetworkError::Interface(interface) = &mut error {
+                interface.path = qualify(prefix, &interface.path).into();
+            }
+            error
+        })?;
         self.charge(network.claims.len(), prefix)?;
         self.charge(network.requirements.len(), prefix)?;
         self.requirements.extend(
