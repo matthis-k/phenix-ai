@@ -675,11 +675,11 @@ impl CompiledNetwork {
         Some(compiled)
     }
 
-    /// Multiple independent root primitive revocations can share one compiled
-    /// graph copy. Validate each monotone step through the *same* single-node
-    /// oracle, including physical references and exact work/instance charges.
-    /// All surviving declarations and all non-instance scope fields must be
-    /// unchanged. Bound the batch to avoid quadratic validation on huge edits.
+    /// Remove 2–32 independent primitive declarations with one flattened
+    /// index map and one compiled-generation clone. Validate every declaration
+    /// through the same member guard as single removal; checked rebasing also
+    /// rejects any surviving nested/public physical reference to a removed
+    /// index. No partial candidate can escape Composer publication.
     pub(crate) fn reuse_after_batch_isolated_root_removal(
         &self,
         before: &NetworkDef,
@@ -704,18 +704,78 @@ impl CompiledNetwork {
         if removed.len() != count {
             return None;
         }
-        // The definitions contain shared Arcs, so these two symbolic copies
-        // are cheap. No intermediate CompiledNetwork clone or generation is
-        // made; partial candidate mutations are never published by Composer.
-        let mut current = before.clone();
-        let mut next = before.clone();
-        let mut compiled = self.with_fresh_generation();
+        let mut paths = BTreeSet::new();
+        let mut indexes = BTreeSet::new();
+        let mut removed_work = 0u64;
         for name in removed {
-            next.instances.remove(&name)?;
-            let plan = compiled.plan_isolated_root_removal(&current, &next)?;
-            compiled.apply_isolated_root_removal(plan);
-            current.instances.remove(&name)?;
+            let (path, index, work) = self.plan_isolated_root_removal_member(before, &name)?;
+            if !paths.insert(path) || !indexes.insert(index) {
+                return None;
+            }
+            removed_work = removed_work.checked_add(work)?;
         }
+        let work = self.compile_work.checked_sub(removed_work)?;
+        let instances = self
+            .compile_instances
+            .checked_sub(u64::try_from(count).ok()?)?;
+        // A single old->new index map ensures every surviving process,
+        // connection, ingress/egress and nested composite boundary sees the
+        // same stable relocation. The removed index maps to None (never 0).
+        let mut relocation = Vec::with_capacity(self.processes.len());
+        let mut next_index = 0usize;
+        for index in 0..self.processes.len() {
+            if indexes.contains(&index) {
+                relocation.push(None);
+            } else {
+                relocation.push(Some(next_index));
+                next_index = next_index.checked_add(1)?;
+            }
+        }
+        let rebase = |index: &mut usize| -> Option<()> {
+            *index = relocation.get(*index).copied().flatten()?;
+            Some(())
+        };
+        let mut compiled = self.with_fresh_generation();
+        let mut old_index = 0usize;
+        compiled.processes.retain(|_| {
+            let keep = !indexes.contains(&old_index);
+            old_index += 1;
+            keep
+        });
+        compiled.inspections.retain(|path, _| !paths.contains(path));
+        compiled.boundaries.retain(|path, _| !paths.contains(path));
+        for snapshot in compiled.inspections.values_mut() {
+            if let Some(index) = &mut snapshot.physical_index {
+                rebase(index)?;
+            }
+        }
+        for edge in &mut compiled.connections {
+            rebase(&mut edge.from.0)?;
+            rebase(&mut edge.to.0)?;
+        }
+        for targets in compiled.inputs.values_mut() {
+            for (index, _) in targets {
+                rebase(index)?;
+            }
+        }
+        for (index, _) in compiled.outputs.values_mut() {
+            rebase(index)?;
+        }
+        for index in &mut compiled.sources {
+            rebase(index)?;
+        }
+        for boundary in compiled.boundaries.values_mut() {
+            for targets in boundary.inputs.values_mut() {
+                for (index, _) in targets {
+                    rebase(index)?;
+                }
+            }
+            for (index, _) in boundary.outputs.values_mut() {
+                rebase(index)?;
+            }
+        }
+        compiled.compile_work = work;
+        compiled.compile_instances = instances;
         Some(compiled)
     }
 
@@ -736,9 +796,56 @@ impl CompiledNetwork {
             .instances
             .iter()
             .filter(|(name, _)| !after.instances.contains_key(*name));
-        let (name, definition) = removed.next()?;
-        if removed.next().is_some()
-            || !matches!(definition.body(), Body::Primitive(_))
+        let (name, _definition) = removed.next()?;
+        if removed.next().is_some() {
+            return None;
+        }
+        let (name, removed_index, removed_work) =
+            self.plan_isolated_root_removal_member(before, name)?;
+        // Every compiled reference outside the removed declaration must
+        // survive reindexing; never silently redirect a former endpoint.
+        if self.sources.contains(&removed_index)
+            || self
+                .connections
+                .iter()
+                .any(|edge| edge.from.0 == removed_index || edge.to.0 == removed_index)
+            || self
+                .inputs
+                .values()
+                .flatten()
+                .any(|(index, _)| *index == removed_index)
+            || self
+                .outputs
+                .values()
+                .any(|(index, _)| *index == removed_index)
+            || self.boundaries.iter().any(|(path, boundary)| {
+                path != &name
+                    && (boundary
+                        .inputs
+                        .values()
+                        .flatten()
+                        .any(|(index, _)| *index == removed_index)
+                        || boundary
+                            .outputs
+                            .values()
+                            .any(|(index, _)| *index == removed_index))
+            })
+        {
+            return None;
+        }
+        self.compile_work.checked_sub(removed_work)?;
+        self.compile_instances.checked_sub(1)?;
+        Some((name, removed_index, removed_work))
+    }
+    /// One strict semantic declaration guard shared by single and batched
+    /// removals. Physical projections are checked by each caller before reuse.
+    fn plan_isolated_root_removal_member(
+        &self,
+        before: &NetworkDef,
+        name: &String,
+    ) -> Option<(String, usize, u64)> {
+        let definition = before.instances.get(name)?;
+        if !matches!(definition.body(), Body::Primitive(_))
             || !definition.claims().is_empty()
             || before.replacement_points.contains(name)
             || before.sources.contains(name)
@@ -767,37 +874,6 @@ impl CompiledNetwork {
         if self.processes.get(removed_index)?.path != *name || !self.boundaries.contains_key(name) {
             return None;
         }
-        // Every compiled reference outside the removed declaration must
-        // survive reindexing; never silently redirect a former endpoint.
-        if self.sources.contains(&removed_index)
-            || self
-                .connections
-                .iter()
-                .any(|edge| edge.from.0 == removed_index || edge.to.0 == removed_index)
-            || self
-                .inputs
-                .values()
-                .flatten()
-                .any(|(index, _)| *index == removed_index)
-            || self
-                .outputs
-                .values()
-                .any(|(index, _)| *index == removed_index)
-            || self.boundaries.iter().any(|(path, boundary)| {
-                path != name
-                    && (boundary
-                        .inputs
-                        .values()
-                        .flatten()
-                        .any(|(index, _)| *index == removed_index)
-                        || boundary
-                            .outputs
-                            .values()
-                            .any(|(index, _)| *index == removed_index))
-            })
-        {
-            return None;
-        }
         let removed_work = u64::try_from(
             definition
                 .interface()
@@ -808,10 +884,9 @@ impl CompiledNetwork {
                 .checked_add(1)?,
         )
         .ok()?;
-        self.compile_work.checked_sub(removed_work)?;
-        self.compile_instances.checked_sub(1)?;
         Some((name.clone(), removed_index, removed_work))
     }
+
     fn apply_isolated_root_removal(&mut self, plan: (String, usize, u64)) {
         let (name, removed_index, removed_work) = plan;
         self.processes.remove(removed_index);
@@ -1719,6 +1794,32 @@ mod batch_isolated_root_removal_tests {
             composer.current().compiled().compile_work,
             canonical.compile_work
         );
+    }
+
+    #[test]
+    fn batch_rebase_refuses_hidden_physical_references_without_mutating_original() {
+        let (before, _) = fixture();
+        let mut after = before.clone();
+        after.instances.remove("b0");
+        after.instances.remove("b2");
+        // Simulate an old compiler generation with a physically projected
+        // endpoint to a component that otherwise looks isolated symbolically.
+        // This must refuse reuse; physical index 1 may never be redirected.
+        let mut tampered = before.compile().unwrap();
+        let removed_index = tampered.inspect("b0").unwrap().physical_index.unwrap();
+        tampered
+            .outputs
+            .insert("hidden".into(), (removed_index, "output".into()));
+        let old_len = tampered.processes().len();
+        let old_work = tampered.compile_work;
+        assert!(
+            tampered
+                .reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+        assert_eq!(tampered.processes().len(), old_len);
+        assert_eq!(tampered.compile_work, old_work);
+        assert_eq!(tampered.outputs["hidden"].0, removed_index);
     }
 
     #[test]
