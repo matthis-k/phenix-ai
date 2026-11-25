@@ -168,55 +168,58 @@ pub(super) fn plan(
     // Fail closed on ambiguities, even when a third registration could defeat
     // one participant. Dependency ordering is the only splice ordering key.
     let mut blockers = Vec::new();
-    for (i, j) in conflict_candidates(registrations, order, &footprints) {
-        // The topological replay order forbids j being an ancestor of i.
-        // Cache closures only for registrations with a potential collision.
-        if ancestor_cache[j].get_or_insert_with(|| dependencies.ancestor_mask(j))[i] {
-            continue;
-        }
-        let a = &order[i];
-        let b = &order[j];
-        let left = &footprints[a];
-        let right = &footprints[b];
-        // Check all anchors, not just the first colliding footprint: the
-        // patches may also collide on an added component declaration.
-        for edit in registrations[a].patch.edits() {
-            if let Edit::Splice { anchor, .. } = edit
-                && registrations[b].patch.edits().iter().any(
-                    |other| matches!(other, Edit::Splice { anchor: other, .. } if other == anchor),
-                )
+    let collisions = ConflictIndex::new(registrations, order, &footprints);
+    for i in 0..order.len() {
+        for j in collisions.after(i, registrations, order, &footprints) {
+            // The topological replay order forbids j being an ancestor of i.
+            // Cache closures only for registrations with a potential collision.
+            if ancestor_cache[j].get_or_insert_with(|| dependencies.ancestor_mask(j))[i] {
+                continue;
+            }
+            let a = &order[i];
+            let b = &order[j];
+            let left = &footprints[a];
+            let right = &footprints[b];
+            // Check all anchors, not just the first colliding footprint: the
+            // patches may also collide on an added component declaration.
+            for edit in registrations[a].patch.edits() {
+                if let Edit::Splice { anchor, .. } = edit
+                    && registrations[b].patch.edits().iter().any(
+                        |other| matches!(other, Edit::Splice { anchor: other, .. } if other == anchor),
+                    )
+                {
+                    return Err(ComposeError::Conflict {
+                        first: a.clone(),
+                        second: b.clone(),
+                        footprint: Box::new(Footprint::Connection(anchor.clone())),
+                    });
+                }
+            }
+            // New nested exports may depend on a declaration introduced by
+            // another plugin. Reject undeclared dependencies regardless of
+            // lexical replay order, and reject an independent ancestor revision
+            // that would overwrite the exported port.
+            if let Some(path) = nested_export_dependency(&registrations[a], &registrations[b])
+                .or_else(|| nested_export_dependency(&registrations[b], &registrations[a]))
             {
                 return Err(ComposeError::Conflict {
                     first: a.clone(),
                     second: b.clone(),
-                    footprint: Box::new(Footprint::Connection(anchor.clone())),
+                    footprint: Box::new(Footprint::Component(path)),
                 });
             }
-        }
-        // New nested exports may depend on a declaration introduced by
-        // another plugin. Reject undeclared dependencies regardless of
-        // lexical replay order, and reject an independent ancestor revision
-        // that would overwrite the exported port.
-        if let Some(path) = nested_export_dependency(&registrations[a], &registrations[b])
-            .or_else(|| nested_export_dependency(&registrations[b], &registrations[a]))
-        {
-            return Err(ComposeError::Conflict {
-                first: a.clone(),
-                second: b.clone(),
-                footprint: Box::new(Footprint::Component(path)),
-            });
-        }
-        if let Some(footprint) = overlapping_write(left, right) {
-            match registrations[a].priority.cmp(&registrations[b].priority) {
-                std::cmp::Ordering::Equal => {
-                    return Err(ComposeError::Conflict {
-                        first: a.clone(),
-                        second: b.clone(),
-                        footprint: Box::new(footprint.clone()),
-                    });
+            if let Some(footprint) = overlapping_write(left, right) {
+                match registrations[a].priority.cmp(&registrations[b].priority) {
+                    std::cmp::Ordering::Equal => {
+                        return Err(ComposeError::Conflict {
+                            first: a.clone(),
+                            second: b.clone(),
+                            footprint: Box::new(footprint.clone()),
+                        });
+                    }
+                    std::cmp::Ordering::Greater => blockers.push((i, j)),
+                    std::cmp::Ordering::Less => blockers.push((j, i)),
                 }
-                std::cmp::Ordering::Greater => blockers.push((i, j)),
-                std::cmp::Ordering::Less => blockers.push((j, i)),
             }
         }
     }
@@ -234,48 +237,142 @@ pub(super) fn plan(
     })
 }
 
-/// Build candidate collision pairs from exact writes and path indexes. A pair is
-/// visited only if the original scanner could find a splice, nested-export or
-/// overlapping footprint conflict. Returning sorted (i, j) preserves the exact
-/// first-error precedence of the historical nested scan.
-fn conflict_candidates(
-    registrations: &BTreeMap<String, Registration>,
-    order: &[String],
-    footprints: &BTreeMap<String, BTreeSet<Footprint>>,
-) -> BTreeSet<(usize, usize)> {
-    fn index<K: Ord>(map: &mut BTreeMap<K, BTreeSet<usize>>, key: K, owner: usize) {
-        map.entry(key).or_default().insert(owner);
-    }
-    fn ancestors(path: &str) -> impl Iterator<Item = &str> {
-        std::iter::once(path).chain(path.match_indices('/').map(|(at, _)| &path[..at]))
-    }
-    fn pair(pairs: &mut BTreeSet<(usize, usize)>, i: usize, j: usize) {
-        if i != j {
-            pairs.insert((i.min(j), i.max(j)));
+/// The registration index stores only exact and path-prefix postings, never
+/// the O(n^2) Cartesian set of conflicting registration pairs. Query one
+/// earlier registration at a time, in lexical replay order, to keep the old
+/// first-error precedence and reject dense equal-priority collisions early.
+#[derive(Default)]
+struct ConflictIndex {
+    exact: BTreeMap<Footprint, BTreeSet<usize>>,
+    component_exact: BTreeMap<String, BTreeSet<usize>>,
+    component_descendants: BTreeMap<String, BTreeSet<usize>>,
+    connection_descendants: BTreeMap<String, BTreeSet<usize>>,
+    nested_export_references: BTreeMap<String, BTreeSet<usize>>,
+}
+
+fn path_ancestors(path: &str) -> impl Iterator<Item = &str> {
+    std::iter::once(path).chain(path.match_indices('/').map(|(at, _)| &path[..at]))
+}
+
+impl ConflictIndex {
+    fn new(
+        registrations: &BTreeMap<String, Registration>,
+        order: &[String],
+        footprints: &BTreeMap<String, BTreeSet<Footprint>>,
+    ) -> Self {
+        fn index<K: Ord>(map: &mut BTreeMap<K, BTreeSet<usize>>, key: K, owner: usize) {
+            map.entry(key).or_default().insert(owner);
         }
+
+        let mut result = Self::default();
+        for (owner, id) in order.iter().enumerate() {
+            for write in &footprints[id] {
+                index(&mut result.exact, write.clone(), owner);
+                match write {
+                    Footprint::Component(path) => {
+                        index(&mut result.component_exact, path.clone(), owner);
+                        for prefix in path_ancestors(path) {
+                            index(&mut result.component_descendants, prefix.to_owned(), owner);
+                        }
+                    }
+                    Footprint::Connection(edge) => {
+                        for endpoint in [&edge.from.process, &edge.to.process] {
+                            for prefix in path_ancestors(endpoint) {
+                                if prefix != endpoint || endpoint.contains('/') {
+                                    index(
+                                        &mut result.connection_descendants,
+                                        prefix.to_owned(),
+                                        owner,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for edit in registrations[id].patch.edits() {
+                match edit {
+                    Edit::ExposeNestedInput {
+                        parent, targets, ..
+                    } => {
+                        for prefix in path_ancestors(parent) {
+                            index(
+                                &mut result.nested_export_references,
+                                prefix.to_owned(),
+                                owner,
+                            );
+                        }
+                        for target in targets {
+                            index(
+                                &mut result.nested_export_references,
+                                target.process.clone(),
+                                owner,
+                            );
+                        }
+                    }
+                    Edit::ExposeNestedOutput { parent, from, .. } => {
+                        for prefix in path_ancestors(parent) {
+                            index(
+                                &mut result.nested_export_references,
+                                prefix.to_owned(),
+                                owner,
+                            );
+                        }
+                        index(
+                            &mut result.nested_export_references,
+                            from.process.clone(),
+                            owner,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        result
     }
 
-    let mut exact: BTreeMap<Footprint, BTreeSet<usize>> = BTreeMap::new();
-    let mut component_descendants: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-    let mut connection_descendants: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-    let mut nested_export_references: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-    let mut components = Vec::new();
-
-    for (owner, id) in order.iter().enumerate() {
+    fn after(
+        &self,
+        i: usize,
+        registrations: &BTreeMap<String, Registration>,
+        order: &[String],
+        footprints: &BTreeMap<String, BTreeSet<Footprint>>,
+    ) -> BTreeSet<usize> {
+        fn from_path(
+            destinations: &mut BTreeSet<usize>,
+            map: &BTreeMap<String, BTreeSet<usize>>,
+            path: &str,
+            after: usize,
+        ) {
+            if let Some(owners) = map.get(path) {
+                destinations.extend(owners.iter().copied().filter(|owner| *owner > after));
+            }
+        }
+        let id = &order[i];
+        let mut candidates = BTreeSet::new();
         for write in &footprints[id] {
-            index(&mut exact, write.clone(), owner);
+            if let Some(owners) = self.exact.get(write) {
+                candidates.extend(owners.iter().copied().filter(|owner| *owner > i));
+            }
             match write {
                 Footprint::Component(path) => {
-                    components.push((path, owner));
-                    for prefix in ancestors(path) {
-                        index(&mut component_descendants, prefix.to_owned(), owner);
+                    for prefix in path_ancestors(path) {
+                        from_path(&mut candidates, &self.component_exact, prefix, i);
+                    }
+                    for map in [
+                        &self.component_descendants,
+                        &self.connection_descendants,
+                        &self.nested_export_references,
+                    ] {
+                        from_path(&mut candidates, map, path, i);
                     }
                 }
                 Footprint::Connection(edge) => {
                     for endpoint in [&edge.from.process, &edge.to.process] {
-                        for prefix in ancestors(endpoint) {
+                        for prefix in path_ancestors(endpoint) {
                             if prefix != endpoint || endpoint.contains('/') {
-                                index(&mut connection_descendants, prefix.to_owned(), owner);
+                                from_path(&mut candidates, &self.component_exact, prefix, i);
                             }
                         }
                     }
@@ -283,51 +380,50 @@ fn conflict_candidates(
                 _ => {}
             }
         }
+        // The reverse direction matters when the earlier registration is an
+        // export and a later registration declares a referenced component.
         for edit in registrations[id].patch.edits() {
             match edit {
                 Edit::ExposeNestedInput {
                     parent, targets, ..
                 } => {
-                    for prefix in ancestors(parent) {
-                        index(&mut nested_export_references, prefix.to_owned(), owner);
+                    for prefix in path_ancestors(parent) {
+                        from_path(&mut candidates, &self.component_exact, prefix, i);
                     }
                     for target in targets {
-                        index(&mut nested_export_references, target.process.clone(), owner);
+                        from_path(&mut candidates, &self.component_exact, &target.process, i);
                     }
                 }
                 Edit::ExposeNestedOutput { parent, from, .. } => {
-                    for prefix in ancestors(parent) {
-                        index(&mut nested_export_references, prefix.to_owned(), owner);
+                    for prefix in path_ancestors(parent) {
+                        from_path(&mut candidates, &self.component_exact, prefix, i);
                     }
-                    index(&mut nested_export_references, from.process.clone(), owner);
+                    from_path(&mut candidates, &self.component_exact, &from.process, i);
                 }
                 _ => {}
             }
         }
+        candidates
     }
+}
 
-    let mut pairs = BTreeSet::new();
-    for owners in exact.values() {
-        for (position, &i) in owners.iter().enumerate() {
-            for &j in owners.iter().skip(position + 1) {
-                pair(&mut pairs, i, j);
-            }
-        }
-    }
-    for (path, i) in components {
-        for by_path in [
-            &component_descendants,
-            &connection_descendants,
-            &nested_export_references,
-        ] {
-            if let Some(owners) = by_path.get(path) {
-                for &j in owners {
-                    pair(&mut pairs, i, j);
-                }
-            }
-        }
-    }
-    pairs
+/// Tests can materialize the complete candidate matrix to compare against the
+/// previous exhaustive predicates; the production planner never does so.
+#[cfg(test)]
+fn conflict_candidates(
+    registrations: &BTreeMap<String, Registration>,
+    order: &[String],
+    footprints: &BTreeMap<String, BTreeSet<Footprint>>,
+) -> BTreeSet<(usize, usize)> {
+    let index = ConflictIndex::new(registrations, order, footprints);
+    (0..order.len())
+        .flat_map(|i| {
+            index
+                .after(i, registrations, order, footprints)
+                .into_iter()
+                .map(move |j| (i, j))
+        })
+        .collect()
 }
 
 /// Exact grants remain separate. Selection conflict is broader: replacing an
@@ -756,5 +852,39 @@ mod conflict_index_tests {
             conflict_candidates(&registrations, &order, &footprints),
             BTreeSet::from([(0, 1)])
         );
+    }
+
+    #[test]
+    fn dense_equal_priority_collision_rejects_first_pair_without_materializing_matrix() {
+        let mut registrations = BTreeMap::new();
+        let definition = Arc::new(ComponentDef::map(|n: i64| n));
+        for i in 0..256 {
+            let id = format!("r{i:04}");
+            registrations.insert(
+                id.clone(),
+                registration(
+                    &id,
+                    vec![Edit::Add {
+                        path: "shared".into(),
+                        definition: definition.clone(),
+                    }],
+                ),
+            );
+        }
+        let order = registrations.keys().cloned().collect::<Vec<_>>();
+        let footprints = order
+            .iter()
+            .map(|id| (id.clone(), registrations[id].patch.footprints()))
+            .collect();
+        let index = ConflictIndex::new(&registrations, &order, &footprints);
+        assert_eq!(
+            index.after(0, &registrations, &order, &footprints).len(),
+            255
+        );
+        assert!(matches!(
+            plan(&registrations, SelectionLimits::default()),
+            Err(ComposeError::Conflict { first, second, .. })
+                if first == "r0000" && second == "r0001"
+        ));
     }
 }
