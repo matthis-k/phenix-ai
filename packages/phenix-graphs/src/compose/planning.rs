@@ -163,6 +163,20 @@ fn overlapping_write<'a>(
                         || a.strip_prefix(b)
                             .is_some_and(|suffix| suffix.starts_with('/'))
                 }
+                (Footprint::Component(path), Footprint::Connection(edge))
+                | (Footprint::Connection(edge), Footprint::Component(path)) => {
+                    // Mutating an ancestor replaces its entire nested body.
+                    // Connecting to a new nested declaration also requires
+                    // dependency ordering, never incidental replay ordering.
+                    [&edge.from.process, &edge.to.process]
+                        .into_iter()
+                        .any(|endpoint| {
+                            endpoint
+                                .strip_prefix(path)
+                                .is_some_and(|suffix| suffix.starts_with('/'))
+                                || (path.contains('/') && endpoint == path)
+                        })
+                }
                 _ => false,
             }
         })

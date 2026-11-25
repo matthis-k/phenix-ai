@@ -140,6 +140,9 @@ pub struct NetworkDef {
     // Exact child declarations the composite author intentionally allows
     // host-granted plugins to replace; never inherited by descendants.
     pub(crate) replacement_points: BTreeSet<String>,
+    // The composite author opts in to host-granted additions and internal edges.
+    // Every composite crossed on a deep edit must opt in independently.
+    pub(crate) extensions_allowed: bool,
     pub(crate) claims: Vec<Contract>,
     pub(crate) origin: Option<GraphOrigin>,
     // Frozen obligations survive replacement, including removed private paths.
@@ -176,6 +179,9 @@ impl NetworkDef {
     /// Explicit, immediate child declarations available as replacement seams.
     pub fn replacement_points(&self) -> &BTreeSet<String> {
         &self.replacement_points
+    }
+    pub fn extensions_allowed(&self) -> bool {
+        self.extensions_allowed
     }
 }
 
