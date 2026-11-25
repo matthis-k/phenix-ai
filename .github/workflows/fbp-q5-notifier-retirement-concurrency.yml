@@ -5,7 +5,6 @@ on:
       - "packages/phenix-graphs/src/runtime/wake.rs"
       - "packages/phenix-graphs/tests/fbp_notifier_retirement_interleavings.rs"
       - "packages/phenix-graphs/tests/fbp_plugin_lock_order.rs"
-      - "docs/fbp-q5-notifier-retirement-interleavings-20261113.md"
       - ".github/workflows/fbp-q5-notifier-retirement-concurrency.yml"
   workflow_dispatch:
 
