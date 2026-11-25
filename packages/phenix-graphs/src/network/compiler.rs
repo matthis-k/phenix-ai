@@ -45,14 +45,7 @@ impl CompiledNetwork {
         // wrapper with the same DefinitionKey (for example, host origin
         // stamping). Check every author-visible claim and origin as well.
         // Composite copy-on-write revisions always receive a fresh key.
-        if !before.instances.iter().all(|(name, old)| {
-            after.instances.get(name).is_some_and(|new| {
-                old.definition_key() == new.definition_key()
-                    && old.interface() == new.interface()
-                    && old.claims() == new.claims()
-                    && old.origin() == new.origin()
-            })
-        }) {
+        if !same_declarations(before, after) {
             return None;
         }
         let remaining: BTreeSet<&str> = after.sources.iter().map(String::as_str).collect();
@@ -153,14 +146,86 @@ impl CompiledNetwork {
         }
         Some(compiled)
     }
+
+    /// Strictly monotone disconnection of direct root primitive edges. Every
+    /// remaining edge keeps its capacity and ordered physical endpoints; no
+    /// component, boundary, claim, source or requirement changes. Deleting
+    /// edges cannot create an invalid port type or exceed a compiler budget.
+    /// Nested/module edges and any additions always use canonical lowering.
+    pub(crate) fn reuse_after_root_connection_pruning(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        if after.connections.len() >= before.connections.len()
+            || before.sources != after.sources
+            || !same_scope_without_connections(before, after)
+            || !same_declarations(before, after)
+        {
+            return None;
+        }
+        let old: BTreeSet<_> = before
+            .connections
+            .iter()
+            .map(|edge| (&edge.from, &edge.to, edge.capacity))
+            .collect();
+        let desired: BTreeSet<_> = after
+            .connections
+            .iter()
+            .map(|edge| (&edge.from, &edge.to, edge.capacity))
+            .collect();
+        if old.len() != before.connections.len()
+            || desired.len() != after.connections.len()
+            || !desired.is_subset(&old)
+        {
+            return None;
+        }
+        let mut removed = BTreeSet::new();
+        for edge in before
+            .connections
+            .iter()
+            .filter(|edge| !desired.contains(&(&edge.from, &edge.to, edge.capacity)))
+        {
+            let from = before.instances.get(&edge.from.process)?;
+            let to = before.instances.get(&edge.to.process)?;
+            if !matches!(from.body(), Body::Primitive(_))
+                || !matches!(to.body(), Body::Primitive(_))
+            {
+                return None;
+            }
+            let from_index = self.inspections.get(&edge.from.process)?.physical_index?;
+            let to_index = self.inspections.get(&edge.to.process)?.physical_index?;
+            removed.insert((
+                from_index,
+                edge.from.port.as_str(),
+                to_index,
+                edge.to.port.as_str(),
+                edge.capacity,
+            ));
+        }
+        if removed.len() != before.connections.len() - after.connections.len() {
+            return None;
+        }
+        let mut compiled = self.with_fresh_generation();
+        let old_count = compiled.connections.len();
+        compiled.connections.retain(|edge| {
+            !removed.contains(&(
+                edge.from.0,
+                edge.from.1.as_str(),
+                edge.to.0,
+                edge.to.1.as_str(),
+                edge.capacity,
+            ))
+        });
+        (old_count - compiled.connections.len() == removed.len()).then_some(compiled)
+    }
 }
 
-/// Structural fields that compilation treats as immutable across both safe
-/// incremental cases. A changed contract obligation, connection, export or
-/// host-authorized extension seam always forces the full compiler.
-fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
+/// These fixed fields are verified before any incremental reuse; changing
+/// a contract, export, origin or author-approved extension seam is never
+/// eligible. Each supported delta may relax only its own exact dimension.
+fn same_scope_without_connections(before: &NetworkDef, after: &NetworkDef) -> bool {
     before.interface == after.interface
-        && before.connections == after.connections
         && before.inputs == after.inputs
         && before.outputs == after.outputs
         && before.claims == after.claims
@@ -169,6 +234,21 @@ fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
         && before.replacement_points == after.replacement_points
         && before.extensions_allowed == after.extensions_allowed
         && before.instances.len() == after.instances.len()
+}
+
+fn same_compilation_scope(before: &NetworkDef, after: &NetworkDef) -> bool {
+    before.connections == after.connections && same_scope_without_connections(before, after)
+}
+
+fn same_declarations(before: &NetworkDef, after: &NetworkDef) -> bool {
+    before.instances.iter().all(|(name, old)| {
+        after.instances.get(name).is_some_and(|new| {
+            old.definition_key() == new.definition_key()
+                && old.interface() == new.interface()
+                && old.claims() == new.claims()
+                && old.origin() == new.origin()
+        })
+    })
 }
 
 type PhysicalPort = (String, String);
@@ -482,6 +562,200 @@ impl Compiler {
         }
         self.active.remove(&identity);
         Ok(boundary)
+    }
+}
+
+#[cfg(test)]
+mod edge_pruning_tests {
+    use super::*;
+    use crate::compose::{Composer, ConnectionKey, Edit, Footprint, NetworkPatch, Registration};
+    use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
+
+    fn endpoint(process: &str, port: &str) -> PortPath {
+        PortPath {
+            process: process.into(),
+            port: port.into(),
+        }
+    }
+
+    fn edge(from: &str, to: &str) -> ConnectionDef {
+        ConnectionDef {
+            from: endpoint(from, "output"),
+            to: endpoint(to, "input"),
+            capacity: NonZeroUsize::new(1).unwrap(),
+        }
+    }
+
+    fn source_network() -> (NetworkDef, Contract) {
+        let mut builder = NetworkBuilder::new();
+        let start = builder
+            .add(
+                "source",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
+            .unwrap();
+        builder.start(&start).unwrap();
+        let plain = crate::ComponentDef::map(|n: i64| n * 2);
+        let contract = Contract::new("test/edge-worker", plain.interface().clone()).unwrap();
+        let worker = builder
+            .add("worker", Arc::new(plain.claim(&contract).unwrap()))
+            .unwrap();
+        builder
+            .expose_output("out", worker.output::<i64>("output").unwrap())
+            .unwrap();
+        (builder.build().unwrap(), contract)
+    }
+
+    #[test]
+    fn direct_root_edge_removal_matches_full_compile_and_preserves_indexes() {
+        let (mut before, contract) = source_network();
+        before.connections.push(edge("source", "worker"));
+        let old = before.compile().unwrap();
+        assert_eq!(old.connections().len(), 1);
+        let handle = old
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        let mut session = old.start();
+        session.run_until_idle(64);
+        assert_eq!(
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
+            Some(&14)
+        );
+
+        let mut after = before.clone();
+        after.connections.clear();
+        let incremental = old
+            .reuse_after_root_connection_pruning(&before, &after)
+            .unwrap();
+        let canonical = after.compile().unwrap();
+        assert!(incremental.connections().is_empty());
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(
+            incremental.inspect("worker").unwrap().definition_key,
+            canonical.inspect("worker").unwrap().definition_key
+        );
+        assert_eq!(
+            handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
+        assert!(!Arc::ptr_eq(&old.generation, &incremental.generation));
+    }
+
+    #[test]
+    fn new_edges_changed_capacity_and_changed_component_bypass_pruning() {
+        let (mut before, contract) = source_network();
+        before.connections.push(edge("source", "worker"));
+        let old = before.compile().unwrap();
+        let mut changed = before.clone();
+        changed.connections.push(edge("source", "worker"));
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
+
+        changed = before.clone();
+        changed.connections[0].capacity = NonZeroUsize::new(2).unwrap();
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
+
+        changed = before.clone();
+        changed.connections.clear();
+        changed.instances.insert(
+            "worker".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
+
+        changed = before.clone();
+        changed.connections.clear();
+        changed.outputs.clear();
+        assert!(
+            old.reuse_after_root_connection_pruning(&before, &changed)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn real_composer_disconnects_selected_edge_with_fresh_handle_authority() {
+        let (network, contract) = source_network();
+        let mut composer = Composer::new(network).unwrap();
+        let connection = edge("source", "worker");
+        composer
+            .register([Registration::new(
+                "edge",
+                [],
+                3,
+                GraphOrigin::default(),
+                [Footprint::Connection(ConnectionKey::new(
+                    connection.from.clone(),
+                    connection.to.clone(),
+                ))],
+                NetworkPatch::new([Edit::Connect(connection.clone())]),
+            )])
+            .unwrap();
+        assert_eq!(composer.current().compiled().connections().len(), 1);
+        let bound = composer
+            .current()
+            .compiled()
+            .bind("worker", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        assert_eq!(
+            bound.resolve(composer.current().compiled()),
+            Ok((1, "output"))
+        );
+        assert_eq!(
+            composer.revoke("edge").unwrap(),
+            BTreeSet::from(["edge".into()])
+        );
+        assert!(composer.current().compiled().connections().is_empty());
+        assert_eq!(
+            bound.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        assert_eq!(
+            composer.current().compiled().connections(),
+            composer
+                .current()
+                .network()
+                .compile()
+                .unwrap()
+                .connections()
+        );
+        composer
+            .register([Registration::new(
+                "edge-again",
+                [],
+                3,
+                GraphOrigin::default(),
+                [Footprint::Connection(ConnectionKey::new(
+                    connection.from.clone(),
+                    connection.to.clone(),
+                ))],
+                NetworkPatch::new([Edit::Connect(connection)]),
+            )])
+            .unwrap();
+        assert_eq!(composer.current().compiled().connections().len(), 1);
     }
 }
 
