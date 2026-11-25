@@ -290,8 +290,16 @@ impl NetworkSession {
                     .position(|port| port.name == name)
                     .ok_or_else(|| format!("unknown readiness port {name}"))?;
                 let queue = self.packet_for(index, port, request, correlated);
+                // The immutable snapshot already proved closure for this
+                // candidate/port. A second proof would rewalk its upstream
+                // graph without any intervening session mutation.
+                let closed = snapshot
+                    .heads
+                    .iter()
+                    .find(|head| head.port == name)
+                    .is_some_and(|head| head.closed);
                 if ports.iter().any(|(selected, _)| *selected == port)
-                    || (queue.is_none() && !self.input_closed_for(index, port, request))
+                    || (queue.is_none() && !closed)
                 {
                     return Err(format!("invalid readiness selection for {name}"));
                 }
