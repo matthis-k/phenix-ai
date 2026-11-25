@@ -37,10 +37,8 @@
 //!
 //! # Planning and selection limits
 //!
-//! `Composer` requires exactly one consistent dependency/priority selection before
-//! replay and compilation. A lower-priority registration is eligible again when its
-//! only blocker is itself ineligible; provisional defeat is not permanent exclusion.
-//! Zero or multiple models reject as `NoConsistentSelection` or `AmbiguousSelection`.
+//! A registration can become eligible when its only blocker is itself ineligible.
+//! Provisional defeat is not permanent exclusion.
 //!
 //! Use `composer.set_selection_limits(SelectionLimits { max_work: ... })` from
 //! `phenix_graph::compose` to change the finite allowance for future updates. The
@@ -51,14 +49,8 @@
 //! time. Kernel hosts configure both composer paths through `BuildOptions::selection_limits`.
 //!
 //! Composition planning has a separate `PlanningLimits { max_units: 1_000_000 }`
-//! default. Configure future `register`/`revoke` updates with
-//! `composer.set_planning_limits(...)`. This is a deliberate new host admission
-//! policy, not compatibility for all formerly unbounded valid inputs: 2,048
-//! independent 512-byte registration IDs reject at the default and can be admitted
-//! with a larger finite allowance. The pinned default success envelope includes
-//! real-write chains/diamonds/skew through 128 registrations, dense priorities and
-//! ordered splice/hierarchical cases through 32, plus Kernel prefixes/self-previews
-//! through 32 contributions. These are tested examples, not universal capacity promises.
+//! default. Set the allowance with `composer.set_planning_limits(...)` before an
+//! update. Large valid registries can require a larger finite allowance.
 //!
 //! Units reserve logical planning operations/storage and symbolic query/copy/scan
 //! bytes before work. Blockers reserve two index cells, ancestor rows their full

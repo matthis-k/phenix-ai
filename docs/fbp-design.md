@@ -1,185 +1,86 @@
-# Native FBP foundation
+# Foundation specification
 
-This is the central design and requirements document for the native graph foundation
-and its integration. API contracts, examples and implementation invariants belong in
-Rustdoc on their owning types and modules; executable acceptance belongs in tests and
-CI. This document describes architecture and durable requirements, not a completion
-scorecard. The current source and tests are authoritative for implemented behavior.
+Build independently usable Rust libraries that compose into an agent application. Use flow-based programming (FBP) for work and data flows. Use ordinary library calls for storage, authorization, configuration, and other work that does not need a flow. Maintain one current API.
 
-## Purpose and boundaries
+Read the [glossary](../GLOSSARY.md) for domain terms. The sections below specify required behavior, not implementation status.
 
-Build a small, independently usable set of Rust libraries that compose well together.
-FBP models flows of work and data, not every operation in the application. Ordinary
-library calls are appropriate for storage, authorization, configuration, and other
-non-flow work. Provide a minimal standard set of components and adapters rather than
-product-specific scheduler features. Maintain one current API and implementation;
-remove superseded paths instead of adding compatibility layers.
+## Library boundaries
 
-| Library | Owns | Does not own |
-| --- | --- | --- |
-| `phenix-graph` | Component definitions, typed ports, network authoring, composition, compilation, bounded execution and inspection | Plugin inventory, concrete storage, resource permissions, application policy, second executor |
-| `phenix-plugin` | Plugin definitions, contributions, registration, snapshots and code/revision ownership | Graph scheduling, concrete application behavior |
-| `phenix-kernel` | Host-selected plugin composition, grants, contract resolution, generation publication, producer/driver lifecycle | Graph scheduling, concrete storage, product-specific flows |
-| `phenix-schema` | Canonical portable schema identity | Graph claims, storage ownership or authorization |
-| `phenix-storage` | Scoped resources, persistence, revisions, atomic operations, transactions and reactive invalidation | Graph execution or plugin discovery |
-| `phenix-storage-plugin` / `phenix-storage-graph` | Explicit bridges for storage contributions and graph-based derivation/queries | A second storage implementation or scheduler |
+| Library | Responsibility |
+| --- | --- |
+| `phenix-graph` | Author, compose, compile, execute, and inspect bounded networks. |
+| `phenix-plugin` | Register contributions and retain plugin revisions and code. |
+| `phenix-kernel` | Resolve host-approved contributions, prepare and publish generations, and manage host producers. |
+| `phenix-schema` | Identify portable schemas shared by Graph and Storage. |
+| `phenix-storage` | Authorize resource access, persist values, and publish invalidations. |
+| `phenix-storage-plugin` | Bind plugin resource requests to host-approved storage. |
+| `phenix-storage-graph` | Connect storage observations and derived values to networks. |
 
-The Graph, Plugin, Storage and Schema libraries remain usable without Kernel.
-Dependencies point toward the libraries, not toward the product harness. Graph
-does not depend on Storage or Kernel. Resource capabilities are opaque, typed,
-explicitly granted values; the underlying resource library enforces its own authority.
+Graph, Plugin, Storage, and Schema work without Kernel. Graph has no dependency on Storage or Kernel. Bridges depend on the libraries they connect. The agent application owns product policy. Graph accepts opaque capabilities; the resource library enforces their authority.
 
-## Network model
+## Network semantics
 
-- A primitive and a composite have the same named public input/output boundary.
-  A primitive owns a process factory; a composite contains a network. A composite
-  is flattened by the compiler, not executed as a second runtime.
-- Named typed authoring and dynamic authoring use the same canonical declarations.
-  Local Rust type identity, portable schema identity, semantic contracts, origin,
-  and authority are distinct. Shape equality alone is not semantic membership.
-- A process is stateful and cooperatively steps. Factories create fresh instance
-  state for a session. Inputs, outputs, sources, explicit closure and bounded FIFO
-  edges suffice for branching, joining, feedback and module composition. Loops
-  are permitted; recursive definitions are rejected.
-- A compiled network is an immutable generation. The compiler validates and lowers
-  deterministic physical identities and projections under finite limits. Handles
-  authenticate their generation and exact declaration/endpoint; request IDs
-  authenticate their owning session. Dynamic lookup must still validate authority.
-- Runtime owns queues, readiness, work admission, staged continuations,
-  publication, capture, closure and cancellation. There is one scheduling path.
-  Readiness and diagnostic queries must be passive and not execute application
-  callbacks. A process instance is single-flight, even across requests.
+- Primitives and composites expose the same interface. The compiler flattens composites. One runtime executes the resulting processes.
+- Typed and dynamic authoring share one declaration model. Local type, portable schema, contract, provenance, and authority remain distinct. Validate dynamic lookups.
+- Processes run cooperatively and hold state within a session. Factories create fresh process state. Support bounded FIFO connections, branches, joins, feedback, and explicit sources and closure. Permit network cycles and reject recursive definitions.
+- Compile deterministically under finite limits. Authenticate each bound handle against its exact declaration and compiled network. Authenticate each request against its network session.
+- Inspection is passive. Process readiness callbacks run through the runtime, not through inspection. A process instance runs one activation at a time.
+- Keep the common component library small. Express application-specific behavior through composition.
 
-## Composition and plugin integration
+## Composition and authority
 
-A host chooses plugin revisions and grants. Contributions declare owned patches,
-dependencies, priorities and offers/imports; the host supplies exact provenance
-and authority separately. The Composer validates a candidate from its frozen
-base and selected registrations, then publishes atomically. Registration order
-must be deterministic; missing dependencies, ambiguous conflicts, invalid
-origins or grants and nonunique selection fail closed. No factory runs during
-patch replay. Failed updates preserve the previous generation and registry.
+- The host selects plugin revisions and issues exact grants, origins, and priorities. Contributions declare patches, dependencies, offers, and imports. Shape equality establishes neither a contract claim nor authority.
+- Compose from a frozen base. Require one consistent selection. Reject missing dependencies, ambiguous conflicts, invalid grants, and invalid origins. Replay without executing process factories. Preserve the published composition on failure.
+- Treat private replacement and additive extension as separate permissions. Require author opt-in and exact grants at each applicable boundary for nested additions, connections, and exports. Preserve existing claims and inherited obligations. Grant neither descendant nor incident-edge authority implicitly.
+- Replace a component only through its exact public interface. A different provider may use an explicit composite with the old interface. The composite handles conversions, supplies additional inputs, and consumes additional outputs. Implicit width subtyping is out of scope.
+- Bound selection work per attempt and logical planning work across the entire Kernel build, including self-import previews. The limits cover neither total build work nor wall-clock time or allocated bytes. Incremental compilation must match full compilation, retain projections, and produce fresh compiled authority. Fall back to full compilation for unsupported edits.
+- Prepare and validate candidates before publishing. Preview bindings cannot authorize final execution. Hold code and resource leases through the destruction of every independently retained executable value, job, and failure. Release inventory and ownership locks before invoking plugin code. Candidate rejection does not undo external effects.
 
-Private nested replacement and additive extension are different permissions.
-Add/Connect/export requires author-opted seams, exact host grants at each
-applicable boundary and checked lowering. No descendant or incident-edge
-authority is inferred. Existing claims and frozen requirements survive edits.
-Replacement preserves exact public boundaries and inherited semantic obligations.
-A provider with a different interface may be installed inside an explicit
-ordinary composite facade that exactly implements the old boundary; conversions,
-extra outputs and extra inputs must be handled explicitly. Implicit width
-subtyping and silent schema conversion are not requirements.
+## Execution and lifecycle
 
-The exact selector has a finite per-attempt work allowance. Composition planning
-has a separate finite logical work/storage allowance, shared across a Kernel
-build's main and self-import preview composers. Neither limit promises a
-wall-clock, payload-byte, allocator-byte or total host-build bound. Compiler
-limits and semantic validation remain separate. Incremental compilation must
-match canonical full compilation, preserve all authority/projection invariants,
-and produce a fresh generation; unsupported deltas fall back to the compiler.
+- Admit one pending emission per process. Prepare and commit selected fanout atomically. Retry blocked publication without replaying process effects.
+- Authenticate owned work tickets. Return refused jobs and completions intact. Preserve the primary typed failure and ordered cleanup failures. Carry execution context across worker handoff.
+- Admit, close, settle, capture, and release request scopes explicitly. Default to shared FIFO and head-only readiness. Opt-in `CorrelatedAll` matches request packets across foreign heads while preserving their per-request order. Unscoped packets remain head-only. Bounded lanes isolate queue and capture capacity, not process state or effects.
+- Respect queue capacity. Drain accepted packets before end of stream (EOS). Account for disposal separately from success. Prove request-local absence from upstream work rather than from global idleness. Distinguish runnable, waiting, quiescent, and terminal states. Current inspection is not a proof of future progress.
+- Fail fast on session contention and callback or worker reentry. Make whole producer drains and blocking-driver ownership exclusive. Publication coordinates retirement with admitted drains. The host cannot prevent application-owned lock cycles or non-yielding callbacks.
 
-Kernel resolves and prepares selected contributions against approved capabilities.
-Preview bindings grant no final-generation authority. Only a successfully
-validated candidate is published; selected executable values, jobs and failures
-pin exact revision, code and known resource owners for their lifetimes. Do not
-hold inventory/ownership locks across plugin callbacks. Failed preparation or
-publication does not promise rollback of arbitrary external application effects.
-
-## Execution and lifecycle requirements
-
-- One pending emission per process; validate and prepare selected fanout once
-  before atomic commit. Backpressure does not replay application effects.
-  Accepted packets drain before EOS; disposal is accounted, not success.
-- Owned work handoff authenticates tickets and returns refused jobs/completions
-  intact. Accepted failure/cleanup preserves the primary typed cause and ordered
-  secondary failures. No unbounded tracing, callback preemption or hidden
-  execution path. Worker guards preserve ownership context across delegation.
-- Request admission, close, settlement, capture and release are explicit.
-  Shared FIFO remains the default and ordinary readiness is head-only.
-  Opt-in authenticated `CorrelatedAll` preserves FIFO within each request
-  while matching across foreign heads; unscoped packets remain head-only.
-  Opt-in bounded lanes isolate queues and capture credit, not mutable process
-  state, external effects, or execution durations. A full queue is backpressure,
-  not permission to exceed a bound. No universal independent progress or
-  arbitrary-arrival fairness is promised.
-- Closure requires actual EOS or a sound request-local absence witness, not
-  global idleness. Diagnostics distinguish waiting, runnable, quiescent and
-  terminal states without speculative liveness claims.
-- Session contention and callback/worker reentry fail fast. Whole producer
-  drains and blocking-driver ownership are exclusive; host publication
-  coordinates retirement without holding application locks through callbacks.
-  Application-created lock cycles, threads and non-yielding callbacks are not
-  made safe by the host.
-
-### Approved lifecycle decisions
+### Lifecycle decisions
 
 | Policy | Requirement |
 | --- | --- |
-| LeasedArchival (C3) | Retirement stops host-owned polling; retained explicit generation/session/job capabilities remain valid under their leases. No strict revocation or forced unloading. |
-| Cooperative (C5) | Optional deferred-job deadlines are supervised while driven; no autonomous abandoned-host watchdog, preemption, effect rollback or forced worker reclamation. |
-| Restart And Persist (C6) | Successors start with fresh process-private state. Continuity is explicit through compatible durable grants. Reject incompatible schema; no automatic live migration, fencing or exclusive successor writer. |
-| TrustedNativeScope (C7) | Plugins run as trusted native Rust code. Native execution is not a sandbox or dynamic-library ABI. Untrusted isolation is outside the current foundation scope. |
+| Leased archival | Stop host-owned producer polling at retirement. Retained generation, session, and job capabilities remain valid under their leases. |
+| Cooperative supervision | Supervise optional deferred-job deadlines while the session is driven. Do not promise an autonomous watchdog, worker preemption, effect rollback, or forced reclamation. |
+| Restart and persist | Start a successor with fresh process state. Preserve continuity through compatible durable grants. Reject incompatible schemas. Live migration, fencing, and exclusive successor writers are out of scope. |
+| Trusted native code | Run trusted Rust plugins in-process. Neither untrusted-code isolation nor a dynamic-library ABI is in scope. |
 
-## Product composition direction
+## Storage
 
-Prove the libraries with real, executable mock components before coupling them
-to production providers or tools.
+Issue stable logical identities independent of physical paths. Resolve them to authorized resources explicitly. Support versioned reads, atomic compare-and-exchange, and revisions that cannot be reused after deletion and recreation within a backend lifetime. Validate durable schema compatibility. Publish invalidations only after successful writes or commits. Bound observation queues and report overflow explicitly. Let consumers decide how to refresh. A resource request does not grant access.
 
-- Basic harness: request/session input, model invocation and streaming,
-  tool dispatch, feedback/termination and observation. The agent loop is a
-  composed network, not one opaque agent process.
-- Advanced harness: extend the same contracts and flow with tool/environment
-  selection, richer state/context, additional observers or subflows. Do not
-  make basic a separate incompatible runtime or make a preset privileged.
-- ACP is an optional plugin for either harness: inbound protocol events trigger
-  approved graph ingress; outbound graph events are observed and translated.
-  It does not own the scheduler or require the advanced harness.
-- Keep application-owned durable state, model/provider selection and credentials
-  outside Graph. Use regular library operations where a flow is not beneficial.
-- Mock acceptance must exercise actual contribution selection, replacement,
-  nested extension, event attachment, failure, cancellation, feedback and
-  generation ownership. Production provider/tool integration is separate work.
+## Agent composition
 
-## Remaining foundation acceptance
+Start with executable mocks. Exercise real contribution selection, nested extension, replacement, event attachment, cancellation, failure, feedback, and generation ownership before integrating production tools or models.
 
-These are the outstanding design/verification areas from the previous 33-finding
-campaign, not numerical progress estimates. Do not reopen accepted bounded
-contracts merely because broader guarantees are intentionally excluded. Do not
-mark remaining work complete without source and exact-head evidence.
+- Basic harness: accept requests, invoke a model, stream output, dispatch tools, return tool results to the model, and observe completion. Compose the agent loop as a network rather than an opaque process.
+- Advanced harness: extend the same contracts with tool environment selection, state, context, observers, and additional flows. Neither preset has privileged runtime access.
+- Agent Client Protocol (ACP): make it an optional plugin for both harnesses. Translate incoming protocol events into authorized graph inputs and observe outgoing graph events. Keep protocol handling outside the scheduler.
 
-| Finding | Requirement / unresolved decision |
+Keep provider selection, credentials, and durable application state outside Graph.
+
+## Performance and progress requirements
+
+These requirements retain the scope of the original acceptance findings. Track implementation status in issues and PRs, not here.
+
+| Finding | Acceptance requirement |
 | --- | --- |
-| H4 | Measure representative scheduling work and latency. Address remaining mandatory source/Custom/staged/global scans only with sound invalidation. |
-| H5 | Measure closure scaling including repeated upstream proofs and full global EOS. Preserve exact closure/witness semantics. |
-| H6 | Establish representative latency, throughput, allocation/live-memory and concurrency workloads and acceptable budgets. Existing bounded measurements are not a portable product SLO. |
-| H7 | Decide shared-state single-flight vs independent sessions or explicitly request-local process instances. Define effect/state continuity, progress assumptions, capture backpressure and resource bounds before promising isolation. |
-| Q2 | Establish general dependency-aware invalidation/recomposition scaling; preserve canonical fallback and fresh generation authority. No speculative persistent reload cache. |
-| Q3 | Verify whole planning limits and host prefix/preview path on exact published source; measure successful dense priorities, defeat/recovery, skew, diamond, hierarchical edits and ordered splices. Local evidence alone does not establish hosted acceptance or a universal performance budget. |
-| Q4 | Specify an analyzable structural subset and sound reject/unknown/progress outcomes with explicit environment assumptions; arbitrary native callbacks and cycles cannot receive a universal static liveness guarantee. |
+| H4 | Measure scheduling work and latency on representative workloads. Change mandatory source, custom, staged, or global scans only with sound invalidation. |
+| H5 | Measure repeated upstream closure proofs and global EOS. Preserve exact closure results and witnesses. |
+| H6 | Establish representative latency, throughput, allocation, live-memory, and concurrency budgets. Local measurements alone do not establish a portable service-level objective. |
+| H7 | Define supported independent progress, state and effect continuity, capture backpressure, and resource bounds before choosing shared state, independent sessions, or request-local process instances. |
+| Q2 | Measure dependency-aware recompilation and recomposition. Preserve canonical fallback and fresh authority. |
+| Q3 | Verify planning limits and Kernel prefixes and previews. Measure dense priorities, defeat and recovery, skew, diamonds, hierarchical edits, and ordered splices. |
+| Q4 | Define a structural subset and sound reject, unknown, and progress outcomes under explicit environment assumptions. Arbitrary native callbacks and cycles have no universal static liveness guarantee. |
 
-## Verification and maintenance
+## Acceptance
 
-Use named unit/integration tests, actual mock networks, protocol/interleaving
-tests, compiler/selector oracles and paired benchmarks as acceptance evidence.
-Test negative paths, stale authority, backpressure, cancellation, unwind/cleanup,
-generation retention and default/no-default configurations. Record exact source
-and CI results in pull requests or issues, with raw samples in workflow artifacts.
-Do not commit rolling review diaries, duplicated issue ledgers, subjective
-completion percentages, temporary benchmark dumps or exact-head CI transcripts.
-
-Code documentation belongs on the owning Rust API, including its invariants,
-limits and examples. Add to this document only when requirements, library
-boundaries or product-level architecture actually change. Historical design and
-acceptance records are available in [the pre-consolidation tree](https://github.com/matthis-k/phenix-ai/tree/1d4f85713b984c7c269e0cabaff37479e74a7947/docs).
-
-Storage requirements: stable host-issued identities independent of physical paths,
-explicit grants, versioned CAS with no ABA, atomic commit/invalidation, bounded
-lossy observation with explicit overflow, and explicit durable schema compatibility.
-See the current [Storage guide](storage.md) and [scoped resource guide](scoped-storage.md)
-for the remaining storage-specific API reference. [CI operations](infrastructure.md)
-are separate from architecture.
-
-Source entry points: [Graph](../packages/phenix-graphs/src/lib.rs),
-[Kernel](../packages/phenix-kernel/src/lib.rs),
-[Plugin](../packages/phenix-plugins/src/lib.rs),
-[Storage](../packages/phenix-storage/src/lib.rs).
+Use tests for public contracts, actual mock networks, negative paths, stale authority, backpressure, cancellation, cleanup, and retained generations. Use oracles for compiler and selector equivalence, bounded interleaving models for concurrency, and paired benchmarks for performance claims. Exercise default and no-default feature builds. Do not claim more than the tests and exact-head CI establish.

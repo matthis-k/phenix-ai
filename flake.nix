@@ -147,6 +147,7 @@
                 root = ./.;
                 fileset = lib.fileset.unions [
                   ./AGENTS.md
+                  ./GLOSSARY.md
                   ./docs
                   ./packages
                 ];
