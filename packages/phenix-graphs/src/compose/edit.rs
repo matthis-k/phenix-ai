@@ -26,6 +26,16 @@ pub enum Footprint {
     Connection(ConnectionKey),
     InputExport(String),
     OutputExport(String),
+    /// Exact nested export authority is distinct from a root export whose
+    /// literal port name happens to contain the same slash-delimited text.
+    NestedInputExport {
+        parent: String,
+        name: String,
+    },
+    NestedOutputExport {
+        parent: String,
+        name: String,
+    },
     Source(String),
 }
 
@@ -47,6 +57,18 @@ pub enum Edit {
         capacity: NonZeroUsize,
     },
     ExposeOutput {
+        name: String,
+        from: PortPath,
+    },
+    /// A port on the exact author-approved nested composite, not a root export.
+    ExposeNestedInput {
+        parent: String,
+        name: String,
+        targets: Vec<PortPath>,
+        capacity: NonZeroUsize,
+    },
+    ExposeNestedOutput {
+        parent: String,
         name: String,
         from: PortPath,
     },
@@ -141,6 +163,30 @@ impl Edit {
                 }
             }
             Self::ExposeOutput { from, .. } => public_path(&from.process)?,
+            Self::ExposeNestedInput {
+                parent,
+                name,
+                targets,
+                ..
+            } => {
+                for part in parent.split('/').chain(std::iter::once(name.as_str())) {
+                    public_path(part)?;
+                }
+                for target in targets {
+                    for part in target.process.split('/') {
+                        public_path(part)?;
+                    }
+                }
+            }
+            Self::ExposeNestedOutput { parent, name, from } => {
+                for part in parent
+                    .split('/')
+                    .chain(std::iter::once(name.as_str()))
+                    .chain(from.process.split('/'))
+                {
+                    public_path(part)?;
+                }
+            }
             Self::AddSource(path) => public_path(path)?,
             Self::Splice {
                 anchor,
@@ -167,6 +213,16 @@ impl Edit {
             Self::Disconnect(key) => [Connection(key.clone())].into(),
             Self::ExposeInput { name, .. } => [InputExport(name.clone())].into(),
             Self::ExposeOutput { name, .. } => [OutputExport(name.clone())].into(),
+            Self::ExposeNestedInput { parent, name, .. } => [NestedInputExport {
+                parent: parent.clone(),
+                name: name.clone(),
+            }]
+            .into(),
+            Self::ExposeNestedOutput { parent, name, .. } => [NestedOutputExport {
+                parent: parent.clone(),
+                name: name.clone(),
+            }]
+            .into(),
             Self::AddSource(path) => [Source(path.clone())].into(),
             // The planner adds the context-dependent predecessor edges.
             Self::Splice { anchor, output, .. } => [

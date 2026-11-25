@@ -114,6 +114,19 @@ pub(super) fn plan(
                     });
                 }
             }
+            // New nested exports may depend on a declaration introduced by
+            // another plugin. Reject undeclared dependencies regardless of
+            // lexical replay order, and reject an independent ancestor revision
+            // that would overwrite the exported port.
+            if let Some(path) = nested_export_dependency(&registrations[a], &registrations[b])
+                .or_else(|| nested_export_dependency(&registrations[b], &registrations[a]))
+            {
+                return Err(ComposeError::Conflict {
+                    first: a.clone(),
+                    second: b.clone(),
+                    footprint: Box::new(Footprint::Component(path)),
+                });
+            }
             if let Some(footprint) = overlapping_write(left, right) {
                 match registrations[a].priority.cmp(&registrations[b].priority) {
                     std::cmp::Ordering::Equal => {
@@ -181,4 +194,42 @@ fn overlapping_write<'a>(
             }
         })
     })
+}
+
+/// An export may refer to a component written by another registration only
+/// when that registration is an explicit dependency. Parent replacements also
+/// conflict with any independently published nested export.
+fn nested_export_dependency(declaration: &Registration, export: &Registration) -> Option<String> {
+    for edit in declaration.patch.edits() {
+        let path = match edit {
+            Edit::Add { path, .. } | Edit::Replace { path, .. } => path,
+            _ => continue,
+        };
+        for edit in export.patch.edits() {
+            match edit {
+                Edit::ExposeNestedInput {
+                    parent, targets, ..
+                } => {
+                    if nested_under(parent, path)
+                        || targets.iter().any(|target| target.process == *path)
+                    {
+                        return Some(path.clone());
+                    }
+                }
+                Edit::ExposeNestedOutput { parent, from, .. }
+                    if nested_under(parent, path) || from.process == *path =>
+                {
+                    return Some(path.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn nested_under(parent: &str, path: &str) -> bool {
+    parent
+        .strip_prefix(path)
+        .is_some_and(|suffix| suffix.starts_with('/') || suffix.is_empty())
 }
