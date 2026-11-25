@@ -448,6 +448,11 @@ fn compose(
             .or_else(|| {
                 previous
                     .compiled
+                    .reuse_after_root_connection_additions(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
                     .reuse_after_isolated_root_removal(&previous.network, &network)
             })
             .or_else(|| {
