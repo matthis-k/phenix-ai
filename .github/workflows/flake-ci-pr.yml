@@ -12,10 +12,10 @@ permissions:
 jobs:
   flake-checks:
     if: ${{ github.event_name == 'pull_request' && !(github.repository == 'matthis-k/phenix-ai' && github.event.pull_request.head.repo.full_name == 'matthis-k/phenix-ai' && (github.event.pull_request.user.login == 'matthis-k')) }}
-    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@39acf9aa98cd9cff011d39abc04d4610e96b7c0c
+    uses: matthis-k/phenix-flake-ci/.github/workflows/flake-dag-staged.yml@a8177632e578629da0de551d248079b7c99ed245
     with:
       config: "ci/flake-check-config.nix"
-      library_ref: "39acf9aa98cd9cff011d39abc04d4610e96b7c0c"
+      library_ref: "a8177632e578629da0de551d248079b7c99ed245"
       test_max_jobs: 32
       tests_per_job: 4
       test_timeout_seconds: 300
