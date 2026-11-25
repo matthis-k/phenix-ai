@@ -23,10 +23,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
-      - name: Checkout exact closure-proof baseline (#1278)
+      - name: Checkout exact obligation-aware H4 baseline (#1285)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 4eb584473818d86014f92f04806a3e22ed78863e
+          ref: 819a64d852c6178720d95f65397b51e612bd45f9
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Machine and exact source provenance

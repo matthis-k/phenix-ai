@@ -349,6 +349,9 @@ impl NetworkSession {
                 inputs.insert(p.name.clone(), packet.into_value());
                 p.cursor =
                     (p.queues.iter().position(|q| *q == queue.0).unwrap() + 1) % p.queues.len();
+                // Releasing bounded input capacity can unblock a retained
+                // producer fanout even if the producer precedes this consumer.
+                self.dirty_queue(queue.0);
             } else {
                 if global_eos {
                     p.eos_delivered = true;

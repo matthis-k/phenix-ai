@@ -16,6 +16,12 @@ impl WakeSignal {
             changed: Condvar::new(),
         })
     }
+    // An epoch read before scheduling ensures that a concurrent external wake
+    // cannot be silently acknowledged after its process was already scanned.
+    pub(super) fn epoch(&self) -> u64 {
+        self.state.lock().unwrap().0
+    }
+
     fn notify(&self) -> bool {
         let mut state = self.state.lock().unwrap();
         if !state.1 {
