@@ -164,6 +164,207 @@ mod tests {
     use super::*;
     use std::{sync::Barrier, thread};
 
+    // Operation-order checking is meaningful here because every operation
+    // on WakeState is linearized by the same mutex. It does NOT model
+    // instruction-level interleavings, plugin locks, or other runtime state.
+    #[derive(Clone, Copy, Debug)]
+    enum WakeEvent {
+        OldNotify,
+        OldWake,
+        Retire,
+        FreshNotify,
+        FreshWake,
+        Take,
+        GlobalNotify,
+        Invalidate,
+    }
+
+    #[derive(Clone, Copy)]
+    struct WakeModel {
+        active: bool,
+        old_active: bool,
+        old_pending: bool,
+        fresh_pending: bool,
+        target: bool,
+        epoch: u64,
+        global_epoch: u64,
+    }
+
+    impl Default for WakeModel {
+        fn default() -> Self {
+            Self {
+                active: true,
+                old_active: true,
+                old_pending: false,
+                fresh_pending: false,
+                target: false,
+                epoch: 0,
+                global_epoch: 0,
+            }
+        }
+    }
+
+    fn assert_wake_history(history: &[WakeEvent; 8]) {
+        const PROCESS: usize = 3;
+        let signal = WakeSignal::new();
+        let old = WakeSlot::default();
+        let fresh = WakeSlot::default();
+        let mut listener = WakeListener::new(signal.clone());
+        let mut model = WakeModel::default();
+
+        for (index, event) in history.iter().enumerate() {
+            match event {
+                WakeEvent::OldNotify | WakeEvent::OldWake => {
+                    let wake = matches!(event, WakeEvent::OldWake);
+                    let accepted = model.active && model.old_active;
+                    assert_eq!(
+                        signal.notify_target(&old, PROCESS, wake),
+                        accepted,
+                        "history={history:?} at step {index}"
+                    );
+                    if accepted {
+                        model.target = true;
+                        model.epoch = model.epoch.wrapping_add(1);
+                        model.old_pending |= wake;
+                    }
+                }
+                WakeEvent::Retire => {
+                    signal.retire_target(PROCESS, &old);
+                    model.old_active = false;
+                    model.old_pending = false;
+                    model.target = false;
+                }
+                WakeEvent::FreshNotify | WakeEvent::FreshWake => {
+                    let wake = matches!(event, WakeEvent::FreshWake);
+                    let accepted = model.active;
+                    assert_eq!(
+                        signal.notify_target(&fresh, PROCESS, wake),
+                        accepted,
+                        "history={history:?} at step {index}"
+                    );
+                    if accepted {
+                        model.target = true;
+                        model.epoch = model.epoch.wrapping_add(1);
+                        model.fresh_pending |= wake;
+                    }
+                }
+                WakeEvent::Take => {
+                    let expected = if model.target {
+                        BTreeSet::from([PROCESS])
+                    } else {
+                        BTreeSet::new()
+                    };
+                    assert_eq!(
+                        signal.take_scheduler_wakes(),
+                        (model.global_epoch, expected),
+                        "history={history:?} at step {index}"
+                    );
+                    model.target = false;
+                }
+                WakeEvent::GlobalNotify => {
+                    assert_eq!(
+                        signal.notify(),
+                        model.active,
+                        "history={history:?} at step {index}"
+                    );
+                    if model.active {
+                        model.epoch = model.epoch.wrapping_add(1);
+                        model.global_epoch = model.global_epoch.wrapping_add(1);
+                    }
+                }
+                WakeEvent::Invalidate => {
+                    signal.invalidate();
+                    model.active = false;
+                    model.target = false;
+                }
+            }
+
+            let state = signal.state.lock().unwrap();
+            assert_eq!(state.active, model.active, "history={history:?}");
+            assert_eq!(state.epoch, model.epoch, "history={history:?}");
+            assert_eq!(
+                state.global_epoch, model.global_epoch,
+                "history={history:?}"
+            );
+            assert_eq!(
+                state.targets.contains(&PROCESS),
+                model.target,
+                "history={history:?}"
+            );
+            assert!(
+                state.targets.iter().all(|target| *target == PROCESS),
+                "unexpected target from history={history:?}"
+            );
+            assert_eq!(
+                old.active.load(Ordering::Acquire),
+                model.old_active,
+                "history={history:?}"
+            );
+            assert_eq!(
+                old.pending.load(Ordering::Acquire),
+                model.old_pending,
+                "history={history:?}"
+            );
+            assert_eq!(
+                fresh.pending.load(Ordering::Acquire),
+                model.fresh_pending,
+                "history={history:?}"
+            );
+        }
+        assert!(listener.wait_timeout(Duration::ZERO));
+        assert!(!old.active.load(Ordering::Acquire));
+    }
+
+    fn enumerate_wake_histories(events: &mut [WakeEvent; 8], position: usize, checked: &mut usize) {
+        if position == events.len() {
+            let retire = events
+                .iter()
+                .position(|event| matches!(event, WakeEvent::Retire))
+                .unwrap();
+            let fresh_notify = events
+                .iter()
+                .position(|event| matches!(event, WakeEvent::FreshNotify))
+                .unwrap();
+            let fresh_wake = events
+                .iter()
+                .position(|event| matches!(event, WakeEvent::FreshWake))
+                .unwrap();
+            // A fresh registration is only available after old retirement.
+            // The new wake slot shares the process index but not authority.
+            if retire < fresh_notify && retire < fresh_wake {
+                assert_wake_history(events);
+                *checked += 1;
+            }
+            return;
+        }
+        for next in position..events.len() {
+            events.swap(position, next);
+            enumerate_wake_histories(events, position + 1, checked);
+            events.swap(position, next);
+        }
+    }
+
+    #[test]
+    fn all_legal_wake_operation_orders_match_lifetime_reference_model() {
+        // 8! total orderings, constrained by retirement preceding both
+        // fresh-owner operations: 8! / 3 = 13,440 legal histories.
+        // Their results are compared after *every operation* with actual
+        // WakeSignal state, not only with a duplicate stand-alone model.
+        let mut events = [
+            WakeEvent::OldNotify,
+            WakeEvent::OldWake,
+            WakeEvent::Retire,
+            WakeEvent::FreshNotify,
+            WakeEvent::FreshWake,
+            WakeEvent::Take,
+            WakeEvent::GlobalNotify,
+            WakeEvent::Invalidate,
+        ];
+        let mut checked = 0;
+        enumerate_wake_histories(&mut events, 0, &mut checked);
+        assert_eq!(checked, 13_440);
+    }
+
     #[test]
     fn targeted_notification_and_retirement_linearize_at_reused_process_index() {
         // Both operations take the *same* signal mutex. Across real concurrent
