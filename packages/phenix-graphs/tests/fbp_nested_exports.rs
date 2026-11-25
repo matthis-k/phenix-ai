@@ -1,6 +1,6 @@
 //! Nested exports are explicit author-owned extension seams, not root aliases.
 use phenix_graph::{
-    ComponentDef, GraphOrigin, Value,
+    ComponentDef, GraphOrigin, NetworkError, Value,
     compose::{ComposeError, Composer, Edit, Footprint, NetworkPatch, Registration},
     network::{ConnectionDef, NetworkBuilder, NetworkDef, PortPath},
 };
@@ -119,6 +119,159 @@ fn output() -> Edit {
         name: "telemetry".into(),
         from: port("m/inner/side", "output"),
     }
+}
+
+#[test]
+fn checked_exports_authenticate_generation_and_preserve_immediate_child_boundaries() {
+    let mut composer = composer(true, true);
+    let seed = NetworkPatch::new([Edit::Add {
+        path: "m/other".into(),
+        definition: stage("other"),
+    }]);
+    composer
+        .register([registration("seed", &[], seed.clone(), seed.footprints())])
+        .unwrap();
+    let compiled = composer.current().compiled().clone();
+    let child = compiled.declaration("m/inner").unwrap();
+    let leaf = compiled.declaration("m/inner/leaf").unwrap();
+    let inputs = [
+        compiled
+            .declaration("m/other")
+            .unwrap()
+            .input::<String>("input")
+            .unwrap(),
+        child.input::<String>("input").unwrap(),
+    ];
+    let output = child.output::<String>("output").unwrap();
+    let patch = NetworkPatch::new([
+        Edit::expose_nested_bound_input(&compiled, "m", "alternate", &inputs, cap()).unwrap(),
+        Edit::expose_nested_bound_output(&compiled, "m", "telemetry", &output).unwrap(),
+    ]);
+    let Edit::ExposeNestedInput {
+        targets, capacity, ..
+    } = &patch.edits()[0]
+    else {
+        panic!("expected nested input");
+    };
+    assert_eq!(
+        targets,
+        &vec![port("m/other", "input"), port("m/inner", "input")]
+    );
+    assert_eq!(*capacity, cap());
+    let Edit::ExposeNestedOutput { from, .. } = &patch.edits()[1] else {
+        panic!("expected nested output");
+    };
+    assert_eq!(from, &port("m/inner", "output"));
+    assert_eq!(
+        output.resolve(&compiled).unwrap(),
+        leaf.output::<String>("output")
+            .unwrap()
+            .resolve(&compiled)
+            .unwrap()
+    );
+
+    // Parent itself, sibling/prefix lookalike, grandchild and root are not
+    // immediate children, even with valid generation-bound endpoints.
+    for parent in ["m/inner", "m/inner2", "other", "", "m/inner/leaf"] {
+        assert!(matches!(
+            Edit::expose_nested_bound_input(&compiled, parent, "x", &inputs, cap()),
+            Err(NetworkError::InvalidProjection(_))
+        ));
+        assert!(matches!(
+            Edit::expose_nested_bound_output(&compiled, parent, "x", &output),
+            Err(NetworkError::InvalidProjection(_))
+        ));
+    }
+    assert!(matches!(
+        Edit::expose_nested_bound_input(
+            &compiled,
+            "m",
+            "x",
+            &[leaf.input::<String>("input").unwrap()],
+            cap()
+        ),
+        Err(NetworkError::InvalidProjection(_))
+    ));
+    assert!(matches!(
+        Edit::expose_nested_bound_output(
+            &compiled,
+            "m",
+            "x",
+            &leaf.output::<String>("output").unwrap()
+        ),
+        Err(NetworkError::InvalidProjection(_))
+    ));
+    assert!(matches!(
+        Edit::expose_nested_bound_input(
+            &compiled,
+            "m/inner",
+            "x",
+            &[leaf.input::<String>("input").unwrap(), inputs[0].clone()],
+            cap()
+        ),
+        Err(NetworkError::InvalidProjection(_))
+    ));
+
+    let foreign = composer.current().network().compile().unwrap();
+    let foreign_input = foreign
+        .declaration("m/inner")
+        .unwrap()
+        .input::<String>("input")
+        .unwrap();
+    assert!(matches!(
+        Edit::expose_nested_bound_input(
+            &compiled,
+            "m",
+            "x",
+            &[inputs[0].clone(), foreign_input],
+            cap()
+        ),
+        Err(NetworkError::ForeignScope)
+    ));
+    assert!(matches!(
+        Edit::expose_nested_bound_output(&foreign, "m", "x", &output),
+        Err(NetworkError::ForeignScope)
+    ));
+
+    composer
+        .register([registration(
+            "checked",
+            &["seed"],
+            patch.clone(),
+            patch.footprints(),
+        )])
+        .unwrap();
+    let next = composer.current().compiled();
+    assert!(
+        next.inspect("m")
+            .unwrap()
+            .interface
+            .input("alternate")
+            .is_some()
+    );
+    assert!(
+        next.inspect("m")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_some()
+    );
+    assert!(
+        compiled
+            .inspect("m")
+            .unwrap()
+            .interface
+            .output("telemetry")
+            .is_none()
+    );
+    assert!(matches!(
+        Edit::expose_nested_bound_input(next, "m", "x", &inputs, cap()),
+        Err(NetworkError::ForeignScope)
+    ));
+    assert!(matches!(
+        Edit::expose_nested_bound_output(next, "m", "x", &output),
+        Err(NetworkError::ForeignScope)
+    ));
 }
 
 #[test]

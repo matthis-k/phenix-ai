@@ -132,6 +132,62 @@ impl Edit {
         })
     }
 
+    /// Lower authenticated immediate-child boundaries without flattening their
+    /// physical targets. Author opt-ins and exact grants are still checked at replay.
+    pub fn expose_nested_bound_input<T>(
+        network: &crate::CompiledNetwork,
+        parent: impl Into<String>,
+        name: impl Into<String>,
+        targets: &[crate::BoundInput<T>],
+        capacity: NonZeroUsize,
+    ) -> Result<Self, NetworkError> {
+        let targets = targets
+            .iter()
+            .map(|target| target.symbolic_path(network).cloned())
+            .collect::<Result<Vec<_>, _>>()?;
+        let parent = parent.into();
+        if parent.is_empty()
+            || targets.iter().any(|target| {
+                target
+                    .process
+                    .rsplit_once('/')
+                    .is_none_or(|(scope, _)| scope != parent)
+            })
+        {
+            return Err(NetworkError::InvalidProjection(parent));
+        }
+        Ok(Self::ExposeNestedInput {
+            parent,
+            name: name.into(),
+            targets,
+            capacity,
+        })
+    }
+
+    /// Preserve the symbolic child boundary, never its flattened physical source.
+    pub fn expose_nested_bound_output<T>(
+        network: &crate::CompiledNetwork,
+        parent: impl Into<String>,
+        name: impl Into<String>,
+        from: &crate::BoundOutput<T>,
+    ) -> Result<Self, NetworkError> {
+        let from = from.symbolic_path(network)?.clone();
+        let parent = parent.into();
+        if parent.is_empty()
+            || from
+                .process
+                .rsplit_once('/')
+                .is_none_or(|(scope, _)| scope != parent)
+        {
+            return Err(NetworkError::InvalidProjection(parent));
+        }
+        Ok(Self::ExposeNestedOutput {
+            parent,
+            name: name.into(),
+            from,
+        })
+    }
+
     pub(super) fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
         match self {
             Self::Add { path, definition } => {
