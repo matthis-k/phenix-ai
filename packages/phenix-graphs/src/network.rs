@@ -327,4 +327,31 @@ impl CompiledNetwork {
     pub fn source_starts(&self) -> &[usize] {
         &self.sources
     }
+
+    /// Feedback components in the *compiled* process topology, including
+    /// self-loops. These are static wiring warnings, NOT deadlock findings:
+    /// cycles can make progress, and acyclic graphs can still stall on external
+    /// ingress, captures, custom readiness or deferred work.
+    ///
+    /// Each group contains physical process paths in compiled-index order.
+    /// Immutable inspection does not start processes, inspect runtime state,
+    /// or grant any binding authority.
+    pub fn structural_feedback_cycles(&self) -> Vec<Vec<&str>> {
+        let size = self.processes.len();
+        let mut edges = vec![Vec::new(); size];
+        let mut reverse = vec![Vec::new(); size];
+        for connection in &self.connections {
+            edges[connection.from.0].push(connection.to.0);
+            reverse[connection.to.0].push(connection.from.0);
+        }
+        crate::graph_analysis::cyclic_components(&edges, &reverse)
+            .into_iter()
+            .map(|members| {
+                members
+                    .into_iter()
+                    .map(|index| self.processes[index].path.as_str())
+                    .collect()
+            })
+            .collect()
+    }
 }
