@@ -233,6 +233,14 @@ mod tests {
     }
 
     #[test]
+    fn all_reachable_idle_nodes_still_complete_scoped_optional_closure() {
+        // Every node belongs to the same reachable request scope. Only the
+        // current closure frontier can progress without physical packets,
+        // and every downstream optional consumer must execute exactly once.
+        super::measure("chain", 64, 6);
+    }
+
+    #[test]
     fn two_roots_owned_by_same_request_must_both_finish_before_optional_closure() {
         use phenix_graph::runtime::{Readiness, SessionOptions};
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));

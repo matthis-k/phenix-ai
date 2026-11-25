@@ -20,10 +20,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
-      - name: Checkout exact pre-prefilter baseline
+      - name: Checkout exact verified H4 scoped baseline (#1281)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 3dbf8e540400cb678f6ca8fe7ee16b94139baeca
+          ref: 64d3f9306633f57f098f4a8ce13485c3ab5bc5d8
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Record exact commits, benchmark source and machine provenance
