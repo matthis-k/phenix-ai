@@ -485,9 +485,25 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
 
 #[test]
 fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
-    let mut kernel = Kernel::build("cancelled", [], Arc::new(LocalProcessDispatcher)).unwrap();
+    // The empty graph is already Completed and correctly cannot be
+    // transformed into Cancelled. Use an open-ingress session instead.
+    let (mut kernel, _, _, _) = fixture(false);
     kernel.start().unwrap();
-    kernel.with_session(|session| session.cancel()).unwrap();
+    kernel
+        .with_session(|session| {
+            assert_eq!(
+                session.state(),
+                phenix_graph::runtime::SessionState::Quiescent
+            );
+            session.cancel();
+            assert_eq!(
+                session.state(),
+                phenix_graph::runtime::SessionState::Cancelled
+            );
+        })
+        .unwrap();
+    // No wake registration is needed for an already-terminal session;
+    // the fixture's producer deliberately does not support set_waker.
     assert_eq!(
         kernel
             .run_until(&phenix_kernel::WakeHandle::default(), |_| {})
@@ -496,5 +512,19 @@ fn cancelled_sessions_stop_the_driver_instead_of_spinning_on_invalid_wakes() {
             state: phenix_graph::runtime::SessionState::Cancelled,
             cause: None
         }
+    );
+}
+
+#[test]
+fn completed_empty_session_returns_success_without_blocking_or_registering_wakes() {
+    let mut kernel = Kernel::build("completed", [], Arc::new(LocalProcessDispatcher)).unwrap();
+    kernel.start().unwrap();
+    assert_eq!(
+        kernel.with_session(|session| session.state()).unwrap(),
+        phenix_graph::runtime::SessionState::Completed
+    );
+    assert_eq!(
+        kernel.run_until(&phenix_kernel::WakeHandle::default(), |_| {}),
+        Ok(())
     );
 }
