@@ -1,0 +1,9 @@
+[package]
+name = "phenix-agent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+phenix-graph = { path = "../phenix-graphs" }
+phenix-kernel = { path = "../phenix-kernel" }
+phenix-plugin = { path = "../phenix-plugins" }

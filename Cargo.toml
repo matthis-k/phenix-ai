@@ -9,6 +9,7 @@ members = [
   "packages/phenix-storage-graph",
   "packages/phenix-storage-plugin",
   "packages/phenix-kernel",
+  "packages/phenix-agent",
 ]
 
 [profile.release]
