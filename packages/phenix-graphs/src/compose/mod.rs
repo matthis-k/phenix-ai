@@ -34,17 +34,90 @@
 //! claims and private requests as final-state obligations, even when a later
 //! edit in the same patch replaces that declaration again. Recomposition starts
 //! these checkpoints afresh from the frozen base and selected edits.
+//!
+//! # Planning and selection limits
+//!
+//! A registration can become eligible when its only blocker is itself ineligible.
+//! Provisional defeat is not permanent exclusion.
+//!
+//! Use `composer.set_selection_limits(SelectionLimits { max_work: ... })` from
+//! `phenix_graph::compose` to change the finite allowance for future updates. The
+//! default is 1,000,000 charged selector operations; exhausted construction/search or
+//! uniqueness proof returns `SelectionBudgetExceeded`, even if one model was found.
+//! Changing limits alone leaves current bindings/topology intact. This allowance
+//! does not bound dependency/footprint planning, replay, compilation or total build
+//! time. Kernel hosts configure both composer paths through `BuildOptions::selection_limits`.
+//!
+//! Composition planning has a separate `PlanningLimits { max_units: 1_000_000 }`
+//! default. Set the allowance with `composer.set_planning_limits(...)` before an
+//! update. Large valid registries can require a larger finite allowance.
+//!
+//! Units reserve logical planning operations/storage and symbolic query/copy/scan
+//! bytes before work. Blockers reserve two index cells, ancestor rows their full
+//! logical Boolean length, and generated paths their bytes before allocation.
+//! Explicit predicate operands and possible diagnostic copies are preflighted;
+//! internal BTree comparison multiplicity is excluded. Reservations are conservative
+//! and never refunded. First denied reservation returns `PlanningBudgetExceeded`
+//! before any later semantic error; with sufficient allowance semantic order remains
+//! unchanged. Selection is still independently budgeted per attempt. Incoming owned
+//! input construction, opaque payloads, replay/network copying/compiler work,
+//! arbitrary callbacks/destructors and allocation failure are outside this logical
+//! allowance. It is not a wall-clock/allocator-byte/total-work guarantee.
+//!
+//! For a synchronous host scope, `register_with_planning_usage(registrations,
+//! &mut used_units)` consumes an ordinary caller-owned counter, including on failed
+//! attempts. Use the same counter and configured limit on all participating
+//! Composers; the borrow is not retained. Ordinary `register`/`revoke` start fresh
+//! per-update counters. There is no public meter, cross-thread sharing, or cumulative
+//! revoke API. Kernel configures `BuildOptions::planning_limits` and shares one
+//! counter across the complete build's main prefixes and static self-import previews.
+//!
+//! Updates prepare before committing. `into_iter`, `next`, iterator Drop, and
+//! rejected candidate cleanup are caught before publication; cleanup cannot replace
+//! an established semantic/budget error. Only nondropping field replacements commit
+//! registry and composition. A catchable retired-state Drop panic after commit is
+//! suppressed and the published update remains successful. Failed attempts keep
+//! old registry/topology/generation; successful unchanged topology still refreshes
+//! generation. Abort, double panic and nontermination are outside the native boundary.
+//!
 use crate::GraphOrigin;
 use crate::network::{CompiledNetwork, NetworkDef, NetworkError, normalize_requirements};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+mod budget;
 mod edit;
 mod planning;
 mod replay;
 mod selection;
 
+use budget::PlanningBudget;
 pub use edit::{ConnectionKey, Edit, Footprint, NetworkPatch};
+
+/// Finite logical composition planning allowance, independent of selection.
+///
+/// The default 1,000,000 units is a new host resource policy: previously valid
+/// unbounded inputs may now require a larger finite allowance. Each explicit
+/// planning visit/lookup and constructed scalar slot costs one unit; symbolic
+/// query/copy/scan bytes cost one unit each plus one operation unit. Predicate
+/// operands and possible diagnostic copies are reserved before the decision.
+/// Blockers reserve two index cells; ancestor masks reserve their logical length
+/// as Boolean cells. Reservations are cumulative and never refunded.
+/// BTree-internal comparisons, allocation rounding/failure, opaque payloads,
+/// incoming input construction/iterator code, replay, network cloning, compiler
+/// and arbitrary native callbacks/destructors are not bounded. This is neither a
+/// wall-clock/byte cap nor a total build-work allowance. Empty planning is free.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanningLimits {
+    pub max_units: usize,
+}
+impl Default for PlanningLimits {
+    fn default() -> Self {
+        Self {
+            max_units: 1_000_000,
+        }
+    }
+}
 
 /// Finite work allowance for exact registration selection on each update.
 ///
@@ -186,6 +259,9 @@ pub enum ComposeError {
     SelectionBudgetExceeded {
         limit: usize,
     },
+    PlanningBudgetExceeded {
+        limit: usize,
+    },
     Conflict {
         first: String,
         second: String,
@@ -254,22 +330,37 @@ impl Composition {
 /// generation-bound handles are always invalidated on successful publication.
 /// Failed updates retain the previous registry, topology, and identity. No
 /// factories are invoked or external side-effect rollback promised. Panics are
-/// converted to `Panicked`.
+/// converted to `Panicked` before publication. Retired-state cleanup panics after
+/// commit are suppressed: a published update remains successful. Abort, double
+/// panic and nontermination are outside the native unwind boundary.
 pub struct Composer {
     base: NetworkDef,
     registrations: BTreeMap<String, Registration>,
     current: Composition,
     selection_limits: SelectionLimits,
+    planning_limits: PlanningLimits,
 }
 impl Composer {
     pub fn new(base: NetworkDef) -> Result<Self, ComposeError> {
         let selection_limits = SelectionLimits::default();
-        let current = guarded_compose(&base, &BTreeMap::new(), selection_limits, None)?;
+        let planning_limits = PlanningLimits::default();
+        let mut used = 0;
+        let mut budget = PlanningBudget::new(planning_limits, &mut used)?;
+        let current =
+            match guarded(|| compose(&base, &BTreeMap::new(), selection_limits, None, &mut budget))
+            {
+                Ok(current) => current,
+                Err(error) => {
+                    dispose(base);
+                    return Err(error);
+                }
+            };
         Ok(Self {
             base,
             registrations: BTreeMap::new(),
             current,
             selection_limits,
+            planning_limits,
         })
     }
     pub fn current(&self) -> &Composition {
@@ -279,47 +370,129 @@ impl Composer {
     pub fn set_selection_limits(&mut self, limits: SelectionLimits) {
         self.selection_limits = limits;
     }
+    /// Apply the logical planning policy to future updates without publication.
+    pub fn set_planning_limits(&mut self, limits: PlanningLimits) {
+        self.planning_limits = limits;
+    }
     /// Batch admission permits dependencies to be supplied in any order.
     pub fn register(
         &mut self,
         registrations: impl IntoIterator<Item = Registration>,
     ) -> Result<&Composition, ComposeError> {
-        let mut candidate = self.registrations.clone();
-        for registration in registrations {
-            if candidate.contains_key(&registration.id) {
-                return Err(ComposeError::DuplicateRegistration(registration.id));
+        self.register_with_planning_usage(registrations, &mut 0)
+    }
+
+    /// Admit using a caller-owned cumulative planning counter. Consumed units
+    /// survive failure; the borrow is not retained. All Composers in one host
+    /// build (including self-previews) must use the same counter and limit.
+    /// The first denied reservation wins; with sufficient allowance semantic
+    /// error order is unchanged. Cleanup never replaces a conclusive error.
+    pub fn register_with_planning_usage(
+        &mut self,
+        registrations: impl IntoIterator<Item = Registration>,
+        used_units: &mut usize,
+    ) -> Result<&Composition, ComposeError> {
+        let mut input = Some(registrations);
+        let mut iterator = None;
+        let mut pending = None;
+        let mut candidate = BTreeMap::new();
+        // Keep user-owned cleanup outside the unwind closure. In particular,
+        // iterator Drop must finish before either published field is replaced.
+        let mut result = guarded(|| {
+            let mut budget = PlanningBudget::new(self.planning_limits, used_units)?;
+            iterator = Some(input.take().expect("input").into_iter());
+            for (id, registration) in &self.registrations {
+                budget.text(id)?;
+                budget.text(id)?;
+                budget.registration_copy(registration)?;
+                candidate.insert(id.clone(), registration.clone());
             }
-            candidate.insert(registration.id.clone(), registration);
+            loop {
+                pending = iterator.as_mut().expect("iterator").next();
+                let Some(registration) = pending.as_ref() else {
+                    break;
+                };
+                // Reserve query, possible diagnostic and inserted key before
+                // deciding duplicate admission.
+                budget.text(&registration.id)?;
+                budget.text(&registration.id)?;
+                budget.text(&registration.id)?;
+                budget.charge(1)?;
+                if candidate.contains_key(&registration.id) {
+                    return Err(ComposeError::DuplicateRegistration(registration.id.clone()));
+                }
+                let registration = pending.take().expect("pending registration");
+                candidate.insert(registration.id.clone(), registration);
+            }
+            compose(
+                &self.base,
+                &candidate,
+                self.selection_limits,
+                Some(&self.current),
+                &mut budget,
+            )
+        });
+        let clean = dispose(iterator) & dispose(input) & dispose(pending);
+        if !clean && result.is_ok() {
+            dispose(result);
+            result = Err(ComposeError::Panicked);
         }
-        let current = guarded_compose(
-            &self.base,
-            &candidate,
-            self.selection_limits,
-            Some(&self.current),
-        )?;
-        self.registrations = candidate;
-        self.current = current;
-        Ok(&self.current)
+        match result {
+            Ok(current) => {
+                self.commit(candidate, current);
+                Ok(&self.current)
+            }
+            Err(error) => {
+                dispose(candidate);
+                Err(error)
+            }
+        }
     }
     /// Remove the prerequisite and its transitive dependents, then rebuild.
     /// Returns all explicitly deactivated registration IDs, including losers.
     pub fn revoke(&mut self, id: &str) -> Result<BTreeSet<String>, ComposeError> {
-        let removed = dependent_closure(&self.registrations, id);
-        let candidate = self
-            .registrations
-            .iter()
-            .filter(|(id, _)| !removed.contains(*id))
-            .map(|(id, registration)| (id.clone(), registration.clone()))
-            .collect();
-        let current = guarded_compose(
-            &self.base,
-            &candidate,
-            self.selection_limits,
-            Some(&self.current),
-        )?;
-        self.registrations = candidate;
-        self.current = current;
-        Ok(removed)
+        let mut candidate = BTreeMap::new();
+        let result = guarded(|| {
+            let mut used = 0;
+            let mut budget = PlanningBudget::new(self.planning_limits, &mut used)?;
+            let removed = dependent_closure(&self.registrations, id, &mut budget)?;
+            for (id, registration) in &self.registrations {
+                budget.text(id)?;
+                if !removed.contains(id) {
+                    budget.text(id)?;
+                    budget.text(id)?;
+                    budget.registration_copy(registration)?;
+                    candidate.insert(id.clone(), registration.clone());
+                }
+            }
+            let current = compose(
+                &self.base,
+                &candidate,
+                self.selection_limits,
+                Some(&self.current),
+                &mut budget,
+            )?;
+            Ok((current, removed))
+        });
+        match result {
+            Ok((current, removed)) => {
+                self.commit(candidate, current);
+                Ok(removed)
+            }
+            Err(error) => {
+                dispose(candidate);
+                Err(error)
+            }
+        }
+    }
+
+    fn commit(&mut self, candidate: BTreeMap<String, Registration>, current: Composition) {
+        let retired_registry = std::mem::replace(&mut self.registrations, candidate);
+        let retired_current = std::mem::replace(&mut self.current, current);
+        // Publication is complete. A catchable retired Drop panic cannot turn
+        // a successful atomic update into a reported precommit failure.
+        dispose(retired_current);
+        dispose(retired_registry);
     }
 }
 
@@ -329,13 +502,21 @@ impl Composer {
 fn dependent_closure(
     registrations: &BTreeMap<String, Registration>,
     root: &str,
-) -> BTreeSet<String> {
+    budget: &mut PlanningBudget<'_>,
+) -> Result<BTreeSet<String>, ComposeError> {
+    if registrations.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    budget.text(root)?;
     if !registrations.contains_key(root) {
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     }
     let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (id, registration) in registrations {
+        budget.charge(1)?;
         for dependency in &registration.dependencies {
+            budget.text(dependency)?;
+            budget.charge(2)?;
             dependents
                 .entry(dependency.as_str())
                 .or_default()
@@ -343,27 +524,27 @@ fn dependent_closure(
         }
     }
     let mut removed = BTreeSet::new();
+    budget.charge(1)?;
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
+        budget.charge(1)?;
+        budget.text(id)?;
+        budget.text(id)?;
+        budget.charge(1)?;
         if !removed.insert(id.to_owned()) {
             continue;
         }
+        budget.text(id)?;
         if let Some(children) = dependents.get(id) {
+            budget.charge(children.len())?;
             stack.extend(children.iter().copied());
         }
     }
-    removed
+    Ok(removed)
 }
 
-fn guarded_compose(
-    base: &NetworkDef,
-    registrations: &BTreeMap<String, Registration>,
-    selection_limits: SelectionLimits,
-    previous: Option<&Composition>,
-) -> Result<Composition, ComposeError> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compose(base, registrations, selection_limits, previous)
-    })) {
+fn guarded<T>(operation: impl FnOnce() -> Result<T, ComposeError>) -> Result<T, ComposeError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
         Ok(result) => result,
         Err(payload) => {
             crate::discard_panic_payload(payload);
@@ -372,13 +553,27 @@ fn guarded_compose(
     }
 }
 
+fn dispose(value: impl Sized) -> bool {
+    guarded(|| {
+        drop(value);
+        Ok(())
+    })
+    .is_ok()
+}
+
 fn compose(
     base: &NetworkDef,
     registrations: &BTreeMap<String, Registration>,
     selection_limits: SelectionLimits,
     previous: Option<&Composition>,
+    budget: &mut PlanningBudget<'_>,
 ) -> Result<Composition, ComposeError> {
-    let plan = planning::plan(registrations, selection_limits)?;
+    let mut plan = planning::plan(registrations, selection_limits, budget)?;
+    // Reserve/filter the final manifest before replay or any reuse return.
+    for id in plan.footprints.keys() {
+        budget.text(id)?;
+    }
+    plan.footprints.retain(|id, _| plan.active.contains(id));
     // Composer edits are monotonic per operation: a registration can only be
     // added under a fresh ID or removed together with its dependents; an
     // existing registration and the frozen base cannot be replaced in place.
@@ -393,6 +588,17 @@ fn compose(
     // unchanged. Other selected write-set changes are replayed and compiled,
     // except the strictly checked source-pruning case below.
     if let Some(previous) = previous {
+        for id in previous.footprints.keys() {
+            budget.text(id)?;
+            budget.text(id)?;
+            budget.charge(1)?;
+        }
+        for id in &plan.active {
+            budget.text(id)?;
+            budget.text(id)?;
+            budget.text(id)?;
+            budget.charge(1)?;
+        }
         let before: BTreeSet<&str> = previous
             .footprints
             .iter()
@@ -406,13 +612,11 @@ fn compose(
             .map(String::as_str)
             .collect();
         if before == after {
-            let mut footprints = plan.footprints;
-            footprints.retain(|id, _| plan.active.contains(id));
             return Ok(Composition {
                 network: previous.network.clone(),
                 compiled: previous.compiled.with_fresh_generation(),
                 active: plan.active,
-                footprints,
+                footprints: plan.footprints,
             });
         }
     }
@@ -440,16 +644,48 @@ fn compose(
                     .compiled
                     .reuse_after_root_connection_pruning(&previous.network, &network)
             })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_root_connection_capacity_changes(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_root_connection_additions(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_removal(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_batch_isolated_root_removal(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_isolated_root_addition(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_connected_root_addition(&previous.network, &network)
+            })
+            .or_else(|| {
+                previous
+                    .compiled
+                    .reuse_after_connected_root_removal(&previous.network, &network)
+            })
     }) {
         Some(compiled) => compiled,
         None => network.compile()?,
     };
     let planning::SelectedPlan {
-        active,
-        mut footprints,
-        ..
+        active, footprints, ..
     } = plan;
-    footprints.retain(|id, _| active.contains(id));
     Ok(Composition {
         network,
         compiled,
@@ -461,6 +697,24 @@ fn compose(
 #[cfg(test)]
 mod dependent_closure_tests {
     use super::*;
+
+    fn dependent_closure(
+        registrations: &BTreeMap<String, Registration>,
+        root: &str,
+    ) -> BTreeSet<String> {
+        super::dependent_closure(
+            registrations,
+            root,
+            &mut PlanningBudget::new(
+                PlanningLimits {
+                    max_units: usize::MAX,
+                },
+                &mut 0,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
 
     fn registration(id: &str, dependencies: Vec<String>) -> Registration {
         Registration::new(
@@ -509,6 +763,43 @@ mod dependent_closure_tests {
             .collect();
         let removed = dependent_closure(&registrations, "0255");
         assert_eq!(removed.len(), 256);
+    }
+}
+
+#[cfg(test)]
+mod construction_cleanup_tests {
+    use super::*;
+    use crate::{ComponentDef, NetworkBuilder};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[test]
+    fn rejected_base_cleanup_cannot_replace_a_conclusive_compile_error() {
+        struct Bomb(Arc<AtomicUsize>);
+        impl Drop for Bomb {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                panic!("base cleanup");
+            }
+        }
+        let drops = Arc::new(AtomicUsize::new(0));
+        let bomb = Bomb(drops.clone());
+        let mut builder = NetworkBuilder::new();
+        builder
+            .add(
+                "node",
+                Arc::new(ComponentDef::map(move |n: i64| {
+                    let _ = &bomb;
+                    n
+                })),
+            )
+            .unwrap();
+        let mut base = builder.build().unwrap();
+        base.sources.push("missing".into());
+        assert!(matches!(Composer::new(base), Err(ComposeError::Network(_))));
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 }
 

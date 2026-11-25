@@ -1,4 +1,42 @@
 //! Shared wire contract. Equality is authoritative, not a hash or Rust type name.
+//!
+//! # Shared Schema Contract
+//!
+//! `Schema` is the authoritative descriptor used by Graph and Storage. Equality
+//! compares name, revision, structure, and codec. Canonical strings use versioned,
+//! length-framed components rather than hashes or Rust type names.
+//!
+//! Graph's `ContractValue` derive mechanically builds ordered record descriptors
+//! from field names, optionality, and nested field contracts. Its codec identifier
+//! specifies the existing little-endian u64 length-framed record format. Independent
+//! structs with the same declared name and structure interoperate; different field
+//! names, order, types, or optionality do not. Graph uses canonical identities for
+//! authoring, compilation, admission, and checked value decoding.
+//!
+//! Storage reexports this same `Schema` type. A storage `Codec::schema` can return
+//! `T::schema()` from a Graph contract directly. `SchemaCodec` binds an existing
+//! codec to that descriptor. Registry registration and session operations compare
+//! the full descriptor before invoking the codec. Codec implementations and manual
+//! descriptors are trusted assertions, not verification of arbitrary codec code.
+//!
+//! Manual Graph implementations must implement `ContractValue::schema()` without
+//! macros. There is no nominal `SCHEMA` constant or optional descriptor fallback.
+//! Primitive and derived record bytes are unchanged, but all wire identities include
+//! the complete descriptor. Old name-only envelopes require explicit migration.
+//!
+//! `Schema::identity()` returns an owned `Arc<str>` containing the canonical
+//! descriptor. Graph values, slots, declarations, interfaces, diagnostics and compiled
+//! metadata own or borrow these identities. Clones share their allocation, equality
+//! compares content, and dropping the last consumer releases strong ownership. There
+//! is no process-global interner or strong cache. Independent equal descriptors may
+//! have different allocations; pointer equality is never contract authority. Local
+//! Rust values remain a distinct `TypeId` identity and cannot alias a wire identity.
+//!
+//! The ignored `distinct_descriptor_reload_retention` release test measures distinct
+//! reload batches and verifies with `Weak` that unloaded identities have no strong
+//! owners. This is an ownership measurement, not allocator RSS profiling. A retained
+//! value, graph, interface snapshot, diagnostic or report legitimately retains its
+//! identity until that consumer is dropped.
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

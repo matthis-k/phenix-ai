@@ -228,6 +228,17 @@ struct Loaded {
 
 /// A cloneable lease on an exact plugin revision. Existing users remain pinned
 /// when the plugin is unloaded or a newer revision is activated.
+///
+/// Component binding resolves the actual locator in the compiled network,
+/// checks exact revision provenance and validates the claimed contract. A
+/// missing locator, origin, claim, or incompatible contract fails closed.
+/// The result pins the revision, not the network or a transferable validation
+/// certificate. Revalidate against the final compiled network after composition.
+///
+/// Raw hosts must attach a snapshot or code lease before exposing executable
+/// compiled declarations. Kernel attaches these leases to final and preview
+/// compiled networks and retains any supplied application lease. Detached
+/// factories, sessions, jobs, and values carry the required ownership.
 #[derive(Clone)]
 pub struct PluginSnapshot {
     loaded: Arc<Loaded>,
@@ -355,6 +366,11 @@ impl PluginSnapshot {
 }
 
 /// Typed contribution whose lifetime pins both plugin state and code.
+///
+/// The origin token identifies the exact revision by allocation identity, not
+/// a plugin name or revision number. Kernel adds a distinct child origin for
+/// each producing contribution. Origin is provenance, not a write grant or a
+/// lease. A contribution handle retains both its state and its code.
 pub struct ContributionHandle<C: Contribution> {
     loaded: Arc<Loaded>,
     index: usize,

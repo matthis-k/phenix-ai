@@ -21,6 +21,36 @@
 //! use phenix_graph::network::{InputEndpoint, PortPath};
 //! fn forge(path: PortPath) -> InputEndpoint { InputEndpoint(path) }
 //! ```
+//!
+//! ## Interchangeable Bodies
+//!
+//! Replacement checks the whole public interface and semantic obligations. Adjacent
+//! symbolic connections do not change, but old authoring handles are revoked.
+//!
+//! ```rust
+//! use phenix_graph::{ComponentDef, NetworkBuilder};
+//! use std::{num::NonZeroUsize, sync::Arc};
+//! let primitive = Arc::new(ComponentDef::map(|n: i64| n + 1));
+//! let mut body = NetworkBuilder::new();
+//! let child = body.add("child", primitive.clone())?;
+//! body.expose_input("input", child.input::<i64>("input")?, NonZeroUsize::new(1).unwrap())?;
+//! body.expose_output("output", child.output::<i64>("output")?)?;
+//! let composite = Arc::new(ComponentDef::composite(body.build()?));
+//! let mut network = NetworkBuilder::new();
+//! let a = network.add("a", primitive.clone())?;
+//! let b = network.module("b", match composite.body() {
+//!     phenix_graph::Body::Composite(body) => (**body).clone(),
+//!     _ => unreachable!(),
+//! })?;
+//! network.connect(a.output::<i64>("output")?, b.input::<i64>("input")?, NonZeroUsize::new(1).unwrap())?;
+//! let a = network.replace(&a, composite)?;
+//! let _b = network.replace(&b, primitive)?;
+//! network.expose_input("request", a.input::<i64>("input")?, NonZeroUsize::new(1).unwrap())?;
+//! let compiled = network.build()?.compile()?;
+//! assert_eq!(compiled.processes().len(), 2);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 use crate::component::{ComponentDef, DefinitionKey};
 use crate::contract::Contract;
 use crate::interface::{Interface, InterfaceError};
@@ -250,6 +280,11 @@ pub struct CompiledNetwork {
     pub(crate) ingress_capacities: BTreeMap<String, NonZeroUsize>,
     pub(crate) outputs: BTreeMap<String, (usize, String)>,
     pub(crate) sources: Vec<usize>,
+    // The successful compiler's bounded charges. Retained across incremental
+    // publications so additions cannot bypass work or instance budgets.
+    pub(crate) compilation_limits: crate::CompileLimits,
+    pub(crate) compile_work: u64,
+    pub(crate) compile_instances: u64,
     inspections: BTreeMap<String, ComponentSnapshot>,
     boundaries: BTreeMap<String, ResolvedBoundary>,
     contracts: Vec<Contract>,

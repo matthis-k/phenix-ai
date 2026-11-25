@@ -117,6 +117,15 @@
         name:
         lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
       ) allPackages;
+      docSource = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [
+          ./AGENTS.md
+          ./GLOSSARY.md
+          ./docs
+          ./packages
+        ];
+      };
       checkConfig = import ./ci/flake-check-config.nix;
     in
     {
@@ -137,6 +146,10 @@
         '';
       };
       checks.${system} = {
+        docs = pkgs.runCommand "phenix-doc-links" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+          python3 ${./ci/check-doc-links.py} ${docSource}
+          touch $out
+        '';
         workflow = pkgs.runCommand "phenix-workflow-sync" { } ''
           diff -u ${pkgs.writeText "flake-ci.yml" self.lib.flakeCiWorkflow} ${./.github/workflows/flake-ci.yml}
           touch $out

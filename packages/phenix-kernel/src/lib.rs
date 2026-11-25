@@ -1,4 +1,166 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
+//!
+//! The kernel resolves plugin contributions, builds host-authorized native network
+//! patches, and leases a persistent `NetworkSession` without holding the ownership
+//! mutex through plugin callbacks. Contending Kernel session access fails fast.
+//! It adds no scheduler or legacy execution adapter. Native Rust plugins are not a sandbox or a dynamic ABI.
+//!
+//! ## Composer Registration
+//!
+//! One authoring object registers its composer and offer/import metadata atomically.
+//! The destination registrar supplies the owner; authors never repeat producer or
+//! consumer keys. The private registered payload is not another public authoring API.
+//!
+//! ```rust,ignore
+//! Contribution::new("service", static_patch)
+//!     .after([Key::new("dependency-plugin", "main")])
+//!     .route(["external-input".into()])
+//!     .prepare(|candidate| Ok(CandidateArtifacts::default()))
+//!     .offer("service-offer", "actual-service-path", definition_key)
+//!     .import("dependency", dependency_definition_key)
+//!     .register(registrar)?;
+//! ```
+//!
+//! `after` and `route` append. Offers/imports accumulate; duplicate IDs reject the
+//! entire bundle without installing a composer, metadata or reserved names. A repeated
+//! `prepare` replaces the authoring callback. Offer/import IDs retain owner-wide,
+//! per-kind namespaces, so host `ImportPolicy` keys do not change. Distinct offer IDs
+//! remain distinct providers even if one composer creates both. No public standalone
+//! offer/requirement records or `Registrar::add(kernel::Contribution)` route remain.
+//!
+//! ## Candidate Artifacts
+//!
+//! ```rust,ignore
+//! pub type Prepare = dyn Fn(&CandidateContext<'_>)
+//!     -> Result<CandidateArtifacts, CallbackError> + Send + Sync;
+//! pub struct CandidateArtifacts {
+//!     pub patch: Option<NetworkPatch>, // Replaces the static patch for this candidate.
+//!     pub activate: Option<Box<Activate>>,
+//!     pub export: Option<Box<dyn Any + Send + Sync>>,
+//! }
+//! pub type Activate = dyn Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync;
+//! ```
+//!
+//! `CandidateArtifacts::default()`, `activate(factory)` and `export(value)` provide
+//! single-slot registration with duplicate detection. The prepare callback receives
+//! read-only `CandidateContext` with `import(id)` metadata and
+//! `bind_import(id)` scoped projection, never a raw compiled topology or mutable
+//! candidate/builder. It may construct its own definitions or an owned patch. Replay
+//! is exclusively native `Composer` work. Self-imports are checked against a compiled,
+//! host-authorized preview of the static patch; they cannot certify fabricated shapes.
+//!
+//! Host `BuildOptions` contains `imports: ImportPolicy`, `execution: SessionOptions`
+//! and `composition: BTreeMap<Key, CompositionPolicy>`.
+//! Host `inspect_network: BTreeSet<Key>` is a separate default-deny read grant.
+//! A preparation callback may call `inspect_network()` only with an exact host
+//! grant; this preserves trusted compiled exports without exposing all topology
+//! to ordinary declared-import consumers. Each `CompositionPolicy` has
+//! `grants: BTreeSet<Footprint>` and `priority: i64`. Missing policy grants no writes.
+//! Grants and priorities are host decisions, never fields in plugin patch payloads.
+//! Host `selection_limits: phenix_graph::compose::SelectionLimits` defaults to
+//! `max_work: 1_000_000`. The budget applies independently to each `Composer` update
+//! and each self-import preview, not to the total kernel build. Incremental
+//! registration is unchanged: every registered prefix must independently have a
+//! unique valid selection. Budget exhaustion remains a typed `ComposeError` source
+//! in `ResolutionError::Composition`. Limits do not preempt all callbacks: ordinary
+//! preparation runs before main registration; self-import preview failure runs before
+//! that contribution's preparation. External callback effects are not rolled back.
+//! Host `planning_limits: phenix_graph::compose::PlanningLimits` defaults to
+//! `max_units: 1_000_000`. Unlike selection, its consumed counter is shared across
+//! all main prefix admissions and self-import previews in one build. A larger
+//! finite allowance may be required; consult `phenix_graph::compose::PlanningLimits`.
+//! Logical units include composition registry/text/dependency/footprint/index,
+//! ancestry/blocker and manifest construction, with charges before growth. They
+//! exclude incoming registration construction, catalog/import matching, callback and
+//! artifact/lease bookkeeping, final offer validation, replay, base/network copying
+//! and compiler work. This is not a total build-work, byte or wall-clock cap.
+//! `PlanningBudgetExceeded` is preserved as a typed composition error. Planning
+//! exhaustion during build/host preparation precedes publication and producer
+//! activation; prepared artifacts are disposed. Retry is an explicit new build scope, not an
+//! internal counter reset. Prefix validation and callback observations remain intact;
+//! later contributions cannot repair an invalid prefix by batching the build.
+//! The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code
+//! lease is added without discarding an application-provided lease.
+//!
+//! Side-effect-only processes declare no outputs. Intentionally unconnected emissions
+//! require explicit `execution.discard_outputs` entries naming the physical process
+//! path and output; the kernel does not silently grant discard permission.
+//!
+//! ## Contracts
+//!
+//! - `ContractDefinition { id, contract: phenix_graph::contract::Contract }`.
+//! - `.offer(id, unit, definition_key)` advertises an actual component path owned by
+//!   this composer; the internal producer key is derived during registration.
+//! - `.import(id, definition_key)` declares a local requirement for this composer.
+//! - `ImportPolicy { selections, allow, deny }` is host-owned; denial wins and unknown policy keys reject.
+//!
+//! Missing, ambiguous, incompatible, foreign-owner and sibling-producer offers fail
+//! closed. All definitions and all offers, including unused entries, are checked.
+//! Each producing contribution receives an exact child `GraphOrigin` within its
+//! leased plugin revision. Final validation uses `compiled.inspect(path).origin`,
+//! `compiled.check_implementation(path, &contract)` and the native contract catalog.
+//! An origin is provenance, not write authority or a code lease.
+//!
+//! `ResolvedImport::bind(&CompiledNetwork) -> Result<BoundComponent<'_>, NetworkError>`
+//! uses the actual native path/checker and returns only contract-visible ports.
+//! Local ports require Rust type identity. Wire ports require complete matching
+//! schema identities, allowing independent Rust implementations and codecs. Matching
+//! shape alone is not semantic membership, nor does schema equality prove codec honesty.
+//!
+//! ## Sessions And Producers
+//!
+//! ```rust,ignore
+//! pub struct InputEvent { pub input: String, pub value: Value }
+//! pub trait Producer: Send {
+//!     fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError>;
+//!     fn set_waker(&mut self, waker: WakeHandle) -> bool { false }
+//! }
+//! ```
+//!
+//! `Kernel::build(name, snapshots, Arc<dyn ProcessDispatcher>)` and
+//! `build_with_options(name, snapshots, dispatcher, options)` do not activate producers.
+//! `start(&mut self)` activates in dependency order; failures release all partial
+//! producers and permit retry without reconstructing candidate artifacts.
+//!
+//! - `inject(&self, input: &str, value: Value) -> Result<(), InjectionError>` admits exactly one value and returns its ownership on failure.
+//! - `inject_key(&self, InputKey<T>, T)` pairs a public input name with its payload;
+//!   local and encoded keys preserve their modes. Conversion precedes session access,
+//!   and failure returns the constructed Value. Generation forwards the same method.
+//! - `with_session<R>(&self, impl FnOnce(&mut NetworkSession) -> R) -> Result<R, SessionAccessError>` permits native requests, captures, completions and wakes only after start.
+//! - `run_steps(&self, budget: usize) -> Result<RunReport, SessionAccessError>` executes bounded native steps through the actual dispatcher and worker execution guards.
+//! - `drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError>` only
+//!   polls/admits events; it never runs process steps. A live blocking driver owns
+//!   polling exclusively. `ProducerEvent.result` is `Result<(), ProducerError>`.
+//! - `compiled()` exposes immutable native declarations; `export::<T>(&Key)` retrieves a candidate-owned artifact.
+//!
+//! Each producer retains at most one pending event on `Full` without repolling.
+//! `InputEvent::new(key, payload)` supplies the same typed conversion for producers;
+//! it does not declare or grant a route, and retry reuses the retained envelope.
+//! Round-robin position persists across calls. Terminal poll errors detach producers
+//! and destroy them outside the producer mutex. Explicit session work does not hold
+//! the producer mutex; a drain defers admission instead of waiting behind it.
+//! The blocking `run_until` driver combines producer notification/shutdown with native
+//! session wakes and bounded step execution. Portless processes need an explicit
+//! `Edit::AddSource` or `NetworkBuilder::start`, never an implicit trigger.
+//!
+//! The kernel combines exact snapshot leases with any application-provided lease,
+//! then applies the same lease to native compiled declarations and the session.
+//! Candidate-context compiled views are leased before callbacks can export or clone
+//! them. Detached `compiled()` clones, exported compiled views, extracted factories,
+//! spawned processes and independently started sessions retain those leases after
+//! kernel/host teardown. Native queued packets, captured/cloned values, owned jobs and
+//! completions retain their leases through payload/process destruction as well.
+//!
+//! Escaping prepare, activation, producer-poll and host-binding callback errors own
+//! their code/application lease, not merely their containing event or lifecycle error.
+//! Moving a cause out of an error preserves the lease. The private wrapper delegates
+//! formatting and exposes the original concrete cause through `Error::source`; walk
+//! the source chain to downcast rather than assuming a fixed depth. The original
+//! cause drops before its lease. Retaining an error intentionally delays plugin code
+//! teardown even after its failed candidate and owned producers have been released.
+//!
+//!
+//! See [host] for publication and wake hints.
 mod bound;
 mod build;
 mod config_error;
@@ -10,7 +172,7 @@ pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
     Value,
-    compose::{Composer, Footprint, NetworkPatch, Registration, SelectionLimits},
+    compose::{Composer, Footprint, NetworkPatch, PlanningLimits, Registration, SelectionLimits},
     contract::Contract,
     network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
     process::{ProcessDispatcher, ProcessExecutionGuard},
@@ -577,6 +739,9 @@ pub struct BuildOptions {
     pub imports: ImportPolicy,
     /// Host-owned selection budget per composer update, including self-import previews.
     pub selection_limits: SelectionLimits,
+    /// Cumulative logical composition planning policy for this entire build,
+    /// including every prefix and self-import preview. Not a total work/time cap.
+    pub planning_limits: PlanningLimits,
     /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.

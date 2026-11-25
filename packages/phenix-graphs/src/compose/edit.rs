@@ -1,6 +1,6 @@
 //! Context-free edit payloads, footprints, and payload validation.
 
-use super::ComposeError;
+use super::{ComposeError, PlanningBudget};
 use crate::component::{Body, ComponentDef};
 use crate::network::{ConnectionDef, NetworkError, PortPath};
 use crate::{CompileLimit, GraphOrigin, LimitKind};
@@ -188,37 +188,42 @@ impl Edit {
         })
     }
 
-    pub(super) fn validate_payload(&self, origin: &GraphOrigin) -> Result<(), ComposeError> {
+    pub(super) fn validate_payload(
+        &self,
+        origin: &GraphOrigin,
+        budget: &mut PlanningBudget<'_>,
+    ) -> Result<(), ComposeError> {
+        budget.edit(self)?;
         match self {
             Self::Add { path, definition } => {
                 for part in path.split('/') {
-                    public_path(part)?;
+                    public_path(part, budget)?;
                 }
-                definition_origin(definition, origin, path)?;
+                definition_origin(definition, origin, path, budget)?;
             }
             Self::Replace { path, definition } => {
                 for part in path.split('/') {
-                    public_path(part)?;
+                    public_path(part, budget)?;
                 }
-                definition_origin(definition, origin, path)?;
+                definition_origin(definition, origin, path, budget)?;
             }
             Self::Connect(edge) => {
                 for path in [&edge.from.process, &edge.to.process] {
                     for part in path.split('/') {
-                        public_path(part)?;
+                        public_path(part, budget)?;
                     }
                 }
             }
             Self::Disconnect(key) => {
-                public_path(&key.from.process)?;
-                public_path(&key.to.process)?;
+                public_path(&key.from.process, budget)?;
+                public_path(&key.to.process, budget)?;
             }
             Self::ExposeInput { targets, .. } => {
                 for target in targets {
-                    public_path(&target.process)?;
+                    public_path(&target.process, budget)?;
                 }
             }
-            Self::ExposeOutput { from, .. } => public_path(&from.process)?,
+            Self::ExposeOutput { from, .. } => public_path(&from.process, budget)?,
             Self::ExposeNestedInput {
                 parent,
                 name,
@@ -226,11 +231,11 @@ impl Edit {
                 ..
             } => {
                 for part in parent.split('/').chain(std::iter::once(name.as_str())) {
-                    public_path(part)?;
+                    public_path(part, budget)?;
                 }
                 for target in targets {
                     for part in target.process.split('/') {
-                        public_path(part)?;
+                        public_path(part, budget)?;
                     }
                 }
             }
@@ -240,17 +245,17 @@ impl Edit {
                     .chain(std::iter::once(name.as_str()))
                     .chain(from.process.split('/'))
                 {
-                    public_path(part)?;
+                    public_path(part, budget)?;
                 }
             }
-            Self::AddSource(path) => public_path(path)?,
+            Self::AddSource(path) => public_path(path, budget)?,
             Self::Splice {
                 anchor,
                 input,
                 output,
             } => {
                 for path in [&anchor.from, &anchor.to, input, output] {
-                    public_path(&path.process)?;
+                    public_path(&path.process, budget)?;
                 }
             }
         }
@@ -309,7 +314,12 @@ impl NetworkPatch {
     }
 }
 
-fn public_path(path: &str) -> Result<(), ComposeError> {
+fn public_path(path: &str, budget: &mut PlanningBudget<'_>) -> Result<(), ComposeError> {
+    // Reserve contains/control scans, both literal comparisons, and possible
+    // diagnostic copying before the first semantic predicate.
+    for _ in 0..5 {
+        budget.text(path)?;
+    }
     if path.is_empty()
         || path.len() > crate::MAX_IDENTIFIER_BYTES
         || path.contains('/')
@@ -325,11 +335,15 @@ fn definition_origin(
     definition: &ComponentDef,
     origin: &GraphOrigin,
     path: &str,
+    budget: &mut PlanningBudget<'_>,
 ) -> Result<(), ComposeError> {
     let limits = crate::CompileLimits::default();
     let mut remaining = limits.max_instances;
+    budget.text(path)?;
+    budget.charge(3)?;
     let mut pending = vec![(definition, path.to_owned(), 0)];
     while let Some((definition, path, depth)) = pending.pop() {
+        budget.charge(1)?;
         if remaining == 0 || depth >= limits.max_depth {
             return Err(NetworkError::LimitExceeded {
                 limit: if remaining == 0 {
@@ -370,6 +384,9 @@ fn definition_origin(
                 .into());
             }
             for (name, child) in child.instances() {
+                budget.text(&path)?;
+                budget.text(name)?;
+                budget.charge(4)?;
                 pending.push((child, format!("{path}/{name}"), depth + 1));
             }
         }

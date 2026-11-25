@@ -3,6 +3,20 @@
 //! This module does not choose database engines, issue grants or create filesystem
 //! paths. A trusted host binds logical resources to provisioned physical datasets.
 //! The low-level Registry/Session API remains available unchanged.
+//!
+//! A `ResourceSpec` resolves against an explicit `Identity`. Missing project or
+//! session identities fail rather than fall back to user scope. The resource's
+//! storage class describes its purpose, not its capabilities. A resource identity
+//! does not include its path, backend, schema, or requester.
+//!
+//! Hosts freeze logical bindings before giving a `Storage` view to a plugin.
+//! Bindings are lookup data; the associated session supplies authority. KV binds
+//! a dataset. SQL binds a mount without creating a placeholder dataset. SQL mount
+//! aliases require an explicit host sharing decision. Native SQL remains mount-wide.
+//!
+//! Use `Storage::user`, `project`, or `session` to resolve a typed view. Use
+//! `config`, `data`, `state`, `cache`, or `runtime` for KV. Use `sql` for a
+//! native SQL resource. Placement policy and provisioning belong to the host.
 use crate::{
     Address, Capability, Codec, Operation, Revision, Revisioned, Schema, Scope, Session, Sql,
     Subscription,
@@ -128,6 +142,10 @@ impl ResourceSpec {
     }
 }
 
+///
+/// Additional capability requirements are independent lower bounds, not grants
+/// or identity components. The resource kind already requires typed KV or SQL.
+/// Use `require` when the consumer needs an optional backend operation.
 #[derive(Clone, Debug)]
 pub struct ResourceRequest {
     pub spec: ResourceSpec,
@@ -474,6 +492,17 @@ bind_cells!(A, B);
 bind_cells!(A, B, C);
 bind_cells!(A, B, C, D);
 
+///
+/// Binding preflights read authority, schema, and atomic batch support without
+/// reading values. A bound cell retains the exact session, address, schema, and
+/// reserved key `value`. It does not grant access to the session or registry.
+///
+/// Use `source` to erase the value type for a snapshot group, then `decode` on the
+/// matching entry. Required absence returns `MissingInput`; `optional` selects
+/// optional absence without suppressing codec or storage errors. Clone retains the
+/// codec through an `Arc`, without requiring the value or codec to implement Clone.
+/// `changed` needs an independent subscribe grant. The cell's `get` uses an atomic
+/// singleton snapshot.
 pub struct ReadCell<T: Stored> {
     source: crate::snapshot::ReadSource,
     format: Arc<T::Format>,
@@ -553,6 +582,13 @@ impl<T: Stored> OptionalReadCell<T> {
 }
 
 /// Typed KV view; no extra hidden cache and no implicit provisioning.
+///
+/// Plain `get` requires read authority and typed KV support. `get_revisioned`
+/// also requires revisioned-read support. `compare_exchange` requires write
+/// authority and atomic CAS support, not read authority. `None` as the expected
+/// revision inserts only if absent. Conflicts return the current revision, if any.
+/// Use `changed` with an independent subscribe grant. See [`Revision`] for token
+/// scope and persistence.
 pub struct Kv<T: Stored> {
     address: Address,
     session: Session,
@@ -606,6 +642,12 @@ impl SqlResource {
 /// Host-only XDG placement policy; returns directories, never silently opens
 /// a database or changes its location. Invalid relative XDG overrides are
 /// ignored in favor of the HOME defaults.
+///
+/// Absolute XDG environment overrides take precedence over HOME defaults.
+/// Relative overrides are ignored. Runtime storage is optional. Directory policy
+/// uses `<class-base>/phenix/{users,projects,sessions}/<stable-id>`.
+/// The storage-plugin host bridge provisions private SQLite paths; this type only
+/// computes directory policy.
 #[derive(Clone)]
 pub struct XdgPaths {
     pub config: PathBuf,

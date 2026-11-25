@@ -3,6 +3,63 @@
 //! Preparation can acquire external producer resources, but never polls them.
 //! Dropping a candidate releases its owned resources; this is not rollback of
 //! arbitrary external effects performed by plugin factories or composers.
+//!
+//! # Host publication
+//!
+//! `KernelHost::prepare(stages, options, dispatcher, name, bind)` builds the exact
+//! candidate inventory, invokes the nonadmitting binding hook, then activates producers
+//! without polling. The hook receives only:
+//!
+//! ```rust,ignore
+//! Binding::export::<T>(&Key) -> Option<&T>
+//! Binding::inspect(&str) -> Result<ComponentSnapshot, NetworkError>
+//! Binding::lookup_definition(DefinitionKey) -> Result<PhysicalDeclaration, NetworkError>
+//! Binding::input_targets(&str) -> Option<&[(usize, String)]>
+//! Binding::output_source(&str) -> Option<(usize, &str)>
+//! ```
+//!
+//! There is no session or startable compiled-network getter on `Binding`.
+//! Use opaque `DefinitionKey` identities, not factory/action pointer equality.
+//! `publish(candidate)` rejects foreign/stale hosts and epochs, commits the plugin
+//! batch, retires old owned producers and replaces the generation. Publication waits
+//! only for producer drains, never old explicit session work. Old `Generation` handles
+//! retain `inject`, `with_session`, `run_steps`, `compiled`, `with_kernel` and exports;
+//! their retired producer drains remain empty. Candidate drop releases artifacts and
+//! producers before their plugin leases. Native callback external effects are not
+//! sandboxed or rolled back. Typed callback errors preserve their exact source.
+//!
+//! # Host wake hints
+//!
+//! `KernelHost::with_wake(plugins, wake.clone())` opts into producer/publication
+//! notifications; `new` remains manual. Preparation builds, binds, and starts before
+//! registering producer wakers, with shutdown checks on either side of registration.
+//! It never polls or runs candidate process steps or installs a session notifier.
+//! Unsupported/panicking registration and shutdown return `LifecycleError::Driver`.
+//! Activation/subscription may perform I/O, and failed candidates may signal hints;
+//! these external effects and wake versions are not rolled back. Shutdown checks
+//! are not atomic publication revocation of an already prepared candidate.
+//!
+//! `WakeHandle::version()` snapshots a wrapping change hint. Snapshot before work
+//! inspection, then `wait_since(version)` waits for a different version or sticky
+//! shutdown, looping through spurious wakes. `is_shutdown()` must also be checked
+//! during busy iterations. Wakes notify all waiters before forwarding to the native
+//! driver notifier, without holding the epoch mutex during forwarding. Versions
+//! are neither event counts nor generation IDs. Publication signals after the new
+//! active pointer is visible and the old drain gate is released, before old producer
+//! destructors, including on first publication.
+//!
+//! This is **source/publication-driven only**, not a general scheduler. An empty
+//! bounded drain is not idle: finish a sweep using an application-known producer
+//! bound, execute bounded steps, drain captures/backpressure, and retry after
+//! progress or exhausted budgets. Graph process wakes, worker completion, deadlines,
+//! explicit injection, and session-lease release do not automatically advance the
+//! host version. Keep native `run_until` or coordinate those sources independently.
+//! Never hold a host mutex while processing or waiting. Mixing host-reactor and
+//! static-driver modes with different wake handles, including handover back to the
+//! host after static registration, is unsupported: producer wakers are not restored.
+//!
+//! `DerivedHost::with_wake` forwards this opt-in without changing mandatory storage
+//! guards. Wake hints are advisory; publication and session ownership remain independent of readiness notification.
 use crate::{
     BuildOptions, CallbackError, DriverError, Kernel, KernelLockScope, Key, ProducerEvent,
     ResolutionError, StartError, WakeHandle,
@@ -504,6 +561,10 @@ impl Drop for KernelHost {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "h3b_closure_tests.rs"]
+mod h3b_closure_tests;
 
 #[cfg(test)]
 mod tests {

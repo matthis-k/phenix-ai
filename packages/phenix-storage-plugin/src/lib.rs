@@ -1,5 +1,44 @@
 //! Optional integration between host-owned storage mounts and the existing
 //! in-process plugin Registrar. No second loader, database engine or kernel API.
+//!
+//! ## Host provisioning
+//!
+//! Collect resource requirements from plugin snapshots. Choose physical placement
+//! and permissions from trusted host policy. Prepare the plan before opening
+//! backends, then activate it to obtain restricted per-plugin views.
+//!
+//! ```rust,no_run
+//! use phenix_plugin::PluginSnapshot;
+//! use phenix_storage::Operation;
+//! use phenix_storage::scoped::{Identity, ResourceId, ScopeId, StorageClass, XdgPaths};
+//! use phenix_storage_plugin::{ActivatedStorage, Error, PreparedStorage,
+//!     ResourceRequirements, StoragePolicy};
+//!
+//! fn activate(snapshots: Vec<PluginSnapshot>) -> Result<ActivatedStorage, Error> {
+//!     let identity = Identity::user("alice")?.project("stable-project-id")?;
+//!     let requirements = ResourceRequirements::collect(snapshots, &identity)?;
+//!     let paths = XdgPaths::from_env()?;
+//!     let mut policy = StoragePolicy::xdg(&requirements, &paths)?;
+//!     // XDG selects placement only. These are trusted host decisions, not copies
+//!     // of plugin requests. Every other request remains denied.
+//!     let settings = ResourceId::new(
+//!         ScopeId::Project("stable-project-id".into()),
+//!         StorageClass::Config,
+//!         "phenix.agent/settings",
+//!     )?;
+//!     policy.resources.get_mut(&settings).ok_or(Error::MissingPlacement)?
+//!         .allowed.insert(Operation::Read);
+//!     policy.plugin_access.insert("settings-reader".into(),
+//!         [(settings, [Operation::Read].into())].into());
+//!     // SQL shared by multiple resources OR plugins additionally requires an
+//!     // explicit entry in policy.shared_sql_mounts.
+//!     PreparedStorage::prepare(requirements, identity, policy)?.activate()
+//! }
+//! ```
+//!
+//! The host publishes the resulting views. Old views remain usable until their
+//! owners release them. Preparation and activation do not create a second plugin
+//! loader or graph runtime.
 use phenix_plugin::{
     CallbackError, Contribution, ContributionHandle, PluginSnapshot, lease_callback_error,
 };
@@ -17,6 +56,17 @@ pub type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, CallbackError> + Sen
 
 /// A plugin *offers* a backend factory. Only the trusted host can choose a
 /// physical mount name, location, configuration and storage authority.
+///
+/// A provider used by preparation must declare its features. Optional KV feature
+/// promises are independent. Missing advertised support rejects the plan before
+/// factory invocation. Activation probes actual support but cannot establish
+/// atomicity, token uniqueness, truthful observation, or schema compatibility
+/// before opening. Durable backends enforce schemas through `Backend::register_dataset`.
+///
+/// Preparation pins the exact offer revision. Opened backends retain that lease
+/// through backend destruction. Replacement or logical unload does not replace
+/// existing backend instances. The lower-level `mount_offer` is available to
+/// trusted hosts without this plan.
 pub struct BackendOffer {
     id: String,
     open: Box<OpenBackend>,
@@ -233,6 +283,15 @@ impl Contribution for ResourceOffer {
 /// Owned declaration data after schema validation, with no requester code leases.
 /// The trusted host supplies physical bindings, provisions datasets, and issues
 /// separate Session grants.
+///
+/// Collection merges compatible logical resources and retains each plugin's
+/// requests independently. Schema and kind conflicts, duplicate plugin names,
+/// and invalid operation or capability combinations fail.
+///
+/// Revisioned reads and atomic batch reads require KV and Read. Compare-and-exchange
+/// requires KV and Write. SQL operations require SQL. Subscribe is independent.
+/// A read cell requests atomic batch support only when Read is requested.
+/// Another plugin's operations cannot make an invalid declaration valid.
 pub struct ResourceRequirements {
     entries: BTreeMap<ResourceId, ResourceKind>,
     requests: BTreeMap<String, Vec<(ResourceId, ResourceRequest)>>,
@@ -352,6 +411,40 @@ pub struct ResourceBinding {
 }
 /// Trusted host decisions, not plugin contributions. SQL mount sharing requires
 /// an explicit allowlist. Reserved KV tables remain protected even on shared mounts.
+///
+/// Both the resource allowance and the per-plugin allowance must authorize every
+/// requested operation. XDG placement leaves both allowlists empty. Approve from
+/// trusted configuration or a user decision, never by copying plugin requests.
+/// Activation issues only the operations requested by that plugin.
+///
+/// Sharing a SQL mount across resources or plugins, including KV colocation, requires
+/// an explicit sharing entry. SQL exposes application tables mount-wide, subject
+/// to the storage authorizer. Separate databases provide stronger isolation.
+///
+/// # Private XDG SQLite placement
+///
+/// XDG placement assigns an isolated file per resource using stable scope IDs,
+/// storage class, and injectively encoded resource names. Reject canonical path
+/// and inode aliases between separately named mounts. Overrides must stay inside
+/// the appropriate private class root.
+///
+/// On Unix, create app-owned directories including `phenix` with mode 0700 and
+/// databases with mode 0600. Existing private components must have exact modes and
+/// effective-uid ownership. Reject symlinks, nonregular files, and hard-linked
+/// databases and sidecars. Use O_NOFOLLOW for checks and precreation. Validate
+/// journal, WAL, and SHM files as private regular files; new sidecars inherit
+/// the database mode. Do not change existing base-directory modes or process umask.
+/// A restrictive umask can cause activation to fail.
+///
+/// Check private paths at preparation, before opening any backend at activation,
+/// during provisioning, and after opening SQLite. Runtime placement requires an
+/// existing nonsymlink directory owned by the effective uid with mode 0700.
+/// Check it at policy construction and activation. Reject private XDG SQLite and
+/// runtime placement on non-Unix platforms. Hosts must protect bases from hostile
+/// concurrent replacement. These checks are not a filesystem sandbox.
+///
+/// Manual placement leaves filesystem security to the host. Memory needs no file.
+/// An external provider owns its own path policy.
 #[derive(Default)]
 pub struct StoragePolicy {
     pub mounts: BTreeMap<String, BackendPlacement>,
@@ -563,6 +656,22 @@ impl PreparedBackend {
         }
     }
 }
+///
+/// Preparation validates declarations, placement, permissions, sharing, and
+/// advertised features without opening provider factories, creating directories,
+/// registering datasets, or issuing sessions. After authorization, check existing
+/// built-in SQLite files read-only for persisted schema conflicts. Missing files
+/// and schemas are allowed. This is advisory: activation rechecks registration,
+/// and preparation cannot validate stored payloads or revision-clock health.
+///
+/// Inspect the plan without executing it. Activation opens mounts, probes demanded
+/// actual interfaces and support predicates before registering datasets or issuing
+/// sessions, then creates views with exact per-plugin bindings and grants.
+/// Provider probes perform no sentinel payload reads or writes.
+///
+/// Failure publishes no views and releases opened backends and leases. Created
+/// directories, files, and durable metadata remain. Never delete existing data
+/// as cleanup. This is not a filesystem or multi-database transaction.
 pub struct PreparedStorage {
     requirements: ResourceRequirements,
     identity: Identity,

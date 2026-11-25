@@ -2,6 +2,11 @@
 use std::{fmt, sync::Arc};
 
 /// An owned callback cause, retaining its concrete type for source inspection.
+///
+/// Retain the concrete cause through `lease_callback_error` when it escapes the
+/// owning revision. Downcast by walking the source chain rather than assuming
+/// a fixed wrapper depth. A retained failure can keep code alive after logical
+/// unload or candidate rejection.
 pub type CallbackError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 struct LeasedCallback {

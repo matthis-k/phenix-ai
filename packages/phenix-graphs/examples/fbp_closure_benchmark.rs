@@ -68,7 +68,7 @@ fn compiled(mode: &str, breadth: usize, hits: Arc<AtomicUsize>) -> CompiledNetwo
     compiled_with_capacity(mode, breadth, hits, NonZeroUsize::new(1).unwrap())
 }
 
-fn compiled_with_capacity(
+pub(crate) fn compiled_with_capacity(
     mode: &str,
     breadth: usize,
     hits: Arc<AtomicUsize>,
@@ -165,7 +165,10 @@ fn compiled_with_capacity(
     builder.build().unwrap().compile().unwrap()
 }
 
-fn readiness_options(mode: &str, breadth: usize) -> phenix_graph::runtime::SessionOptions {
+pub(crate) fn readiness_options(
+    mode: &str,
+    breadth: usize,
+) -> phenix_graph::runtime::SessionOptions {
     let mut options = phenix_graph::runtime::SessionOptions::default();
     if mode == "fan-in" {
         options.readiness.insert(
