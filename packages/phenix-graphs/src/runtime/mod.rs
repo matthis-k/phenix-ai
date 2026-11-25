@@ -233,10 +233,11 @@ pub struct NetworkSession {
     captures: BTreeMap<String, usize>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
-    // Sources, custom/optional readiness and staged groups must still be
-    // polled for zero-packet progress. Ordinary packet-driven nodes use dirty
-    // endpoint invalidation, even in a mixed composition.
+    // Sources, custom readiness and staged input waits need unconditional
+    // polling. Optional policies need zero-packet checks only while
+    // authenticated sealed scopes can reach them.
     always_poll: BTreeSet<usize>,
+    scoped_optional_poll: BTreeMap<usize, usize>,
     dirty_processes: BTreeSet<usize>,
     force_full_refresh: bool,
     observed_global_wake_epoch: u64,
@@ -462,10 +463,8 @@ impl NetworkSession {
             .iter()
             .enumerate()
             .filter_map(|(index, p)| {
-                (p.source
-                    || p.inputs.is_empty()
-                    || matches!(&p.policy, Readiness::Optional { .. } | Readiness::Custom(_)))
-                .then_some(index)
+                (p.source || p.inputs.is_empty() || matches!(&p.policy, Readiness::Custom(_)))
+                    .then_some(index)
             })
             .collect();
         let mut session = Self {
@@ -478,6 +477,7 @@ impl NetworkSession {
             endpoints,
             ready: VecDeque::new(),
             always_poll,
+            scoped_optional_poll: BTreeMap::new(),
             dirty_processes: BTreeSet::new(),
             force_full_refresh: true,
             observed_global_wake_epoch: 0,
@@ -748,10 +748,30 @@ impl NetworkSession {
             })
     }
 
-    // Building a sorted dirty/poll union cannot amortize its cost when at
-    // most one ordinary process could be skipped. Prefer the original scan.
+    // Each sealed scope registers the optional paths it can reach.
+    // Packet/EOS events cover optional nodes outside sealed scopes.
+    fn unwatch_scoped_optional(&mut self, reachable: &[usize]) {
+        for &index in reachable {
+            if matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
+                let count = self
+                    .scoped_optional_poll
+                    .get_mut(&index)
+                    .expect("sealed optional scope must have a registered watcher");
+                *count -= 1;
+                if *count == 0 {
+                    self.scoped_optional_poll.remove(&index);
+                }
+            }
+        }
+    }
+
+    // A conservative upper bound on mandatory checks: a staged optional node
+    // may appear in both sets. Overcounting only chooses a safe full scan.
     fn prefer_full_refresh(&self) -> bool {
-        self.always_poll.len() >= self.processes.len().saturating_sub(1)
+        self.always_poll
+            .len()
+            .saturating_add(self.scoped_optional_poll.len())
+            >= self.processes.len().saturating_sub(1)
     }
 
     fn dirty_process(&mut self, index: usize) {
@@ -905,9 +925,10 @@ impl NetworkSession {
             return;
         }
         let mut dirty = std::mem::take(&mut self.dirty_processes);
-        // Preserve custom/source/optional/staged readiness on every drive;
-        // only ordinary packet-driven nodes can be skipped when unrelated.
+        // Custom/source/staged nodes are permanently polled. An optional
+        // node is polled only for registered sealed scopes reaching it.
         dirty.extend(self.always_poll.iter().copied());
+        dirty.extend(self.scoped_optional_poll.keys().copied());
         loop {
             let mut finished = false;
             for index in dirty {
@@ -928,6 +949,7 @@ impl NetworkSession {
             // without a finish stays pending for the next driver call.
             dirty = std::mem::take(&mut self.dirty_processes);
             dirty.extend(self.always_poll.iter().copied());
+            dirty.extend(self.scoped_optional_poll.keys().copied());
             if dirty.is_empty() {
                 break;
             }

@@ -20,10 +20,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
-      - name: Checkout exact targeted-wake parent baseline (#1287)
+      - name: Checkout exact verified EOS parent baseline (#1288)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 5b6c06aecede2272015f2ae087269c5ee5eccdc9
+          ref: aa3225110d29939a2f842a102d80ef74e7a367e2
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Record exact commits, benchmark source and machine provenance

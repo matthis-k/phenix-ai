@@ -58,6 +58,12 @@ impl NetworkSession {
         if scope.terminal.is_some() {
             return Ok(scope.cancelled_jobs.clone());
         }
+        // Request termination clears reachability below; detach only watches
+        // that were registered by an earlier close_request before clearing it.
+        if scope.sealed {
+            let reachable: Vec<_> = scope.reachable.iter().copied().collect();
+            self.unwatch_scoped_optional(&reachable);
+        }
         let scope = self.requests.get_mut(&id).unwrap();
         scope.sealed = true;
         scope.terminal = Some(status);
