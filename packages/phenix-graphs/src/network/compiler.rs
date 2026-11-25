@@ -675,6 +675,50 @@ impl CompiledNetwork {
         Some(compiled)
     }
 
+    /// Multiple independent root primitive revocations can share one compiled
+    /// graph copy. Validate each monotone step through the *same* single-node
+    /// oracle, including physical references and exact work/instance charges.
+    /// All surviving declarations and all non-instance scope fields must be
+    /// unchanged. Bound the batch to avoid quadratic validation on huge edits.
+    pub(crate) fn reuse_after_batch_isolated_root_removal(
+        &self,
+        before: &NetworkDef,
+        after: &NetworkDef,
+    ) -> Option<Self> {
+        const MAX_BATCH: usize = 32;
+        let count = before.instances.len().checked_sub(after.instances.len())?;
+        if !(2..=MAX_BATCH).contains(&count)
+            || before.connections != after.connections
+            || before.sources != after.sources
+            || !same_scope_except_instances(before, after)
+            || !same_declarations(after, before)
+        {
+            return None;
+        }
+        let removed: Vec<_> = before
+            .instances
+            .keys()
+            .filter(|name| !after.instances.contains_key(*name))
+            .cloned()
+            .collect();
+        if removed.len() != count {
+            return None;
+        }
+        // The definitions contain shared Arcs, so these two symbolic copies
+        // are cheap. No intermediate CompiledNetwork clone or generation is
+        // made; partial candidate mutations are never published by Composer.
+        let mut current = before.clone();
+        let mut next = before.clone();
+        let mut compiled = self.with_fresh_generation();
+        for name in removed {
+            next.instances.remove(&name)?;
+            let plan = compiled.plan_isolated_root_removal(&current, &next)?;
+            compiled.apply_isolated_root_removal(plan);
+            current.instances.remove(&name)?;
+        }
+        Some(compiled)
+    }
+
     fn plan_isolated_root_removal(
         &self,
         before: &NetworkDef,
@@ -1405,6 +1449,295 @@ mod isolated_root_addition_tests {
                 .compile()
                 .unwrap()
                 .compile_instances
+        );
+    }
+}
+
+#[cfg(test)]
+mod batch_isolated_root_removal_tests {
+    use super::*;
+    use crate::compose::{Composer, Edit, Footprint, NetworkPatch, Registration};
+    use crate::network::{ConnectionDef, NetworkBuilder, PortPath};
+
+    fn fixture() -> (NetworkDef, Contract) {
+        let mut builder = NetworkBuilder::new();
+        let source = builder
+            .add(
+                "alpha",
+                Arc::new(crate::ComponentDef::source(|| std::iter::once(7_i64))),
+            )
+            .unwrap();
+        builder.start(&source).unwrap();
+        let worker = crate::ComponentDef::map(|n: i64| n * 2);
+        let contract =
+            Contract::new("test/batch-root-removal", worker.interface().clone()).unwrap();
+        let omega = builder
+            .add("omega", Arc::new(worker.claim(&contract).unwrap()))
+            .unwrap();
+        builder
+            .expose_output("out", omega.output::<i64>("output").unwrap())
+            .unwrap();
+        let mut network = builder.build().unwrap();
+        network.connections.push(ConnectionDef {
+            from: PortPath {
+                process: "alpha".into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: "omega".into(),
+                port: "input".into(),
+            },
+            capacity: NonZeroUsize::new(2).unwrap(),
+        });
+        for name in ["b0", "b1", "b2", "b3", "b4"] {
+            network
+                .instances
+                .insert(name.into(), Arc::new(crate::ComponentDef::map(|n: i64| n)));
+        }
+        (network, contract)
+    }
+
+    #[test]
+    fn batch_isolated_removal_matches_full_compiler_across_index_shifts() {
+        let (before, contract) = fixture();
+        let old = before.compile().unwrap();
+        let old_handle = old
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        let mut after = before.clone();
+        for name in ["b0", "b2", "b4"] {
+            after.instances.remove(name);
+        }
+        let incremental = old
+            .reuse_after_batch_isolated_root_removal(&before, &after)
+            .unwrap();
+        let canonical = after.compile().unwrap();
+        assert_eq!(incremental.processes().len(), 4);
+        assert_eq!(
+            incremental.inspect("omega").unwrap().physical_index,
+            Some(3)
+        );
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        assert_eq!(
+            incremental.structural_reachability(),
+            canonical.structural_reachability()
+        );
+        assert_eq!(
+            incremental.structural_feedback_cycles(),
+            canonical.structural_feedback_cycles()
+        );
+        for name in ["", "alpha", "b1", "b3", "omega"] {
+            let actual = incremental.inspect(name).unwrap();
+            let expected = canonical.inspect(name).unwrap();
+            assert_eq!(actual.physical_index, expected.physical_index);
+            assert_eq!(actual.definition_key, expected.definition_key);
+            assert_eq!(actual.origin, expected.origin);
+        }
+        assert_eq!(
+            old_handle.resolve(&incremental),
+            Err(NetworkError::ForeignScope)
+        );
+        let mut session = incremental.start();
+        session.run_until_idle(64);
+        assert_eq!(
+            session
+                .take_output("out")
+                .unwrap()
+                .unwrap()
+                .value()
+                .borrow::<i64>(),
+            Some(&14)
+        );
+    }
+
+    #[test]
+    fn rejects_mixed_declarations_exports_wiring_and_claimed_batches() {
+        let (before, contract) = fixture();
+        let old = before.compile().unwrap();
+        let mut after = before.clone();
+        for name in ["b0", "b2"] {
+            after.instances.remove(name);
+        }
+        after.outputs.clear();
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+
+        after = before.clone();
+        for name in ["b0", "b2"] {
+            after.instances.remove(name);
+        }
+        after.connections.clear();
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+
+        after = before.clone();
+        for name in ["b0", "b2"] {
+            after.instances.remove(name);
+        }
+        after.instances.insert(
+            "omega".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n * 3)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+
+        let mut claimed = before.clone();
+        claimed.instances.insert(
+            "b2".into(),
+            Arc::new(
+                crate::ComponentDef::map(|n: i64| n)
+                    .claim(&contract)
+                    .unwrap(),
+            ),
+        );
+        let compiled = claimed.compile().unwrap();
+        let mut after = claimed.clone();
+        for name in ["b0", "b2"] {
+            after.instances.remove(name);
+        }
+        assert!(
+            compiled
+                .reuse_after_batch_isolated_root_removal(&claimed, &after)
+                .is_none()
+        );
+
+        let mut wired = before.clone();
+        wired.connections.push(ConnectionDef {
+            from: PortPath {
+                process: "alpha".into(),
+                port: "output".into(),
+            },
+            to: PortPath {
+                process: "b2".into(),
+                port: "input".into(),
+            },
+            capacity: NonZeroUsize::new(1).unwrap(),
+        });
+        let compiled = wired.compile().unwrap();
+        let mut after = wired.clone();
+        for name in ["b0", "b2"] {
+            after.instances.remove(name);
+        }
+        assert!(
+            compiled
+                .reuse_after_batch_isolated_root_removal(&wired, &after)
+                .is_none()
+        );
+
+        let mut after = before.clone();
+        after.instances.remove("b0");
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+
+        let mut after = before.clone();
+        after.instances.clear();
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn real_composer_multi_component_registration_revoke_readmit() {
+        let (mut base, contract) = fixture();
+        for name in ["b0", "b1", "b2", "b3", "b4"] {
+            base.instances.remove(name);
+        }
+        let mut composer = Composer::new(base).unwrap();
+        let patch = NetworkPatch::new(["b0", "b1", "b2", "b3", "b4"].map(|path| Edit::Add {
+            path: path.into(),
+            definition: Arc::new(crate::ComponentDef::map(|n: i64| n)),
+        }));
+        let contribution = |id: &str| {
+            Registration::new(
+                id,
+                [],
+                3,
+                GraphOrigin::default(),
+                ["b0", "b1", "b2", "b3", "b4"].map(|name| Footprint::Component(name.into())),
+                patch.clone(),
+            )
+        };
+        let prior = composer
+            .current()
+            .compiled()
+            .bind("omega", &contract)
+            .unwrap()
+            .output::<i64>("output")
+            .unwrap();
+        composer.register([contribution("pack")]).unwrap();
+        assert_eq!(composer.current().compiled().processes().len(), 7);
+        assert_eq!(
+            prior.resolve(composer.current().compiled()),
+            Err(NetworkError::ForeignScope)
+        );
+        composer.revoke("pack").unwrap();
+        assert_eq!(composer.current().compiled().processes().len(), 2);
+        for name in ["b0", "b1", "b2", "b3", "b4"] {
+            assert!(composer.current().compiled().inspect(name).is_err());
+        }
+        let canonical = composer.current().network().compile().unwrap();
+        assert_eq!(
+            composer.current().compiled().connections(),
+            canonical.connections()
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            canonical.compile_work
+        );
+        assert_eq!(
+            composer.current().compiled().compile_instances,
+            canonical.compile_instances
+        );
+        composer.register([contribution("readmit")]).unwrap();
+        assert_eq!(composer.current().compiled().processes().len(), 7);
+        let canonical = composer.current().network().compile().unwrap();
+        assert_eq!(
+            composer.current().compiled().connections(),
+            canonical.connections()
+        );
+        assert_eq!(
+            composer.current().compiled().compile_work,
+            canonical.compile_work
+        );
+    }
+
+    #[test]
+    fn bounded_batch_size_avoids_pathological_repeated_validation() {
+        let (mut before, _) = fixture();
+        for index in 0..33 {
+            before.instances.insert(
+                format!("extra-{index:02}"),
+                Arc::new(crate::ComponentDef::map(|n: i64| n)),
+            );
+        }
+        let old = before.compile().unwrap();
+        let mut after = before.clone();
+        for index in 0..33 {
+            after.instances.remove(&format!("extra-{index:02}"));
+        }
+        assert!(
+            old.reuse_after_batch_isolated_root_removal(&before, &after)
+                .is_none()
         );
     }
 }
