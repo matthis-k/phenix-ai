@@ -70,7 +70,7 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
     ));
     let revision = configure(&mut demo, None, "first");
     assert!(demo.reads.lock().unwrap().is_empty());
-    let events = demo.kernel.drain(1);
+    let events = demo.kernel.drain(1).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].producer.owner, "observer");
     for event in events {
@@ -82,7 +82,7 @@ fn independent_plugins_drive_real_storage_waves_and_enforce_grants() {
     assert_eq!(observed.value.0, "first");
     assert_eq!(observed.revision, revision);
     drop(reads);
-    assert!(demo.kernel.drain(8).is_empty());
+    assert!(demo.kernel.drain(8).unwrap().is_empty());
     let next = configure(&mut demo, Some(revision.clone()), "second");
     assert_ne!(revision, next);
     assert!(
@@ -158,7 +158,7 @@ fn restart_preserves_data_and_revisions_while_project_switch_isolates_both_resou
             .unwrap();
         assert_eq!(names, ["SavedSymbol"]);
         configure(&mut demo, Some(revision.clone()), "after-restart");
-        let events = demo.kernel.drain(8);
+        let events = demo.kernel.drain(8).unwrap();
         assert_eq!(events.len(), 1);
         for event in events {
             event.result.unwrap();

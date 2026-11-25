@@ -427,7 +427,7 @@ pub fn run() -> Result<(), String> {
         .map_err(text)?;
     demo.kernel.run_steps(64)?;
     assert!(demo.writes.lock().unwrap()[0].is_ok());
-    let events = demo.kernel.drain(16);
+    let events = demo.kernel.drain(16).unwrap();
     assert_eq!(events.len(), 1);
     for event in events {
         event.result.map_err(text)?;

@@ -302,7 +302,7 @@ fn main() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         demo.kernel.run_steps(64)?;
         assert_eq!(demo.counter.read()?, Some(42));
-        for event in demo.kernel.drain(8) {
+        for event in demo.kernel.drain(8).unwrap() {
             event.result.map_err(|error| error.to_string())?;
         }
         demo.kernel.run_steps(64)?;

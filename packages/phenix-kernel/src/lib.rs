@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex, MutexGuard, TryLockError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -49,20 +49,42 @@ impl Drop for KernelLockScope {
     }
 }
 
-// The blocking driver owns producer wake registration for its entire lifetime.
-// An atomic lease avoids holding a mutex over user callbacks or waiting for shutdown.
-struct DriverScope<'a>(&'a AtomicBool);
+// One linearizable producer ownership word: 0 means free, MAX is a
+// whole-lifetime blocking driver, all other values count in-flight or
+// gate-queued manual drains. The producer_drain mutex still serializes
+// actual callbacks; the owner word prevents direct/driver mode overlap.
+const DRIVER_OWNER: usize = usize::MAX;
+
+struct DriverScope<'a>(&'a AtomicUsize);
 impl<'a> DriverScope<'a> {
-    fn enter(active: &'a AtomicBool) -> Option<Self> {
-        active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-            .then(|| Self(active))
+    fn enter(owner: &'a AtomicUsize) -> Result<Self, DriverError> {
+        match owner.compare_exchange(0, DRIVER_OWNER, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => Ok(Self(owner)),
+            Err(DRIVER_OWNER) => Err(DriverError::AlreadyRunning),
+            Err(_) => Err(DriverError::DrainInProgress),
+        }
     }
 }
 impl Drop for DriverScope<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.store(0, Ordering::Release);
+    }
+}
+
+struct DirectDrainScope<'a>(&'a AtomicUsize);
+impl<'a> DirectDrainScope<'a> {
+    fn enter(owner: &'a AtomicUsize) -> Option<Self> {
+        owner
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < DRIVER_OWNER - 1).then(|| count + 1)
+            })
+            .ok()
+            .map(|_| Self(owner))
+    }
+}
+impl Drop for DirectDrainScope<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -461,6 +483,7 @@ impl phenix_plugin::Contribution for ContractRequirement {
 }
 
 /// One poll's admission outcome, distinct from subsequent session execution.
+#[derive(Debug)]
 pub struct ProducerEvent {
     pub producer: Key,
     pub result: Result<(), ProducerError>,
@@ -500,6 +523,7 @@ pub enum DriverError {
     ReentrantSession,
     ReentrantDrain,
     AlreadyRunning,
+    DrainInProgress,
     Retired,
     UnsupportedWake {
         producer: Key,
@@ -523,6 +547,9 @@ impl std::fmt::Display for DriverError {
             Self::ReentrantSession => f.write_str("reentrant kernel session access"),
             Self::ReentrantDrain => f.write_str("reentrant kernel producer drain"),
             Self::AlreadyRunning => f.write_str("kernel blocking driver is already running"),
+            Self::DrainInProgress => {
+                f.write_str("producer drain already admitted while starting driver")
+            }
             Self::Retired => f.write_str("generation producers retired while driver was active"),
             Self::UnsupportedWake { producer } => write!(
                 f,
@@ -592,7 +619,7 @@ pub struct Kernel {
     // Serialize one whole drain against generation retirement. Inventory
     // mutations use a separate short lock; no user poll/readiness runs under it.
     producer_drain: Mutex<()>,
-    driver_active: AtomicBool,
+    producer_ownership: AtomicUsize,
     driver_wake: Mutex<Option<WakeHandle>>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
     _leases: Vec<ContributionHandle<Contribution>>,
@@ -1041,7 +1068,7 @@ impl Kernel {
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
-            driver_active: AtomicBool::new(false),
+            producer_ownership: AtomicUsize::new(0),
             driver_wake: Mutex::new(None),
             artifacts,
             _leases: leases,
@@ -1199,11 +1226,24 @@ impl Kernel {
         std::mem::take(&mut state.producers)
     }
 
+    /// Perform bounded, serially admitted manual producer polls. A blocking
+    /// driver owns producer polling for its whole lifetime, so a competing
+    /// manual drain receives a typed error without touching any producer.
+    pub fn drain(&self, max_polls: usize) -> Result<Vec<ProducerEvent>, DriverError> {
+        if KernelLockScope::held(&self.producer_drain) {
+            return Err(DriverError::ReentrantDrain);
+        }
+        let _owner =
+            DirectDrainScope::enter(&self.producer_ownership).ok_or(DriverError::AlreadyRunning)?;
+        Ok(self.drain_owned(max_polls))
+    }
+
     /// Perform at most `max_polls` nonblocking producer polls, round-robin across
     /// calls. One whole drain is serialized against retirement, but callbacks
     /// and eager session admission do not hold the producer inventory mutex.
     /// A full input retains one event without repolling. No process code runs here.
-    pub fn drain(&self, max_polls: usize) -> Vec<ProducerEvent> {
+    /// The blocking driver calls this only while holding its exclusive lease.
+    fn drain_owned(&self, max_polls: usize) -> Vec<ProducerEvent> {
         let scope = KernelLockScope::enter(&self.producer_drain).expect("recursive producer drain");
         let drain = self
             .producer_drain
@@ -1347,7 +1387,7 @@ impl Kernel {
         if KernelLockScope::held(&self.producer_drain) {
             return Err(DriverError::ReentrantDrain);
         }
-        let _driver = DriverScope::enter(&self.driver_active).ok_or(DriverError::AlreadyRunning)?;
+        let _driver = DriverScope::enter(&self.producer_ownership)?;
         let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
         let (mut listener, notifier, initial_state, cause) = self
             .with_session(|session| {
@@ -1466,7 +1506,7 @@ impl Kernel {
                 if self.producers_retired() {
                     return Err(DriverError::Retired);
                 }
-                for event in self.drain(1) {
+                for event in self.drain_owned(1) {
                     active = true;
                     let producer = event.producer.clone();
                     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
@@ -1613,13 +1653,16 @@ mod tests {
     }
 
     #[test]
-    fn recursive_drain_in_poll_is_contained_and_releases_the_whole_drain_gate() {
+    fn recursive_drain_in_poll_is_typed_and_preserves_producer() {
         use std::sync::Weak;
 
         struct Recursive(Weak<Kernel>);
         impl Producer for Recursive {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
-                self.0.upgrade().unwrap().drain(1);
+                assert_eq!(
+                    self.0.upgrade().unwrap().drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                );
                 Ok(None)
             }
         }
@@ -1635,15 +1678,13 @@ mod tests {
             None,
         ));
 
-        let events = kernel.drain(1);
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].producer, key);
-        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
-    fn recursive_drain_in_wake_registration_is_reported_without_losing_producer() {
+    fn recursive_drain_in_wake_registration_is_typed_without_losing_producer() {
         use std::sync::Weak;
 
         struct RecursiveWake(Weak<Kernel>);
@@ -1653,7 +1694,10 @@ mod tests {
             }
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
-                self.0.upgrade().unwrap().drain(1);
+                assert_eq!(
+                    self.0.upgrade().unwrap().drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                );
                 true
             }
         }
@@ -1669,14 +1713,11 @@ mod tests {
             Some(Box::new(RecursiveWake(Arc::downgrade(&kernel)))),
             None,
         ));
-        assert_eq!(
-            kernel
-                .run_until(&WakeHandle::default(), |_| {})
-                .unwrap_err(),
-            DriverError::WakeRegistrationPanicked { producer: key }
-        );
+        let wake = WakeHandle::default();
+        wake.shutdown();
+        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
@@ -1715,7 +1756,7 @@ mod tests {
         wake.shutdown();
         assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
     }
 
     #[test]
@@ -1748,7 +1789,7 @@ mod tests {
                 .unwrap_err(),
             DriverError::EventCallbackPanicked { producer: key }
         );
-        assert!(kernel.drain(1).is_empty());
+        assert!(kernel.drain(1).unwrap().is_empty());
         assert!(
             kernel
                 .with_session(|session| session.failure().is_none())
@@ -1852,7 +1893,7 @@ mod tests {
             kernel
         });
         assert_eq!(selections.load(Ordering::SeqCst), 0);
-        let events = kernel.drain(1);
+        let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
         assert!(events[0].result.is_ok());
         assert!(selections.load(Ordering::SeqCst) > 0);
@@ -1937,7 +1978,7 @@ mod tests {
             Some(Box::new(Probe(Arc::downgrade(&kernel), calls.clone()))),
             None,
         ));
-        assert!(kernel.drain(3).is_empty());
+        assert!(kernel.drain(3).unwrap().is_empty());
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(kernel.producers.lock().unwrap().producers.len(), 1);
     }
@@ -1967,7 +2008,7 @@ mod tests {
             (Key::new("test", "broken"), Some(Box::new(Panics)), None),
             (Key::new("test", "live"), Some(Box::new(Idle)), None),
         ];
-        let events = kernel.drain(3);
+        let events = kernel.drain(3).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].producer.id, "broken");
         assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
@@ -2002,7 +2043,7 @@ mod tests {
                     assert!(state.producers.is_empty());
                     assert_eq!(state.next, 0);
                 }
-                assert!(kernel.drain(1).is_empty());
+                assert!(kernel.drain(1).unwrap().is_empty());
                 self.1.fetch_add(1, Ordering::SeqCst);
             }
         }
@@ -2027,7 +2068,7 @@ mod tests {
                 )
             })
             .collect();
-        let events = kernel.drain(2);
+        let events = kernel.drain(2).unwrap();
         assert_eq!(
             events
                 .iter()
@@ -2041,7 +2082,7 @@ mod tests {
                 .all(|event| matches!(event.result, Err(ProducerError::Poll(_))))
         );
         assert_eq!(drops.load(Ordering::SeqCst), 2);
-        assert!(kernel.drain(2).is_empty());
+        assert!(kernel.drain(2).unwrap().is_empty());
     }
 
     #[test]
@@ -2075,26 +2116,32 @@ mod tests {
                 )
             })
             .collect();
-        assert!(kernel.drain(0).is_empty());
+        assert!(kernel.drain(0).unwrap().is_empty());
         assert!(log.lock().unwrap().is_empty());
-        assert!(kernel.drain(1).is_empty());
-        let events = kernel.drain(1);
+        assert!(kernel.drain(1).unwrap().is_empty());
+        let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].producer, Key::new("test", "broken"));
-        assert!(kernel.drain(3).is_empty());
+        assert!(kernel.drain(3).unwrap().is_empty());
         assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
     }
 
     #[test]
     fn rejected_second_driver_keeps_first_lease_active() {
-        let active = AtomicBool::new(false);
-        let first = DriverScope::enter(&active).unwrap();
-        assert!(DriverScope::enter(&active).is_none());
+        let owner = AtomicUsize::new(0);
+        let first = DriverScope::enter(&owner).unwrap();
+        assert_eq!(
+            DriverScope::enter(&owner).err(),
+            Some(DriverError::AlreadyRunning)
+        );
         // A rejected attempt must not construct a guard whose Drop releases
         // the first driver's still-active lease.
-        assert!(DriverScope::enter(&active).is_none());
+        assert_eq!(
+            DriverScope::enter(&owner).err(),
+            Some(DriverError::AlreadyRunning)
+        );
         drop(first);
-        let next = DriverScope::enter(&active).unwrap();
+        let next = DriverScope::enter(&owner).unwrap();
         drop(next);
     }
 
@@ -2107,6 +2154,7 @@ mod tests {
             kernel: Weak<Kernel>,
             entered: mpsc::Sender<()>,
             proceed: mpsc::Receiver<()>,
+            completed: mpsc::Sender<()>,
         }
         impl Producer for CrossThread {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
@@ -2126,6 +2174,7 @@ mod tests {
                     phenix_graph::connection::ConnectionError::WouldBlock
                 );
                 assert_eq!(*rejected.value.borrow::<i64>().unwrap(), 13);
+                self.completed.send(()).unwrap();
                 true
             }
         }
@@ -2137,12 +2186,14 @@ mod tests {
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "cross-thread"),
             Some(Box::new(CrossThread {
                 kernel: Arc::downgrade(&kernel),
                 entered: entered_tx,
                 proceed: proceed_rx,
+                completed: completed_tx,
             })),
             None,
         ));
@@ -2151,12 +2202,13 @@ mod tests {
         let driver_kernel = kernel.clone();
         let driver = std::thread::spawn(move || driver_kernel.run_until(&wake, |_| {}));
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        // A owns session and waits for the producer drain mutex. B owns drain
-        // and attempts session APIs. With blocking locks, A and B deadlock.
+        // A owns session while B invokes callback session APIs. The callback
+        // must complete its nonblocking checks before A releases the mutex.
+        // Driver-vs-manual drain ownership is proved in separate tests.
         kernel
             .with_session(|_| {
                 proceed_tx.send(()).unwrap();
-                assert!(kernel.drain(0).is_empty());
+                completed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             })
             .unwrap();
         assert_eq!(driver.join().unwrap(), Ok(()));
@@ -2255,6 +2307,121 @@ mod tests {
         proceed_tx.send(()).unwrap();
         assert_eq!(first.join().unwrap(), Ok(()));
 
+        let next = WakeHandle::default();
+        next.shutdown();
+        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+    }
+
+    #[test]
+    fn live_driver_exclusively_owns_polls_and_releases_manual_drain_after_exit() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        struct Idle {
+            polls: Arc<AtomicUsize>,
+            registered: mpsc::Sender<()>,
+            first_poll: mpsc::Sender<()>,
+        }
+        impl Producer for Idle {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polls.fetch_add(1, Ordering::SeqCst);
+                let _ = self.first_poll.send(());
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.registered.send(()).unwrap();
+                true
+            }
+        }
+
+        let (registered_tx, registered_rx) = mpsc::channel();
+        let (first_poll_tx, first_poll_rx) = mpsc::channel();
+        let polls = Arc::new(AtomicUsize::new(0));
+        let mut kernel =
+            Kernel::build("driver-vs-direct", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "idle"),
+            Some(Box::new(Idle {
+                polls: polls.clone(),
+                registered: registered_tx,
+                first_poll: first_poll_tx,
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+        let wake = WakeHandle::default();
+        let worker_wake = wake.clone();
+        let worker_kernel = kernel.clone();
+        let driver = std::thread::spawn(move || worker_kernel.run_until(&worker_wake, |_| {}));
+        registered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        first_poll_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
+        assert_eq!(kernel.drain(1).unwrap_err(), DriverError::AlreadyRunning);
+        assert_eq!(
+            kernel.producer_ownership.load(Ordering::Acquire),
+            DRIVER_OWNER
+        );
+        wake.shutdown();
+        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
+        let before = polls.load(Ordering::SeqCst);
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert_eq!(polls.load(Ordering::SeqCst), before + 1);
+    }
+
+    #[test]
+    fn in_flight_direct_drain_denies_driver_without_registering_wake() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct Paused {
+            entered: mpsc::Sender<()>,
+            resume: mpsc::Receiver<()>,
+        }
+        impl Producer for Paused {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.entered.send(()).unwrap();
+                self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(None)
+            }
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                true
+            }
+        }
+
+        let mut kernel =
+            Kernel::build("direct-vs-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
+        kernel.start().unwrap();
+        kernel.session = Mutex::new(live_ingress_session());
+        let (entered, entered_rx) = mpsc::channel();
+        let (resume, resume_rx) = mpsc::channel();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "paused"),
+            Some(Box::new(Paused {
+                entered,
+                resume: resume_rx,
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+        let worker_kernel = kernel.clone();
+        let manual = std::thread::spawn(move || worker_kernel.drain(1));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let wake = WakeHandle::default();
+        assert_eq!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        );
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
+        resume.send(()).unwrap();
+        assert!(manual.join().unwrap().unwrap().is_empty());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
         let next = WakeHandle::default();
         next.shutdown();
         assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));

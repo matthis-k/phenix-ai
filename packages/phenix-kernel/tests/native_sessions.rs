@@ -115,14 +115,14 @@ fn full_retains_exactly_one_event_and_does_not_repoll_or_execute() {
     let (mut kernel, polls, calls, _) = fixture(false);
     assert!(kernel.with_session(|_| ()).is_err());
     kernel.start().unwrap();
-    assert_eq!(kernel.drain(10).len(), 2); // One reserved input plus one queued input.
+    assert_eq!(kernel.drain(10).unwrap().len(), 2); // One reserved input plus one queued input.
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     assert!(calls.lock().unwrap().is_empty());
-    assert!(kernel.drain(100).is_empty());
+    assert!(kernel.drain(100).unwrap().is_empty());
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     kernel.run_steps(100).unwrap();
     assert_eq!(*calls.lock().unwrap(), [1, 2]);
-    assert_eq!(kernel.drain(1).len(), 1);
+    assert_eq!(kernel.drain(1).unwrap().len(), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     kernel.run_steps(100).unwrap();
     assert_eq!(*calls.lock().unwrap(), [1, 2, 3]);
@@ -178,11 +178,11 @@ fn explicit_session_ownership_defers_producer_admission_without_blocking_retirem
             .unwrap()
     });
     ready.recv().unwrap();
-    assert!(kernel.drain(100).is_empty());
+    assert!(kernel.drain(100).unwrap().is_empty());
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     release.send(()).unwrap();
     worker.join().unwrap();
-    assert_eq!(kernel.drain(1).len(), 1);
+    assert_eq!(kernel.drain(1).unwrap().len(), 1);
     assert_eq!(polls.load(Ordering::SeqCst), 1);
 }
 #[test]

@@ -137,7 +137,7 @@ fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
 }
 
 fn assert_live(generation: &Generation) {
-    let events = generation.drain(1);
+    let events = generation.drain(1).unwrap();
     assert_eq!(events.len(), 1);
     assert!(events[0].result.is_ok());
 }
@@ -168,7 +168,7 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     let old = host.publish(candidate).unwrap();
     let candidate = prepare(&host, vec![host.plugins().prepare_unload(&key).unwrap()]);
     let reader = old.clone();
-    let drain = std::thread::spawn(move || reader.drain(3));
+    let drain = std::thread::spawn(move || reader.drain(3).unwrap());
     gate.0.wait();
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     let publishing = Arc::new(Barrier::new(2));
@@ -189,7 +189,7 @@ fn blocked_poll_finishes_its_drain_before_publication_retires_the_source() {
     assert!(Arc::ptr_eq(&current, &host.active().unwrap()));
     assert_eq!(current.epoch(), 2);
     for _ in 0..3 {
-        assert!(old.drain(10).is_empty());
+        assert!(old.drain(10).unwrap().is_empty());
     }
     assert_eq!(polls.load(Ordering::SeqCst), 3);
     // Retirement stops owned producers, not already admitted work or explicit queries.

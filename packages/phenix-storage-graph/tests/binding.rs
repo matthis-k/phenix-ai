@@ -150,14 +150,14 @@ fn independent_plugins_preserve_tails_and_overflow_per_ingress() {
     kernel.start().unwrap();
     write(&session, &address);
     write(&session, &address);
-    kernel.drain(1).remove(0).result.unwrap();
+    kernel.drain(1).unwrap().remove(0).result.unwrap();
     kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 1);
     assert!(logs[1].lock().unwrap().is_empty());
     // A has a buffered tail; B's undrained subscription overflows independently.
     write(&session, &address);
     write(&session, &address);
-    let events = kernel.drain(3);
+    let events = kernel.drain(3).unwrap();
     assert_eq!(events.len(), 2);
     assert!(events.into_iter().all(|e| e.result.is_ok()));
     kernel.run_steps(128).unwrap();
@@ -166,11 +166,11 @@ fn independent_plugins_preserve_tails_and_overflow_per_ingress() {
         logs[1].lock().unwrap().as_slice(),
         [Notice::Overflow { through: 5 }]
     ));
-    assert_eq!(kernel.drain(4).len(), 2);
+    assert_eq!(kernel.drain(4).unwrap().len(), 2);
     kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 4);
     write(&session, &address);
-    assert_eq!(kernel.drain(2).len(), 2);
+    assert_eq!(kernel.drain(2).unwrap().len(), 2);
     kernel.run_steps(128).unwrap();
     assert_eq!(logs[0].lock().unwrap().len(), 5);
     assert_eq!(logs[1].lock().unwrap().len(), 2);

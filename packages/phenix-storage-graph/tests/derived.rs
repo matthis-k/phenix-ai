@@ -363,7 +363,7 @@ fn observation_activation_failure_is_retryable_and_never_bootstraps() {
     let mut runtime = local(plugin);
     assert!(runtime.start().is_err());
     assert!(runtime.start().is_err());
-    assert!(runtime.drain(10).is_empty());
+    assert!(runtime.drain(10).unwrap().is_empty());
 }
 
 #[test]
@@ -373,19 +373,19 @@ fn producer_admission_is_bounded_and_does_not_execute_processes() {
     f.put(&f.b, 5);
     let (plugin, spec) = sum(&f, true);
     let mut runtime = local(plugin);
-    assert!(runtime.drain(10).is_empty());
+    assert!(runtime.drain(10).unwrap().is_empty());
     runtime.start().unwrap();
-    assert_eq!(runtime.drain(1).len(), 1);
+    assert_eq!(runtime.drain(1).unwrap().len(), 1);
     f.put(&f.a, 4);
     f.put(&f.b, 7);
-    let events = runtime.drain(20);
+    let events = runtime.drain(20).unwrap();
     assert!(events.len() <= 2);
     runtime
         .kernel()
         .with_session(|s| assert!(s.last_step().is_none()))
         .unwrap();
     settle(&runtime);
-    runtime.drain(20);
+    runtime.drain(20).unwrap();
     settle(&runtime);
     assert_eq!(*runtime.bind_query(&spec).unwrap().query().unwrap(), 11);
 }
@@ -533,10 +533,10 @@ fn local_and_offloaded_demand_and_observer_processes_cannot_query_another_runtim
         let mut runtime = build(authored(g, query.clone(), Some(observer)), dispatcher);
         runtime.start().unwrap();
         assert_eq!(*runtime.bind_query(&query).unwrap().query().unwrap(), 8);
-        runtime.drain(1);
+        runtime.drain(1).unwrap();
         settle(&runtime);
         f.put(&f.b, 6);
-        runtime.drain(1);
+        runtime.drain(1).unwrap();
         settle(&runtime);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(*target.bind_query(&spec).unwrap().query().unwrap(), 9);
