@@ -1,0 +1,81 @@
+name: "FBP H4 Notified Custom Readiness Benchmark"
+on:
+  pull_request:
+    paths:
+      - "packages/phenix-graphs/src/runtime/wake.rs"
+      - "packages/phenix-graphs/src/runtime/readiness.rs"
+      - "packages/phenix-graphs/src/runtime/mod.rs"
+      - "packages/phenix-graphs/examples/fbp_notified_custom_benchmark.rs"
+      - ".github/workflows/fbp-h4-notified-custom-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notified-custom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Save exact provenance and environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "workflow_sha=$GITHUB_SHA"
+            date -u +%FT%TZ
+            uname -a
+            lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|CPU max MHz|CPU min MHz):' || true
+            taskset -pc $$
+            nix --version
+            nix develop --command rustc -vV
+          } > artifacts/environment.txt
+          sha256sum packages/phenix-graphs/examples/fbp_notified_custom_benchmark.rs \
+            > artifacts/source-hashes.txt
+          cat artifacts/environment.txt
+          cat artifacts/source-hashes.txt
+      - name: Compile same candidate release executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix develop --command cargo build --locked --release -q \
+            -p phenix-graph --example fbp_notified_custom_benchmark
+      - name: Three interleaved pinned single-CPU mode comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed="$(taskset -pc $$ | sed -E 's/.*: //')"
+          cpu="$(printf '%s' "$allowed" | cut -d, -f1 | cut -d- -f1)"
+          taskset -c "$cpu" true
+          echo "cpu=$cpu" > artifacts/affinity.txt
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              order=(polled notified)
+            else
+              order=(notified polled)
+            fi
+            for mode in "${order[@]}"; do
+              taskset -c "$cpu" /usr/bin/time \
+                -f 'elapsed_s=%e user_s=%U sys_s=%S maxrss_kb=%M' \
+                -o "artifacts/$mode-$repetition.resources" \
+                target/release/examples/fbp_notified_custom_benchmark "$mode" 1500 \
+                > "artifacts/$mode-$repetition.csv"
+              echo "mode=$mode repetition=$repetition"
+              cat "artifacts/$mode-$repetition.csv"
+              cat "artifacts/$mode-$repetition.resources"
+            done
+          done
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fbp-h4-notified-custom-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/
+          if-no-files-found: warn

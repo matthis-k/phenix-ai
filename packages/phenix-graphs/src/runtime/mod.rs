@@ -31,7 +31,7 @@ pub use request::{
     CaptureMetadata, RequestDisposal, RequestError, RequestId, RequestInjectionError,
     RequestStatus, RequestWork,
 };
-pub use wake::{SessionNotifier, WakeHandle, WakeListener};
+pub use wake::{ProcessNotifier, SessionNotifier, WakeHandle, WakeListener};
 use wake::{WakeSignal, WakeSlot};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -212,6 +212,8 @@ struct RuntimeProcess {
     waiting: Option<String>,
     waiting_policy: Option<Readiness>,
     policy: Readiness,
+    // Stable opt-in snapshot from the policy at session startup.
+    notification_driven: bool,
     cursor: usize,
     queued: bool,
     done: bool,
@@ -233,11 +235,11 @@ pub struct NetworkSession {
     captures: BTreeMap<String, usize>,
     endpoints: Vec<(QueueEndpoint, QueueEndpoint)>,
     ready: VecDeque<usize>,
-    // Sources, custom readiness and staged input waits need unconditional
-    // polling. Optional policies need zero-packet checks only while
+    // Sources, legacy custom readiness and staged waits require unconditional
+    // polling. Opt-in notified Custom and Optional policies are polled while
     // authenticated sealed scopes can reach them.
     always_poll: BTreeSet<usize>,
-    scoped_optional_poll: BTreeMap<usize, usize>,
+    scoped_readiness_poll: BTreeMap<usize, usize>,
     dirty_processes: BTreeSet<usize>,
     force_full_refresh: bool,
     observed_global_wake_epoch: u64,
@@ -366,6 +368,7 @@ impl NetworkSession {
                 waiting: None,
                 waiting_policy: None,
                 policy: options.readiness.get(p.path()).cloned().unwrap_or_default(),
+                notification_driven: false,
                 cursor: 0,
                 queued: false,
                 done: false,
@@ -459,14 +462,31 @@ impl NetworkSession {
         for edge in compiled.connections() {
             downstream[edge.from().0].push(edge.to().0);
         }
-        let always_poll = processes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, p)| {
-                (p.source || p.inputs.is_empty() || matches!(&p.policy, Readiness::Custom(_)))
-                    .then_some(index)
-            })
-            .collect();
+        // A user policy must explicitly promise to send process-targeted
+        // notifications for external selection changes. The default stays
+        // polled. Query once and contain plugin panics as session failure.
+        let mut always_poll = BTreeSet::new();
+        for (index, process) in processes.iter_mut().enumerate() {
+            if let Readiness::Custom(policy) = &process.policy {
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    policy.notification_driven()
+                })) {
+                    Ok(value) => process.notification_driven = value,
+                    Err(_) => {
+                        initial_failure = Some(format!(
+                            "readiness notification contract panicked: {}",
+                            compiled.processes()[index].path()
+                        ));
+                    }
+                }
+            }
+            if process.source
+                || process.inputs.is_empty()
+                || matches!(&process.policy, Readiness::Custom(_)) && !process.notification_driven
+            {
+                always_poll.insert(index);
+            }
+        }
         let mut session = Self {
             compiled,
             downstream,
@@ -477,7 +497,7 @@ impl NetworkSession {
             endpoints,
             ready: VecDeque::new(),
             always_poll,
-            scoped_optional_poll: BTreeMap::new(),
+            scoped_readiness_poll: BTreeMap::new(),
             dirty_processes: BTreeSet::new(),
             force_full_refresh: true,
             observed_global_wake_epoch: 0,
@@ -633,6 +653,22 @@ impl NetworkSession {
             process: index,
         })
     }
+    /// Addressed readiness invalidation for one compiled process. Unlike
+    /// wake_handle(), this does not resume a process suspended in WaitWake.
+    /// External notification-driven Custom policies should retain this handle
+    /// and call notify() after a change affecting their selection.
+    pub fn process_notifier(&self, path: &str) -> Option<ProcessNotifier> {
+        let index = self
+            .compiled
+            .processes()
+            .iter()
+            .position(|p| p.path() == path)?;
+        (!self.processes[index].done && self.terminal.is_none()).then(|| ProcessNotifier {
+            slot: self.processes[index].wake.clone(),
+            signal: self.signal.clone(),
+            process: index,
+        })
+    }
     pub fn wake_listener(&self) -> WakeListener {
         WakeListener::new(self.signal.clone())
     }
@@ -748,18 +784,21 @@ impl NetworkSession {
             })
     }
 
-    // Each sealed scope registers the optional paths it can reach.
-    // Packet/EOS events cover optional nodes outside sealed scopes.
-    fn unwatch_scoped_optional(&mut self, reachable: &[usize]) {
+    // Each sealed scope registers Optional and notified Custom policies it
+    // can reach. Physical packets/EOS and targeted notifications cover those
+    // policies outside a sealed scope.
+    fn unwatch_scoped_readiness(&mut self, reachable: &[usize]) {
         for &index in reachable {
-            if matches!(&self.processes[index].policy, Readiness::Optional { .. }) {
+            if matches!(&self.processes[index].policy, Readiness::Optional { .. })
+                || self.processes[index].notification_driven
+            {
                 let count = self
-                    .scoped_optional_poll
+                    .scoped_readiness_poll
                     .get_mut(&index)
-                    .expect("sealed optional scope must have a registered watcher");
+                    .expect("sealed readiness scope must have a registered watcher");
                 *count -= 1;
                 if *count == 0 {
-                    self.scoped_optional_poll.remove(&index);
+                    self.scoped_readiness_poll.remove(&index);
                 }
             }
         }
@@ -770,7 +809,7 @@ impl NetworkSession {
     fn prefer_full_refresh(&self) -> bool {
         self.always_poll
             .len()
-            .saturating_add(self.scoped_optional_poll.len())
+            .saturating_add(self.scoped_readiness_poll.len())
             >= self.processes.len().saturating_sub(1)
     }
 
@@ -925,10 +964,11 @@ impl NetworkSession {
             return;
         }
         let mut dirty = std::mem::take(&mut self.dirty_processes);
-        // Custom/source/staged nodes are permanently polled. An optional
-        // node is polled only for registered sealed scopes reaching it.
+        // Legacy Custom/source/staged nodes stay permanently polled.
+        // Optional and notified Custom nodes additionally poll for
+        // registered sealed scopes reaching them.
         dirty.extend(self.always_poll.iter().copied());
-        dirty.extend(self.scoped_optional_poll.keys().copied());
+        dirty.extend(self.scoped_readiness_poll.keys().copied());
         loop {
             let mut finished = false;
             for index in dirty {
@@ -949,7 +989,7 @@ impl NetworkSession {
             // without a finish stays pending for the next driver call.
             dirty = std::mem::take(&mut self.dirty_processes);
             dirty.extend(self.always_poll.iter().copied());
-            dirty.extend(self.scoped_optional_poll.keys().copied());
+            dirty.extend(self.scoped_readiness_poll.keys().copied());
             if dirty.is_empty() {
                 break;
             }

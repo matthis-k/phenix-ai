@@ -52,6 +52,17 @@ pub trait ReadinessPolicy: Send + Sync {
     /// Return distinct port names whose heads should be atomically reserved.
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
+
+    /// Opt in to event-driven readiness. False (the default) retains polling.
+    ///
+    /// Returning true promises that every external state change affecting
+    /// select() is followed by a ProcessNotifier::notify() for this process.
+    /// Packet, global EOS and sealed request changes remain kernel events.
+    /// This declaration is read once when the session starts. Violating the
+    /// contract can strand work; the kernel cannot observe arbitrary state.
+    fn notification_driven(&self) -> bool {
+        false
+    }
 }
 pub(super) struct Reservation {
     pub ports: Vec<(usize, Option<(usize, usize)>)>,

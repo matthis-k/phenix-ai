@@ -381,3 +381,230 @@ fn eos_closes_only_affected_queues_even_for_reverse_ordered_chains() {
         assert_eq!(session.state(), SessionState::Quiescent);
     }
 }
+
+struct NotifiedPolicy {
+    calls: Arc<AtomicUsize>,
+    allowed: Arc<AtomicBool>,
+}
+impl ReadinessPolicy for NotifiedPolicy {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if !self.allowed.load(Ordering::SeqCst) {
+            return vec![];
+        }
+        snapshot
+            .heads
+            .iter()
+            .filter(|head| head.available)
+            .map(|head| head.port.clone())
+            .collect()
+    }
+
+    fn notification_driven(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn notified_custom_reevaluates_only_on_targeted_or_generic_notification() {
+    use std::time::Duration;
+
+    let allowed = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut builder = NetworkBuilder::new();
+    let sink = Arc::new(ComponentDef::sink(|value: &u64| {
+        std::hint::black_box(*value);
+    }));
+    let targeted = builder.add("targeted", sink.clone()).unwrap();
+    let ordinary = builder.add("ordinary", sink).unwrap();
+    builder
+        .expose_input(
+            "targeted_in",
+            targeted.input::<u64>("input").unwrap(),
+            one(),
+        )
+        .unwrap();
+    builder
+        .expose_input(
+            "ordinary_in",
+            ordinary.input::<u64>("input").unwrap(),
+            one(),
+        )
+        .unwrap();
+    let mut options = SessionOptions::default();
+    options.readiness.insert(
+        "targeted".into(),
+        Readiness::Custom(Arc::new(NotifiedPolicy {
+            calls: calls.clone(),
+            allowed: allowed.clone(),
+        })),
+    );
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+    let notifier = session.process_notifier("targeted").unwrap();
+    let mut listener = session.wake_listener();
+    session.inject_local("targeted_in", 1_u64).unwrap();
+    assert_eq!(session.run_until_idle(16).steps, 0);
+    let before = calls.load(Ordering::SeqCst);
+    assert!(before > 0);
+
+    for index in 0..12_u64 {
+        session.inject_local("ordinary_in", index).unwrap();
+        assert_eq!(session.run_until_idle(16).steps, 1);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), before);
+
+    allowed.store(true, Ordering::SeqCst);
+    assert!(notifier.notify());
+    assert!(listener.wait_timeout(Duration::ZERO));
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert!(calls.load(Ordering::SeqCst) > before);
+    assert_eq!(session.state(), SessionState::Quiescent);
+}
+
+#[test]
+fn process_notifier_does_not_resume_waitwake_but_wake_handle_does() {
+    use std::time::Duration;
+
+    let resumed = Arc::new(AtomicUsize::new(0));
+    let mut builder = NetworkBuilder::new();
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let node = builder
+        .node(
+            "waiter",
+            iface,
+            Arc::new({
+                let resumed = resumed.clone();
+                move || WaitOnWake {
+                    stage: 0,
+                    resumed: resumed.clone(),
+                }
+            }),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let mut session = builder.build().unwrap().compile().unwrap().start();
+    let notifier = session.process_notifier("waiter").unwrap();
+    let wake = session.wake_handle("waiter").unwrap();
+    let mut listener = session.wake_listener();
+
+    session.inject("input", Value::of(4_i64)).unwrap();
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert!(notifier.notify());
+    assert!(listener.wait_timeout(Duration::ZERO));
+    assert_eq!(session.run_until_idle(16).steps, 0);
+    assert_eq!(resumed.load(Ordering::SeqCst), 0);
+
+    assert!(wake.wake());
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert_eq!(resumed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn generic_notifier_still_drives_opted_in_custom_policy() {
+    let allowed = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut builder = NetworkBuilder::new();
+    let sink = builder
+        .add("custom", Arc::new(ComponentDef::sink(|_: &u64| {})))
+        .unwrap();
+    builder
+        .expose_input("input", sink.input::<u64>("input").unwrap(), one())
+        .unwrap();
+    let mut options = SessionOptions::default();
+    options.readiness.insert(
+        "custom".into(),
+        Readiness::Custom(Arc::new(NotifiedPolicy {
+            calls: calls.clone(),
+            allowed: allowed.clone(),
+        })),
+    );
+    let mut session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+    session.inject_local("input", 1_u64).unwrap();
+    assert_eq!(session.run_until_idle(16).steps, 0);
+    allowed.store(true, Ordering::SeqCst);
+    assert!(session.notifier().notify());
+    assert_eq!(session.run_until_idle(16).steps, 1);
+    assert_eq!(session.state(), SessionState::Quiescent);
+}
+
+struct PanicNotificationContract;
+impl ReadinessPolicy for PanicNotificationContract {
+    fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+        vec![]
+    }
+    fn notification_driven(&self) -> bool {
+        panic!("policy registration failed")
+    }
+}
+#[test]
+fn notification_contract_panic_fails_session_instead_of_escaping_start() {
+    let mut builder = NetworkBuilder::new();
+    let sink = builder
+        .add("custom", Arc::new(ComponentDef::sink(|_: &u64| {})))
+        .unwrap();
+    builder
+        .expose_input("input", sink.input::<u64>("input").unwrap(), one())
+        .unwrap();
+    let mut options = SessionOptions::default();
+    options.readiness.insert(
+        "custom".into(),
+        Readiness::Custom(Arc::new(PanicNotificationContract)),
+    );
+    let session = builder
+        .build()
+        .unwrap()
+        .compile()
+        .unwrap()
+        .start_with_options(options);
+    assert_eq!(session.state(), SessionState::Failed);
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .contains("readiness notification contract panicked")
+    );
+}
+
+#[test]
+fn process_notifier_is_invalid_after_finish_and_cannot_target_another_session() {
+    let mut builder = NetworkBuilder::new();
+    let iface = Arc::new(Interface::new([PortDef::wire::<i64>("in").unwrap()], []).unwrap());
+    let node = builder
+        .node(
+            "finish",
+            iface,
+            Arc::new(|| FinishOnEos(Arc::new(AtomicUsize::new(0)))),
+        )
+        .unwrap();
+    builder
+        .expose_input("input", node.wire_input::<i64>("in").unwrap(), one())
+        .unwrap();
+    let network = builder.build().unwrap().compile().unwrap();
+    let mut first = network.start();
+    let old = first.process_notifier("finish").unwrap();
+    first.close_input("input").unwrap();
+    assert_eq!(first.run_until_idle(16).steps, 1);
+    assert!(!old.notify());
+    assert!(first.process_notifier("finish").is_none());
+
+    let mut second = network.start();
+    let fresh = second.process_notifier("finish").unwrap();
+    assert!(!old.notify());
+    assert!(fresh.notify());
+    assert_eq!(second.run_until_idle(16).steps, 0);
+    second.close_input("input").unwrap();
+    assert_eq!(second.run_until_idle(16).steps, 1);
+    assert!(!fresh.notify());
+}
