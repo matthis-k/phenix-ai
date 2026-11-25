@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "crane": {
+      "locked": {
+        "lastModified": 1793836618,
+        "narHash": "sha256-TREenflwEjxOSq292FYwbc3kEm7TDRtXCZRNWEdjBmg=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "79fd63528501446749c09f08cad486a58c7d173e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "79fd63528501446749c09f08cad486a58c7d173e",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1783776592,
@@ -18,22 +34,23 @@
     },
     "phenix-flake-ci": {
       "locked": {
-        "lastModified": 1794827411,
-        "narHash": "sha256-ZsD5XXIe5bq4gNdZUMnOLNi8zu5dg4WDoj7Sj51twu4=",
+        "lastModified": 1794866158,
+        "narHash": "sha256-YKRGXtUopeOpp6Gp7e7BbaK/nWQQzDNGJxek9qhsWkY=",
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "a8177632e578629da0de551d248079b7c99ed245",
+        "rev": "49c60b4f55216649e3251b64458504a49a4acaf3",
         "type": "github"
       },
       "original": {
         "owner": "matthis-k",
         "repo": "phenix-flake-ci",
-        "rev": "a8177632e578629da0de551d248079b7c99ed245",
+        "rev": "49c60b4f55216649e3251b64458504a49a4acaf3",
         "type": "github"
       }
     },
     "root": {
       "inputs": {
+        "crane": "crane",
         "nixpkgs": "nixpkgs",
         "phenix-flake-ci": "phenix-flake-ci"
       }
