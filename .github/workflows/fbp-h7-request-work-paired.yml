@@ -1,4 +1,4 @@
-name: "FBP H7 Request Work Paired Benchmark"
+name: "FBP H5 Request Status Paired Benchmark"
 on:
   pull_request:
     paths:
@@ -20,10 +20,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: candidate
-      - name: Checkout exact pre-optimization integration
+      - name: Checkout pre-status-optimization H7 scope diagnostics
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 1ea3be140724388638005b20c52fb14ea5d096c5
+          ref: f4253d4cced7ff7d12202c1f67c3b870ec7883e6
           path: baseline
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       - name: Capture exact source and CPU provenance
@@ -73,6 +73,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fbp-h7-request-work-${{ github.event.pull_request.head.sha || github.sha }}
+          name: fbp-h5-request-status-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/
           if-no-files-found: warn
