@@ -2,10 +2,10 @@ use phenix_graph::{
     ContractValue, Interface, PortDef, Schema,
     component::ComponentDef,
     compose::{Edit, NetworkPatch},
-    network::{ConnectionDef, PortPath},
+    network::PortPath,
     process::{Process, ProcessContext, Step},
 };
-use phenix_kernel::{CandidateArtifacts, ContractRequirement, Contribution, Key};
+use phenix_kernel::{CandidateArtifacts, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::sync::{Arc, Mutex};
 
@@ -26,10 +26,10 @@ macro_rules! wire_value {
             fn encode(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
             }
-            fn decode(bytes: &[u8]) -> Result<Self, String> {
-                Ok(Self(i64::from_le_bytes(
-                    bytes.try_into().map_err(|_| "consumer: invalid i64")?,
-                )))
+            fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+                Ok(Self(i64::from_le_bytes(bytes.try_into().map_err(
+                    |cause| phenix_graph::Failure::external("consumer: invalid i64", cause),
+                )?)))
             }
         }
     };
@@ -41,7 +41,7 @@ pub struct Plugin(pub Arc<Mutex<Vec<i64>>>);
 
 struct Sink(Arc<Mutex<Vec<i64>>>);
 impl Process for Sink {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         let Some(value) = context.take("value") else {
             return Ok(Step::Finished);
         };
@@ -55,24 +55,16 @@ impl Process for Sink {
 
 impl PluginInstance for Plugin {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
-        into.add(ContractRequirement {
-            id: "transform".into(),
-            consumer: Key::new(into.owner(), "main"),
-            contract: Key::new("definition", "transform"),
-        })?;
         let observed = self.0.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |context| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .import("transform", Key::new("definition", "transform"))
+            .prepare(move |context| {
                 let bound = context.bind_import("transform")?;
                 // Only contract-visible names and C's own Rust types are used.
                 assert!(bound.wire_input::<Request>("extra").is_err());
-                bound.wire_input::<Request>("left")?;
-                bound.wire_input::<Request>("right")?;
-                bound.wire_output::<Response>("value")?;
+                let left = bound.wire_input::<Request>("left")?;
+                let right = bound.wire_input::<Request>("right")?;
+                let output = bound.wire_output::<Response>("value")?;
                 let capacity = std::num::NonZeroUsize::new(1).unwrap();
                 let port = |process: &str, name: &str| PortPath {
                     process: process.into(),
@@ -88,24 +80,24 @@ impl PluginInstance for Plugin {
                         path: "consumer-sink".into(),
                         definition: Arc::new(sink),
                     },
-                    Edit::Connect(ConnectionDef {
-                        from: port(bound.path(), "value"),
-                        to: port("consumer-sink", "value"),
+                    context.connect_bound_output(
+                        &output,
+                        port("consumer-sink", "value"),
                         capacity,
-                    }),
+                    )?,
                 ];
-                for name in ["left", "right"] {
-                    edits.push(Edit::ExposeInput {
-                        name: name.into(),
-                        targets: vec![port(bound.path(), name)],
+                for input in [left, right] {
+                    edits.push(context.expose_bound_input(
+                        input.name(),
+                        std::slice::from_ref(&input),
                         capacity,
-                    });
+                    )?);
                 }
                 Ok(CandidateArtifacts {
                     patch: Some(NetworkPatch::new(edits)),
                     ..Default::default()
                 })
-            })),
-        })
+            })
+            .register(into)
     }
 }

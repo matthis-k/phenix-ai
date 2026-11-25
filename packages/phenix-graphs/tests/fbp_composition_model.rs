@@ -39,12 +39,15 @@ const B: Map = Map {
 
 struct IntegerMap(Map);
 impl Process for IntegerMap {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(match context.take("in") {
             Some(value) => Step::Emit(ProcessEmission::new(
                 "out",
                 Value::local(
-                    self.0.mul * *value.borrow::<i64>().ok_or("expected local integer")?
+                    self.0.mul
+                        * *value.borrow::<i64>().ok_or_else(|| {
+                            phenix_graph::Failure::application_message("expected local integer")
+                        })?
                         + self.0.add,
                 ),
             )),
@@ -289,10 +292,33 @@ fn overlap(a: &Spec, b: &Spec, registry: &BTreeMap<String, Spec>) -> bool {
         && !a.writes().is_disjoint(&b.writes())
 }
 
-// Enumerate truth assignments satisfying dependency closure and priority defeat.
-// This is not the composer's priority-sort/iterative elimination algorithm.
-fn selection(registry: &BTreeMap<String, Spec>) -> Result<BTreeSet<String>, ()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SelectionFailure {
+    Conflict,
+    NoConsistent,
+    Ambiguous,
+}
+impl SelectionFailure {
+    fn assert_error(self, error: &ComposeError) {
+        assert!(
+            matches!(
+                (self, error),
+                (Self::Conflict, ComposeError::Conflict { .. })
+                    | (Self::NoConsistent, ComposeError::NoConsistentSelection)
+                    | (Self::Ambiguous, ComposeError::AmbiguousSelection)
+            ),
+            "expected {self:?}, got {error:?}"
+        );
+    }
+}
+
+// Enumerate complete truth assignments, independently of propagation/search.
+fn selection(registry: &BTreeMap<String, Spec>) -> Result<BTreeSet<String>, SelectionFailure> {
     let regs: Vec<_> = registry.values().collect();
+    assert!(
+        regs.len() <= 12,
+        "exhaustive oracle is only for tiny fixtures"
+    );
     for (i, a) in regs.iter().enumerate() {
         for b in &regs[i + 1..] {
             if overlap(a, b, registry)
@@ -300,7 +326,7 @@ fn selection(registry: &BTreeMap<String, Spec>) -> Result<BTreeSet<String>, ()> 
                     || (a.ops.iter().any(|op| matches!(op, Op::Splice(..)))
                         && b.ops.iter().any(|op| matches!(op, Op::Splice(..)))))
             {
-                return Err(());
+                return Err(SelectionFailure::Conflict);
             }
         }
     }
@@ -329,12 +355,11 @@ fn selection(registry: &BTreeMap<String, Spec>) -> Result<BTreeSet<String>, ()> 
             solutions.push(active);
         }
     }
-    assert_eq!(
-        solutions.len(),
-        1,
-        "oracle requires a unique solution: {registry:?}"
-    );
-    Ok(solutions.pop().unwrap())
+    match solutions.len() {
+        0 => Err(SelectionFailure::NoConsistent),
+        1 => Ok(solutions.pop().unwrap()),
+        _ => Err(SelectionFailure::Ambiguous),
+    }
 }
 
 struct Harness {
@@ -565,9 +590,10 @@ impl Harness {
                     Err(NetworkError::ForeignScope)
                 ));
             }
-            Err(()) => {
-                assert!(matches!(result, Err(ComposeError::Conflict { .. })));
+            Err(failure) => {
+                failure.assert_error(&result.unwrap_err());
                 binding.resolve(self.composer.current().compiled()).unwrap();
+                assert_eq!(self.composer.current().active(), published.active());
                 assert_eq!(self.composer.current().footprints(), published.footprints());
                 for path in published.network().instances().keys() {
                     assert_eq!(
@@ -580,6 +606,15 @@ impl Harness {
                         published.compiled().inspect(path).unwrap().declared_origin
                     );
                 }
+                for spec in self.registry.values() {
+                    assert_eq!(
+                        self.composer
+                            .register([spec.native(&self.definitions)])
+                            .unwrap_err(),
+                        ComposeError::DuplicateRegistration(spec.id.clone())
+                    );
+                }
+                binding.resolve(self.composer.current().compiled()).unwrap();
             }
         }
         self.check();
@@ -592,12 +627,22 @@ impl Harness {
         expected.is_ok()
     }
     fn revoke(&mut self, id: &str) {
+        assert!(self.try_revoke(id));
+    }
+    fn try_revoke(&mut self, id: &str) -> bool {
         let removed: BTreeSet<_> = self
             .registry
             .keys()
             .filter(|other| other.as_str() == id || depends(&self.registry, other, id))
             .cloned()
             .collect();
+        let candidate = self
+            .registry
+            .iter()
+            .filter(|(id, _)| !removed.contains(*id))
+            .map(|(id, spec)| (id.clone(), spec.clone()))
+            .collect();
+        let expected = selection(&candidate);
         let published = self.composer.current().clone();
         let binding = published
             .compiled()
@@ -605,15 +650,383 @@ impl Harness {
             .unwrap()
             .output::<i64>("out")
             .unwrap();
-        assert_eq!(self.composer.revoke(id).unwrap(), removed);
-        assert!(matches!(
-            binding.resolve(self.composer.current().compiled()),
-            Err(NetworkError::ForeignScope)
-        ));
+        let result = self.composer.revoke(id);
+        match expected {
+            Ok(_) => {
+                assert_eq!(result.unwrap(), removed);
+                assert!(matches!(
+                    binding.resolve(self.composer.current().compiled()),
+                    Err(NetworkError::ForeignScope)
+                ));
+                self.registry = candidate;
+            }
+            Err(failure) => {
+                failure.assert_error(&result.unwrap_err());
+                binding.resolve(self.composer.current().compiled()).unwrap();
+                assert_eq!(self.composer.current().active(), published.active());
+                assert_eq!(self.composer.current().footprints(), published.footprints());
+                for spec in self.registry.values() {
+                    assert_eq!(
+                        self.composer
+                            .register([spec.native(&self.definitions)])
+                            .unwrap_err(),
+                        ComposeError::DuplicateRegistration(spec.id.clone())
+                    );
+                }
+                binding.resolve(self.composer.current().compiled()).unwrap();
+            }
+        }
         binding.resolve(published.compiled()).unwrap();
-        self.registry.retain(|id, _| !removed.contains(id));
         self.check();
+        expected.is_ok()
     }
+}
+
+// Reverse lexical traversal without changing dependencies, priorities or writes.
+fn relabel(specs: &[Spec]) -> Vec<Spec> {
+    let ids: BTreeSet<_> = specs.iter().map(|spec| spec.id.clone()).collect();
+    let names: BTreeMap<_, _> = ids
+        .into_iter()
+        .rev()
+        .enumerate()
+        .map(|(i, id)| (id, format!("renamed-{i:02}")))
+        .collect();
+    specs
+        .iter()
+        .map(|spec| {
+            let mut renamed = spec.clone();
+            renamed.id = names[&spec.id].clone();
+            renamed.deps = spec.deps.iter().map(|dep| names[dep].clone()).collect();
+            renamed
+        })
+        .collect()
+}
+
+fn toggle() -> Vec<Spec> {
+    vec![
+        Spec::new("a", &[], -2, vec![Op::Output("toggle-a", "a")]),
+        Spec::new("b", &[], -1, vec![Op::Output("toggle-b", "a")]),
+        Spec::new("A", &["a"], 10, vec![Op::Output("toggle-b", "a")]),
+        Spec::new("B", &["b"], 11, vec![Op::Output("toggle-a", "a")]),
+    ]
+}
+
+fn odd_ring() -> Vec<Spec> {
+    vec![
+        Spec::new("x", &[], 0, vec![Op::Output("ring-x", "a")]),
+        Spec::new("y", &[], 1, vec![Op::Output("ring-y", "a")]),
+        Spec::new("z", &[], 2, vec![Op::Output("ring-z", "a")]),
+        Spec::new("X", &["x"], 20, vec![Op::Output("ring-y", "a")]),
+        Spec::new("Y", &["y"], 21, vec![Op::Output("ring-z", "a")]),
+        Spec::new("Z", &["z"], 22, vec![Op::Output("ring-x", "a")]),
+    ]
+}
+
+#[test]
+fn dependent_recovers_when_its_prerequisite_winner_is_later_deactivated() {
+    let specs = vec![
+        Spec::new("P", &["p"], 10, vec![Op::Put("x", A, true)]),
+        Spec::new("Q", &["q"], 5, vec![Op::Put("a", B, false)]),
+        Spec::new("R", &[], 3, vec![Op::Put("b", A, false)]),
+        Spec::new("p", &[], 0, vec![Op::Put("a", A, false)]),
+        Spec::new("q", &[], 0, vec![Op::Put("b", B, false)]),
+    ];
+    assert_eq!(
+        selection(&specs.iter().map(|s| (s.id.clone(), s.clone())).collect()),
+        Ok(["P", "R", "p"].map(String::from).into())
+    );
+    for renamed in [false, true] {
+        let specs = if renamed {
+            relabel(&specs)
+        } else {
+            specs.clone()
+        };
+        for reverse in [false, true] {
+            let mut h = Harness::new([A, B]);
+            assert!(h.register(specs.clone(), reverse));
+            h.revoke(&specs[2].id); // Removing R restores q and Q, defeating p and P.
+            assert_eq!(
+                h.composer.current().active(),
+                &[specs[1].id.clone(), specs[4].id.clone()].into()
+            );
+            h.revoke(&specs[1].id); // Q's removal restores both p and P again.
+            assert_eq!(
+                h.composer.current().active(),
+                &[
+                    specs[0].id.clone(),
+                    specs[3].id.clone(),
+                    specs[4].id.clone()
+                ]
+                .into()
+            );
+            h.revoke(&specs[3].id);
+            assert_eq!(h.composer.current().active(), &[specs[4].id.clone()].into());
+        }
+    }
+}
+
+#[test]
+fn unique_cyclic_defeat_retains_the_only_dependency_closed_selection() {
+    let specs = vec![
+        Spec::new(
+            "a",
+            &[],
+            1,
+            vec![Op::Output("ab", "a"), Op::Output("ac", "a")],
+        ),
+        Spec::new(
+            "b",
+            &[],
+            3,
+            vec![
+                Op::Output("ab", "a"),
+                Op::Output("Pb", "a"),
+                Op::Output("Qb", "a"),
+            ],
+        ),
+        Spec::new(
+            "c",
+            &[],
+            0,
+            vec![Op::Output("ac", "a"), Op::Output("Pc", "a")],
+        ),
+        Spec::new(
+            "P",
+            &["a"],
+            5,
+            vec![Op::Output("Pb", "a"), Op::Output("Pc", "a")],
+        ),
+        Spec::new("Q", &["c"], 6, vec![Op::Output("Qb", "a")]),
+    ];
+    assert_eq!(
+        selection(&specs.iter().map(|s| (s.id.clone(), s.clone())).collect()),
+        Ok(["a", "P"].map(String::from).into())
+    );
+    for renamed in [false, true] {
+        let specs = if renamed {
+            relabel(&specs)
+        } else {
+            specs.clone()
+        };
+        for reverse in [false, true] {
+            let mut h = Harness::new([A, B]);
+            assert!(h.register(specs.clone(), reverse));
+            assert!(!h.try_revoke(&specs[4].id));
+            assert!(!h.try_revoke(&specs[3].id));
+            h.revoke(&specs[1].id);
+            h.revoke(&specs[3].id);
+            assert_eq!(h.composer.current().active(), &[specs[0].id.clone()].into());
+        }
+    }
+}
+
+#[test]
+fn two_model_toggle_and_zero_model_odd_ring_reject_registration_atomically() {
+    for (specs, failure) in [
+        (toggle(), SelectionFailure::Ambiguous),
+        (odd_ring(), SelectionFailure::NoConsistent),
+    ] {
+        assert_eq!(
+            selection(&specs.iter().map(|s| (s.id.clone(), s.clone())).collect()),
+            Err(failure)
+        );
+        for renamed in [false, true] {
+            let specs = if renamed {
+                relabel(&specs)
+            } else {
+                specs.clone()
+            };
+            for reverse in [false, true] {
+                let mut h = Harness::new([A, B]);
+                assert!(h.register(
+                    vec![Spec::new(
+                        "existing",
+                        &[],
+                        100,
+                        vec![Op::Put("a", B, false)]
+                    )],
+                    false,
+                ));
+                assert!(!h.register(specs.clone(), reverse));
+                // The same IDs remain admissible after the failed whole batch.
+                assert!(h.register(vec![specs[0].clone()], reverse));
+                h.revoke(&specs[0].id);
+                h.revoke("existing");
+            }
+        }
+    }
+}
+
+#[test]
+fn authority_and_global_conflicts_precede_zero_or_multiple_selection_models() {
+    for specs in [toggle(), odd_ring()] {
+        for reverse in [false, true] {
+            let mut h = Harness::new([A, B]);
+            let published = h.composer.current().clone();
+            let binding = published
+                .compiled()
+                .bind("a", &contract())
+                .unwrap()
+                .output::<i64>("out")
+                .unwrap();
+            let unauthorized = Spec::new(
+                "unauthorized",
+                &[],
+                100,
+                vec![Op::Output("unauthorized-export", "a")],
+            );
+            let mut batch: Vec<_> = specs.iter().map(|s| s.native(&h.definitions)).collect();
+            batch.push(Registration::new(
+                &unauthorized.id,
+                [],
+                unauthorized.priority,
+                unauthorized.origin.clone(),
+                [],
+                unauthorized.native(&h.definitions).patch().clone(),
+            ));
+            if reverse {
+                batch.reverse();
+            }
+            assert_eq!(
+                h.composer.register(batch).unwrap_err(),
+                ComposeError::Unauthorized {
+                    registration: unauthorized.id.clone(),
+                    footprint: Write::Output("unauthorized-export").native(),
+                }
+            );
+            binding.resolve(h.composer.current().compiled()).unwrap();
+            h.check();
+            for spec in specs.iter().chain([&unauthorized]) {
+                assert!(h.composer.revoke(&spec.id).unwrap().is_empty());
+            }
+
+            let mut equal = specs.clone();
+            equal.extend([
+                Spec::new("equal-one", &[], 30, vec![Op::Output("global", "a")]),
+                Spec::new("equal-two", &[], 30, vec![Op::Output("global", "a")]),
+                Spec::new("winner", &[], 40, vec![Op::Output("global", "a")]),
+            ]);
+            // Equal-priority losers still conflict, even with a stronger winner.
+            assert!(!h.register(equal, reverse));
+
+            let mut splices = specs.clone();
+            splices.extend([
+                Spec::new(
+                    "splice-one",
+                    &[],
+                    30,
+                    vec![Op::Put("x", A, true), Op::Splice("x", "a")],
+                ),
+                Spec::new(
+                    "splice-two",
+                    &[],
+                    31,
+                    vec![Op::Put("y", B, true), Op::Splice("y", "a")],
+                ),
+                Spec::new("winner", &[], 40, vec![Op::Wire(("a", "b"), false)]),
+            ]);
+            // A stronger disconnect cannot hide unordered splices of the same anchor.
+            assert!(!h.register(splices, reverse));
+        }
+    }
+}
+
+#[test]
+fn downstream_contradiction_resolves_upstream_toggle_globally_and_failed_revokes_are_atomic() {
+    let mut specs = toggle();
+    specs.extend(odd_ring());
+    specs[2].ops.push(Op::Output("gate", "a")); // A blocks x, not X.
+    specs[4].ops.push(Op::Output("gate", "a"));
+    assert_eq!(
+        selection(&specs.iter().map(|s| (s.id.clone(), s.clone())).collect()),
+        Ok(["A", "a", "Y", "y"].map(String::from).into())
+    );
+    for renamed in [false, true] {
+        let specs = if renamed {
+            relabel(&specs)
+        } else {
+            specs.clone()
+        };
+        for reverse in [false, true] {
+            let mut h = Harness::new([A, B]);
+            assert!(h.register(specs.clone(), reverse));
+            // Without A the odd ring has no model; without X both toggle choices work.
+            assert!(!h.try_revoke(&specs[2].id));
+            assert!(!h.try_revoke(&specs[7].id));
+            // Also exercise cascade rollback: removing a would remove A as well.
+            assert!(!h.try_revoke(&specs[0].id));
+            h.revoke(&specs[3].id);
+            h.revoke(&specs[7].id);
+            h.revoke(&specs[0].id);
+        }
+    }
+}
+
+#[test]
+fn bounded_generated_dependency_dags_and_conflicts_match_zero_one_many_models() {
+    let lows = ["a", "b", "c"];
+    let highs = ["A", "B", "C"];
+    let exports = ["ab", "ac", "ba", "bc", "ca", "cb"];
+    let mut outcomes = [0; 3];
+    // All 64 directed defeat graphs on three dependency pairs, with four DAG shapes.
+    for mask in 0..64 {
+        for shape in 0..4 {
+            let mut specs: Vec<_> = lows
+                .iter()
+                .enumerate()
+                .map(|(i, id)| Spec::new(id, &[], i as i64 - 3, vec![]))
+                .chain(
+                    highs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| Spec::new(id, &[lows[i]], i as i64 + 3, vec![])),
+                )
+                .collect();
+            if shape & 1 != 0 {
+                specs[4].deps.insert(highs[0].into());
+            }
+            if shape & 2 != 0 {
+                specs[5].deps.insert(highs[1].into());
+            }
+            let dag: BTreeMap<_, _> = specs.iter().map(|s| (s.id.clone(), s.clone())).collect();
+            let mut bit = 0;
+            for high in 0..3 {
+                for low in 0..3 {
+                    if high == low {
+                        continue;
+                    }
+                    // Ordered registrations may both win, so cannot add the same export.
+                    if mask & (1 << bit) != 0 && !depends(&dag, highs[high], lows[low]) {
+                        specs[high + 3].ops.push(Op::Output(exports[bit], "a"));
+                        specs[low].ops.push(Op::Output(exports[bit], "a"));
+                    }
+                    bit += 1;
+                }
+            }
+            let expected = selection(&specs.iter().map(|s| (s.id.clone(), s.clone())).collect());
+            outcomes[match expected {
+                Ok(_) => 1,
+                Err(SelectionFailure::NoConsistent) => 0,
+                Err(SelectionFailure::Ambiguous) => 2,
+                Err(SelectionFailure::Conflict) => panic!("generated priorities are distinct"),
+            }] += 1;
+            for reverse in [false, true] {
+                let mut h = Harness::new([A, B]);
+                assert_eq!(
+                    h.register(specs.clone(), reverse),
+                    expected.is_ok(),
+                    "mask={mask:#08b}, shape={shape}, reverse={reverse}"
+                );
+                if expected.is_ok() {
+                    h.try_revoke(lows[mask % 3]);
+                }
+            }
+        }
+    }
+    assert!(
+        outcomes.iter().all(|count| *count > 0),
+        "0/1/many counts: {outcomes:?}"
+    );
 }
 
 #[test]

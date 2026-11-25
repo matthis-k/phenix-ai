@@ -41,8 +41,10 @@ impl ReadinessPolicy for ExternalGate {
 
 struct Count(Arc<AtomicUsize>);
 impl Process for Count {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
-        let packet = cx.take("in").ok_or("no packet to count")?;
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        let packet = cx
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("no packet to count"))?;
         let _ = packet.get::<u64>()?;
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Complete)

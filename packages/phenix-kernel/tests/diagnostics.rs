@@ -6,7 +6,7 @@ use phenix_graph::{
     network::NetworkError,
     process::LocalProcessDispatcher,
 };
-use phenix_kernel::{ContractDefinition, Kernel, Key, NetworkOffer, ResolutionError};
+use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key, ResolutionError};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::{error::Error, sync::Arc};
 #[derive(Clone, Copy)]
@@ -35,27 +35,11 @@ impl PluginInstance for Case {
                 .unwrap(),
             })?;
         }
-        if matches!(self, Self::WrongOrigin | Self::Interface) {
-            into.add(NetworkOffer {
-                id: "offer".into(),
-                producer: Key::new(
-                    if matches!(self, Self::WrongOrigin) {
-                        "foreign"
-                    } else {
-                        "plugin"
-                    },
-                    "main",
-                ),
-                unit: "service".into(),
-                contract: Key::new("plugin", "contract"),
-            })?;
-        }
-        let patch = match self {
+        let mut patch = match self {
             Self::Compilation => NetworkPatch::new([Edit::AddSource("missing".into())]),
             Self::Catalog => support::patch("service", false, true, 0, "different@1"),
             _ => support::patch("service", false, false, 0, "diagnostics/test@1"),
         };
-        let mut contribution = support::contribution("main", patch);
         if matches!(self, Self::Catalog) {
             let conflicting = Contract::new(
                 contract.id(),
@@ -71,23 +55,48 @@ impl PluginInstance for Case {
             )
             .claim(&conflicting)
             .unwrap();
-            contribution.patch = NetworkPatch::new([Edit::Add {
+            patch = NetworkPatch::new([Edit::Add {
                 path: "service".into(),
                 definition: Arc::new(definition),
             }]);
         }
-        if matches!(self, Self::Composition) {
-            contribution.prepare = Some(Box::new(|_| Err("composer failed".into())));
+        let mut contribution = support::contribution("main", patch);
+        if matches!(self, Self::Interface) {
+            contribution = contribution.offer("offer", "service", Key::new("plugin", "contract"));
         }
-        into.add(contribution)
+        if matches!(self, Self::Composition) {
+            contribution = contribution.prepare(|_| Err("composer failed".into()));
+        }
+        contribution.register(into)
     }
 }
 fn failure(case: Case) -> ResolutionError {
+    struct Foreign;
+    impl PluginInstance for Foreign {
+        fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
+            support::contribution("main", NetworkPatch::new([]))
+                .after([Key::new("plugin", "main")])
+                .offer("offer", "service", Key::new("plugin", "contract"))
+                .register(into)
+        }
+    }
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("plugin", "main"),
+        [match case {
+            Case::Compilation => phenix_graph::compose::Footprint::Source("missing".into()),
+            _ => phenix_graph::compose::Footprint::Component("service".into()),
+        }],
+    );
     let snapshot = support::snapshot("plugin", case);
-    let options = support::options(std::slice::from_ref(&snapshot));
+    let mut snapshots = vec![snapshot];
+    if matches!(case, Case::WrongOrigin) {
+        snapshots.push(support::snapshot("foreign", Foreign));
+    }
     Kernel::build_with_options(
         "diagnostics",
-        [snapshot],
+        snapshots,
         Arc::new(LocalProcessDispatcher),
         options,
     )
@@ -105,7 +114,7 @@ fn build_failures_identify_definition_composer_and_origin() {
     );
     assert_eq!(composition.source().unwrap().to_string(), "composer failed");
     assert!(
-        matches!(failure(Case::WrongOrigin), ResolutionError::WrongOrigin { offer, producer, unit } if offer == Key::new("plugin", "offer") && *producer == Key::new("foreign", "main") && unit == "service")
+        matches!(failure(Case::WrongOrigin), ResolutionError::WrongOrigin { offer, producer, unit } if offer == Key::new("foreign", "offer") && *producer == Key::new("foreign", "main") && unit == "service")
     );
 }
 #[test]
@@ -147,11 +156,19 @@ fn interface_fields_and_missing_unit_remain_machine_readable() {
     let NetworkError::Interface(cause) = *cause else {
         unreachable!()
     };
-    assert!(cause.message.contains("claim"));
+    assert!(matches!(
+        cause.reason.as_ref(),
+        phenix_graph::interface::InterfaceReason::MissingExplicitClaim { contract }
+            if contract.as_ref() == "diagnostics/test@1"
+    ));
     let missing = ResolutionError::MissingUnit {
         offer: Key::new("plugin", "offer"),
         unit: "service".into(),
+        cause: Box::new(NetworkError::UnknownProcess("service".into())),
     };
     assert!(missing.to_string().contains("service"));
-    assert!(missing.source().is_none());
+    assert!(matches!(
+        missing.source().unwrap().downcast_ref::<NetworkError>(),
+        Some(NetworkError::UnknownProcess(path)) if path == "service"
+    ));
 }

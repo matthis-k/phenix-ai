@@ -33,9 +33,37 @@ impl Codec for CounterCodec {
         Ok(value.to_le_bytes().to_vec())
     }
     fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<i64> {
-        Ok(i64::from_le_bytes(bytes.try_into().map_err(|_| {
-            phenix_storage::Error::Codec("expected eight bytes".into())
+        Ok(i64::from_le_bytes(bytes.try_into().map_err(|cause| {
+            phenix_storage::Error::CodecCause {
+                summary: "counter codec expected eight bytes",
+                cause: Box::new(cause),
+            }
         })?))
+    }
+}
+
+#[cfg(test)]
+mod q7_codec_tests {
+    use super::*;
+    use std::error::Error as _;
+
+    #[test]
+    fn counter_codec_retains_actual_slice_conversion_error() {
+        let error = CounterCodec(1).decode(&[1, 2, 3]).unwrap_err();
+        assert!(matches!(
+            &error,
+            phenix_storage::Error::CodecCause {
+                summary: "counter codec expected eight bytes",
+                ..
+            }
+        ));
+        assert!(
+            error
+                .source()
+                .unwrap()
+                .is::<std::array::TryFromSliceError>()
+        );
+        assert_eq!(CounterCodec(1).decode(&42_i64.to_le_bytes()).unwrap(), 42);
     }
 }
 
@@ -104,12 +132,8 @@ impl PluginInstance for CounterPlugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let counter = self.counter.clone();
         let reads = self.reads.clone();
-        registrar.add(Contribution {
-            id: "module".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("module", NetworkPatch::new([]))
+            .prepare(move |_| {
                 let mut module = NetworkBuilder::new();
                 let writer = counter.clone();
                 let write = module.add(
@@ -149,8 +173,8 @@ impl PluginInstance for CounterPlugin {
                     )),
                     ..Default::default()
                 })
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 struct ObserverPlugin {
@@ -165,12 +189,10 @@ impl PluginInstance for ObserverPlugin {
         let session = self.session.clone();
         let scope = self.scope.clone();
         let capacity = self.capacity;
-        registrar.add(Contribution {
-            id: "observer".into(),
-            requires: vec![Key::new("counter", "module")],
-            routes: vec!["storage_changed".into()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("observer", NetworkPatch::new([]))
+            .after([Key::new("counter", "module")])
+            .route(["storage_changed".into()])
+            .prepare(move |_| {
                 let mut context = CandidateArtifacts::default();
                 let log = observed.clone();
                 let sink = support::local_sink(move |notice: phenix_storage::Notice| {
@@ -186,8 +208,8 @@ impl PluginInstance for ObserverPlugin {
                     }))
                 })?;
                 Ok(context)
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 
@@ -293,7 +315,7 @@ pub fn build(sqlite: bool, capacity: usize) -> Result<Demo, String> {
 }
 
 #[allow(dead_code)]
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     for sqlite in [false, true] {
         let mut demo = build(sqlite, 8)?;
         demo.kernel.start().map_err(|error| error.to_string())?;

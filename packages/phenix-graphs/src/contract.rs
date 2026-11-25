@@ -1,6 +1,6 @@
 //! Canonical contracts. Inspection data is deliberately not an attestation API.
 use crate::component::ComponentDef;
-use crate::interface::{Interface, InterfaceError};
+use crate::interface::{Interface, InterfaceError, InterfaceReason};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -13,7 +13,9 @@ impl Contract {
     pub fn new(id: impl Into<String>, required: Arc<Interface>) -> Result<Self, InterfaceError> {
         let id = id.into();
         if id.len() > crate::MAX_IDENTIFIER_BYTES || !id.split('/').all(valid_segment) {
-            return Err(InterfaceError::new("invalid contract identity"));
+            return Err(InterfaceError::new(
+                InterfaceReason::InvalidContractIdentity { id: id.into() },
+            ));
         }
         Ok(Self { id, required })
     }
@@ -28,7 +30,10 @@ impl Contract {
             Ok(())
         } else {
             Err(InterfaceError::new(
-                "different contract identity or definition",
+                InterfaceReason::DifferingContractDefinition {
+                    expected: self.clone(),
+                    actual: provided.clone(),
+                },
             ))
         }
     }
@@ -55,7 +60,9 @@ impl Contract {
             found = true;
         }
         if !found {
-            return Err(InterfaceError::new("missing explicit contract claim"));
+            return Err(InterfaceError::new(InterfaceReason::MissingExplicitClaim {
+                contract: self.id().into(),
+            }));
         }
         self.check_shape(interface)
     }

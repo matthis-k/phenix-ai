@@ -206,19 +206,16 @@ struct FailCandidate(Arc<AtomicBool>);
 impl PluginInstance for FailCandidate {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let fail = self.0.clone();
-        registrar.add(Contribution {
-            id: "fail".into(),
-            requires: vec![Key::new("derive", "derive")],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("fail", NetworkPatch::new([]))
+            .after([Key::new("derive", "derive")])
+            .prepare(move |_| {
                 if fail.load(Ordering::SeqCst) {
                     Err("candidate rejected".into())
                 } else {
                     Ok(CandidateArtifacts::default())
                 }
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 
@@ -228,12 +225,9 @@ struct SelectedReader(Arc<Mutex<Arc<scoped::Storage>>>);
 impl PluginInstance for SelectedReader {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let selected = self.0.clone();
-        registrar.add(Contribution {
-            id: "reader".into(),
-            requires: vec![],
-            routes: vec!["values.refresh".into()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("reader", NetworkPatch::new([]))
+            .route(["values.refresh".into()])
+            .prepare(move |_| {
                 let (a, b) = selected.lock().unwrap().bind((A.read(), B.read()))?;
                 let mut graph = NetworkBuilder::new();
                 let group = graph.sources("values", (&a, &b))?;
@@ -247,8 +241,8 @@ impl PluginInstance for SelectedReader {
                 artifacts.export(query)?;
                 artifacts.activate(move || observation.activate().map_err(Into::into))?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 
@@ -357,18 +351,14 @@ fn starting_a_after_b_uses_as_exact_observation() {
 struct CompetingFactories;
 impl PluginInstance for CompetingFactories {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        registrar.add(Contribution {
-            id: "competing".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(|_| {
+        Contribution::new("competing", NetworkPatch::new([]))
+            .prepare(|_| {
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.activate(|| panic!("must not activate"))?;
                 artifacts.activate(|| panic!("must not activate"))?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 

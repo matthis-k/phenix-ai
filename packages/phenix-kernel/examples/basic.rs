@@ -21,13 +21,7 @@ impl PluginInstance for Increment {
                 port: "output".into(),
             },
         });
-        registrar.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new(edits),
-            prepare: None,
-        })
+        Contribution::new("main", NetworkPatch::new(edits)).register(registrar)
     }
 }
 fn main() -> Result<(), phenix_kernel::CallbackError> {

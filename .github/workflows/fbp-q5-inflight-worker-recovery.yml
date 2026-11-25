@@ -2,8 +2,17 @@ name: "FBP Q5 In-Flight Worker Recovery"
 on:
   pull_request:
     paths:
+      - "packages/phenix-graphs/src/process.rs"
+      - "packages/phenix-graphs/src/process/handoff_model.rs"
+      - "packages/phenix-graphs/src/runtime/execution.rs"
+      - "packages/phenix-graphs/src/runtime/recovery.rs"
+      - "packages/phenix-graphs/src/runtime/scheduling.rs"
+      - "packages/phenix-graphs/src/runtime/wake.rs"
+      - "packages/phenix-graphs/src/connection.rs"
+      - "packages/phenix-graphs/src/failure.rs"
+      - "packages/phenix-graphs/src/value.rs"
+      - "packages/phenix-graphs/tests/fbp_handoff_history.rs"
       - "packages/phenix-graphs/tests/fbp_inflight_worker_recovery.rs"
-      - "docs/fbp-q5-inflight-deferred-recovery-20261113.md"
       - ".github/workflows/fbp-q5-inflight-worker-recovery.yml"
   workflow_dispatch:
 
@@ -34,25 +43,61 @@ jobs:
             nix --version
             nix develop --command rustc -vV
           } > artifacts/environment.txt
-          sha256sum packages/phenix-graphs/tests/fbp_inflight_worker_recovery.rs > artifacts/source-hashes.txt
+          sha256sum \
+            packages/phenix-graphs/src/process.rs \
+            packages/phenix-graphs/src/process/handoff_model.rs \
+            packages/phenix-graphs/src/runtime/execution.rs \
+            packages/phenix-graphs/src/runtime/recovery.rs \
+            packages/phenix-graphs/src/runtime/scheduling.rs \
+            packages/phenix-graphs/src/runtime/wake.rs \
+            packages/phenix-graphs/src/connection.rs \
+            packages/phenix-graphs/src/failure.rs \
+            packages/phenix-graphs/src/value.rs \
+            packages/phenix-graphs/tests/fbp_handoff_history.rs \
+            packages/phenix-graphs/tests/fbp_inflight_worker_recovery.rs \
+            > artifacts/source-hashes.txt
           cat artifacts/environment.txt
           cat artifacts/source-hashes.txt
+      - name: Run the bounded handoff and public history suites once
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUST_BACKTRACE=1
+          nix develop --command cargo test --locked \
+            -p phenix-graph --lib process::handoff_model \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/handoff-model.log
+          nix develop --command cargo test --locked \
+            -p phenix-graph --test fbp_handoff_history \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/handoff-history.log
+          nix develop --command cargo test --locked \
+            -p phenix-graph --test fbp_inflight_worker_recovery \
+            -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/worker-baseline.log
       - name: Repeat real in-flight cancellation and fresh completion 12 times
         shell: bash
         run: |
           set -euo pipefail
           export RUST_BACKTRACE=1
           for repeat in $(seq 1 12); do
-            nix develop --command cargo test --locked -q \
+            nix develop --command cargo test --locked \
               -p phenix-graph --test fbp_inflight_worker_recovery \
-              -- --test-threads=1 \
+              -- --nocapture --test-threads=1 \
               > "artifacts/worker-$repeat.log" 2>&1 || {
                 cat "artifacts/worker-$repeat.log"
                 exit 1
               }
-            echo "repeat $repeat: 48 cancel/recovery interleavings passed"
+            echo "repeat $repeat: seven worker tests passed (five baseline frames and four added identity/composition tests, both queue policies where required)"
             tail -n 4 "artifacts/worker-$repeat.log"
           done
+          {
+            echo "Baseline: bounded handoff model, public handoff history, and worker suite each ran once with --nocapture."
+            echo "Worker repeat loop: 12 additional deterministic executions."
+                       echo "Per worker execution: seven tests. Baseline: five frames = 48 legacy rounds plus two publication-order frames at one round each."
+            echo "Added: same-session wrong-index, cross-session identity/wake, both-policy publication-pending cancellation, and both-policy non-emitting old Complete through five fresh boundaries."
+            echo "The repeated executions are deterministic witnesses, not exhaustive interleaving coverage."
+          } | tee artifacts/coverage-summary.txt
       - name: Save checks and exact-head provenance
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

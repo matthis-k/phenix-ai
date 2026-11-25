@@ -1,25 +1,44 @@
 //! Host-authorized native network composition and persistent producer lifecycle.
+mod bound;
+mod config_error;
+mod exclusive;
 pub mod host;
+mod producer_ownership;
+pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 
+use exclusive::{ExclusiveLease, ExclusiveSlot};
 use phenix_graph::{
     Value,
-    compose::{Composer, Footprint, NetworkPatch, Registration},
+    compose::{Composer, Footprint, NetworkPatch, Registration, SelectionLimits},
     contract::Contract,
     network::{BoundComponent, CompiledNetwork, NetworkBuilder, NetworkError},
-    process::ProcessDispatcher,
+    process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{InjectionError, NetworkSession, RunReport, SessionOptions, SessionState},
 };
 pub use phenix_plugin::CallbackError;
 use phenix_plugin::{ContributionHandle, PluginSnapshot, lease_callback_error};
+use producer_ownership::{DirectDrainScope, DriverAdmissionError, DriverScope};
 use std::{
     any::Any,
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    ops::{Deref, DerefMut},
     sync::{
-        Arc, Mutex, TryLockError,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+thread_local! {
+    static ACTIVE_SESSION_KERNELS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+static NEXT_KERNEL_SESSION_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn next_kernel_session_id() -> usize {
+    NEXT_KERNEL_SESSION_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("kernel session identity exhausted")
+}
 
 // Fail fast on same-thread recursive access to an identical kernel resource.
 // Call sites choose their own cross-thread contention policy.
@@ -49,86 +68,11 @@ impl Drop for KernelLockScope {
     }
 }
 
-struct SessionLease<'a> {
-    slot: &'a Mutex<Option<NetworkSession>>,
-    session: Option<NetworkSession>,
-    notify_on_drop: bool,
-}
-
-impl SessionLease<'_> {
-    fn notify_on_drop(&mut self) {
-        self.notify_on_drop = true;
-    }
-}
-
-impl std::ops::Deref for SessionLease<'_> {
-    type Target = NetworkSession;
-
-    fn deref(&self) -> &Self::Target {
-        self.session.as_ref().expect("session lease is active")
-    }
-}
-
-impl std::ops::DerefMut for SessionLease<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.session.as_mut().expect("session lease is active")
-    }
-}
-
-impl Drop for SessionLease<'_> {
-    fn drop(&mut self) {
-        let notifier = self.notify_on_drop.then(|| {
-            self.session
-                .as_ref()
-                .expect("session lease is active")
-                .notifier()
-        });
-        let mut slot = self.slot.lock().unwrap_or_else(|error| error.into_inner());
-        *slot = self.session.take();
-        drop(slot);
-        if let Some(notifier) = notifier {
-            notifier.notify();
-        }
-    }
-}
-
-// One linearizable producer ownership word: 0 means free, MAX is a
-// whole-lifetime blocking driver, all other values count in-flight or
-// gate-queued manual drains. The producer_drain mutex still serializes
-// actual callbacks; the owner word prevents direct/driver mode overlap.
-const DRIVER_OWNER: usize = usize::MAX;
-
-struct DriverScope<'a>(&'a AtomicUsize);
-impl<'a> DriverScope<'a> {
-    fn enter(owner: &'a AtomicUsize) -> Result<Self, DriverError> {
-        match owner.compare_exchange(0, DRIVER_OWNER, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => Ok(Self(owner)),
-            Err(DRIVER_OWNER) => Err(DriverError::AlreadyRunning),
-            Err(_) => Err(DriverError::DrainInProgress),
-        }
-    }
-}
-impl Drop for DriverScope<'_> {
-    fn drop(&mut self) {
-        self.0.store(0, Ordering::Release);
-    }
-}
-
-struct DirectDrainScope<'a>(&'a AtomicUsize);
-impl<'a> DirectDrainScope<'a> {
-    fn enter(owner: &'a AtomicUsize) -> Option<Self> {
-        owner
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < DRIVER_OWNER - 1).then(|| count + 1)
-            })
-            .ok()
-            .map(|_| Self(owner))
-    }
-}
-impl Drop for DirectDrainScope<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
-    }
+fn enter_driver(owner: &AtomicUsize) -> Result<DriverScope<'_>, DriverError> {
+    DriverScope::enter(owner).map_err(|error| match error {
+        DriverAdmissionError::AlreadyRunning => DriverError::AlreadyRunning,
+        DriverAdmissionError::DrainInProgress => DriverError::DrainInProgress,
+    })
 }
 
 // The exclusive blocking driver temporarily registers its wake handle for
@@ -167,13 +111,49 @@ impl Key {
 }
 
 /// One bounded external admission to one public network input.
+/// Producer events are symbolic, contribution-route-scoped authoring data, not
+/// compiled binding capabilities. Factories are prepared before final composition;
+/// final handles are issued separately by host::Binding for explicit session work.
+/// Possessing an ingress handle never grants a producer an additional route.
 pub struct InputEvent {
     pub input: String,
     pub value: Value,
 }
 
-/// A producer must not wait for an event. Drop must stop and release its resources.
-/// Factories must clean up partially acquired resources if activation fails.
+impl InputEvent {
+    /// Convert a typed public input name and payload into a producer event.
+    /// This grants no route authority. Conversion runs now, before route and
+    /// admission checks. Admission errors retain the constructed Value, not T;
+    /// undeclared routes keep the existing producer error/disposal behavior.
+    /// ```
+    /// use phenix_graph::InputKey;
+    /// use phenix_kernel::InputEvent;
+    /// let event = InputEvent::new(InputKey::<i64>::encoded("input"), 7);
+    /// assert_eq!(event.input, "input");
+    /// assert_eq!(event.value.bytes(), 7_i64.to_le_bytes());
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::InputKey;
+    /// use phenix_kernel::InputEvent;
+    /// InputEvent::new(InputKey::<i64>::new("input"), String::new());
+    /// ```
+    /// ```compile_fail,E0308
+    /// use phenix_graph::OutputKey;
+    /// use phenix_kernel::InputEvent;
+    /// InputEvent::new(OutputKey::<i64>::new("input"), 7);
+    /// ```
+    pub fn new<T: Send + Sync + 'static>(key: phenix_graph::InputKey<T>, payload: T) -> Self {
+        Self {
+            input: key.name().into(),
+            value: key.value(payload),
+        }
+    }
+}
+
+/// A producer must not wait for an event. Poll/wake callbacks run without the
+/// kernel producer inventory mutex; recursive drain returns a typed error.
+/// Concurrent manual drains serialize; a blocking driver owns polling exclusively.
+/// Drop must stop and release resources. Factories clean partial activation.
 pub trait Producer: Send {
     /// An error is terminal: the kernel reports it once and drops this producer.
     /// Transient unavailability must return Ok(None) and wake when ready to retry.
@@ -188,16 +168,25 @@ pub trait Producer: Send {
 
 #[derive(Default)]
 struct WakeState {
-    shutdown: Mutex<bool>,
+    epoch: Mutex<(u64, bool)>,
+    changed: Condvar,
     notifier: Mutex<Option<phenix_graph::runtime::SessionNotifier>>,
 }
 
-/// Cloneable notification and shutdown handle for the optional blocking driver.
+/// Cloneable source/publication hint and sticky shutdown handle.
+/// Versions are wrapping change hints, not event counts or generation identities.
+/// Native session notifications are forwarded for the blocking driver, but are
+/// not automatically reflected in this handle's version.
 #[derive(Clone, Default)]
 pub struct WakeHandle(Arc<WakeState>);
 
 impl WakeHandle {
     pub fn wake(&self) {
+        {
+            let mut state = self.0.epoch.lock().unwrap();
+            state.0 = state.0.wrapping_add(1);
+            self.0.changed.notify_all();
+        }
         if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
             notifier.notify();
         }
@@ -205,10 +194,34 @@ impl WakeHandle {
 
     /// Shutdown is sticky. Use a new handle for a subsequent driver run.
     pub fn shutdown(&self) {
-        *self.0.shutdown.lock().unwrap() = true;
+        {
+            let mut state = self.0.epoch.lock().unwrap();
+            state.0 = state.0.wrapping_add(1);
+            state.1 = true;
+            self.0.changed.notify_all();
+        }
         if let Some(notifier) = self.0.notifier.lock().unwrap().as_ref() {
             notifier.notify();
         }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.0.epoch.lock().unwrap().0
+    }
+
+    /// Wait until a hint differs from `observed` or shutdown is requested.
+    /// Snapshot before inspecting work to avoid losing a concurrent wake.
+    /// This does not establish that all application work sources are idle.
+    pub fn wait_since(&self, observed: u64) -> u64 {
+        let mut state = self.0.epoch.lock().unwrap();
+        while state.0 == observed && !state.1 {
+            state = self.0.changed.wait(state).unwrap();
+        }
+        state.0
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.0.epoch.lock().unwrap().1
     }
 }
 
@@ -265,7 +278,7 @@ impl CandidateArtifacts {
         factory: impl Fn() -> Result<Box<dyn Producer>, CallbackError> + Send + Sync + 'static,
     ) -> Result<(), CallbackError> {
         if self.activate.is_some() {
-            return Err("candidate activation already registered".into());
+            return Err(CandidateError::ActivationAlreadyRegistered.into());
         }
         self.activate = Some(Box::new(factory));
         Ok(())
@@ -275,7 +288,7 @@ impl CandidateArtifacts {
     /// Bundle multiple values in a struct; retrieve it through Kernel::export.
     pub fn export<T: Send + Sync + 'static>(&mut self, value: T) -> Result<(), CallbackError> {
         if self.export.is_some() {
-            return Err("candidate export already registered".into());
+            return Err(CandidateError::ExportAlreadyRegistered.into());
         }
         self.export = Some(Box::new(value));
         Ok(())
@@ -283,13 +296,49 @@ impl CandidateArtifacts {
 }
 
 impl CandidateContext<'_> {
+    /// Lower an authenticated preview endpoint into symbolic composition data.
+    /// The resulting compilation must issue fresh execution handles.
+    pub fn expose_bound_input<T>(
+        &self,
+        name: impl Into<String>,
+        targets: &[phenix_graph::BoundInput<T>],
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_bound_input(self.compiled, name, targets, capacity)
+    }
+
+    pub fn expose_bound_output<T>(
+        &self,
+        name: impl Into<String>,
+        from: &phenix_graph::BoundOutput<T>,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        phenix_graph::compose::Edit::expose_bound_output(self.compiled, name, from)
+    }
+
+    /// Connect an imported preview output to a newly authored symbolic input.
+    /// The composer validates the destination and the host's exact write grant.
+    pub fn connect_bound_output<T>(
+        &self,
+        from: &phenix_graph::BoundOutput<T>,
+        to: phenix_graph::network::PortPath,
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        Ok(phenix_graph::compose::Edit::Connect(
+            phenix_graph::network::ConnectionDef {
+                from: from.symbolic_path(self.compiled)?.clone(),
+                to,
+                capacity,
+            },
+        ))
+    }
+
     /// Look up only this contribution's declared imports. The result owns its
     /// metadata so callers can retain provider and offer identities.
     pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {
         self.imports
             .get(id)
             .cloned()
-            .ok_or_else(|| format!("undeclared import: {id}").into())
+            .ok_or_else(|| CandidateError::UndeclaredImport { id: id.into() }.into())
     }
 
     /// Project only a declared import using the graph's authoritative contract
@@ -298,7 +347,7 @@ impl CandidateContext<'_> {
         let imported = self
             .imports
             .get(id)
-            .ok_or_else(|| format!("undeclared import: {id}"))?;
+            .ok_or_else(|| CandidateError::UndeclaredImport { id: id.into() })?;
         imported.bind(self.compiled).map_err(Into::into)
     }
 
@@ -308,23 +357,137 @@ impl CandidateContext<'_> {
         if self.can_inspect_network {
             Ok(self.compiled)
         } else {
-            Err("full compiled network inspection not granted".into())
+            Err(CandidateError::InspectionNotGranted.into())
         }
     }
 }
 
-/// Shared Rust type registered by plugins through the existing Registrar.
-/// Payloads never carry write grants or mutable candidate access.
+/// Declarative composer authoring. Register the composer and its offers/imports
+/// together; producer and consumer identities are derived from the registrar.
+/// This builder carries no write grants or mutable candidate access.
+///
+/// Stage an ordinary native patch with the same registration path used for
+/// composers with offers/imports. The host still grants writes and builds it:
+/// ```
+/// use phenix_graph::{ComponentDef, compose::{Edit, NetworkPatch}};
+/// use phenix_kernel::Contribution;
+/// use phenix_plugin::Registrar;
+/// use std::sync::Arc;
+/// let mut registrar = Registrar::new("example")?;
+/// Contribution::new("map", NetworkPatch::new([Edit::Add {
+///     path: "map".into(),
+///     definition: Arc::new(ComponentDef::map(|value: i64| value + 1)),
+/// }])).register(&mut registrar)?;
+/// assert_eq!(registrar.finish().keys().count(), 1);
+/// # Ok::<(), phenix_plugin::Failure>(())
+/// ```
+///
+/// The authoring builder is not a standalone plugin payload:
+/// ```compile_fail
+/// use phenix_graph::compose::NetworkPatch;
+/// use phenix_kernel::Contribution;
+/// use phenix_plugin::Registrar;
+/// let mut registrar = Registrar::new("plugin").unwrap();
+/// registrar.add(Contribution::new("service", NetworkPatch::new([]))).unwrap();
+/// ```
+/// Standalone ownership-bearing metadata is no longer a public authoring route:
+/// ```compile_fail
+/// use phenix_kernel::{NetworkOffer, ContractRequirement};
+/// ```
 pub struct Contribution {
-    pub id: String,
-    pub requires: Vec<Key>,
-    /// Public input names this contribution's producer may inject.
-    pub routes: Vec<String>,
-    pub patch: NetworkPatch,
-    pub prepare: Option<Box<Prepare>>,
+    inner: RegisteredContribution,
+    offers: Vec<(String, String, Key)>,
+    imports: Vec<(String, Key)>,
 }
 
-impl phenix_plugin::Contribution for Contribution {
+impl Contribution {
+    pub fn new(id: impl Into<String>, patch: NetworkPatch) -> Self {
+        Self {
+            inner: RegisteredContribution {
+                id: id.into(),
+                requires: Vec::new(),
+                routes: Vec::new(),
+                patch,
+                prepare: None,
+            },
+            offers: Vec::new(),
+            imports: Vec::new(),
+        }
+    }
+
+    /// Append explicit composer dependencies.
+    pub fn after(mut self, dependencies: impl IntoIterator<Item = Key>) -> Self {
+        self.inner.requires.extend(dependencies);
+        self
+    }
+
+    /// Append public input names this contribution's producer may inject.
+    pub fn route(mut self, inputs: impl IntoIterator<Item = String>) -> Self {
+        self.inner.routes.extend(inputs);
+        self
+    }
+
+    /// Set candidate preparation, replacing any previously authored callback.
+    pub fn prepare(
+        mut self,
+        prepare: impl Fn(&CandidateContext<'_>) -> Result<CandidateArtifacts, CallbackError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.inner.prepare = Some(Box::new(prepare));
+        self
+    }
+
+    /// Advertise an actual unit created by this composer. All offers are checked.
+    pub fn offer(mut self, id: impl Into<String>, unit: impl Into<String>, contract: Key) -> Self {
+        self.offers.push((id.into(), unit.into(), contract));
+        self
+    }
+
+    /// Declare an import whose provider is selected only by the trusted host.
+    pub fn import(mut self, id: impl Into<String>, contract: Key) -> Self {
+        self.imports.push((id.into(), contract));
+        self
+    }
+
+    /// Atomically admit this composer and its metadata in the existing owner-wide
+    /// namespaces. Failure installs no entries and reserves no names.
+    pub fn register(
+        self,
+        registrar: &mut phenix_plugin::Registrar,
+    ) -> Result<(), phenix_plugin::Failure> {
+        let key = Key::new(registrar.owner(), &self.inner.id);
+        let mut bundle = phenix_plugin::Registrar::new(registrar.owner())?;
+        bundle.add(self.inner)?;
+        for (id, unit, contract) in self.offers {
+            bundle.add(NetworkOffer {
+                id,
+                producer: key.clone(),
+                unit,
+                contract,
+            })?;
+        }
+        for (id, contract) in self.imports {
+            bundle.add(ContractRequirement {
+                id,
+                consumer: key.clone(),
+                contract,
+            })?;
+        }
+        registrar.merge(bundle.finish())
+    }
+}
+
+struct RegisteredContribution {
+    id: String,
+    requires: Vec<Key>,
+    routes: Vec<String>,
+    patch: NetworkPatch,
+    prepare: Option<Box<Prepare>>,
+}
+
+impl phenix_plugin::Contribution for RegisteredContribution {
     const KIND: &'static str = "kernel.contribution";
     fn id(&self) -> &str {
         &self.id
@@ -347,12 +510,12 @@ impl phenix_plugin::Contribution for ContractDefinition {
 
 /// An offer names an actual unit, never a purported implementation shape.
 /// Every offer is checked after all composition, including unused offers.
-pub struct NetworkOffer {
-    pub id: String,
+struct NetworkOffer {
+    id: String,
     /// Exact contribution responsible for creating the offered unit.
-    pub producer: Key,
-    pub unit: String,
-    pub contract: Key,
+    producer: Key,
+    unit: String,
+    contract: Key,
 }
 
 impl phenix_plugin::Contribution for NetworkOffer {
@@ -366,10 +529,10 @@ impl phenix_plugin::Contribution for NetworkOffer {
 }
 
 /// A local declarative import. Only the trusted host can select its provider.
-pub struct ContractRequirement {
-    pub id: String,
-    pub consumer: Key,
-    pub contract: Key,
+struct ContractRequirement {
+    id: String,
+    consumer: Key,
+    contract: Key,
 }
 
 /// Trusted host decisions, never plugin contributions. Denial wins over allowance.
@@ -385,6 +548,8 @@ pub struct ImportPolicy {
 #[derive(Default)]
 pub struct BuildOptions {
     pub imports: ImportPolicy,
+    /// Host-owned selection budget per composer update, including self-import previews.
+    pub selection_limits: SelectionLimits,
     /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.
@@ -400,10 +565,30 @@ pub struct CompositionPolicy {
     pub priority: i64,
 }
 
+/// Why a host-selected offer is not eligible for an import.
+#[derive(Debug)]
+pub enum IneligibleReason {
+    IncompatibleContract(Box<phenix_graph::interface::InterfaceError>),
+    DeniedByPolicy,
+}
+
+impl std::fmt::Display for IneligibleReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncompatibleContract(cause) => {
+                write!(f, "offer advertising an incompatible contract: {cause}")
+            }
+            Self::DeniedByPolicy => f.write_str("offer denied by host eligibility policy"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ResolutionError {
+    Session(phenix_graph::Failure),
+    CompositionSetup(Box<phenix_graph::ComposeError>),
     DuplicateOwner(String),
-    Invalid(String),
+    Invalid(Box<ConfigurationError>),
     ConflictingDefinition {
         definition: Key,
         contract: String,
@@ -418,6 +603,7 @@ pub enum ResolutionError {
     MissingUnit {
         offer: Key,
         unit: String,
+        cause: Box<NetworkError>,
     },
     WrongOrigin {
         offer: Key,
@@ -440,7 +626,7 @@ pub enum ResolutionError {
     Ineligible {
         requirement: Key,
         offer: Key,
-        reason: Box<str>,
+        reason: IneligibleReason,
     },
     Cycle(Vec<Key>),
 }
@@ -448,8 +634,10 @@ pub enum ResolutionError {
 impl std::fmt::Display for ResolutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Session(failure) => write!(f, "native session startup: {failure}"),
             Self::DuplicateOwner(owner) => write!(f, "duplicate snapshot owner: {owner}"),
-            Self::Invalid(message) => f.write_str(message),
+            Self::Invalid(error) => error.fmt(f),
+            Self::CompositionSetup(error) => error.fmt(f),
             Self::ConflictingDefinition {
                 definition,
                 contract,
@@ -462,7 +650,7 @@ impl std::fmt::Display for ResolutionError {
                 cause,
             } => write!(f, "composition of {contribution:?}: {cause}"),
             Self::Compilation { cause } => cause.fmt(f),
-            Self::MissingUnit { offer, unit } => {
+            Self::MissingUnit { offer, unit, .. } => {
                 write!(f, "compiled unit not found for offer {offer:?}: {unit}")
             }
             Self::WrongOrigin {
@@ -504,17 +692,25 @@ impl std::fmt::Display for ResolutionError {
 impl std::error::Error for ResolutionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Session(failure) => Some(failure),
+            Self::CompositionSetup(error) => Some(error.as_ref()),
+            Self::Invalid(error) => Some(error.as_ref()),
             Self::Compilation { cause } => Some(cause),
             Self::Interface { cause, .. } => Some(cause.as_ref()),
+            Self::MissingUnit { cause, .. } => Some(cause.as_ref()),
             Self::Composition { cause, .. } => Some(cause.as_ref()),
+            Self::Ineligible {
+                reason: IneligibleReason::IncompatibleContract(cause),
+                ..
+            } => Some(cause.as_ref()),
             _ => None,
         }
     }
 }
 
-impl From<String> for ResolutionError {
-    fn from(message: String) -> Self {
-        Self::Invalid(message)
+impl From<ConfigurationError> for ResolutionError {
+    fn from(error: ConfigurationError) -> Self {
+        Self::Invalid(Box::new(error))
     }
 }
 
@@ -560,7 +756,24 @@ impl std::error::Error for ProducerError {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionAccessError {
+    NotStarted,
+    Reentrant,
+    Busy,
+}
+impl std::fmt::Display for SessionAccessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotStarted => "kernel not started",
+            Self::Reentrant => "reentrant access to the same kernel session",
+            Self::Busy => "kernel session busy",
+        })
+    }
+}
+impl std::error::Error for SessionAccessError {}
+
+#[derive(Debug)]
 pub enum DriverError {
     NotStarted,
     ReentrantSession,
@@ -569,18 +782,21 @@ pub enum DriverError {
     AlreadyRunning,
     DrainInProgress,
     Retired,
+    WakeShutdown,
     UnsupportedWake {
         producer: Key,
     },
     WakeRegistrationPanicked {
         producer: Key,
+        cause: phenix_graph::Failure,
     },
     EventCallbackPanicked {
         producer: Key,
+        cause: phenix_graph::Failure,
     },
     SessionStopped {
         state: SessionState,
-        cause: Option<String>,
+        cause: Option<phenix_graph::Failure>,
     },
 }
 
@@ -596,14 +812,15 @@ impl std::fmt::Display for DriverError {
                 f.write_str("producer drain already admitted while starting driver")
             }
             Self::Retired => f.write_str("generation producers retired while driver was active"),
+            Self::WakeShutdown => f.write_str("host wake handle is shut down"),
             Self::UnsupportedWake { producer } => write!(
                 f,
                 "producer does not support wake notifications: {producer:?}"
             ),
-            Self::WakeRegistrationPanicked { producer } => {
+            Self::WakeRegistrationPanicked { producer, .. } => {
                 write!(f, "producer wake registration panicked: {producer:?}")
             }
-            Self::EventCallbackPanicked { producer } => {
+            Self::EventCallbackPanicked { producer, .. } => {
                 write!(f, "event callback panicked for producer: {producer:?}")
             }
             Self::SessionStopped { state, cause } => {
@@ -613,7 +830,18 @@ impl std::fmt::Display for DriverError {
     }
 }
 
-impl std::error::Error for DriverError {}
+impl std::error::Error for DriverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SessionStopped {
+                cause: Some(cause), ..
+            } => Some(cause),
+            Self::WakeRegistrationPanicked { cause, .. }
+            | Self::EventCallbackPanicked { cause, .. } => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum StartError {
@@ -656,11 +884,116 @@ struct ProducerState {
     retired: bool,
 }
 
+struct SessionLease<'a> {
+    lease: ExclusiveLease<'a, NetworkSession>,
+    notify_on_drop: bool,
+}
+
+impl SessionLease<'_> {
+    fn notify_on_drop(&mut self) {
+        self.notify_on_drop = true;
+    }
+}
+
+impl Deref for SessionLease<'_> {
+    type Target = NetworkSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lease
+    }
+}
+
+impl DerefMut for SessionLease<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lease
+    }
+}
+
+impl Drop for SessionLease<'_> {
+    fn drop(&mut self) {
+        let notifier = self.notify_on_drop.then(|| self.lease.notifier());
+        self.lease.release();
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
+    }
+}
+
+struct ActiveSessionCall {
+    identity: usize,
+    registered: bool,
+}
+
+impl ActiveSessionCall {
+    fn held(identity: usize) -> bool {
+        ACTIVE_SESSION_KERNELS.with(|active| active.borrow().contains(&identity))
+    }
+
+    fn enter(identity: usize) -> Result<Self, ()> {
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(&identity) {
+                Err(())
+            } else {
+                active.push(identity);
+                Ok(Self {
+                    identity,
+                    registered: true,
+                })
+            }
+        })
+    }
+
+    fn inherit(identity: usize) -> Self {
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(&identity) {
+                Self {
+                    identity,
+                    registered: false,
+                }
+            } else {
+                active.push(identity);
+                Self {
+                    identity,
+                    registered: true,
+                }
+            }
+        })
+    }
+}
+
+impl Drop for ActiveSessionCall {
+    fn drop(&mut self) {
+        if !self.registered {
+            return;
+        }
+        ACTIVE_SESSION_KERNELS.with(|active| {
+            let mut active = active.borrow_mut();
+            let index = active
+                .iter()
+                .rposition(|identity| *identity == self.identity)
+                .expect("active session call is registered");
+            active.remove(index);
+        });
+    }
+}
+
+struct KernelExecutionGuard {
+    identity: usize,
+}
+
+impl ProcessExecutionGuard for KernelExecutionGuard {
+    fn enter(&self) -> Result<Box<dyn Any>, phenix_graph::Failure> {
+        Ok(Box::new(ActiveSessionCall::inherit(self.identity)))
+    }
+}
+
 pub struct Kernel {
-    // Drop clears producers first; leases outlive session and compiled declarations.
-    // Protect ownership transfer only. No kernel mutex is held across runtime
-    // callbacks; concurrent session calls fail fast while the session is leased.
-    session: Mutex<Option<NetworkSession>>,
+    // The session and producer mutexes protect ownership transfer only. Plugin
+    // callbacks run with the corresponding state leased out of the mutex.
+    session: ExclusiveSlot<NetworkSession>,
+    session_identity: usize,
     compiled: CompiledNetwork,
     producers: Mutex<ProducerState>,
     // Serialize one whole drain against generation retirement. Inventory
@@ -669,7 +1002,7 @@ pub struct Kernel {
     producer_ownership: AtomicUsize,
     driver_wake: Mutex<Option<WakeHandle>>,
     artifacts: BTreeMap<Key, CandidateArtifacts>,
-    _leases: Vec<ContributionHandle<Contribution>>,
+    _leases: Vec<ContributionHandle<RegisteredContribution>>,
     keys: Vec<Key>,
     started: bool,
     routes: BTreeMap<Key, BTreeSet<String>>,
@@ -719,9 +1052,11 @@ impl Kernel {
         let mut owners = BTreeSet::new();
         for snapshot in &snapshots {
             if snapshot.name().len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                return Err(ResolutionError::Invalid(
-                    "plugin owner identifier exceeds size limit".into(),
-                ));
+                return Err(ConfigurationError::OwnerIdentifier {
+                    length: snapshot.name().len(),
+                    limit: phenix_graph::MAX_IDENTIFIER_BYTES,
+                }
+                .into());
             }
             if !owners.insert(snapshot.name()) {
                 return Err(ResolutionError::DuplicateOwner(snapshot.name().into()));
@@ -734,19 +1069,28 @@ impl Kernel {
         for snapshot in &snapshots {
             for (_, kind, id) in snapshot.keys() {
                 if id.len() > phenix_graph::MAX_IDENTIFIER_BYTES {
-                    return Err(ResolutionError::Invalid(
-                        "plugin contribution identifier exceeds size limit".into(),
-                    ));
+                    return Err(ConfigurationError::ContributionIdentifier {
+                        owner: snapshot.name().into(),
+                        length: id.len(),
+                        limit: phenix_graph::MAX_IDENTIFIER_BYTES,
+                    }
+                    .into());
                 }
                 let key = Key::new(snapshot.name(), id);
                 macro_rules! collect {
                     ($ty:ty, $map:ident) => {
                         if kind == <$ty as phenix_plugin::Contribution>::KIND {
-                            let handle = snapshot
-                                .get::<$ty>(id)
-                                .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
+                            let handle = snapshot.get::<$ty>(id).ok_or_else(|| {
+                                ConfigurationError::ContributionType {
+                                    key: key.clone(),
+                                    expected: <$ty as phenix_plugin::Contribution>::KIND,
+                                }
+                            })?;
                             if $map.insert(key.clone(), handle).is_some() {
-                                return Err(format!("duplicate contribution: {key:?}").into());
+                                return Err(ConfigurationError::DuplicateContribution {
+                                    key: key.clone(),
+                                }
+                                .into());
                             }
                             continue;
                         }
@@ -755,14 +1099,19 @@ impl Kernel {
                 collect!(ContractDefinition, definitions);
                 collect!(NetworkOffer, offers);
                 collect!(ContractRequirement, requirements);
-                if kind != <Contribution as phenix_plugin::Contribution>::KIND {
+                if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
                     continue;
                 }
-                let handle = snapshot
-                    .get::<Contribution>(id)
-                    .ok_or_else(|| format!("contribution type mismatch: {key:?}"))?;
+                let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
+                    ConfigurationError::ContributionType {
+                        key: key.clone(),
+                        expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
+                    }
+                })?;
                 if pending.insert(key.clone(), handle).is_some() {
-                    return Err(format!("duplicate contribution: {key:?}").into());
+                    return Err(
+                        ConfigurationError::DuplicateContribution { key: key.clone() }.into(),
+                    );
                 }
             }
         }
@@ -780,10 +1129,11 @@ impl Kernel {
         }
         for (key, offer) in &offers {
             if !definitions.contains_key(&offer.contract) {
-                return Err(format!(
-                    "missing contract definition for offer {key:?}: {:?}",
-                    offer.contract
-                )
+                return Err(ConfigurationError::MissingDefinition {
+                    key: key.clone(),
+                    contract: offer.contract.clone(),
+                    role: DefinitionRole::Offer,
+                }
                 .into());
             }
             if offer.producer.owner != key.owner || !pending.contains_key(&offer.producer) {
@@ -813,29 +1163,34 @@ impl Kernel {
             .chain(policy.deny.iter().map(|(r, o)| (r, o)))
         {
             if !requirements.contains_key(requirement) {
-                return Err(
-                    format!("host policy names unknown requirement: {requirement:?}").into(),
-                );
+                return Err(ConfigurationError::UnknownRequirement {
+                    requirement: requirement.clone(),
+                }
+                .into());
             }
             if !offers.contains_key(offer) {
-                return Err(format!("host policy names unknown offer: {offer:?}").into());
+                return Err(ConfigurationError::UnknownOffer {
+                    offer: offer.clone(),
+                }
+                .into());
             }
         }
         for (key, requirement) in &requirements {
             if !definitions.contains_key(&requirement.contract) {
-                return Err(format!(
-                    "missing contract definition for requirement {key:?}: {:?}",
-                    requirement.contract
-                )
+                return Err(ConfigurationError::MissingDefinition {
+                    key: key.clone(),
+                    contract: requirement.contract.clone(),
+                    role: DefinitionRole::Requirement,
+                }
                 .into());
             }
             if requirement.consumer.owner != key.owner
                 || !pending.contains_key(&requirement.consumer)
             {
-                return Err(format!(
-                    "requirement {key:?}: invalid consumer ownership: {:?}",
-                    requirement.consumer
-                )
+                return Err(ConfigurationError::InvalidConsumer {
+                    requirement: key.clone(),
+                    consumer: requirement.consumer.clone(),
+                }
                 .into());
             }
             let requested = &definitions[&requirement.contract].contract;
@@ -856,21 +1211,16 @@ impl Kernel {
                 .collect();
             let selected = if let Some(selected) = policy.selections.get(key) {
                 if !candidates.contains(selected) {
-                    let reason = match offers.get(selected) {
-                        None => "missing selected offer".into(),
-                        Some(offer) => match requested
-                            .check_definition(&definitions[&offer.contract].contract)
-                        {
-                            Err(error) => {
-                                format!("offer advertising an incompatible contract: {error}")
-                            }
-                            Ok(()) => "offer denied by host eligibility policy".into(),
-                        },
-                    };
+                    let offer = &offers[selected];
+                    let reason =
+                        match requested.check_definition(&definitions[&offer.contract].contract) {
+                            Err(error) => IneligibleReason::IncompatibleContract(Box::new(error)),
+                            Ok(()) => IneligibleReason::DeniedByPolicy,
+                        };
                     return Err(ResolutionError::Ineligible {
                         requirement: key.clone(),
                         offer: selected.clone(),
-                        reason: reason.into(),
+                        reason,
                     });
                 }
                 selected.clone()
@@ -916,10 +1266,18 @@ impl Kernel {
             let mut dependencies = BTreeSet::new();
             for dependency in &contribution.requires {
                 if !dependencies.insert(dependency) {
-                    return Err(format!("duplicate dependency for {key:?}: {dependency:?}").into());
+                    return Err(ConfigurationError::DuplicateDependency {
+                        contribution: key.clone(),
+                        dependency: dependency.clone(),
+                    }
+                    .into());
                 }
                 if !pending.contains_key(dependency) {
-                    return Err(format!("missing dependency for {key:?}: {dependency:?}").into());
+                    return Err(ConfigurationError::MissingDependency {
+                        contribution: key.clone(),
+                        dependency: dependency.clone(),
+                    }
+                    .into());
                 }
             }
         }
@@ -946,8 +1304,9 @@ impl Kernel {
         let base = NetworkBuilder::new()
             .build()
             .map_err(|cause| ResolutionError::Compilation { cause })?;
-        let mut composer =
-            Composer::new(base).map_err(|cause| ResolutionError::Invalid(cause.to_string()))?;
+        let mut composer = Composer::new(base)
+            .map_err(|cause| ResolutionError::CompositionSetup(Box::new(cause)))?;
+        composer.set_selection_limits(options.selection_limits);
         let registration_ids: BTreeMap<_, _> = keys
             .iter()
             .enumerate()
@@ -969,6 +1328,7 @@ impl Kernel {
                             cause: Box::new(cause),
                         }
                     })?;
+                preview.set_selection_limits(options.selection_limits);
                 preview
                     .register([Registration::new(
                         "self",
@@ -1001,7 +1361,14 @@ impl Kernel {
                         can_inspect_network: options.inspect_network.contains(key),
                     })
                 }))
-                .unwrap_or_else(|_| Err("plugin preparation panicked".into()))
+                .unwrap_or_else(|payload| {
+                    Err(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::Prepare,
+                        payload,
+                    )
+                    .with_lease(preparation_lease.clone())
+                    .into())
+                })
                 .map_err(|cause| ResolutionError::Composition {
                     contribution: key.clone(),
                     cause: lease_callback_error(cause, preparation_lease.clone()),
@@ -1065,12 +1432,14 @@ impl Kernel {
             })?;
         for (key, offer) in &offers {
             let contract = &definitions[&offer.contract].contract;
-            let unit = compiled
-                .inspect(&offer.unit)
-                .map_err(|_| ResolutionError::MissingUnit {
-                    offer: key.clone(),
-                    unit: offer.unit.clone(),
-                })?;
+            let unit =
+                compiled
+                    .inspect(&offer.unit)
+                    .map_err(|cause| ResolutionError::MissingUnit {
+                        offer: key.clone(),
+                        unit: offer.unit.clone(),
+                        cause: Box::new(cause),
+                    })?;
             if unit.origin.as_ref() != Some(&origins[&offer.producer]) {
                 return Err(ResolutionError::WrongOrigin {
                     offer: key.clone(),
@@ -1089,15 +1458,26 @@ impl Kernel {
         let mut routes = BTreeMap::new();
         for (key, contribution) in keys.iter().zip(&leases) {
             if artifacts[key].activate.is_none() && !contribution.routes.is_empty() {
-                return Err(format!("routes declared without producer: {key:?}").into());
+                return Err(ConfigurationError::RoutesWithoutProducer {
+                    contribution: key.clone(),
+                }
+                .into());
             }
             let mut selected = BTreeSet::new();
             for name in &contribution.routes {
                 if !compiled.inputs().contains_key(name) {
-                    return Err(format!("unknown producer route for {key:?}: {name:?}").into());
+                    return Err(ConfigurationError::UnknownRoute {
+                        contribution: key.clone(),
+                        route: name.clone(),
+                    }
+                    .into());
                 }
                 if !selected.insert(name.clone()) {
-                    return Err(format!("duplicate producer route for {key:?}: {name:?}").into());
+                    return Err(ConfigurationError::DuplicateRoute {
+                        contribution: key.clone(),
+                        route: name.clone(),
+                    }
+                    .into());
                 }
             }
             routes.insert(key.clone(), selected);
@@ -1106,12 +1486,20 @@ impl Kernel {
         // Do not let a caller-provided lease displace the plugin revision leases.
         options.execution.lease = Some(code_lease.clone());
         options.execution.dispatcher = dispatcher;
+        let session_identity = next_kernel_session_id();
+        options.execution.execution_guards.insert(
+            0,
+            Arc::new(KernelExecutionGuard {
+                identity: session_identity,
+            }),
+        );
         let session = compiled.start_with_options(options.execution);
         if let Some(failure) = session.failure() {
-            return Err(ResolutionError::Invalid(failure.into()));
+            return Err(ResolutionError::Session(failure.clone()));
         }
         Ok(Self {
-            session: Mutex::new(Some(session)),
+            session: ExclusiveSlot::new(session),
+            session_identity,
             compiled,
             producers: Mutex::new(ProducerState::default()),
             producer_drain: Mutex::new(()),
@@ -1137,12 +1525,27 @@ impl Kernel {
         let mut producers = Vec::new();
         for key in &self.keys {
             if let Some(activate) = &self.artifacts[key].activate {
-                let producer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(activate))
-                    .unwrap_or_else(|_| Err("producer activation panicked".into()))
-                    .map_err(|cause| StartError::Activation {
-                        contribution: key.clone(),
-                        cause: lease_callback_error(cause, self.code_lease.clone()),
-                    })?;
+                let producer =
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(activate)) {
+                        Ok(Ok(producer)) => producer,
+                        Ok(Err(cause)) => {
+                            return Err(StartError::Activation {
+                                contribution: key.clone(),
+                                cause: lease_callback_error(cause, self.code_lease.clone()),
+                            });
+                        }
+                        Err(payload) => {
+                            let cause =
+                                self.lease_failure(phenix_graph::process::callback_panicked(
+                                    phenix_graph::CallbackPhase::ProducerActivate,
+                                    payload,
+                                ));
+                            return Err(StartError::Activation {
+                                contribution: key.clone(),
+                                cause: lease_callback_error(cause.into(), self.code_lease.clone()),
+                            });
+                        }
+                    };
                 producers.push((key.clone(), Some(producer), None));
             }
         }
@@ -1159,52 +1562,63 @@ impl Kernel {
         &self.compiled
     }
 
+    /// Retain the same execution code ownership used by jobs and native packets,
+    /// including on independently escapable cleanup failures. Call before cloning
+    /// any handle that will escape this Kernel; earlier clones are not enriched.
+    pub fn lease_failure(&self, failure: phenix_graph::Failure) -> phenix_graph::Failure {
+        failure.with_lease(self.code_lease.clone())
+    }
+
     /// Retrieve this candidate's composed export, never a shared snapshot slot.
     /// Missing keys and mismatched types return None.
     pub fn export<T: Send + Sync + 'static>(&self, key: &Key) -> Option<&T> {
         self.artifacts.get(key)?.export.as_ref()?.downcast_ref()
     }
 
-    // Session operations own the value without holding its mutex across runtime
-    // callbacks. Every caller is nonblocking; contention is explicit so a plugin
-    // holding an external mutex never waits behind code that might call it back.
-    fn try_session(&self) -> Option<SessionLease<'_>> {
-        let mut slot = match self.session.try_lock() {
-            Ok(slot) => slot,
-            Err(TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(TryLockError::WouldBlock) => return None,
-        };
-        let session = slot.take()?;
-        drop(slot);
-        Some(SessionLease {
-            slot: &self.session,
-            session: Some(session),
+    fn lease_session(&self) -> Option<SessionLease<'_>> {
+        self.try_lease_session()
+    }
+
+    fn try_lease_session(&self) -> Option<SessionLease<'_>> {
+        self.session.try_take().map(|lease| SessionLease {
+            lease,
             notify_on_drop: false,
         })
     }
 
-    /// Lease exclusive mutable access to the session. The kernel mutex is not
-    /// held while the closure runs. Same-thread recursion and concurrent access
-    /// fail fast; callers may retry after releasing their own locks.
+    /// Run an exclusive session operation without holding the kernel mutex.
+    /// Same-thread re-entry through this Kernel returns an error instead of waiting
+    /// on its own session lease. All concurrent callers also fail fast, so a
+    /// plugin holding another mutex cannot wait behind a callback needing it.
     pub fn with_session<R>(
         &self,
         use_session: impl FnOnce(&mut NetworkSession) -> R,
-    ) -> Result<R, String> {
+    ) -> Result<R, SessionAccessError> {
         if !self.started {
-            return Err("kernel not started".into());
+            return Err(SessionAccessError::NotStarted);
         }
-        let _scope = KernelLockScope::enter(&self.session)
-            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
-        let mut session = self
-            .try_session()
-            .ok_or_else(|| "kernel session busy".to_owned())?;
+        let _active = ActiveSessionCall::enter(self.session_identity)
+            .map_err(|()| SessionAccessError::Reentrant)?;
+        let mut session = self.lease_session().ok_or(SessionAccessError::Busy)?;
         session.notify_on_drop();
         let result = use_session(&mut session);
         Ok(result)
     }
 
-    /// Inject one packet without waiting for a session callback on another thread.
-    /// Busy/reentrant errors return ownership of the original value.
+    /// Convert before acquiring session ownership, then use raw admission.
+    /// Codec callbacks may panic, block or reenter; no rollback is implied.
+    /// Errors, including WouldBlock/Reentrant, return the constructed Value.
+    pub fn inject_key<T: Send + Sync + 'static>(
+        &self,
+        key: phenix_graph::InputKey<T>,
+        payload: T,
+    ) -> Result<(), InjectionError> {
+        let value = key.value(payload);
+        self.inject(key.name(), value)
+    }
+
+    /// Inject one value. Reentrant same-thread session access returns the value
+    /// with `ConnectionError::Reentrant`.
     pub fn inject(&self, input: &str, value: Value) -> Result<(), InjectionError> {
         if !self.started {
             return Err(InjectionError {
@@ -1212,13 +1626,16 @@ impl Kernel {
                 value,
             });
         }
-        let Some(_scope) = KernelLockScope::enter(&self.session) else {
-            return Err(InjectionError {
-                reason: phenix_graph::connection::ConnectionError::Reentrant,
-                value,
-            });
+        let _active = match ActiveSessionCall::enter(self.session_identity) {
+            Ok(active) => active,
+            Err(()) => {
+                return Err(InjectionError {
+                    reason: phenix_graph::connection::ConnectionError::Reentrant,
+                    value,
+                });
+            }
         };
-        let Some(mut session) = self.try_session() else {
+        let Some(mut session) = self.lease_session() else {
             return Err(InjectionError {
                 reason: phenix_graph::connection::ConnectionError::WouldBlock,
                 value,
@@ -1231,17 +1648,15 @@ impl Kernel {
         result
     }
 
-    /// Run a bounded session drive without the kernel session mutex held across
-    /// dispatcher/process callbacks. Concurrent session ownership fails fast.
-    pub fn run_steps(&self, budget: usize) -> Result<RunReport, String> {
+    /// Drive a session budget with no kernel mutex held across dispatcher/process
+    /// callbacks. Same-thread re-entry through this Kernel fails fast.
+    pub fn run_steps(&self, budget: usize) -> Result<RunReport, SessionAccessError> {
         if !self.started {
-            return Err("kernel not started".into());
+            return Err(SessionAccessError::NotStarted);
         }
-        let _scope = KernelLockScope::enter(&self.session)
-            .ok_or_else(|| "reentrant kernel session access".to_owned())?;
-        let mut session = self
-            .try_session()
-            .ok_or_else(|| "kernel session busy".to_owned())?;
+        let _active = ActiveSessionCall::enter(self.session_identity)
+            .map_err(|()| SessionAccessError::Reentrant)?;
+        let mut session = self.lease_session().ok_or(SessionAccessError::Busy)?;
         Ok(session.run_until_idle(budget))
     }
 
@@ -1333,7 +1748,12 @@ impl Kernel {
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| producer.poll()))
                     {
                         Ok(result) => result,
-                        Err(_) => Err("producer poll panicked".into()),
+                        Err(payload) => Err(self
+                            .lease_failure(phenix_graph::process::callback_panicked(
+                                phenix_graph::CallbackPhase::ProducerPoll,
+                                payload,
+                            ))
+                            .into()),
                     }
                 }
             };
@@ -1341,10 +1761,13 @@ impl Kernel {
             let mut terminal_poll = false;
             let outcome = match polled {
                 Ok(None) => None,
-                Ok(Some(event)) => {
+                Ok(Some(mut event)) => {
+                    event.value = event.value.with_lease(self.code_lease.clone());
                     // A producer may retire its own host while polled. Even
                     // the event returned by that in-flight callback must not
                     // enter the retired generation's native session.
+                    // Passing this check permits admission to finish even if
+                    // an eager session callback subsequently retires the host.
                     if self.producers_retired() {
                         None
                     } else if !self.routes[&key].contains(&event.input) {
@@ -1352,8 +1775,9 @@ impl Kernel {
                     } else {
                         // Session access stays nonblocking. On contention or
                         // Full, retain exactly one owned event, never repoll.
-                        let session = self.try_session();
-                        if let Some(mut session) = session {
+                        let active = ActiveSessionCall::enter(self.session_identity);
+                        if let (Ok(_active), Some(mut session)) = (active, self.try_lease_session())
+                        {
                             let input = event.input;
                             match session.inject(&input, event.value) {
                                 Ok(()) => {
@@ -1418,60 +1842,11 @@ impl Kernel {
         events
     }
 
-    /// Drive a started kernel until shutdown or normal network completion,
-    /// delivering events without retaining reports. Failed and cancelled
-    /// sessions return `SessionStopped`, including if terminal on entry.
-    /// Live producers must support wake registration. Shutdown is checked between
-    /// bounded driver iterations; it cannot preempt a running step or callback.
-    pub fn run_until(
-        &self,
-        wake: &WakeHandle,
-        mut on_event: impl FnMut(ProducerEvent),
-    ) -> Result<(), DriverError> {
-        if !self.started {
-            return Err(DriverError::NotStarted);
-        }
-        // Same-thread reentry from set_waker/poll retains the specific
-        // ReentrantDrain diagnosis; distinct concurrent drivers are rejected
-        // by the per-kernel lifetime lease before any wake handle mutation.
-        if KernelLockScope::held(&self.producer_drain) {
-            return Err(DriverError::ReentrantDrain);
-        }
-        if KernelLockScope::held(&self.session) {
-            return Err(DriverError::ReentrantSession);
-        }
-        let _driver = DriverScope::enter(&self.producer_ownership)?;
-        let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
-        let (mut listener, notifier, initial_state, cause) = self
-            .with_session(|session| {
-                (
-                    session.wake_listener(),
-                    session.notifier(),
-                    session.state(),
-                    session.failure().map(str::to_owned),
-                )
-            })
-            .map_err(|_| DriverError::SessionBusy)?;
-        if initial_state == SessionState::Completed {
-            return Ok(());
-        }
-        if matches!(
-            initial_state,
-            SessionState::Failed | SessionState::Cancelled
-        ) {
-            return Err(DriverError::SessionStopped {
-                state: initial_state,
-                cause,
-            });
-        }
-        if self.producers_retired() {
-            return Err(DriverError::Retired);
-        }
-        // Enter producer-drain scope only after the nonblocking session
-        // preflight. Callback session access uses the same exclusive lease.
+    // Registration only: no session lease, notifier attachment, polling, or steps.
+    // The caller owns either a private candidate or the static driver's lease.
+    fn register_producer_wakers(&self, wake: &WakeHandle) -> Result<(), DriverError> {
         let registration_scope =
             KernelLockScope::enter(&self.producer_drain).ok_or(DriverError::ReentrantDrain)?;
-        *wake.0.notifier.lock().unwrap() = Some(notifier);
         let drain = self
             .producer_drain
             .lock()
@@ -1502,8 +1877,7 @@ impl Kernel {
                         .expect("exclusive producer wake registration"),
                 )
             };
-            // Producer callbacks never run under inventory locks, including
-            // during initial driver wake registration.
+            // Producer callbacks never run under inventory locks.
             let registered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 producer.set_waker(wake.clone())
             }));
@@ -1518,9 +1892,15 @@ impl Kernel {
                     registration_error = Some(DriverError::UnsupportedWake { producer: key });
                     break;
                 }
-                Err(_) => {
-                    registration_error =
-                        Some(DriverError::WakeRegistrationPanicked { producer: key });
+                Err(payload) => {
+                    let cause = self.lease_failure(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::WakeRegistration,
+                        payload,
+                    ));
+                    registration_error = Some(DriverError::WakeRegistrationPanicked {
+                        producer: key,
+                        cause,
+                    });
                     break;
                 }
             }
@@ -1535,24 +1915,83 @@ impl Kernel {
         if self.producers_retired() {
             return Err(DriverError::Retired);
         }
+        Ok(())
+    }
+
+    /// Drive a started kernel until shutdown or normal network completion,
+    /// delivering events without retaining reports. Failed and cancelled
+    /// sessions return `SessionStopped`, including if terminal on entry.
+    /// Live producers must support wake registration. Shutdown is checked between
+    /// bounded driver iterations; it cannot preempt a running step or callback.
+    /// Wake registration runs without the producer mutex and contains panics.
+    /// A driver rejects an admitted manual drain with `DrainInProgress`; manual
+    /// drains reject an active driver with `AlreadyRunning`.
+    pub fn run_until(
+        &self,
+        wake: &WakeHandle,
+        mut on_event: impl FnMut(ProducerEvent),
+    ) -> Result<(), DriverError> {
+        if !self.started {
+            return Err(DriverError::NotStarted);
+        }
+        // Same-thread reentry from set_waker/poll retains the specific
+        // ReentrantDrain diagnosis; distinct concurrent drivers are rejected
+        // by the per-kernel lifetime lease before any wake handle mutation.
+        if KernelLockScope::held(&self.producer_drain) {
+            return Err(DriverError::ReentrantDrain);
+        }
+        if ActiveSessionCall::held(self.session_identity) {
+            return Err(DriverError::ReentrantSession);
+        }
+        let _driver = enter_driver(&self.producer_ownership)?;
+        let _driver_wake = DriverWakeScope::register(&self.driver_wake, wake);
+        let (mut listener, notifier, initial_state, cause) = {
+            let _active = ActiveSessionCall::enter(self.session_identity)
+                .map_err(|()| DriverError::ReentrantSession)?;
+            let session = self.try_lease_session().ok_or(DriverError::SessionBusy)?;
+            (
+                session.wake_listener(),
+                session.notifier(),
+                session.state(),
+                session.failure().cloned(),
+            )
+        };
+        if initial_state == SessionState::Completed {
+            return Ok(());
+        }
+        if matches!(
+            initial_state,
+            SessionState::Failed | SessionState::Cancelled
+        ) {
+            return Err(DriverError::SessionStopped {
+                state: initial_state,
+                cause,
+            });
+        }
+        if self.producers_retired() {
+            return Err(DriverError::Retired);
+        }
+        // Enter producer-drain scope only after the nonblocking session
+        // preflight. Callback session access uses the same exclusive lease.
+        *wake.0.notifier.lock().unwrap() = Some(notifier);
+        self.register_producer_wakers(wake)?;
         loop {
-            {
-                if *wake.0.shutdown.lock().unwrap() {
-                    return Ok(());
-                }
+            if wake.is_shutdown() {
+                return Ok(());
             }
             if self.producers_retired() {
                 return Err(DriverError::Retired);
             }
             let mut active = false;
-            let count = self
-                .producers
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .producers
-                .len();
+            let count = {
+                let state = self
+                    .producers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                state.producers.len()
+            };
             for _ in 0..count {
-                if *wake.0.shutdown.lock().unwrap() {
+                if wake.is_shutdown() {
                     return Ok(());
                 }
                 if self.producers_retired() {
@@ -1561,34 +2000,45 @@ impl Kernel {
                 for event in self.drain_owned(1) {
                     active = true;
                     let producer = event.producer.clone();
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
-                        .is_err()
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_event(event)))
                     {
-                        return Err(DriverError::EventCallbackPanicked { producer });
+                        let cause = self.lease_failure(phenix_graph::process::callback_panicked(
+                            phenix_graph::CallbackPhase::Event,
+                            payload,
+                        ));
+                        return Err(DriverError::EventCallbackPanicked { producer, cause });
                     }
                 }
             }
-            let report = self.run_steps(64).unwrap();
+            let (report, cause) = {
+                let _active = ActiveSessionCall::enter(self.session_identity)
+                    .map_err(|()| DriverError::ReentrantSession)?;
+                let mut session = self.try_lease_session().ok_or(DriverError::SessionBusy)?;
+                let report = session.run_until_idle(64);
+                (report, session.failure().cloned())
+            };
             if report.state == SessionState::Completed {
                 return Ok(());
             }
             if matches!(report.state, SessionState::Failed | SessionState::Cancelled) {
                 return Err(DriverError::SessionStopped {
                     state: report.state,
-                    cause: self
-                        .with_session(|session| session.failure().map(str::to_owned))
-                        .ok()
-                        .flatten(),
+                    cause,
                 });
             }
-            active |= report.steps > 0 || report.publications > 0;
+            active |= report.steps > 0
+                || report.publications > 0
+                || report.state == SessionState::Runnable;
             if self.producers_retired() {
                 return Err(DriverError::Retired);
             }
             if !active {
-                // Retirement notifications share the native epoch-latched
-                // listener, including the race between this check and wait.
-                listener.wait_timeout(std::time::Duration::from_secs(60));
+                let timeout = report
+                    .next_deferred_timeout
+                    .unwrap_or(std::time::Duration::from_secs(60))
+                    .min(std::time::Duration::from_secs(60));
+                listener.wait_timeout(timeout);
             }
         }
     }
@@ -1597,6 +2047,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::producer_ownership::DRIVER_OWNER;
     use phenix_graph::process::LocalProcessDispatcher;
 
     /// A deliberately live/open network for driver wake-registration callbacks.
@@ -1642,7 +2093,7 @@ mod tests {
             None,
         ));
         // Producer does not support set_waker, but no work is possible.
-        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        assert!(kernel.run_until(&WakeHandle::default(), |_| {}).is_ok());
         assert_eq!(polls.load(Ordering::SeqCst), 0);
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
     }
@@ -1673,18 +2124,18 @@ mod tests {
             .with_session(|_| {
                 assert_eq!(
                     kernel.with_session(|_| ()).unwrap_err(),
-                    "reentrant kernel session access"
+                    SessionAccessError::Reentrant
                 );
                 assert_eq!(
                     kernel.run_steps(1).unwrap_err(),
-                    "reentrant kernel session access"
+                    SessionAccessError::Reentrant
                 );
-                assert_eq!(
+                assert!(matches!(
                     kernel
                         .run_until(&WakeHandle::default(), |_| {})
                         .unwrap_err(),
                     DriverError::ReentrantSession
-                );
+                ));
                 let error = kernel.inject("missing", Value::local(71_i64)).unwrap_err();
                 assert_eq!(
                     error.reason,
@@ -1730,11 +2181,11 @@ mod tests {
 
         callback_kernel
             .with_session(|_| {
-                assert!(callback_kernel.session.try_lock().is_ok());
+                assert!(callback_kernel.session.lock_is_available());
                 entered_tx.send(()).unwrap();
                 assert_eq!(
                     attempted_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-                    Err("kernel session busy".into())
+                    Err(SessionAccessError::Busy)
                 );
                 // The contender has released its external lock after its
                 // nonblocking session attempt, so this acquisition is safe.
@@ -1761,7 +2212,7 @@ mod tests {
                 .unwrap();
         }));
         assert!(panic.is_err());
-        assert!(kernel.session.try_lock().unwrap().as_ref().is_some());
+        assert!(kernel.session.try_take().is_some());
         assert!(kernel.with_session(|_| ()).is_ok());
     }
 
@@ -1772,10 +2223,10 @@ mod tests {
         struct Recursive(Weak<Kernel>);
         impl Producer for Recursive {
             fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
-                assert_eq!(
+                assert!(matches!(
                     self.0.upgrade().unwrap().drain(1).unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 Ok(None)
             }
         }
@@ -1807,10 +2258,10 @@ mod tests {
             }
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
-                assert_eq!(
+                assert!(matches!(
                     self.0.upgrade().unwrap().drain(1).unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 true
             }
         }
@@ -1818,7 +2269,7 @@ mod tests {
         let mut kernel =
             Kernel::build("recursive-wake", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let key = Key::new("test", "recursive-wake");
         kernel.producers.lock().unwrap().producers.push((
@@ -1828,7 +2279,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).unwrap().is_empty());
     }
@@ -1845,12 +2296,12 @@ mod tests {
 
             fn set_waker(&mut self, _: WakeHandle) -> bool {
                 let kernel = self.0.upgrade().unwrap();
-                assert_eq!(
+                assert!(matches!(
                     kernel
                         .run_until(&WakeHandle::default(), |_| {})
                         .unwrap_err(),
                     DriverError::ReentrantDrain
-                );
+                ));
                 true
             }
         }
@@ -1858,7 +2309,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-reentry", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "driver-reentry"),
@@ -1867,7 +2318,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
         assert!(kernel.producers.lock().unwrap().producers[0].1.is_some());
         assert!(kernel.drain(1).unwrap().is_empty());
     }
@@ -1888,7 +2339,7 @@ mod tests {
         let mut kernel =
             Kernel::build("event-panic", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let key = Key::new("test", "event-panic");
         kernel.producers.lock().unwrap().producers.push((
             key.clone(),
@@ -1896,12 +2347,12 @@ mod tests {
             None,
         ));
 
-        assert_eq!(
+        assert!(matches!(
             kernel
                 .run_until(&WakeHandle::default(), |_| panic!("host callback panicked"))
                 .unwrap_err(),
-            DriverError::EventCallbackPanicked { producer: key }
-        );
+            DriverError::EventCallbackPanicked { producer, .. } if producer == key
+        ));
         assert!(kernel.drain(1).unwrap().is_empty());
         assert!(
             kernel
@@ -1977,7 +2428,7 @@ mod tests {
                     NonZeroUsize::new(1).unwrap(),
                 )
                 .unwrap();
-            kernel.session = Mutex::new(Some(
+            kernel.session = ExclusiveSlot::new(
                 builder
                     .build()
                     .unwrap()
@@ -1993,7 +2444,7 @@ mod tests {
                         )]),
                         ..Default::default()
                     }),
-            ));
+            );
             let key = Key::new("test", "one");
             kernel
                 .routes
@@ -2040,7 +2491,7 @@ mod tests {
         )
         .unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "waker"),
@@ -2211,50 +2662,272 @@ mod tests {
                 }
             }
         }
-        let log = Arc::new(Mutex::new(Vec::new()));
+        for order in [["a", "b", "broken"], ["a", "broken", "b"]] {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let mut kernel = Kernel::build(
+                "fair",
+                [],
+                Arc::new(phenix_graph::process::LocalProcessDispatcher),
+            )
+            .unwrap();
+            kernel.start().unwrap();
+            kernel.producers.get_mut().unwrap().producers = order
+                .into_iter()
+                .map(|name| {
+                    (
+                        Key::new("test", name),
+                        Some(Box::new(Source(name, log.clone())) as Box<dyn Producer>),
+                        None,
+                    )
+                })
+                .collect();
+            assert!(kernel.drain(0).unwrap().is_empty());
+            assert!(log.lock().unwrap().is_empty());
+            for _ in order.iter().take_while(|name| **name != "broken") {
+                assert!(kernel.drain(1).unwrap().is_empty());
+            }
+            let events = kernel.drain(1).unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].producer, Key::new("test", "broken"));
+            assert!(kernel.drain(3).unwrap().is_empty());
+            let expected: &[&str] = if order[1] == "broken" {
+                &["a", "broken", "b", "a", "b"]
+            } else {
+                &["a", "b", "broken", "a", "b", "a"]
+            };
+            assert_eq!(*log.lock().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn producer_callbacks_run_without_the_producer_mutex_and_reentry_is_bounded() {
+        use std::sync::{
+            Weak,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct Source(Weak<Kernel>, Arc<AtomicUsize>);
+        impl Producer for Source {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                let kernel = self.0.upgrade().unwrap();
+                assert!(kernel.producers.try_lock().is_ok());
+                assert!(kernel.session.try_take().is_some());
+                assert!(matches!(
+                    kernel.drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                ));
+                self.1.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, wake: WakeHandle) -> bool {
+                let kernel = self.0.upgrade().unwrap();
+                assert!(kernel.producers.try_lock().is_ok());
+                assert!(kernel.session.try_take().is_some());
+                assert!(matches!(
+                    kernel.drain(1).unwrap_err(),
+                    DriverError::ReentrantDrain
+                ));
+                wake.shutdown();
+                true
+            }
+        }
+
         let mut kernel = Kernel::build(
-            "fair",
+            "callback-lock",
             [],
             Arc::new(phenix_graph::process::LocalProcessDispatcher),
         )
         .unwrap();
         kernel.start().unwrap();
-        kernel.producers.get_mut().unwrap().producers = ["a", "broken", "b"]
-            .into_iter()
-            .map(|name| {
-                (
-                    Key::new("test", name),
-                    Some(Box::new(Source(name, log.clone())) as Box<dyn Producer>),
-                    None,
-                )
-            })
-            .collect();
-        assert!(kernel.drain(0).unwrap().is_empty());
-        assert!(log.lock().unwrap().is_empty());
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        let kernel = Arc::new(kernel);
+        let polls = Arc::new(AtomicUsize::new(0));
+        kernel.producers.lock().unwrap().producers.push((
+            Key::new("test", "source"),
+            Some(Box::new(Source(Arc::downgrade(&kernel), polls.clone()))),
+            None,
+        ));
+
         assert!(kernel.drain(1).unwrap().is_empty());
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        kernel.run_until(&WakeHandle::default(), |_| {}).unwrap();
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn producer_panics_are_contained_without_poisoning_kernel_state() {
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                panic!("poll panic")
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "callback-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
         let events = kernel.drain(1).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].producer, Key::new("test", "broken"));
-        assert!(kernel.drain(3).unwrap().is_empty());
-        assert_eq!(*log.lock().unwrap(), ["a", "broken", "b", "a", "b"]);
+        assert!(matches!(events[0].result, Err(ProducerError::Poll(_))));
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn panicking_panic_payload_destructors_do_not_bypass_producer_reconciliation() {
+        struct PanickingPayload;
+        impl Drop for PanickingPayload {
+            fn drop(&mut self) {
+                panic!("panic payload destructor panic");
+            }
+        }
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                std::panic::panic_any(PanickingPayload)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "panic-payload-drop",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic-payload"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
+        let events = kernel.drain(1).unwrap();
+        assert!(matches!(
+            events.as_slice()[0].result,
+            Err(ProducerError::Poll(_))
+        ));
+        assert!(kernel.drain(1).unwrap().is_empty());
+        assert!(!kernel.producers.is_poisoned());
+    }
+
+    #[test]
+    fn wake_registration_panics_are_reported_without_poisoning_kernel_state() {
+        struct PanickingPayload;
+        impl Drop for PanickingPayload {
+            fn drop(&mut self) {
+                panic!("wake panic payload destructor panic");
+            }
+        }
+        struct Panicking;
+        impl Producer for Panicking {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                std::panic::panic_any(PanickingPayload)
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "wake-callback-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "panic"),
+            Some(Box::new(Panicking)),
+            None,
+        ));
+
+        assert!(matches!(
+            kernel.run_until(&WakeHandle::default(), |_| {}),
+            Err(DriverError::WakeRegistrationPanicked { .. })
+        ));
+        assert!(!kernel.producers.is_poisoned());
+        assert!(kernel.drain(1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn same_thread_session_reentry_fails_fast_and_preserves_rejected_input() {
+        let mut kernel = Kernel::build(
+            "session-reentry",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        let kernel = Arc::new(kernel);
+
+        let nested = kernel
+            .with_session(|_| {
+                assert!(kernel.session.lock_is_available());
+                kernel.run_steps(1)
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(nested, SessionAccessError::Reentrant);
+        let error = kernel
+            .with_session(|_| kernel.inject("input", Value::local(41_i64)))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error.reason,
+            phenix_graph::connection::ConnectionError::Reentrant
+        );
+        assert_eq!(error.value.borrow::<i64>(), Some(&41));
+    }
+
+    #[test]
+    fn panicking_session_callback_restores_exclusive_ownership() {
+        let mut kernel = Kernel::build(
+            "session-panic",
+            [],
+            Arc::new(phenix_graph::process::LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            kernel
+                .with_session(|_| panic!("session callback panic"))
+                .unwrap();
+        }));
+        assert!(panic.is_err());
+        assert!(kernel.session.try_take().is_some());
+        assert!(kernel.run_steps(0).is_ok());
     }
 
     #[test]
     fn rejected_second_driver_keeps_first_lease_active() {
         let owner = AtomicUsize::new(0);
-        let first = DriverScope::enter(&owner).unwrap();
-        assert_eq!(
-            DriverScope::enter(&owner).err(),
+        let first = enter_driver(&owner).unwrap();
+        assert!(matches!(
+            enter_driver(&owner).err(),
             Some(DriverError::AlreadyRunning)
-        );
+        ));
         // A rejected attempt must not construct a guard whose Drop releases
         // the first driver's still-active lease.
-        assert_eq!(
-            DriverScope::enter(&owner).err(),
+        assert!(matches!(
+            enter_driver(&owner).err(),
             Some(DriverError::AlreadyRunning)
-        );
+        ));
         drop(first);
-        let next = DriverScope::enter(&owner).unwrap();
+        let next = enter_driver(&owner).unwrap();
         drop(next);
     }
 
@@ -2278,7 +2951,7 @@ mod tests {
                 self.entered.send(()).unwrap();
                 self.proceed.recv_timeout(Duration::from_secs(2)).unwrap();
                 let kernel = self.kernel.upgrade().unwrap();
-                let busy = "kernel session busy";
+                let busy = SessionAccessError::Busy;
                 assert_eq!(kernel.with_session(|_| ()).unwrap_err(), busy);
                 assert_eq!(kernel.run_steps(1).unwrap_err(), busy);
                 let rejected = kernel.inject("input", Value::local(13_i64)).unwrap_err();
@@ -2295,7 +2968,7 @@ mod tests {
         let mut kernel =
             Kernel::build("cross-thread-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2324,7 +2997,7 @@ mod tests {
                 completed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             })
             .unwrap();
-        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert!(driver.join().unwrap().is_ok());
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),
             SessionState::Quiescent
@@ -2353,7 +3026,7 @@ mod tests {
         let mut kernel =
             Kernel::build("uncontended-session", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         kernel.producers.lock().unwrap().producers.push((
             Key::new("test", "inspect"),
@@ -2362,7 +3035,7 @@ mod tests {
         ));
         let wake = WakeHandle::default();
         wake.shutdown();
-        assert_eq!(kernel.run_until(&wake, |_| {}), Ok(()));
+        assert!(kernel.run_until(&wake, |_| {}).is_ok());
     }
 
     #[test]
@@ -2392,7 +3065,7 @@ mod tests {
         let mut kernel =
             Kernel::build("exclusive-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let kernel = Arc::new(kernel);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (proceed_tx, proceed_rx) = mpsc::channel();
@@ -2412,17 +3085,17 @@ mod tests {
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
         let competing = WakeHandle::default();
-        assert_eq!(
+        assert!(matches!(
             kernel.run_until(&competing, |_| {}),
             Err(DriverError::AlreadyRunning)
-        );
+        ));
         assert!(competing.0.notifier.lock().unwrap().is_none());
         proceed_tx.send(()).unwrap();
-        assert_eq!(first.join().unwrap(), Ok(()));
+        assert!(first.join().unwrap().is_ok());
 
         let next = WakeHandle::default();
         next.shutdown();
-        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
     }
 
     #[test]
@@ -2456,7 +3129,7 @@ mod tests {
         let mut kernel =
             Kernel::build("driver-vs-direct", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         kernel.producers.get_mut().unwrap().producers.push((
             Key::new("test", "idle"),
             Some(Box::new(Idle {
@@ -2473,14 +3146,20 @@ mod tests {
         let driver = std::thread::spawn(move || worker_kernel.run_until(&worker_wake, |_| {}));
         registered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         first_poll_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(kernel.drain(0).unwrap_err(), DriverError::AlreadyRunning);
-        assert_eq!(kernel.drain(1).unwrap_err(), DriverError::AlreadyRunning);
+        assert!(matches!(
+            kernel.drain(0).unwrap_err(),
+            DriverError::AlreadyRunning
+        ));
+        assert!(matches!(
+            kernel.drain(1).unwrap_err(),
+            DriverError::AlreadyRunning
+        ));
         assert_eq!(
             kernel.producer_ownership.load(Ordering::Acquire),
             DRIVER_OWNER
         );
         wake.shutdown();
-        assert_eq!(driver.join().unwrap(), Ok(()));
+        assert!(driver.join().unwrap().is_ok());
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
         let before = polls.load(Ordering::SeqCst);
         assert!(kernel.drain(1).unwrap().is_empty());
@@ -2510,7 +3189,7 @@ mod tests {
         let mut kernel =
             Kernel::build("direct-vs-driver", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(live_ingress_session()));
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
         let (entered, entered_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
         kernel.producers.get_mut().unwrap().producers.push((
@@ -2526,10 +3205,10 @@ mod tests {
         let manual = std::thread::spawn(move || worker_kernel.drain(1));
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let wake = WakeHandle::default();
-        assert_eq!(
+        assert!(matches!(
             kernel.run_until(&wake, |_| {}),
             Err(DriverError::DrainInProgress)
-        );
+        ));
         assert!(wake.0.notifier.lock().unwrap().is_none());
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
         resume.send(()).unwrap();
@@ -2537,7 +3216,120 @@ mod tests {
         assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
         let next = WakeHandle::default();
         next.shutdown();
-        assert_eq!(kernel.run_until(&next, |_| {}), Ok(()));
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
+    }
+
+    #[test]
+    fn gate_queued_direct_drain_keeps_driver_excluded_until_both_exit() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        struct Paused {
+            polls: usize,
+            entered: mpsc::Sender<usize>,
+            resume_first: mpsc::Receiver<()>,
+            resume_second: mpsc::Receiver<()>,
+            registrations: Arc<AtomicUsize>,
+        }
+        impl Producer for Paused {
+            fn poll(&mut self) -> Result<Option<InputEvent>, CallbackError> {
+                self.polls += 1;
+                self.entered.send(self.polls).unwrap();
+                match self.polls {
+                    1 => self.resume_first.recv_timeout(Duration::from_secs(2)),
+                    2 => self.resume_second.recv_timeout(Duration::from_secs(2)),
+                    poll => panic!("unexpected producer poll {poll}"),
+                }
+                .unwrap();
+                Ok(None)
+            }
+
+            fn set_waker(&mut self, _: WakeHandle) -> bool {
+                self.registrations.fetch_add(1, Ordering::SeqCst);
+                true
+            }
+        }
+
+        let mut kernel = Kernel::build(
+            "queued-direct-vs-driver",
+            [],
+            Arc::new(LocalProcessDispatcher),
+        )
+        .unwrap();
+        kernel.start().unwrap();
+        kernel.session = ExclusiveSlot::new(live_ingress_session());
+        let (entered, entered_rx) = mpsc::channel();
+        let (resume_first, first_rx) = mpsc::channel();
+        let (resume_second, second_rx) = mpsc::channel();
+        let registrations = Arc::new(AtomicUsize::new(0));
+        kernel.producers.get_mut().unwrap().producers.push((
+            Key::new("test", "paused"),
+            Some(Box::new(Paused {
+                polls: 0,
+                entered,
+                resume_first: first_rx,
+                resume_second: second_rx,
+                registrations: registrations.clone(),
+            })),
+            None,
+        ));
+        let kernel = Arc::new(kernel);
+
+        let first_kernel = kernel.clone();
+        let first = std::thread::spawn(move || first_kernel.drain(1));
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+
+        let second_kernel = kernel.clone();
+        let second = std::thread::spawn(move || second_kernel.drain(1));
+        let mut queued = false;
+        for _ in 0..100_000 {
+            if kernel.producer_ownership.load(Ordering::Acquire) == 2 {
+                queued = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            queued,
+            "second direct drain was not admitted behind the gate"
+        );
+
+        let wake = WakeHandle::default();
+        assert!(matches!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        ));
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(wake.version(), 0);
+        assert!(kernel.driver_wake.lock().unwrap().is_none());
+        assert_eq!(registrations.load(Ordering::SeqCst), 0);
+
+        resume_first.send(()).unwrap();
+        assert!(first.join().unwrap().unwrap().is_empty());
+        // The queued drain is now in its own bounded poll. Releasing only the
+        // first direct scope must not open a free/driver window.
+        assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)).unwrap(), 2);
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 1);
+        assert!(matches!(
+            kernel.run_until(&wake, |_| {}),
+            Err(DriverError::DrainInProgress)
+        ));
+        assert!(wake.0.notifier.lock().unwrap().is_none());
+        assert_eq!(wake.version(), 0);
+        assert!(kernel.driver_wake.lock().unwrap().is_none());
+        assert_eq!(registrations.load(Ordering::SeqCst), 0);
+
+        resume_second.send(()).unwrap();
+        assert!(second.join().unwrap().unwrap().is_empty());
+        assert_eq!(kernel.producer_ownership.load(Ordering::Acquire), 0);
+        assert!(!kernel.producers_retired());
+        let next = WakeHandle::default();
+        next.shutdown();
+        assert!(kernel.run_until(&next, |_| {}).is_ok());
+        assert_eq!(registrations.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -2550,8 +3342,8 @@ mod tests {
         let mut kernel =
             Kernel::build("drain-to-complete", [], Arc::new(LocalProcessDispatcher)).unwrap();
         kernel.start().unwrap();
-        kernel.session = Mutex::new(Some(session));
-        assert_eq!(kernel.run_until(&WakeHandle::default(), |_| {}), Ok(()));
+        kernel.session = ExclusiveSlot::new(session);
+        assert!(kernel.run_until(&WakeHandle::default(), |_| {}).is_ok());
         assert_eq!(
             kernel.with_session(|session| session.state()).unwrap(),
             SessionState::Completed

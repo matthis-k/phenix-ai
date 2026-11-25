@@ -126,12 +126,8 @@ impl PluginInstance for Plugin {
         let phase = self.phase;
         let alive = self.life.alive.clone();
         let log = self.life.log.clone();
-        into.add(Contribution {
-            id: "main".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("main", NetworkPatch::new([]))
+            .prepare(move |_| {
                 if matches!(phase, Phase::Prepare) {
                     return Err(Box::new(Cause {
                         alive: alive.clone(),
@@ -155,8 +151,8 @@ impl PluginInstance for Plugin {
                     }))
                 })?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 #[test]
@@ -279,7 +275,7 @@ struct CheckProcess {
     calls: Arc<AtomicUsize>,
 }
 impl Process for CheckProcess {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         assert!(self.alive.load(Ordering::SeqCst));
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Finished)
@@ -304,7 +300,7 @@ impl PluginInstance for DeclarationPlugin {
                 }
             }),
         );
-        into.add(support::contribution(
+        support::contribution(
             "declarations",
             NetworkPatch::new([
                 Edit::Add {
@@ -313,18 +309,16 @@ impl PluginInstance for DeclarationPlugin {
                 },
                 Edit::AddSource("worker".into()),
             ]),
-        ))?;
-        into.add(Contribution {
-            id: "export".into(),
-            requires: vec![Key::new("plugin", "declarations")],
-            routes: vec![],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(|context| {
+        )
+        .register(into)?;
+        Contribution::new("export", NetworkPatch::new([]))
+            .after([Key::new("plugin", "declarations")])
+            .prepare(|context| {
                 let mut artifacts = CandidateArtifacts::default();
                 artifacts.export(context.inspect_network()?.clone())?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(into)
     }
 }
 #[test]
@@ -336,6 +330,17 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
         let application = Life::new("application", &log);
         let application_alive = application.alive.clone();
         let calls = Arc::new(AtomicUsize::new(0));
+        let mut options = BuildOptions::default();
+        support::grant(
+            &mut options,
+            Key::new("plugin", "declarations"),
+            [
+                phenix_graph::compose::Footprint::Component("worker".into()),
+                phenix_graph::compose::Footprint::Source("worker".into()),
+            ],
+        );
+        options.execution.lease = Some(Arc::new(application));
+        options.inspect_network.insert(Key::new("plugin", "export"));
         let snapshot = support::snapshot(
             "plugin",
             DeclarationPlugin {
@@ -343,9 +348,6 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
                 calls: calls.clone(),
             },
         );
-        let mut options = support::options(std::slice::from_ref(&snapshot));
-        options.execution.lease = Some(Arc::new(application));
-        options.inspect_network.insert(Key::new("plugin", "export"));
         let kernel = Kernel::build_with_options(
             "declarations",
             [snapshot],
@@ -393,10 +395,11 @@ struct CompetingSnapshot {
 impl PluginInstance for CompetingSnapshot {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
         assert!(self.life.alive.load(Ordering::SeqCst));
-        into.add(support::contribution(
+        support::contribution(
             "unit",
             support::patch("worker", false, false, 1, "test/competing@1"),
-        ))
+        )
+        .register(into)
     }
 }
 
@@ -407,14 +410,21 @@ fn detached_compiled_network_does_not_pin_defeated_snapshot_revisions() {
     let winner_alive = winner_life.alive.clone();
     let loser_life = Life::new("loser", &log);
     let loser_alive = loser_life.alive.clone();
-    let winner = support::snapshot("winner", CompetingSnapshot { life: winner_life });
-    let loser = support::snapshot("loser", CompetingSnapshot { life: loser_life });
-    let mut options = support::options(&[winner.clone(), loser.clone()]);
+    let mut options = BuildOptions::default();
+    for owner in ["winner", "loser"] {
+        support::grant(
+            &mut options,
+            Key::new(owner, "unit"),
+            [phenix_graph::compose::Footprint::Component("worker".into())],
+        );
+    }
     options
         .composition
         .get_mut(&Key::new("winner", "unit"))
         .unwrap()
         .priority = 10;
+    let winner = support::snapshot("winner", CompetingSnapshot { life: winner_life });
+    let loser = support::snapshot("loser", CompetingSnapshot { life: loser_life });
     let kernel = Kernel::build_with_options(
         "defeated-lease",
         [winner, loser],
@@ -432,4 +442,83 @@ fn detached_compiled_network_does_not_pin_defeated_snapshot_revisions() {
     drop(detached);
     assert!(!winner_alive.load(Ordering::SeqCst));
     assert_eq!(*log.lock().unwrap(), ["loser", "winner"]);
+}
+
+#[test]
+fn lease_failure_pins_independently_escaping_nested_cleanup_without_changing_sources() {
+    for reverse in [false, true] {
+        let log = Log::default();
+        let life = Life::new("plugin", &log);
+        let alive = life.alive.clone();
+        let application = Life::new("application", &log);
+        let application_alive = application.alive.clone();
+        let mut options = BuildOptions::default();
+        options.execution.lease = Some(Arc::new(application));
+        let snapshot = support::snapshot(
+            "plugin",
+            Plugin {
+                life,
+                phase: Phase::None,
+            },
+        );
+        let kernel = Kernel::build_with_options(
+            "cleanup",
+            [snapshot],
+            Arc::new(LocalProcessDispatcher),
+            options,
+        )
+        .unwrap();
+        let make_failure = || {
+            phenix_graph::Failure::external(
+                "cached host summary",
+                Cause {
+                    alive: alive.clone(),
+                    log: log.clone(),
+                },
+            )
+        };
+        let original = make_failure().with_cleanup(make_failure().with_cleanup(make_failure()));
+        let failure = kernel.lease_failure(original.clone());
+        assert!(failure.same_origin(&original));
+        assert!(std::ptr::eq(
+            failure.source().unwrap(),
+            original.source().unwrap()
+        ));
+        let mut escaped = vec![
+            failure.cleanup()[0].clone(),
+            failure.cleanup()[0].cleanup()[0].clone(),
+        ];
+        for (leased, original) in [
+            (&escaped[0], &original.cleanup()[0]),
+            (&escaped[1], &original.cleanup()[0].cleanup()[0]),
+        ] {
+            assert!(leased.same_origin(original));
+            assert!(std::ptr::eq(
+                leased.source().unwrap(),
+                original.source().unwrap()
+            ));
+            assert_eq!(leased.context(), original.context());
+        }
+        drop(original);
+        drop(failure);
+        drop(kernel);
+        assert!(alive.load(Ordering::SeqCst));
+        assert!(application_alive.load(Ordering::SeqCst));
+        for failure in &escaped {
+            inspect(failure);
+        }
+        if reverse {
+            escaped.reverse();
+        }
+        drop(escaped.pop());
+        assert!(alive.load(Ordering::SeqCst));
+        assert!(application_alive.load(Ordering::SeqCst));
+        drop(escaped);
+        assert!(!alive.load(Ordering::SeqCst));
+        assert!(!application_alive.load(Ordering::SeqCst));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["cause", "cause", "cause", "application", "plugin"]
+        );
+    }
 }

@@ -38,7 +38,7 @@ mod source;
 pub use host::{DerivedGeneration, DerivedHost};
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
-pub use query::{DerivedRuntime, QueryHandle, QuerySpec, QueryValue};
+pub use query::{DerivedRuntime, QueryBinding, QueryHandle, QuerySpec, QueryValue};
 
 use phenix_graph::{
     component::{ComponentDef, DefinitionKey},
@@ -59,24 +59,44 @@ pub enum RefreshCause {
 }
 
 #[derive(Debug)]
+pub enum QueryCleanupStage {
+    Close,
+    CancelledJobs,
+    Disposal,
+}
+
+#[derive(Debug)]
 pub enum Error {
-    Graph(String),
+    Access(phenix_kernel::SessionAccessError),
+    Transport(phenix_graph::connection::ConnectionError),
+    Execution(phenix_graph::Failure),
+    Network(Box<NetworkError>),
     Kernel(phenix_kernel::CallbackError),
     Storage(phenix_storage::Error),
     MultipleRefreshRoots,
-    WrongGeneration,
     InvalidRefreshRoute(String),
     NestedQuery,
     PublicationCount(usize),
     InvalidPublication,
     Request(phenix_graph::runtime::RequestError),
     Unsettled,
+    /// Cleanup never replaces the initiating error. If release failed, `request`
+    /// still identifies the scope for caller inspection and a release retry.
+    Cleanup {
+        cause: Box<Error>,
+        request: phenix_graph::runtime::RequestId,
+        termination: Option<phenix_graph::runtime::RequestError>,
+        /// A new or newly enriched termination failure unrelated to `cause`.
+        termination_failure: Option<phenix_graph::Failure>,
+        release: Option<phenix_graph::runtime::RequestError>,
+        inventory: Vec<(QueryCleanupStage, phenix_graph::runtime::RequestError)>,
+    },
     RequestInterrupted {
         cause: Box<Error>,
         cancelled_jobs: Vec<phenix_graph::process::StepTicket>,
         disposal: phenix_graph::runtime::RequestDisposal,
     },
-    Wave(Vec<String>),
+    Wave(Vec<phenix_graph::Failure>),
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,22 +106,24 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Access(e) => Some(e),
+            Self::Transport(e) => Some(e),
+            Self::Execution(e) => Some(e),
+            Self::Wave(errors) => errors.first().map(|e| e as _),
+            Self::Network(e) => Some(e.as_ref()),
             Self::Kernel(e) => Some(e.as_ref()),
             Self::Storage(e) => Some(e),
             Self::Request(e) => Some(e),
-            Self::RequestInterrupted { cause, .. } => Some(cause.as_ref()),
+            Self::Cleanup { cause, .. } | Self::RequestInterrupted { cause, .. } => {
+                Some(cause.as_ref())
+            }
             _ => None,
         }
     }
 }
-impl From<String> for Error {
-    fn from(e: String) -> Self {
-        Self::Graph(e)
-    }
-}
 impl From<NetworkError> for Error {
     fn from(e: NetworkError) -> Self {
-        Self::Graph(e.to_string())
+        Self::Network(Box::new(e))
     }
 }
 impl From<phenix_storage::Error> for Error {
@@ -121,6 +143,10 @@ pub(crate) struct Root {
     definition: Arc<ComponentDef>,
     capture: String,
     errors: String,
+    matches_value: fn(
+        &phenix_graph::BoundDeclaration,
+        &phenix_graph::CaptureHandle,
+    ) -> Result<bool, NetworkError>,
 }
 
 /// Typed native endpoint and source lineage, not a value cache.
@@ -196,6 +222,11 @@ impl GraphDeriveExt for NetworkBuilder {
             definition: source::definition::<I>(inputs, reader)?,
             capture: format!("{name}.snapshot"),
             errors: format!("{name}.errors"),
+            matches_value: |declaration, capture| {
+                capture.matches_output(
+                    &declaration.output_key(phenix_graph::OutputKey::<I::Values>::new("value"))?,
+                )
+            },
         });
         self.additions(|graph| source::lower::<I>(graph, name, root))
     }

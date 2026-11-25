@@ -1,11 +1,11 @@
 use super::*;
 use phenix_graph::{
-    Interface, PortDef, Value,
+    CallbackPhase, Failure, FailureContext, FailureKind, InputKey, Interface, PortDef, Value,
     process::{Process, ProcessContext, ProcessEmission, Step},
 };
 use phenix_storage::snapshot::SnapshotReader;
 
-type Compute = dyn Fn(&mut ProcessContext) -> Result<Value, String> + Send + Sync;
+type Compute = dyn Fn(&mut ProcessContext) -> Result<Value, Failure> + Send + Sync;
 
 /// One emission followed by explicit activation completion. The callback is
 /// immutable; each physical instance owns its continuation state.
@@ -15,7 +15,7 @@ pub(crate) struct Function {
     pub inputs: Vec<String>,
 }
 impl Process for Function {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -26,7 +26,7 @@ impl Process for Function {
         for input in &self.inputs {
             if context.input(input).is_none() {
                 if context.is_closed(input) {
-                    return Err(format!("missing join input {input}"));
+                    return Err(missing_input(input));
                 }
                 return Ok(Step::WaitInput(input.clone()));
             }
@@ -39,7 +39,7 @@ impl Process for Function {
 pub(crate) fn function(
     inputs: impl IntoIterator<Item = PortDef>,
     output: PortDef,
-    function: impl Fn(&mut ProcessContext) -> Result<Value, String> + Send + Sync + 'static,
+    function: impl Fn(&mut ProcessContext) -> Result<Value, Failure> + Send + Sync + 'static,
 ) -> Result<Arc<ComponentDef>, Error> {
     let interface = Arc::new(Interface::new(inputs, [output]).map_err(NetworkError::from)?);
     let function: Arc<Compute> = Arc::new(function);
@@ -64,20 +64,23 @@ where
         [PortDef::local::<V>("run")],
         PortDef::local::<O>("value"),
         move |ctx| {
-            let value = ctx.take("run").ok_or("missing input")?;
-            Ok(Value::local(f(value
-                .borrow::<V>()
-                .ok_or("wrong input type")?
-                .clone())))
+            InputKey::<V>::new("run")
+                .map_shared_input(ctx, "", |_, value| Ok(Value::local(f(value))))
         },
     )
 }
-fn diagnostic(error: phenix_storage::Error) -> String {
-    let category = match &error {
-        phenix_storage::Error::MissingInput { .. } => "MissingInput",
-        _ => "Storage",
-    };
-    format!("source[{category}]: {error}")
+pub(crate) fn missing_input(field: &str) -> Failure {
+    Failure::external(
+        "missing source input",
+        phenix_graph::InputError::Missing {
+            field: field.into(),
+        },
+    )
+    .with_kind(FailureKind::Framework)
+    .with_context(FailureContext {
+        field: Some(field.into()),
+        ..Default::default()
+    })
 }
 pub(crate) fn definition<I: StoredInputs>(
     inputs: I::Owned,
@@ -88,7 +91,7 @@ pub(crate) fn definition<I: StoredInputs>(
         emitted: bool,
     }
     impl Process for Read {
-        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, ctx: &mut ProcessContext) -> Result<Step, Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -104,13 +107,45 @@ pub(crate) fn definition<I: StoredInputs>(
             Ok(Step::Emit(ProcessEmission::new(output, value)))
         }
     }
+    let configuration = Arc::new((inputs, reader));
     let function: Arc<Compute> = Arc::new(move |ctx| {
-        let cause = ctx.take("run").ok_or("missing refresh")?;
-        cause.borrow::<RefreshCause>().ok_or("wrong refresh type")?;
-        let snapshot = reader.read().map_err(diagnostic)?;
-        Ok(Value::local(
-            I::decode(&inputs, snapshot.entries()).map_err(diagnostic)?,
-        ))
+        InputKey::<RefreshCause>::new("run").map_shared_input(ctx, "", |_, _| {
+            let snapshot = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                configuration.1.read()
+            })) {
+                Ok(result) => result.map_err(|error| {
+                    Failure::external("storage source read failed", error)
+                        .with_context(FailureContext {
+                            phase: Some(CallbackPhase::Read),
+                            ..Default::default()
+                        })
+                        .with_lease(configuration.clone())
+                }),
+                Err(payload) => Err(phenix_graph::process::callback_panicked(
+                    CallbackPhase::Read,
+                    payload,
+                )
+                .with_lease(configuration.clone())),
+            }?;
+            let values = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                I::decode(&configuration.0, snapshot.entries())
+            })) {
+                Ok(result) => result.map_err(|error| {
+                    Failure::external("storage source decode failed", error)
+                        .with_context(FailureContext {
+                            phase: Some(CallbackPhase::Decode),
+                            ..Default::default()
+                        })
+                        .with_lease(configuration.clone())
+                }),
+                Err(payload) => Err(phenix_graph::process::callback_panicked(
+                    CallbackPhase::Decode,
+                    payload,
+                )
+                .with_lease(configuration.clone())),
+            }?;
+            Ok(Value::local(values).with_lease(configuration.clone()))
+        })
     });
     Ok(Arc::new(ComponentDef::primitive(
         Arc::new(
@@ -118,7 +153,7 @@ pub(crate) fn definition<I: StoredInputs>(
                 [PortDef::local::<RefreshCause>("run")],
                 [
                     PortDef::local::<I::Values>("value"),
-                    PortDef::local::<String>("error"),
+                    PortDef::local::<Failure>("error"),
                 ],
             )
             .map_err(NetworkError::from)?,
@@ -141,7 +176,7 @@ pub(crate) fn lower<I: StoredInputs>(
         capacity(),
     )?;
     g.expose_output(&root.capture, component.output::<I::Values>("value")?)?;
-    g.expose_output(&root.errors, component.output::<String>("error")?)?;
+    g.expose_output(&root.errors, component.output::<Failure>("error")?)?;
     Ok(DerivedRef {
         output: component.output("value")?,
         component,

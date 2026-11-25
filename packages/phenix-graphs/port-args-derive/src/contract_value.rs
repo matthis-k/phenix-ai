@@ -121,25 +121,29 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<Tokens> {
         let decoder = if f.optional {
             quote! {
                 match field.split_first() {
-                    Some((&0, rest)) if rest.is_empty() => None,
-                    Some((&1, rest)) => Some(<#ty as ::phenix_graph::ContractValue>::decode(rest)?),
-                    _ => return Err(::std::format!("invalid Option encoding for {}", #name)),
+                    Some((&0, rest)) if rest.is_empty() => Ok(None),
+                    Some((&1, rest)) => <#ty as ::phenix_graph::ContractValue>::decode(rest).map(Some),
+                    _ => Err(::phenix_graph::CodecError::OptionTag { field: #name.into(), tag: field.first().copied(), length: field.len() }.failure()),
                 }
             }
         } else {
-            quote! { <#ty as ::phenix_graph::ContractValue>::decode(field)? }
+            quote! { <#ty as ::phenix_graph::ContractValue>::decode(field) }
         };
         // Field identifiers appear only as members, never as decoder locals.
         quote! {
             #ident: {
-                let header_end = cursor.checked_add(8).ok_or("field offset overflow")?;
-                let header = bytes.get(cursor..header_end).ok_or("truncated field header")?;
-                let length = usize::try_from(u64::from_le_bytes(
-                    header.try_into().map_err(|_| "invalid field header")?
-                )).map_err(|_| "field length overflow")?;
-                let end = header_end.checked_add(length).ok_or("field length overflow")?;
-                let field = bytes.get(header_end..end).ok_or("truncated field payload")?;
-                let value = #decoder;
+                let header_end = cursor.checked_add(8).ok_or_else(|| ::phenix_graph::CodecError::OffsetOverflow { field: #name.into(), offset: cursor, length: 8 }.failure())?;
+                let header = bytes.get(cursor..header_end).ok_or_else(|| ::phenix_graph::CodecError::TruncatedHeader { field: #name.into(), offset: cursor, remaining: bytes.len().saturating_sub(cursor) }.failure())?;
+                let wire_length = u64::from_le_bytes(header.try_into().expect("eight byte field header"));
+                let length = usize::try_from(wire_length).map_err(|cause| ::phenix_graph::CodecError::LengthOverflow { field: #name.into(), length: wire_length, cause }.failure())?;
+                let end = header_end.checked_add(length).ok_or_else(|| ::phenix_graph::CodecError::OffsetOverflow { field: #name.into(), offset: header_end, length }.failure())?;
+                let field = bytes.get(header_end..end).ok_or_else(|| ::phenix_graph::CodecError::TruncatedPayload { field: #name.into(), offset: header_end, length, remaining: bytes.len().saturating_sub(header_end) }.failure())?;
+                let value = (#decoder).map_err(|failure| {
+                    let mut context = failure.context().clone();
+                    if context.field.is_none() { context.field = Some(#name.into()); }
+                    context.phase.get_or_insert(::phenix_graph::CallbackPhase::Decode);
+                    failure.with_context(context)
+                })?;
                 cursor = end;
                 value
             }
@@ -161,10 +165,10 @@ pub(super) fn derive(input: DeriveInput) -> syn::Result<Tokens> {
                 #(#write_fields)*
                 out
             }
-            fn decode(bytes: &[u8]) -> ::std::result::Result<Self, ::std::string::String> {
+            fn decode(bytes: &[u8]) -> ::std::result::Result<Self, ::phenix_graph::Failure> {
                 let mut cursor = 0usize;
                 let value = Self { #(#read_fields),* };
-                if cursor != bytes.len() { return Err("trailing bytes in contract value".into()); }
+                if cursor != bytes.len() { return Err(::phenix_graph::CodecError::TrailingBytes { offset: cursor, total: bytes.len() }.failure()); }
                 Ok(value)
             }
         }

@@ -26,6 +26,9 @@ mod tests {
             }
         }
         impl TypedKv for Probe {
+            fn supports_revisioned_reads(&self) -> bool {
+                true
+            }
             fn get(&mut self, _: &str, _: &str) -> Result<Option<Vec<u8>>> {
                 panic!("preflight must not read values")
             }
@@ -412,7 +415,7 @@ impl Session {
             key,
             schema,
         };
-        SnapshotReader::new(vec![source.clone()], ReadConsistency::BestEffort)?;
+        SnapshotReader::new(vec![source.clone()], ReadConsistency::AtomicWithinMount)?;
         Ok(source)
     }
 }
@@ -473,6 +476,14 @@ impl SnapshotReader {
                     capability: Capability::AtomicReadMany,
                 });
             }
+            if self.consistency == ReadConsistency::BestEffort
+                && !kv.supports_atomic_read_many()
+                && !kv.supports_revisioned_reads()
+            {
+                return Err(Error::UnsupportedCapability {
+                    capability: Capability::RevisionedRead,
+                });
+            }
         }
         Ok(())
     }
@@ -523,7 +534,14 @@ impl SnapshotReader {
                 kv.read_many(&keys)?
             } else if self.consistency == ReadConsistency::BestEffort {
                 keys.iter()
-                    .map(|k| kv.get_revisioned(k.dataset, k.key))
+                    .map(|k| {
+                        if !kv.supports_revisioned_reads() {
+                            return Err(Error::UnsupportedCapability {
+                                capability: Capability::RevisionedRead,
+                            });
+                        }
+                        kv.get_revisioned(k.dataset, k.key)
+                    })
                     .collect::<Result<Vec<_>>>()?
             } else {
                 return Err(Error::UnsupportedCapability {

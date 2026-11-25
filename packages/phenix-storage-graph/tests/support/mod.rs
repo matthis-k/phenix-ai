@@ -17,6 +17,20 @@ use phenix_storage::{
 use phenix_storage_graph::derived::*;
 use std::sync::Arc;
 
+pub fn failures(error: &Error) -> &[phenix_graph::Failure] {
+    match error {
+        Error::Wave(failures) => failures,
+        Error::Execution(failure) => match std::error::Error::source(failure)
+            .and_then(|cause| cause.downcast_ref::<Error>())
+        {
+            Some(cause) => failures(cause),
+            None => std::slice::from_ref(failure),
+        },
+        Error::RequestInterrupted { cause, .. } | Error::Cleanup { cause, .. } => failures(cause),
+        other => panic!("expected execution failure: {other:?}"),
+    }
+}
+
 pub struct Fixture {
     pub registry: Registry,
     pub session: Session,
@@ -85,13 +99,10 @@ pub struct Plugin {
 impl PluginInstance for Plugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let author = self.author.clone();
-        registrar.add(Contribution {
-            id: "derive".into(),
-            requires: vec![],
-            routes: self.routes.clone(),
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| author())),
-        })
+        Contribution::new("derive", NetworkPatch::new([]))
+            .route(self.routes.clone())
+            .prepare(move |_| author())
+            .register(registrar)
     }
 }
 pub fn options(plugin: &Plugin) -> BuildOptions {

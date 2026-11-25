@@ -41,7 +41,10 @@ impl<T: ContractValue> Codec for Adapter<T> {
         Ok(value.encode())
     }
     fn decode(&self, bytes: &[u8]) -> phenix_storage::Result<T> {
-        T::decode(bytes).map_err(Error::Codec)
+        T::decode(bytes).map_err(|cause| Error::CodecCause {
+            summary: "graph contract decode failed",
+            cause: Box::new(cause),
+        })
     }
 }
 

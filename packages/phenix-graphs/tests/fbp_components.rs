@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Noop;
 impl Process for Noop {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -40,6 +40,24 @@ fn module() -> NetworkDef {
         .expose_output("out", leaf.output::<i64>("out").unwrap())
         .unwrap();
     builder.build().unwrap()
+}
+
+#[test]
+fn projection_identifier_is_not_an_incomplete_boundary_reason() {
+    let mut builder = NetworkBuilder::new();
+    let leaf = builder.node("leaf", io(), factory()).unwrap();
+    let output = leaf.output::<i64>("out").unwrap();
+    builder
+        .expose_output("incomplete public boundary", output.clone())
+        .unwrap();
+    let error = builder
+        .expose_output("incomplete public boundary", output)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        NetworkError::InvalidProjection("incomplete public boundary".into())
+    );
+    assert_ne!(error, NetworkError::IncompletePublicBoundary);
 }
 fn source_interface() -> Arc<Interface> {
     Arc::new(Interface::new([], [PortDef::local::<i64>("out")]).unwrap())
@@ -657,7 +675,10 @@ fn compile_limits_bound_depth_instances_including_empty_modules_and_work() {
             ..CompileLimits::default()
         }),
         Err(NetworkError::LimitExceeded {
-            limit: "max_depth",
+            limit: phenix_graph::CompileLimit {
+                kind: phenix_graph::LimitKind::Depth,
+                ..
+            },
             ..
         })
     ));
@@ -675,7 +696,10 @@ fn compile_limits_bound_depth_instances_including_empty_modules_and_work() {
             ..CompileLimits::default()
         }),
         Err(NetworkError::LimitExceeded {
-            limit: "max_instances",
+            limit: phenix_graph::CompileLimit {
+                kind: phenix_graph::LimitKind::Instances,
+                ..
+            },
             ..
         })
     ));
@@ -685,7 +709,10 @@ fn compile_limits_bound_depth_instances_including_empty_modules_and_work() {
             ..CompileLimits::default()
         }),
         Err(NetworkError::LimitExceeded {
-            limit: "max_work",
+            limit: phenix_graph::CompileLimit {
+                kind: phenix_graph::LimitKind::Work,
+                ..
+            },
             ..
         })
     ));
@@ -701,7 +728,10 @@ fn compile_limits_bound_depth_instances_including_empty_modules_and_work() {
             ..CompileLimits::default()
         }),
         Err(NetworkError::LimitExceeded {
-            limit: "max_instances",
+            limit: phenix_graph::CompileLimit {
+                kind: phenix_graph::LimitKind::Instances,
+                ..
+            },
             ..
         })
     ));
@@ -709,7 +739,7 @@ fn compile_limits_bound_depth_instances_including_empty_modules_and_work() {
 
 struct Counter(Cell<usize>);
 impl Process for Counter {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.0.set(self.0.get() + 1);
         if self.0.get() == 1 {
             Ok(Step::Yield)
@@ -901,6 +931,6 @@ fn compile_work_limit_accounts_for_expanded_connection_fanout() {
     assert_eq!(compiled.connections().len(), 32);
     assert!(matches!(network.compile_with_limits(CompileLimits {
         max_work: 180, ..CompileLimits::default()
-    }), Err(NetworkError::LimitExceeded { limit: "max_work", path }) if path.is_empty()));
+    }), Err(NetworkError::LimitExceeded { limit: phenix_graph::CompileLimit { kind: phenix_graph::LimitKind::Work, .. }, path }) if path.is_empty()));
     assert_eq!(network.compile().unwrap().connections().len(), 32);
 }

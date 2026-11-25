@@ -33,7 +33,7 @@ impl PluginInstance for Provider {
 }
 struct Identity;
 impl Process for Identity {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Complete)
     }
 }
@@ -163,6 +163,40 @@ fn module_offers_use_the_same_compiled_unit_validation() {
     snapshot
         .bind::<ProviderAction>("model", &contract(false), &compiled(&snapshot, true, true))
         .unwrap();
+}
+
+#[test]
+fn missing_compiled_unit_retains_actual_network_cause_and_module_path() {
+    use phenix_graph::network::NetworkError;
+    use std::error::Error as _;
+    for module in [false, true] {
+        for path in ["missing", "service.missing"] {
+            let mut catalog = PluginCatalog::new();
+            let key = catalog
+                .register("provider", |path: String| Ok(Provider(Some(path), 1)))
+                .unwrap();
+            let snapshot = catalog.instance().load(&key, path.into()).unwrap();
+            let required = contract(false);
+            let error = snapshot
+                .bind::<ProviderAction>("model", &required, &compiled(&snapshot, true, module))
+                .err()
+                .unwrap();
+            assert_eq!(error.code, Code::MissingBinding);
+            assert!(error.message.contains(path));
+            assert!(error.message.contains(required.id()));
+            let context = error.context.as_ref().unwrap();
+            assert_eq!(context.plugin, "provider");
+            assert_eq!(context.contribution.as_deref(), Some("model"));
+            let mut source = error.source().unwrap();
+            while !source.is::<NetworkError>() {
+                source = source.source().unwrap();
+            }
+            assert_eq!(
+                source.downcast_ref::<NetworkError>(),
+                Some(&NetworkError::UnknownProcess(path.into()))
+            );
+        }
+    }
 }
 
 #[test]

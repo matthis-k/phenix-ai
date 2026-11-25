@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 struct Noop;
 impl Process for Noop {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         Ok(Step::Finished)
     }
 }
@@ -269,7 +269,7 @@ macro_rules! portable_value {
             fn encode(&self) -> Vec<u8> {
                 vec![]
             }
-            fn decode(_: &[u8]) -> Result<Self, String> {
+            fn decode(_: &[u8]) -> Result<Self, phenix_graph::Failure> {
                 Ok(Self)
             }
         }
@@ -378,7 +378,7 @@ impl ContractValue for Mislabelled {
     fn encode(&self) -> Vec<u8> {
         vec![]
     }
-    fn decode(_: &[u8]) -> Result<Self, String> {
+    fn decode(_: &[u8]) -> Result<Self, phenix_graph::Failure> {
         Ok(Self)
     }
 }

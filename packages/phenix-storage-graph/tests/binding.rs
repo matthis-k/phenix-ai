@@ -62,12 +62,9 @@ impl PluginInstance for Observer {
         let target = route.clone();
         let session = self.session.clone();
         let observed = self.observed.clone();
-        registrar.add(Contribution {
-            id: "observer".into(),
-            requires: vec![],
-            routes: vec![route.clone()],
-            patch: NetworkPatch::new([]),
-            prepare: Some(Box::new(move |_| {
+        Contribution::new("observer", NetworkPatch::new([]))
+            .route([route.clone()])
+            .prepare(move |_| {
                 let mut graph = NetworkBuilder::new();
                 let observed = observed.clone();
                 let sink = example::sink(&mut graph, &route, move |notice: Notice| {
@@ -89,8 +86,8 @@ impl PluginInstance for Observer {
                     Ok(Box::new(StorageBinding::new(subscription, target.clone())))
                 })?;
                 Ok(artifacts)
-            })),
-        })
+            })
+            .register(registrar)
     }
 }
 

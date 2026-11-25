@@ -10,15 +10,35 @@ use phenix_graph::{
 };
 use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
+// Paired CI registers this cfg with --check-cfg; ordinary builds use Failure.
+#[allow(unexpected_cfgs)]
+mod benchmark_error {
+    #[cfg(fbp_benchmark_baseline_string_error)]
+    pub type StepError = String;
+    #[cfg(not(fbp_benchmark_baseline_string_error))]
+    pub type StepError = phenix_graph::Failure;
+
+    pub fn application_message(message: &str) -> StepError {
+        #[cfg(fbp_benchmark_baseline_string_error)]
+        {
+            message.to_owned()
+        }
+        #[cfg(not(fbp_benchmark_baseline_string_error))]
+        {
+            phenix_graph::Failure::application_message(message)
+        }
+    }
+}
+
 fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
 
 struct FinishOnEos;
 impl Process for FinishOnEos {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, benchmark_error::StepError> {
         if !cx.is_eos("in") {
-            return Err("expected global EOS".into());
+            return Err(benchmark_error::application_message("expected global EOS"));
         }
         Ok(Step::Finished)
     }

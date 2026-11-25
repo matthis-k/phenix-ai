@@ -1,8 +1,18 @@
 mod support;
 use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
-use phenix_kernel::{ContractDefinition, Kernel, Key, NetworkOffer};
+use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key};
 use phenix_plugin::{Code, Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
+struct Locator;
+impl phenix_plugin::Contribution for Locator {
+    const KIND: &'static str = "test.locator";
+    fn id(&self) -> &str {
+        "offer"
+    }
+    fn component_path(&self) -> Option<&str> {
+        Some("service")
+    }
+}
 #[derive(Clone)]
 struct Provider {
     module: bool,
@@ -14,19 +24,22 @@ impl PluginInstance for Provider {
             id: "definition".into(),
             contract: support::contract("example/service@1"),
         })?;
-        into.add(NetworkOffer {
-            id: "offer".into(),
-            producer: Key::new("provider", "main"),
-            unit: "service".into(),
-            contract: Key::new("provider", "definition"),
-        })?;
+        into.add(Locator)?;
         if self.sibling {
-            into.add(support::contribution("main", NetworkPatch::new([])))?;
+            support::contribution("main", NetworkPatch::new([]))
+                .after([Key::new("provider", "sibling")])
+                .offer("offer", "service", Key::new("provider", "definition"))
+                .register(into)?;
         }
-        into.add(support::contribution(
+        let mut contribution = support::contribution(
             if self.sibling { "sibling" } else { "main" },
             support::patch("service", self.module, true, 1, "example/service@1"),
-        ))
+        );
+        if !self.sibling {
+            contribution =
+                contribution.offer("offer", "service", Key::new("provider", "definition"));
+        }
+        contribution.register(into)
     }
 }
 #[test]
@@ -41,8 +54,15 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             sibling: false,
         };
         let mut plugins = catalog.instance();
+        let mut options = BuildOptions::default();
+        support::grant(
+            &mut options,
+            Key::new("provider", "main"),
+            [phenix_graph::compose::Footprint::Component(
+                "service".into(),
+            )],
+        );
         let snapshot = plugins.load(&key, config.clone()).unwrap();
-        let options = support::options(std::slice::from_ref(&snapshot));
         let kernel = Kernel::build_with_options(
             "host",
             [snapshot.clone()],
@@ -55,7 +75,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         assert_ne!(&origin, snapshot.graph_origin());
         assert!(origin.belongs_to(snapshot.graph_origin()));
         snapshot
-            .bind::<NetworkOffer>("offer", &support::contract("example/service@1"), &compiled)
+            .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
             .unwrap();
         let stage = plugins.prepare_reload(&key, config.clone()).unwrap();
         let candidate = stage.candidate().unwrap();
@@ -67,11 +87,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         for other in [candidate, replacement, foreign] {
             assert_eq!(
                 other
-                    .bind::<NetworkOffer>(
-                        "offer",
-                        &support::contract("example/service@1"),
-                        &compiled
-                    )
+                    .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
                     .err()
                     .unwrap()
                     .code,
@@ -81,8 +97,16 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         drop(kernel);
         plugins.unload(&key).unwrap();
         snapshot
-            .bind::<NetworkOffer>("offer", &support::contract("example/service@1"), &compiled)
+            .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
             .unwrap();
+        let mut options = BuildOptions::default();
+        support::grant(
+            &mut options,
+            Key::new("provider", "sibling"),
+            [phenix_graph::compose::Footprint::Component(
+                "service".into(),
+            )],
+        );
         let sibling = plugins
             .load(
                 &key,
@@ -92,7 +116,6 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
                 },
             )
             .unwrap();
-        let options = support::options(std::slice::from_ref(&sibling));
         assert!(
             Kernel::build_with_options(
                 "host",

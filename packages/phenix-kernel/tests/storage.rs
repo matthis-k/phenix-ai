@@ -1,5 +1,6 @@
 #[path = "../examples/storage.rs"]
 mod example;
+mod support;
 use example::support as native;
 use phenix_graph::Value;
 use phenix_kernel::{BuildOptions, CandidateArtifacts, Contribution, Kernel, Key, Producer};
@@ -56,45 +57,46 @@ impl PluginInstance for SubscriptionPlugin {
             let observed = self.observed.clone();
             let probe = self.probe.clone();
             let fail_first = self.fail_first;
-            registrar.add(Contribution {
-                id: if later { "later" } else { "subscription" }.into(),
-                routes: vec!["observed".into()],
-                requires: if later {
-                    vec![Key::new("storage", "subscription")]
-                } else {
-                    vec![]
-                },
-                patch: phenix_graph::compose::NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
-                    let mut context = CandidateArtifacts::default();
-                    if !later {
-                        let observed = observed.clone();
-                        let sink = native::local_sink(move |notice: Notice| {
-                            observed.lock().unwrap().push(notice);
-                        });
-                        context.patch = Some(native::input_patch("observe", "observed", sink));
+            Contribution::new(
+                if later { "later" } else { "subscription" },
+                phenix_graph::compose::NetworkPatch::new([]),
+            )
+            .route(["observed".into()])
+            .after(if later {
+                vec![Key::new("storage", "subscription")]
+            } else {
+                vec![]
+            })
+            .prepare(move |_| {
+                let mut context = CandidateArtifacts::default();
+                if !later {
+                    let observed = observed.clone();
+                    let sink = native::local_sink(move |notice: Notice| {
+                        observed.lock().unwrap().push(notice);
+                    });
+                    context.patch = Some(native::input_patch("observe", "observed", sink));
+                }
+                let attempts = AtomicUsize::new(0);
+                let counter = counter.clone();
+                let probe = probe.clone();
+                context.activate(move || {
+                    if later && fail_first && attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Err("later activation failed".into());
                     }
-                    let attempts = AtomicUsize::new(0);
-                    let counter = counter.clone();
-                    let probe = probe.clone();
-                    context.activate(move || {
-                        if later && fail_first && attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                            return Err("later activation failed".into());
-                        }
-                        let subscription = counter
-                            .session
-                            .subscribe(Scope::Dataset(counter.address.clone()), 1)?;
-                        let marker = Arc::new(());
-                        probe.markers.lock().unwrap().push(Arc::downgrade(&marker));
-                        Ok(Box::new(ProbedSubscription {
-                            subscription,
-                            _marker: marker,
-                            drops: probe.drops.clone(),
-                        }))
-                    })?;
-                    Ok(context)
-                })),
-            })?;
+                    let subscription = counter
+                        .session
+                        .subscribe(Scope::Dataset(counter.address.clone()), 1)?;
+                    let marker = Arc::new(());
+                    probe.markers.lock().unwrap().push(Arc::downgrade(&marker));
+                    Ok(Box::new(ProbedSubscription {
+                        subscription,
+                        _marker: marker,
+                        drops: probe.drops.clone(),
+                    }))
+                })?;
+                Ok(context)
+            })
+            .register(registrar)?;
         }
         Ok(())
     }
@@ -143,6 +145,15 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
         .register("storage", |plugin: SubscriptionPlugin| Ok(plugin))
         .unwrap();
     let mut plugins = catalog.instance();
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("storage", "subscription"),
+        [
+            phenix_graph::compose::Footprint::Component("observe".into()),
+            phenix_graph::compose::Footprint::InputExport("observed".into()),
+        ],
+    );
     plugins
         .load(
             &key,
@@ -154,14 +165,6 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
             },
         )
         .unwrap();
-    let mut options = BuildOptions::default();
-    native::allow(
-        &mut options,
-        "storage",
-        "subscription",
-        "observe",
-        "observed",
-    );
     let mut kernel = Kernel::build_with_options(
         "subscription-lifecycle",
         plugins.snapshots(),

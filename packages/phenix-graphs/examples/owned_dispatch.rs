@@ -15,14 +15,14 @@ struct Sum {
     emitted: bool,
 }
 impl Process for Sum {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
         }
         self.total += context
             .take("increment")
-            .ok_or("missing increment")?
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing increment"))?
             .get::<i64>()?;
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new(

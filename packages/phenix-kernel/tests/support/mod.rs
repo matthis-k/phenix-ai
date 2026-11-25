@@ -7,7 +7,7 @@ use phenix_graph::{
     network::{NetworkBuilder, PortPath},
     process::{Process, ProcessContext, ProcessEmission, Step},
 };
-use phenix_kernel::{BuildOptions, CompositionPolicy, Contribution, Key};
+use phenix_kernel::{BuildOptions, Contribution, Key};
 use phenix_plugin::{PluginCatalog, PluginInstance, PluginSnapshot};
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -38,7 +38,7 @@ pub struct Transform {
     pub emitted: bool,
 }
 impl Process for Transform {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -49,7 +49,12 @@ impl Process for Transform {
         self.emitted = true;
         Ok(Step::Emit(ProcessEmission::new(
             "value",
-            Value::local(value.borrow::<i64>().ok_or("wrong input")? + self.increment),
+            Value::local(
+                value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong input"))?
+                    + self.increment,
+            ),
         )))
     }
 }
@@ -94,13 +99,7 @@ pub fn patch(
     }])
 }
 pub fn contribution(id: &str, patch: NetworkPatch) -> Contribution {
-    Contribution {
-        id: id.into(),
-        patch,
-        requires: vec![],
-        routes: vec![],
-        prepare: None,
-    }
+    Contribution::new(id, patch)
 }
 pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<ComponentDef> {
     struct Function {
@@ -108,7 +107,7 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
         emitted: bool,
     }
     impl Process for Function {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -119,7 +118,9 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "value",
-                Value::local((self.f)(*value.borrow::<i64>().ok_or("wrong type")?)),
+                Value::local((self.f)(*value.borrow::<i64>().ok_or_else(|| {
+                    phenix_graph::Failure::application_message("wrong type")
+                })?)),
             )))
         }
     }
@@ -135,11 +136,15 @@ pub fn function(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Arc<Component
 pub fn sink(f: impl Fn(i64) + Send + Sync + 'static) -> Arc<ComponentDef> {
     struct Sink(Arc<dyn Fn(i64) + Send + Sync>);
     impl Process for Sink {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let Some(value) = context.take("run") else {
                 return Ok(Step::Finished);
             };
-            (self.0)(*value.borrow::<i64>().ok_or("wrong type")?);
+            (self.0)(
+                *value
+                    .borrow::<i64>()
+                    .ok_or_else(|| phenix_graph::Failure::application_message("wrong type"))?,
+            );
             Ok(Step::Complete)
         }
     }
@@ -153,25 +158,6 @@ pub fn snapshot<P: PluginInstance + 'static>(owner: &str, plugin: P) -> PluginSn
     let mut catalog = PluginCatalog::new();
     let key = catalog.register(owner, |plugin: P| Ok(plugin)).unwrap();
     catalog.instance().load(&key, plugin).unwrap()
-}
-/// Test host deliberately approves the immutable fixture patches, not runtime callbacks.
-pub fn options(snapshots: &[PluginSnapshot]) -> BuildOptions {
-    let mut options = BuildOptions::default();
-    for snapshot in snapshots {
-        for (_, kind, id) in snapshot.keys() {
-            if kind == <Contribution as phenix_plugin::Contribution>::KIND {
-                let contribution = snapshot.get::<Contribution>(id).unwrap();
-                options.composition.insert(
-                    Key::new(snapshot.name(), id),
-                    CompositionPolicy {
-                        grants: contribution.patch.footprints(),
-                        priority: 0,
-                    },
-                );
-            }
-        }
-    }
-    options
 }
 pub fn grant(options: &mut BuildOptions, key: Key, grants: impl IntoIterator<Item = Footprint>) {
     options

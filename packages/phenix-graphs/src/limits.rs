@@ -5,6 +5,22 @@
 pub const MAX_IDENTIFIER_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LimitKind {
+    Work,
+    Depth,
+    Instances,
+}
+
+/// A rejected logical compiler count, without retaining declarations or factories.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompileLimit {
+    pub kind: LimitKind,
+    pub configured: u64,
+    /// The attempted logical count (one-based for depth), or `None` on `u64` overflow.
+    pub attempted: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompileLimits {
     pub max_depth: usize,
     pub max_instances: u64,

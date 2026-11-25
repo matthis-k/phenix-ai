@@ -29,7 +29,7 @@ struct RunningSum {
     effects: Arc<AtomicUsize>,
 }
 impl Process for RunningSum {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.just_emitted {
             self.just_emitted = false;
             return Ok(Step::Complete);
@@ -115,10 +115,11 @@ struct WaitOnWake {
     resumed: Arc<AtomicUsize>,
 }
 impl Process for WaitOnWake {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match self.stage {
             0 => {
-                cx.take("in").ok_or("missing input")?;
+                cx.take("in")
+                    .ok_or_else(|| phenix_graph::Failure::application_message("missing input"))?;
                 self.stage = 1;
                 Ok(Step::WaitWake)
             }
@@ -301,9 +302,11 @@ fn mixed_custom_node_is_polled_without_disabling_unrelated_packet_nodes() {
 
 struct FinishOnEos(Arc<AtomicUsize>);
 impl Process for FinishOnEos {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if !cx.is_eos("in") {
-            return Err("EOS was not delivered".into());
+            return Err(phenix_graph::Failure::application_message(
+                "EOS was not delivered",
+            ));
         }
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Finished)
@@ -575,6 +578,7 @@ fn notification_contract_panic_fails_session_instead_of_escaping_start() {
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("readiness notification contract panicked")
     );

@@ -63,20 +63,18 @@ impl PluginInstance for Plugin {
             let composed = self.composed.clone();
             let activations = self.activations.clone();
             let failure = self.failure;
-            registrar.add(Contribution {
-                id: name.into(),
-                requires: if name == "b" {
+            Contribution::new(name, NetworkPatch::new([]))
+                .after(if name == "b" {
                     vec![Key::new("plugin", "a")]
                 } else {
                     vec![]
-                },
-                routes: if failure == "route" {
-                    vec!["missing".into()]
+                })
+                .route(if failure == "route" {
+                    vec![String::from("missing")]
                 } else {
                     vec![]
-                },
-                patch: NetworkPatch::new([]),
-                prepare: Some(Box::new(move |_| {
+                })
+                .prepare(move |_| {
                     let mut context = CandidateArtifacts::default();
                     let id = composed.fetch_add(1, Ordering::SeqCst);
                     let state = Arc::new(State {
@@ -118,8 +116,8 @@ impl PluginInstance for Plugin {
                         return Err("composition failed".into());
                     }
                     Ok(context)
-                })),
-            })?;
+                })
+                .register(registrar)?;
         }
         Ok(())
     }
@@ -135,21 +133,29 @@ fn snapshots(plugin: Plugin) -> Vec<PluginSnapshot> {
     plugins.snapshots().collect()
 }
 
-fn build(
-    name: &str,
-    snapshots: Vec<PluginSnapshot>,
-) -> Result<Kernel, phenix_kernel::ResolutionError> {
+fn options(failure: &str) -> BuildOptions {
     let mut options = BuildOptions::default();
     for name in ["a", "b"] {
         support::grant(
             &mut options,
             Key::new("plugin", name),
-            [
-                Footprint::Component(name.into()),
-                Footprint::Source("missing".into()),
-            ],
+            [Footprint::Component(name.into())],
         );
     }
+    if failure == "compile" {
+        support::grant(
+            &mut options,
+            Key::new("plugin", "a"),
+            [Footprint::Source("missing".into())],
+        );
+    }
+    options
+}
+fn build(
+    name: &str,
+    snapshots: Vec<PluginSnapshot>,
+    options: BuildOptions,
+) -> Result<Kernel, phenix_kernel::ResolutionError> {
     Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options)
 }
 
@@ -157,6 +163,7 @@ fn build(
 fn artifacts_and_engine_drop_before_plugin_leases_on_success_and_build_failure() {
     for failure in ["", "unstarted", "compose", "compile", "route"] {
         let log = Log::default();
+        let options = options(failure);
         let result = build(
             "drop-order",
             snapshots(Plugin {
@@ -165,6 +172,7 @@ fn artifacts_and_engine_drop_before_plugin_leases_on_success_and_build_failure()
                 activations: Arc::default(),
                 failure,
             }),
+            options,
         );
         if matches!(failure, "" | "unstarted") {
             let mut kernel = result.unwrap();
@@ -206,14 +214,16 @@ fn nth_activation_failure_retries_the_exact_composed_state_without_recomposition
     let log = Log::default();
     let composed = Arc::new(AtomicUsize::new(0));
     let activations = Arc::new(Mutex::new(Vec::new()));
+    let first_options = options("activation");
+    let second_options = options("activation");
     let snapshots = snapshots(Plugin {
         log: log.clone(),
         composed: composed.clone(),
         activations: activations.clone(),
         failure: "activation",
     });
-    let mut first = build("first", snapshots.clone()).unwrap();
-    let mut second = build("second", snapshots).unwrap();
+    let mut first = build("first", snapshots.clone(), first_options).unwrap();
+    let mut second = build("second", snapshots, second_options).unwrap();
     let state = |kernel: &Kernel, name| {
         kernel
             .export::<Arc<State>>(&Key::new("plugin", name))

@@ -4,9 +4,15 @@
 //! paths. A trusted host binds logical resources to provisioned physical datasets.
 //! The low-level Registry/Session API remains available unchanged.
 use crate::{
-    Address, Codec, Operation, Revision, Revisioned, Schema, Scope, Session, Sql, Subscription,
+    Address, Capability, Codec, Operation, Revision, Revisioned, Schema, Scope, Session, Sql,
+    Subscription,
 };
-use std::{collections::BTreeMap, marker::PhantomData, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+    path::PathBuf,
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub enum Error {
@@ -22,7 +28,17 @@ pub enum Error {
     InvalidBaseDirectory,
     WrongResourceKind,
     InvalidRuntimeDirectory,
+    RuntimeDirectoryIo {
+        path: PathBuf,
+        phase: RuntimeDirectoryPhase,
+        cause: std::io::Error,
+    },
     Storage(crate::Error),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeDirectoryPhase {
+    SymlinkMetadata,
 }
 
 impl std::fmt::Display for Error {
@@ -30,7 +46,15 @@ impl std::fmt::Display for Error {
         write!(f, "{self:?}")
     }
 }
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Storage(cause) => Some(cause),
+            Self::RuntimeDirectoryIo { cause, .. } => Some(cause),
+            _ => None,
+        }
+    }
+}
 impl From<crate::Error> for Error {
     fn from(error: crate::Error) -> Self {
         Self::Storage(error)
@@ -107,25 +131,20 @@ impl ResourceSpec {
 #[derive(Clone, Debug)]
 pub struct ResourceRequest {
     pub spec: ResourceSpec,
-    pub operations: std::collections::BTreeSet<Operation>,
-    pub atomic_cas: bool,
+    pub operations: BTreeSet<Operation>,
+    /// Additional backend support, not permission grants or resource identity.
+    pub required: BTreeSet<Capability>,
 }
 impl ResourceRequest {
-    /// Scoped reads return revision tokens even when no CAS write was requested.
-    pub fn requires_atomic_cas(&self) -> bool {
-        self.atomic_cas
-            || (matches!(self.spec.kind, ResourceKind::TypedKv(_))
-                && self.operations.contains(&Operation::Read))
-    }
     pub fn new(spec: ResourceSpec, operations: impl IntoIterator<Item = Operation>) -> Self {
         Self {
             spec,
             operations: operations.into_iter().collect(),
-            atomic_cas: false,
+            required: BTreeSet::new(),
         }
     }
-    pub fn with_atomic_cas(mut self) -> Self {
-        self.atomic_cas = true;
+    pub fn require(mut self, capability: Capability) -> Self {
+        self.required.insert(capability);
         self
     }
 }
@@ -399,6 +418,14 @@ impl<T> CellSpec<T> {
     }
 }
 impl<T: Stored> CellSpec<T> {
+    pub fn request(&self, operations: impl IntoIterator<Item = Operation>) -> ResourceRequest {
+        let request = ResourceRequest::new(self.resource_spec(), operations);
+        if request.operations.contains(&Operation::Read) {
+            request.require(Capability::AtomicReadMany)
+        } else {
+            request
+        }
+    }
     pub fn resource_spec(&self) -> ResourceSpec {
         ResourceSpec {
             scope: self.scope,
@@ -533,7 +560,10 @@ pub struct Kv<T: Stored> {
     _value: PhantomData<fn() -> T>,
 }
 impl<T: Stored> Kv<T> {
-    pub fn get(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
+    pub fn get(&self, key: &str) -> crate::Result<Option<T>> {
+        self.session.get(&self.address, key, &self.format)
+    }
+    pub fn get_revisioned(&self, key: &str) -> crate::Result<Option<Revisioned<T>>> {
         self.session
             .get_revisioned(&self.address, key, &self.format)
     }
@@ -658,7 +688,11 @@ impl XdgPaths {
             .as_ref()
             .ok_or(Error::MissingRuntimeDirectory)?;
         let metadata =
-            std::fs::symlink_metadata(path).map_err(|_| Error::InvalidRuntimeDirectory)?;
+            std::fs::symlink_metadata(path).map_err(|cause| Error::RuntimeDirectoryIo {
+                path: path.clone(),
+                phase: RuntimeDirectoryPhase::SymlinkMetadata,
+                cause,
+            })?;
         if !metadata.is_dir()
             || metadata.uid() != effective_uid
             || metadata.mode() & 0o7777 != 0o700
@@ -693,7 +727,10 @@ mod tests {
         fn decode(&self, bytes: &[u8]) -> crate::Result<Text> {
             String::from_utf8(bytes.to_vec())
                 .map(Text)
-                .map_err(|e| crate::Error::Codec(e.to_string()))
+                .map_err(|e| crate::Error::CodecCause {
+                    summary: "invalid codec bytes",
+                    cause: Box::new(e),
+                })
         }
     }
     impl Stored for Text {
@@ -781,6 +818,44 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn runtime_metadata_failure_retains_path_phase_and_actual_os_error() {
+        use std::error::Error as _;
+        use std::os::unix::fs::MetadataExt;
+        let root =
+            std::env::temp_dir().join(format!("phenix-runtime-cause-{}", std::process::id()));
+        std::fs::write(&root, b"not a directory").unwrap();
+        let uid = std::fs::metadata(&root).unwrap().uid();
+        for (path, kind) in [
+            (root.join("child"), std::io::ErrorKind::NotADirectory),
+            (root.with_extension("missing"), std::io::ErrorKind::NotFound),
+        ] {
+            let expected = std::fs::symlink_metadata(&path).unwrap_err();
+            let paths = XdgPaths::new(
+                "/tmp/config".into(),
+                "/tmp/data".into(),
+                "/tmp/state".into(),
+                "/tmp/cache".into(),
+                Some(path.clone()),
+            )
+            .unwrap();
+            let error = paths.validate_runtime(uid).unwrap_err();
+            assert!(matches!(&error, Error::RuntimeDirectoryIo {
+                path: actual, phase: RuntimeDirectoryPhase::SymlinkMetadata, ..
+            } if actual == &path));
+            let cause = error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap();
+            assert_eq!(cause.kind(), kind);
+            assert_eq!(cause.raw_os_error(), expected.raw_os_error());
+            assert!(cause.raw_os_error().is_some());
+        }
+        std::fs::remove_file(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn runtime_validation_checks_owner_mode_and_symlinks() {
         use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
         let root = std::env::temp_dir().join(format!("phenix-runtime-{}", std::process::id()));
@@ -857,7 +932,7 @@ mod tests {
             .get("default")
             .unwrap()
             .unwrap();
-        assert_eq!(value.value.0, "selected");
+        assert_eq!(value.0, "selected");
         assert!(
             reader
                 .user()
@@ -930,7 +1005,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "user"
         );
@@ -943,7 +1017,6 @@ mod tests {
                 .get("a")
                 .unwrap()
                 .unwrap()
-                .value
                 .0,
             "project"
         );
@@ -1054,7 +1127,7 @@ mod tests {
                 .get("default")
                 .unwrap()
                 .unwrap();
-            assert_eq!(found.value.0, "persisted");
+            assert_eq!(found.0, "persisted");
         }
         std::fs::remove_file(path).unwrap();
     }

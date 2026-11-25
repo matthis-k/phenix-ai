@@ -10,6 +10,26 @@ use phenix_graph::{
 };
 use std::{hint::black_box, num::NonZeroUsize, sync::Arc, time::Instant};
 
+// Paired CI registers this cfg with --check-cfg; ordinary builds use Failure.
+#[allow(unexpected_cfgs)]
+mod benchmark_error {
+    #[cfg(fbp_benchmark_baseline_string_error)]
+    pub type StepError = String;
+    #[cfg(not(fbp_benchmark_baseline_string_error))]
+    pub type StepError = phenix_graph::Failure;
+
+    pub fn application_message(message: &str) -> StepError {
+        #[cfg(fbp_benchmark_baseline_string_error)]
+        {
+            message.to_owned()
+        }
+        #[cfg(not(fbp_benchmark_baseline_string_error))]
+        {
+            phenix_graph::Failure::application_message(message)
+        }
+    }
+}
+
 fn one() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
 }
@@ -17,9 +37,11 @@ fn one() -> NonZeroUsize {
 #[derive(Default)]
 struct AwaitWake(bool);
 impl Process for AwaitWake {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, benchmark_error::StepError> {
         if !self.0 {
-            let value = cx.take("in").ok_or("missing initial packet")?;
+            let value = cx
+                .take("in")
+                .ok_or_else(|| benchmark_error::application_message("missing initial packet"))?;
             black_box(value.get::<u64>()?);
             self.0 = true;
             Ok(Step::WaitWake)

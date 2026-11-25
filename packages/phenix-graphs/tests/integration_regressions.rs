@@ -1,13 +1,14 @@
 //! Cross-cutting regressions retained when the wave engine was removed.
 use phenix_graph::{
     Contract, ContractValue, Interface, NetworkBuilder, PortDef, Process, ProcessContext,
-    ProcessEmission, ResourceGrant, Schema, Step, Store, TypeIdentity, Value,
+    ProcessEmission, ResourceError, ResourceGrant, Schema, Step, TypeIdentity,
+    ValidatedResourceSet, Value,
 };
 use std::{num::NonZeroUsize, sync::Arc};
 
 struct Relay;
 impl Process for Relay {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         match context.take("in") {
             Some(value) => Ok(Step::Emit(ProcessEmission::new(
                 "out",
@@ -18,34 +19,58 @@ impl Process for Relay {
     }
 }
 
+mod application {
+    use std::sync::{Arc, RwLock};
+
+    pub struct ReadFacade(Arc<RwLock<i64>>);
+    pub struct WriteFacade(Arc<RwLock<i64>>);
+    impl ReadFacade {
+        pub fn read(&self) -> i64 {
+            *self.0.read().unwrap()
+        }
+    }
+    impl WriteFacade {
+        pub fn read(&self) -> i64 {
+            *self.0.read().unwrap()
+        }
+        pub fn write(&self, value: i64) {
+            *self.0.write().unwrap() = value;
+        }
+    }
+    pub fn facades() -> (ReadFacade, WriteFacade) {
+        let state = Arc::new(RwLock::new(7));
+        (ReadFacade(state.clone()), WriteFacade(state))
+    }
+}
+
 #[test]
-fn store_preserves_typed_replacement_and_grants_do_not_follow_claims() {
-    let mut store = Store::new();
-    assert!(store.get::<i64>("counter").unwrap_err().contains("absent"));
-    store.insert("counter", 1_i64);
-    assert!(
-        store
-            .get::<String>("counter")
-            .unwrap_err()
-            .contains("wrong Rust type")
-    );
-    store.insert("counter", 7_i64);
-    let store = Arc::new(store);
+fn capability_facades_preserve_authority_and_grants_do_not_follow_claims() {
+    use application::{ReadFacade, WriteFacade};
+    let (reader, writer) = application::facades();
     let denied = ProcessContext::default();
-    assert!(denied.read::<i64, _>("counter", |x| *x).is_err());
-    let read = ProcessContext::default()
-        .with_resources(vec![ResourceGrant::read(store.clone(), "counter")]);
-    assert_eq!(read.read::<i64, _>("counter", |x| *x).unwrap(), 7);
-    assert!(read.write::<i64, _>("counter", |x| *x += 1).is_err());
-    let write = ProcessContext::default()
-        .with_resources(vec![ResourceGrant::write(store.clone(), "counter")]);
-    write.write::<i64, _>("counter", |x| *x += 1).unwrap();
-    assert_eq!(*store.get::<i64>("counter").unwrap().read().unwrap(), 8);
-    assert!(write.read::<i64, _>("other", |x| *x).is_err());
-    assert!(write.read::<String, _>("counter", Clone::clone).is_err());
+    assert!(matches!(
+        denied.resource::<ReadFacade>("counter"),
+        Err(ResourceError::NotGranted("counter"))
+    ));
+    let read = ProcessContext::default().with_resources(
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("counter", reader)]).unwrap(),
+    );
+    assert_eq!(read.resource::<ReadFacade>("counter").unwrap().read(), 7);
+    assert!(matches!(
+        read.resource::<WriteFacade>("counter"),
+        Err(ResourceError::WrongType("counter"))
+    ));
+    let write = ProcessContext::default().with_resources(
+        ValidatedResourceSet::try_new(vec![ResourceGrant::new("counter", writer)]).unwrap(),
+    );
+    write.resource::<WriteFacade>("counter").unwrap().write(8);
+    assert_eq!(write.resource::<WriteFacade>("counter").unwrap().read(), 8);
+    assert_eq!(read.resource::<ReadFacade>("counter").unwrap().read(), 8);
+    assert!(write.resource::<WriteFacade>("other").is_err());
+    assert!(write.resource::<String>("counter").is_err());
     let claim = Contract::new("resource/counter", Arc::new(Interface::default())).unwrap();
     claim.check_shape(&Interface::default()).unwrap();
-    assert!(denied.write::<i64, _>("counter", |x| *x = 0).is_err());
+    assert!(denied.resource::<WriteFacade>("counter").is_err());
 }
 
 #[test]
@@ -99,7 +124,7 @@ fn malformed_wire_payload_fails_without_poisoning_an_independent_session() {
 fn option_and_result_remain_data() {
     struct Pass;
     impl Process for Pass {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(match context.take("in") {
                 Some(value) => Step::Emit(ProcessEmission::new("out", value)),
                 None => Step::Complete,
@@ -165,7 +190,7 @@ fn option_and_result_remain_data() {
 fn network_schema_metadata_and_captures_release_after_unload() {
     struct Echo;
     impl Process for Echo {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             Ok(match context.take("in") {
                 Some(value) => Step::Emit(ProcessEmission::new("out", value)),
                 None => Step::Complete,
@@ -243,7 +268,7 @@ fn generated_dags_and_contributor_orders_match_an_independent_reference() {
         bias: i64,
     }
     impl Process for Sum {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let names: Vec<_> = context.inputs().map(|(name, _)| name.to_owned()).collect();
             if names.is_empty() {
                 return Ok(Step::Complete);
@@ -576,7 +601,7 @@ fn typed_connections_and_required_schema_are_compile_checked() {
         ),
         (
             "schema",
-            "struct Nominal; impl ContractValue for Nominal { fn encode(&self)->Vec<u8>{vec![]} fn decode(_: &[u8])->Result<Self,String>{Ok(Self)} }",
+            "struct Nominal; impl ContractValue for Nominal { fn encode(&self)->Vec<u8>{vec![]} fn decode(_: &[u8])->Result<Self,phenix_graph::Failure>{Ok(Self)} }",
             false,
         ),
     ] {
@@ -608,9 +633,68 @@ fn typed_connections_and_required_schema_are_compile_checked() {
         }
         if name == "schema" {
             assert!(
-                stderr.contains("missing") && stderr.contains("schema"),
+                stderr.contains("E0046")
+                    && stderr.contains("missing: `schema`")
+                    && stderr.matches("error[").count() == 1
+                    && !stderr.contains("E0053")
+                    && !stderr.contains("E0277"),
                 "{stderr}"
             );
+        }
+    }
+    // Compile the real example from outside the facade's defining module.
+    for (name, source, diagnostic) in [
+        ("resource_allowed", "", None),
+        (
+            "resource_no_write",
+            "fn upgrade(read: &application::ReadFacade) { read.write(0); }",
+            Some("E0599"),
+        ),
+        (
+            "resource_private",
+            "fn upgrade(read: &application::ReadFacade) { let _ = &read.0; }",
+            Some("E0616"),
+        ),
+        (
+            "resource_no_conversion",
+            "fn upgrade(read: application::ReadFacade) -> application::WriteFacade { read.into() }",
+            Some("E0277"),
+        ),
+    ] {
+        let mut child = Command::new("rustc")
+            .args([
+                "--edition=2024",
+                "--crate-name",
+                name,
+                "--emit=metadata",
+                "--out-dir",
+            ])
+            .arg(&output_dir)
+            .arg("--extern")
+            .arg(format!("phenix_graph={}", library.display()))
+            .arg("-L")
+            .arg(format!("dependency={}", deps.display()))
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        write!(
+            child.stdin.take().unwrap(),
+            "{}\n{source}",
+            include_str!("../examples/resource_capabilities.rs")
+        )
+        .unwrap();
+        let output = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.success(),
+            diagnostic.is_none(),
+            "{name}: {stderr}"
+        );
+        if let Some(diagnostic) = diagnostic {
+            assert!(stderr.contains(diagnostic), "{name}: {stderr}");
         }
     }
     std::fs::remove_dir_all(output_dir).unwrap();

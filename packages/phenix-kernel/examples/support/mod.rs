@@ -20,7 +20,7 @@ pub fn local_map<T: Clone + Send + Sync + 'static, U: Send + Sync + 'static>(
         emitted: bool,
     }
     impl<T: Clone + Send + Sync + 'static, U: Send + Sync + 'static> Process for Map<T, U> {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             if self.emitted {
                 self.emitted = false;
                 return Ok(Step::Complete);
@@ -28,7 +28,12 @@ pub fn local_map<T: Clone + Send + Sync + 'static, U: Send + Sync + 'static>(
             let Some(value) = context.take("input") else {
                 return Ok(Step::Finished);
             };
-            let input = value.borrow::<T>().ok_or("wrong local input type")?.clone();
+            let input = value
+                .borrow::<T>()
+                .ok_or_else(|| {
+                    phenix_graph::Failure::application_message("wrong local input type")
+                })?
+                .clone();
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "output",
@@ -72,11 +77,18 @@ pub fn local_sink<T: Clone + Send + Sync + 'static>(
 ) -> Arc<ComponentDef> {
     struct Sink<T>(Arc<dyn Fn(T) + Send + Sync>);
     impl<T: Clone + Send + Sync + 'static> Process for Sink<T> {
-        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
             let Some(value) = context.take("input") else {
                 return Ok(Step::Finished);
             };
-            (self.0)(value.borrow::<T>().ok_or("wrong local input type")?.clone());
+            (self.0)(
+                value
+                    .borrow::<T>()
+                    .ok_or_else(|| {
+                        phenix_graph::Failure::application_message("wrong local input type")
+                    })?
+                    .clone(),
+            );
             Ok(Step::Complete)
         }
     }

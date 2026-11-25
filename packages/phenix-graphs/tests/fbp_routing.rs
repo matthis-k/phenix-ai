@@ -31,7 +31,7 @@ struct Router {
     effects: Arc<AtomicUsize>,
 }
 impl Process for Router {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.emitted {
             self.emitted = false;
             return Ok(Step::Complete);
@@ -82,7 +82,7 @@ struct Sink {
     deliveries: Deliveries,
 }
 impl Process for Sink {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if let Some(value) = cx.take("run") {
             self.deliveries
                 .lock()
@@ -211,7 +211,13 @@ fn explicit_empty_selection_is_intentional_discard_without_capture_or_outgoing_e
     let report = implicit.run_until_idle(20);
     assert_eq!(report.state, SessionState::Failed);
     assert_eq!(report.publications, 0);
-    assert!(implicit.failure().unwrap().contains("unconnected output"));
+    assert!(
+        implicit
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("unconnected output")
+    );
     assert_eq!(effects.load(Ordering::SeqCst), 2);
     let (connected, _, deliveries) = fixture(false);
     let mut connected = connected.start();
@@ -259,9 +265,13 @@ fn unknown_duplicate_foreign_and_unconnected_selections_deliver_nothing_atomical
         assert_eq!(report.state, SessionState::Failed);
         assert_eq!(report.publications, 0);
         assert!(
-            session.failure().unwrap().contains(diagnostic),
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(diagnostic),
             "{:?}",
-            session.failure()
+            session.failure().map(phenix_graph::Failure::summary)
         );
         assert!(deliveries.lock().unwrap().is_empty());
         assert_eq!(take(&mut session, "tap"), None);
@@ -322,7 +332,13 @@ fn selection_cannot_borrow_an_edge_from_another_output() {
     let mut session = builder.build().unwrap().compile().unwrap().start();
     inject(&mut session, 77, Some(vec![path("b", "run")]));
     assert_eq!(session.run_until_idle(100).state, SessionState::Failed);
-    assert!(session.failure().unwrap().contains("not connected"));
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("not connected")
+    );
     assert!(deliveries.lock().unwrap().is_empty());
     assert_eq!(take(&mut session, "tap"), None);
     assert_eq!(effects.load(Ordering::SeqCst), 1);
@@ -337,6 +353,7 @@ fn oversized_selection_rejects_before_resolution_and_captures_do_not_expand_the_
     assert!(
         session
             .failure()
+            .map(phenix_graph::Failure::summary)
             .unwrap()
             .contains("outgoing connection budget (2)")
     );
@@ -364,7 +381,13 @@ fn erased_paths_resolve_only_existing_edges_and_never_grant_injection_authority(
     let mut session = compiled.start();
     inject(&mut session, 3, Some(vec![erased]));
     assert_eq!(session.run_until_idle(100).state, SessionState::Failed);
-    assert!(session.failure().unwrap().contains("not connected"));
+    assert!(
+        session
+            .failure()
+            .map(phenix_graph::Failure::summary)
+            .unwrap()
+            .contains("not connected")
+    );
     assert!(deliveries.lock().unwrap().is_empty());
     assert_eq!(take(&mut session, "tap"), None);
     let mut allowed = compiled.start();
@@ -376,7 +399,7 @@ fn erased_paths_resolve_only_existing_edges_and_never_grant_injection_authority(
 
 struct Echo(bool);
 impl Process for Echo {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.0 {
             self.0 = false;
             return Ok(Step::Complete);
@@ -514,11 +537,17 @@ fn alias_overlap_and_partially_connected_alias_fanout_reject_before_any_delivery
         };
         inject(&mut session, 77, Some(destinations));
         assert_eq!(session.run_until_idle(100).state, SessionState::Failed);
-        assert!(session.failure().unwrap().contains(if partial {
-            "not connected"
-        } else {
-            "duplicate selected input"
-        }));
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .unwrap()
+                .contains(if partial {
+                    "not connected"
+                } else {
+                    "duplicate selected input"
+                })
+        );
         for output in [
             "tap",
             "first.left",
@@ -620,7 +649,7 @@ struct SequenceRouter {
     effects: Arc<AtomicUsize>,
 }
 impl Process for SequenceRouter {
-    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         self.phase += 1;
         self.effects.fetch_add(1, Ordering::SeqCst);
         Ok(Step::Emit(ProcessEmission::select(

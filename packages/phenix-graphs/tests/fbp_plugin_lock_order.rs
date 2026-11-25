@@ -100,8 +100,11 @@ fn verify_external_lock_order(
 
 struct CompleteInput;
 impl Process for CompleteInput {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
-        context.take("in").ok_or("missing input")?.get::<u64>()?;
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+        context
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing input"))?
+            .get::<u64>()?;
         Ok(Step::Complete)
     }
 }
@@ -154,13 +157,23 @@ fn readiness_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
             })),
         );
         let mut session = simple_network(|| CompleteInput).start_with_options(options);
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
         let notifier = session.notifier();
         verify_external_lock_order(&probe, observed, notifier, move || {
             session.inject("input", Value::of(11_u64)).unwrap();
             assert_eq!(session.run_until_idle(16).steps, 1);
             assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(session.failure().is_none());
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none()
+            );
         });
     }
 }
@@ -191,7 +204,12 @@ fn dispatcher_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         verify_external_lock_order(&probe, observed, notifier, move || {
             assert_eq!(session.run_until_idle(16).steps, 1);
             assert_eq!(session.state(), SessionState::Quiescent);
-            assert!(session.failure().is_none());
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none()
+            );
         });
     }
 }
@@ -200,12 +218,15 @@ struct RequestWaitWake {
     waiting: bool,
 }
 impl Process for RequestWaitWake {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if self.waiting {
             self.waiting = false;
             return Ok(Step::Complete);
         }
-        context.take("in").ok_or("missing input")?.get::<u64>()?;
+        context
+            .take("in")
+            .ok_or_else(|| phenix_graph::Failure::application_message("missing input"))?
+            .get::<u64>()?;
         self.waiting = true;
         Ok(Step::WaitWake)
     }
@@ -259,7 +280,12 @@ fn recovery_factory_does_not_hold_wake_mutex_while_entering_plugin_lock() {
             );
             session.release_request(cancelled).unwrap();
             session.release_request(fresh).unwrap();
-            assert!(session.failure().is_none());
+            assert!(
+                session
+                    .failure()
+                    .map(phenix_graph::Failure::summary)
+                    .is_none()
+            );
         });
     }
 }

@@ -25,10 +25,12 @@ struct WaitThenComplete {
     completed: Arc<AtomicUsize>,
 }
 impl Process for WaitThenComplete {
-    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, String> {
+    fn step(&mut self, cx: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
         if !self.waiting {
             cx.take("in")
-                .ok_or("missing input for wait")?
+                .ok_or_else(|| {
+                    phenix_graph::Failure::application_message("missing input for wait")
+                })?
                 .get::<u64>()?;
             self.waiting = true;
             Ok(Step::WaitWake)
@@ -140,7 +142,12 @@ fn concurrent_old_wakes_never_resume_replacement_after_request_restart() {
         );
         assert!(!old_notifier.notify(), "round {round}: stale notifier");
         assert!(!old_wake.wake(), "round {round}: stale wake");
-        assert!(session.failure().is_none());
+        assert!(
+            session
+                .failure()
+                .map(phenix_graph::Failure::summary)
+                .is_none()
+        );
 
         // A fresh request reuses the same process index with its own WakeSlot.
         // Previous wake() may have returned true, but must not resume the

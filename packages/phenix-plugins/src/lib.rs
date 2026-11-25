@@ -7,6 +7,7 @@ pub use error::{
     CallbackContext, CallbackError, CallbackPhase, Code, Failure, lease_callback_error,
 };
 pub use manager::{
-    ContributionHandle, PluginCatalog, PluginKey, PluginSet, PluginSnapshot, StagedPlugin,
+    BindingFault, ContributionHandle, LifecycleFault, LifecycleOperation, PluginCatalog, PluginKey,
+    PluginSet, PluginSnapshot, StagedPlugin,
 };
-pub use registry::{Contribution, Contributions, PluginInstance, Registrar};
+pub use registry::{Contribution, Contributions, PluginInstance, Registrar, RegistryFault};

@@ -48,11 +48,9 @@ impl PluginInstance for Plugin {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let phase = self.0;
         let identity = self.1.clone();
-        registrar.add(Contribution {
-            id: "callback".into(),
-            requires: vec![],
-            routes: vec![],
-            patch: if matches!(phase, Phase::WakePanic | Phase::PollLive) {
+        Contribution::new(
+            "callback",
+            if matches!(phase, Phase::WakePanic | Phase::PollLive) {
                 NetworkPatch::new([
                     Edit::Add {
                         path: "wake-sink".into(),
@@ -67,31 +65,45 @@ impl PluginInstance for Plugin {
             } else {
                 NetworkPatch::new([])
             },
-            prepare: Some(Box::new(move |_| {
-                if matches!(phase, Phase::ComposePanic) {
-                    panic!("deliberate preparation panic");
+        )
+        .prepare(move |_| {
+            if matches!(phase, Phase::ComposePanic) {
+                panic!("deliberate preparation panic");
+            }
+            if matches!(phase, Phase::Compose) {
+                return Err(Box::new(Cause(identity.clone())));
+            }
+            let identity = identity.clone();
+            let mut artifacts = CandidateArtifacts::default();
+            artifacts.activate(move || {
+                if matches!(phase, Phase::ActivatePanic) {
+                    panic!("deliberate activation panic");
                 }
-                if matches!(phase, Phase::Compose) {
+                if matches!(phase, Phase::Activate) {
                     return Err(Box::new(Cause(identity.clone())));
                 }
-                let identity = identity.clone();
-                let mut artifacts = CandidateArtifacts::default();
-                artifacts.activate(move || {
-                    if matches!(phase, Phase::ActivatePanic) {
-                        panic!("deliberate activation panic");
-                    }
-                    if matches!(phase, Phase::Activate) {
-                        return Err(Box::new(Cause(identity.clone())));
-                    }
-                    Ok(Box::new(Source(
-                        identity.clone(),
-                        matches!(phase, Phase::WakePanic),
-                    )))
-                })?;
-                Ok(artifacts)
-            })),
+                Ok(Box::new(Source(
+                    identity.clone(),
+                    matches!(phase, Phase::WakePanic),
+                )))
+            })?;
+            Ok(artifacts)
         })
+        .register(registrar)
     }
+}
+
+fn live_options() -> BuildOptions {
+    let mut options = BuildOptions::default();
+    support::grant(
+        &mut options,
+        Key::new("plugin", "callback"),
+        [
+            phenix_graph::compose::Footprint::Component("wake-sink".into()),
+            phenix_graph::compose::Footprint::InputExport("input".into()),
+        ],
+    );
+    options
 }
 
 fn assert_cause(error: &dyn Error, identity: &Arc<()>) {
@@ -136,8 +148,8 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
 
     // Unsupported wake registration is a live-session boundary. The
     // host's earlier Phase::Poll fixture stays an intentionally empty graph.
+    let options = live_options();
     let snapshot = plugins.reload(&key, Phase::PollLive).unwrap();
-    let options = support::options(std::slice::from_ref(&snapshot));
     let mut kernel = Kernel::build_with_options(
         "poll",
         [snapshot],
@@ -145,21 +157,21 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
         options,
     )
     .unwrap();
-    assert_eq!(
+    assert!(matches!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
             .unwrap_err(),
         DriverError::NotStarted
-    );
+    ));
     kernel.start().unwrap();
-    assert_eq!(
+    assert!(matches!(
         kernel
             .run_until(&WakeHandle::default(), |_| {})
             .unwrap_err(),
         DriverError::UnsupportedWake {
-            producer: Key::new("plugin", "callback")
-        }
-    );
+            producer
+        } if producer == Key::new("plugin", "callback")
+    ));
     let event = kernel.drain(1).unwrap().pop().unwrap();
     assert_eq!(event.producer, Key::new("plugin", "callback"));
     let error = event.result.err().unwrap();
@@ -252,8 +264,8 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
         .register("plugin", move |phase| Ok(Plugin(phase, captured.clone())))
         .unwrap();
     let mut plugins = catalog.instance();
+    let options = live_options();
     let snapshot = plugins.load(&key, Phase::WakePanic).unwrap();
-    let options = support::options(std::slice::from_ref(&snapshot));
     let mut kernel = Kernel::build_with_options(
         "wake-panic",
         [snapshot],
@@ -266,12 +278,12 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     let failure = kernel
         .run_until(&WakeHandle::default(), |_| panic!("driver must not run"))
         .unwrap_err();
-    assert_eq!(
+    assert!(matches!(
         failure,
         DriverError::WakeRegistrationPanicked {
-            producer: Key::new("plugin", "callback"),
-        }
-    );
+            producer, ..
+        } if producer == Key::new("plugin", "callback")
+    ));
     // A failed registration must restore the owned producer slot. The original
     // typed poll error can still be observed, and no extra producer is created.
     let event = kernel.drain(1).unwrap().pop().expect("producer slot lost");
