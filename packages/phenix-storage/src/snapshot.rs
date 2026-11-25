@@ -1,5 +1,27 @@
 //! Authorized versioned batches. Absence has no history token: do not memoize
 //! missing entries without revalidation. No snapshot emits invalidations.
+//!
+//! ## Consistency
+//!
+//! `AtomicWithinMount` requires one registry and mount with atomic batch support.
+//! Memory reads under one mount lock; SQLite uses one deferred read transaction
+//! and its own snapshot. Neither mode promises atomicity across mounts.
+//!
+//! `BestEffort` permits mixed sources. It prefers an atomic batch on each mount and
+//! otherwise uses explicitly supported revisioned single-key reads. The returned
+//! consistency remains BestEffort even when the particular read was coherent.
+//! Neither mode requires compare-and-exchange.
+//!
+//! Each source retains its own session. Grants are not combined. Validate all read
+//! grants and schemas before probing backend capabilities or reading payloads.
+//! Recheck the corresponding support predicates before payload reads. Capability
+//! loss is an error, not absence. Empty groups succeed without I/O. Preserve input
+//! order, duplicates, and absent entries. Decode after backend locks end.
+//!
+//! Backend implementations must opt in to each optional operation independently.
+//! An atomic batch must return a coherent versioned result of the requested length
+//! and order. A support predicate is a trusted promise, not proof of atomicity.
+//! No read emits an invalidation.
 use crate::*;
 
 /// Backend batch membership; duplicates must produce duplicate ordered results.

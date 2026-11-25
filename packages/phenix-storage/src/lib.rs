@@ -1,7 +1,59 @@
-//! Synchronous, explicitly authorized storage. See `docs/storage.md` in the repository.
-//! Hosts can mount external backends through object-safe optional capabilities.
-//! Observations are invalidations, not committed row changes or a durable change log.
-
+//! Synchronous storage with explicit host-issued grants.
+//!
+//! The host provisions a [`Registry`] and gives consumers restricted [`Session`]s.
+//! Memory and SQLite are the built-in backends. External backends implement
+//! [`Backend`]. Logical resource access lives in [scoped]. Versioned batch reads
+//! live in [snapshot]. Graph integration is outside this crate.
+//!
+//! ## Typed key-value access
+//!
+//! The codec author supplies the representation and the canonical schema. Storage
+//! checks the schema's name, revision, structure, and codec identity before encoding
+//! or decoding. Equal descriptors do not prove the codec is correct.
+//!
+//! ```rust
+//! use phenix_storage::*;
+//!
+//! struct Text;
+//! impl Codec for Text {
+//!     type Value = String;
+//!     fn schema(&self) -> Schema {
+//!         Schema {
+//!             name: "example.title".into(), revision: 1,
+//!             structure: "utf8-string".into(), codec: "utf8".into(),
+//!         }
+//!     }
+//!     fn encode(&self, value: &String) -> Result<Vec<u8>> {
+//!         Ok(value.as_bytes().to_vec())
+//!     }
+//!     fn decode(&self, bytes: &[u8]) -> Result<String> {
+//!         String::from_utf8(bytes.to_vec()).map_err(|e| Error::Codec(e.to_string()))
+//!     }
+//! }
+//!
+//! fn provision() -> Result<()> {
+//!     let registry = Registry::new();
+//!     registry.mount_memory("local")?;
+//!     let address = Address::parse("store://local/titles")?;
+//!     registry.register(&address, Text.schema())?;
+//!     let node = registry.session([Grant::new(
+//!         Scope::Dataset(address.clone()),
+//!         [Operation::Read, Operation::Write, Operation::Subscribe],
+//!     )]);
+//!     let mut changes = node.subscribe(Scope::Dataset(address.clone()), 32)?;
+//!     node.put(&address, "document-1", &"Title".to_owned(), &Text)?;
+//!     let title: Option<String> = node.get(&address, "document-1", &Text)?;
+//!     for notice in changes.drain()? {
+//!         // The plugin binding decides which graph input/cache to invalidate.
+//!         // Overflow requires a complete rescan of the subscribed scope.
+//!         println!("{notice:?}");
+//!     }
+//!     assert_eq!(title.as_deref(), Some("Title"));
+//!     Ok(())
+//! }
+//! # provision()?;
+//! # Ok::<(), Error>(())
+//! ```
 pub mod scoped;
 pub mod snapshot;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -74,6 +126,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Opaque backend token, comparable only for the same mount/dataset/key.
 /// Not authority or a database snapshot. Restoring an older database file also
 /// restores its tokens; absence has no token and carries no history guarantee.
+///
+/// Memory and SQLite implement atomic conditional writes. A successful write
+/// invalidates earlier tokens, including across delete and recreate. SQLite persists
+/// its revision clock and uses an immediate transaction for compare-and-exchange.
+/// Already-versioned databases with missing or regressed clocks fail closed.
+/// This is not a guarantee across mounts, backend instances, or database restores.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Revision(Vec<u8>);
 impl Revision {
@@ -98,6 +156,11 @@ fn component(s: &str) -> bool {
 }
 
 /// Canonical logical address, never a filesystem path or SQL identifier.
+///
+/// The canonical form is `store://mount/dataset`. Each component is nonempty and
+/// contains lowercase ASCII letters, digits, hyphens, or underscores. The parser
+/// does not normalize, decode, or interpret the address as a filesystem path.
+/// KV keys are opaque strings, not address components.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Address {
     mount: String,
@@ -610,6 +673,19 @@ struct State {
     watches: Vec<Weak<Mutex<Watch>>>,
     sequence: u64,
 }
+///
+/// Trusted host boundary for mount provisioning, dataset registration, and grant
+/// issuance. A grant declaration alone is not operational authority; only the
+/// registry can create a session.
+///
+/// Mounts and datasets cannot be replaced. Memory metadata lasts for the registry's
+/// lifetime. SQLite stores authoritative descriptors in `__phenix_schema` and
+/// rejects incompatible registrations after restart. Register datasets at startup.
+/// Native SQL does not require a dataset declaration.
+///
+/// The registry lock resolves mount identity and orders invalidations. Each mount
+/// has its own mutation lock. Registration and grant issuance remain host decisions
+/// after startup.
 #[derive(Clone, Default)]
 pub struct Registry {
     inner: Arc<Mutex<State>>,
@@ -854,6 +930,18 @@ impl Registry {
     }
 }
 
+///
+/// A restricted view of a registry. Grants authorize exact mount or dataset
+/// operations; prefix matches and implicit permission expansion are forbidden.
+/// Authorize before resource lookup. Read, write, delete, and subscribe are
+/// independent permissions. A capability probe reports backend support, not authority.
+///
+/// Same-thread reentry to the same mount returns `Error::Reentrant`. Avoid nested
+/// transactions across mounts because inconsistent lock order can deadlock.
+/// Codec callbacks run outside the mount lock. Writes recheck schema after encoding.
+///
+/// The session keeps the registry alive. There is no grant revocation, cross-mount
+/// transaction, automatic schema migration, or general poison recovery.
 #[derive(Clone)]
 pub struct Session {
     inner: Arc<Mutex<State>>,
@@ -1392,6 +1480,43 @@ fn reserved_sql(action: AuthAction<'_>) -> bool {
 }
 
 /// Native parameter binding and typed row decoding, without connection escape.
+///
+/// SQL requires mount-scoped authority. `SqlRead` allows read-only statements.
+/// `SqlWrite` adds data mutation; `SqlAdmin` adds DDL. `Operation::Sql` is the
+/// existing administrator alias. SQL is SQLite-specific, not a hostile-code sandbox.
+///
+/// Even administrators cannot use the reserved case-insensitive `__phenix_`
+/// namespace, read SQL text from SQLite schema catalogs, use `ALTER TABLE`,
+/// control transactions or savepoints, attach or detach databases, or run PRAGMAs
+/// and `pragma_` functions. SQLite's authorizer does not expose all rename
+/// destinations. Internal adapter operations also deny derived trigger and view
+/// execution so persisted triggers cannot acquire internal KV authority.
+///
+/// Returning `Ok` commits; `Err` rolls back. A callback panic unwinds after rollback
+/// and release of the mount lock. If SQLite ends the transaction itself, subsequent
+/// facade calls fail with `TransactionEnded`. A failed commit emits no invalidation.
+/// The adapter removes its authorizer before returning a connection to its trusted
+/// backend, including error and unwind paths.
+///
+/// Use one statement per call. Bind values with parameters, not identifiers. Use
+/// `query` or `query_each` for read-only statements and `returning` for mutating
+/// RETURNING statements. A visitor error must propagate to roll back the transaction.
+///
+/// ```rust
+/// # use phenix_storage::*;
+/// fn sql_work(registry: &Registry) -> Result<Vec<(i64, String)>> {
+///     let node = registry.session([Grant::new(
+///         Scope::Mount("db".into()), [Operation::SqlAdmin],
+///     )]);
+///     node.transaction_mount("db", |sql| {
+///         sql.execute("CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, title TEXT NOT NULL)", &[])?;
+///         sql.execute("INSERT INTO items(title) VALUES (?)", &[&"bound, not interpolated"])?;
+///         sql.query("SELECT id, title FROM items WHERE id > ?", &[&0i64], |row| {
+///             Ok((row.get::<i64>(0)?, row.get::<String>(1)?))
+///         })
+///     })
+/// }
+/// ```
 pub struct Sql<'a> {
     connection: &'a Connection,
     dirty: std::cell::Cell<bool>,
@@ -1579,6 +1704,26 @@ fn run_wakers(actions: impl IntoIterator<Item = WakerAction>) {
         }));
     }
 }
+///
+/// A bounded, non-durable invalidation queue with a weak registry reference.
+/// A notice says that data may need refreshing. It is not a row change or replay log.
+///
+/// A successful mutation or commit precedes publication under the mount lock.
+/// The registry lock orders sequence numbers and queue insertion. Memory notices
+/// name the dataset and key. SQLite SQL transactions conservatively report a
+/// mount-wide change, including to that mount's dataset subscribers. Read-only
+/// transactions and failed compare-and-exchange operations publish no notice.
+///
+/// When capacity is exhausted, replace queued detail with `Overflow { through }`.
+/// Matching changes advance the watermark until drain; then detailed delivery
+/// resumes. On overflow, rescan the subscribed scope. Capacity bounds notice count,
+/// not key bytes. Delivery does not wait for a consumer to drain.
+///
+/// Only writes through this registry are observed. Other connections, processes,
+/// and file replacement are outside this contract. A crash after commit can lose
+/// notification. Wakes are hints; the queue carries the actual notices. Dropping
+/// a subscription releases its queue, including during a SQL callback or registry
+/// poisoning. An empty drain differs from `SubscriptionClosed`.
 pub struct Subscription {
     inner: Weak<Mutex<State>>,
     watch: Arc<Mutex<Watch>>,

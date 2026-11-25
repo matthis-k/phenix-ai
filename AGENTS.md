@@ -16,4 +16,4 @@
 
 Before completing a change, check every affected contract against its source or test. Remove superseded references and duplicate descriptions. Run the applicable checks from the flake; report any you could not run in the PR.
 
-Writing references: [writing-for-agents](https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents), [domain-modeling](https://github.com/mattpocock/skills/tree/main/skills/engineering/domain-modeling), and [technical-writing](https://github.com/cursor/plugins/tree/main/pstack/skills/technical-writing).
+When editing documentation, apply [writing-for-agents](https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents), [domain-modeling](https://github.com/mattpocock/skills/tree/main/skills/engineering/domain-modeling), and [technical-writing](https://github.com/cursor/plugins/tree/main/pstack/skills/technical-writing), including its [unslop](https://github.com/cursor/plugins/tree/main/pstack/skills/unslop) pass.

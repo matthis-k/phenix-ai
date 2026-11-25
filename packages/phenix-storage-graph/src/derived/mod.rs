@@ -30,6 +30,40 @@
 //! use phenix_graph::process::CompletedStep;
 //! fn replay(completed: &CompletedStep) -> CompletedStep { completed.clone() }
 //! ```
+//!
+//! ## Query contract
+//!
+//! Use `sources` to author an atomic same-mount snapshot group and `derive_from`
+//! to transform it. Joins support arities one through four and reject foreign
+//! authoring capabilities and unrelated refresh roots. Authoring failures preserve
+//! existing topology and revoke handles from the aborted additions.
+//!
+//! A source exports refresh, snapshot, and diagnostic ports. Observation subscribes
+//! before bootstrap. Each notice refreshes the whole snapshot. Overflow retains
+//! its watermark; bootstrap is a resynchronization. Observation polling rotates
+//! across subscriptions and uses bounded producer admission.
+//!
+//! A demand query admits an authenticated request, injects refresh, closes input,
+//! runs bounded steps, drains captures, settles, and releases the request. Older
+//! observation captures cannot satisfy demand. The source snapshot and selected
+//! terminal each publish once. Sibling effects still execute. Binding validates
+//! the unique declaration, exact refresh ingress, and snapshot, terminal, and
+//! diagnostic projections.
+//!
+//! `DerivedRuntime` and `DerivedHost` add an execution guard to the actual worker
+//! path. Nested queries fail before session admission, even across runtimes.
+//! They select `RestartAffectedProcess`. A tagged failure reconstructs affected
+//! process state, not unrelated state; budget exhaustion cancels only the request.
+//! Storage errors use diagnostics rather than becoming ordinary derived payloads.
+//! Untagged work and replacement-factory panics can still fail the session.
+//!
+//! `QueryValue` retains native value and code ownership across clones. Synchronous
+//! queries cannot wait for deferred completions that themselves need independent
+//! session admission. Cancellation invalidates tickets but cannot preempt workers
+//! or undo effects. An interrupted query returns the original cause, cancelled
+//! job tickets, and disposal inventory. The runner still owns those jobs.
+//! `QuerySpec::bind_kernel` validates declarations; it does not install the guard
+//! or recovery policy. Use the runtime or host builders for those guarantees.
 mod host;
 mod inputs;
 mod producer;

@@ -10,6 +10,10 @@ Phenix composes independently usable libraries into an extensible agent runtime.
 A reusable unit of work with a declared interface. Its body is a primitive or a composite.
 _Avoid_: Node template, operation package
 
+**Component instance**:
+A named placement of a component definition in a network.
+_Avoid_: Node (when the distinction from a definition or process matters)
+
 **Primitive**:
 A component whose body describes a process rather than a nested network.
 _Avoid_: Leaf module, action
