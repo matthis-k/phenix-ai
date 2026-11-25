@@ -25,8 +25,6 @@
 //! claim. Values carrying plugin/resource leases reject bare owned extraction;
 //! `borrow`, `leased_shared` and `decoded` preserve the ownership boundary.
 //!
-
-//!
 //! # Independent request queues
 //!
 //! Shared FIFO is the default. Opt-in bounded lanes keep FIFO within each request and
