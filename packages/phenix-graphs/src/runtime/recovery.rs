@@ -84,24 +84,29 @@ impl NetworkSession {
         scope.disposal.queued_packets = scope.disposal.queued_packets.saturating_add(disposed);
         self.ready.retain(|index| !affected.contains(index));
         for index in &affected {
-            let p = &mut self.processes[*index];
-            let scope = self.requests.get_mut(&id).unwrap();
-            scope.disposal.activations += 1;
-            if let Some(pending) = p.pending.take() {
-                scope.disposal.prepared_packets += pending.retained_packets();
-            }
-            if let Some(ticket) = p.handoff.cancel() {
-                scope.cancelled_jobs.push(ticket);
-                scope.disposal.handed_jobs += 1;
-            }
-            p.pending_targets.clear();
-            p.wake.active.store(false, Ordering::Release);
-            p.wake.pending.store(false, Ordering::Release);
-            p.request = None;
-            p.waiting = None;
-            p.waiting_policy = None;
-            p.closed_in_activation.clear();
-            p.queued = false;
+            let retired_wake = {
+                let p = &mut self.processes[*index];
+                let scope = self.requests.get_mut(&id).unwrap();
+                scope.disposal.activations += 1;
+                if let Some(pending) = p.pending.take() {
+                    scope.disposal.prepared_packets += pending.retained_packets();
+                }
+                if let Some(ticket) = p.handoff.cancel() {
+                    scope.cancelled_jobs.push(ticket);
+                    scope.disposal.handed_jobs += 1;
+                }
+                p.pending_targets.clear();
+                p.request = None;
+                p.waiting = None;
+                p.waiting_policy = None;
+                p.closed_in_activation.clear();
+                p.queued = false;
+                p.wake.clone()
+            };
+            // A notifier for the old request may race with recovery. Retire
+            // under the same lock it uses to publish a process target, before
+            // a replacement slot can be installed for this compiled index.
+            self.signal.retire_target(*index, &retired_wake);
         }
         if !affected.is_empty() && self.terminal.is_none() {
             if self.request_failure_policy == RequestFailurePolicy::FailSession {

@@ -58,6 +58,17 @@ impl WakeSignal {
         true
     }
 
+    // Retirement and notification share one lock: a stale handle either
+    // notified before retirement (its target is discarded) or observes the
+    // inactive slot afterward. Recovery reuses the compiled process index,
+    // so clearing an old queued target prevents cross-generation delivery.
+    pub(super) fn retire_target(&self, process: usize, slot: &WakeSlot) {
+        let mut state = self.state.lock().unwrap();
+        slot.active.store(false, Ordering::Release);
+        slot.pending.store(false, Ordering::Release);
+        state.targets.remove(&process);
+    }
+
     // SessionNotifier has no process identity: retain full-scan semantics.
     fn notify(&self) -> bool {
         let mut state = self.state.lock().unwrap();
