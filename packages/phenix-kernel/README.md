@@ -204,4 +204,4 @@ static-driver modes with different wake handles, including handover back to the
 host after static registration, is unsupported: producer wakers are not restored.
 
 `DerivedHost::with_wake` forwards this opt-in without changing mandatory storage
-guards. See [the bounded design and reactor contract](../../docs/fbp-published-host-wake-20261115.md).
+guards. See [the foundation specification](../../docs/fbp-design.md).
