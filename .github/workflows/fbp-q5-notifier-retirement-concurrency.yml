@@ -4,6 +4,7 @@ on:
     paths:
       - "packages/phenix-graphs/src/runtime/wake.rs"
       - "packages/phenix-graphs/tests/fbp_notifier_retirement_interleavings.rs"
+      - "packages/phenix-graphs/tests/fbp_plugin_lock_order.rs"
       - "docs/fbp-q5-notifier-retirement-interleavings-20261113.md"
       - ".github/workflows/fbp-q5-notifier-retirement-concurrency.yml"
   workflow_dispatch:
@@ -37,6 +38,7 @@ jobs:
           } > artifacts/environment.txt
           sha256sum packages/phenix-graphs/src/runtime/wake.rs \
             packages/phenix-graphs/tests/fbp_notifier_retirement_interleavings.rs \
+            packages/phenix-graphs/tests/fbp_plugin_lock_order.rs \
             > artifacts/source-hashes.txt
           cat artifacts/environment.txt
           cat artifacts/source-hashes.txt
@@ -60,9 +62,17 @@ jobs:
                 cat "artifacts/integration-$repetition.log"
                 exit 1
               }
-            echo "repetition $repetition: internal wake + compiled-session races passed"
+            nix develop --command cargo test --locked -q \
+              -p phenix-graph --test fbp_plugin_lock_order \
+              -- --test-threads=1 \
+              > "artifacts/plugin-lock-$repetition.log" 2>&1 || {
+                cat "artifacts/plugin-lock-$repetition.log"
+                exit 1
+              }
+            echo "repetition $repetition: internal wake + request recovery + plugin lock-order callbacks passed"
             tail -n 3 "artifacts/unit-$repetition.log"
             tail -n 3 "artifacts/integration-$repetition.log"
+            tail -n 3 "artifacts/plugin-lock-$repetition.log"
           done
       - name: Preserve CI evidence and failures
         if: always()

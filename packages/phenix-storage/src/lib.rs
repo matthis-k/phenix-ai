@@ -1574,6 +1574,17 @@ impl Subscription {
         Ok(watch.queue.drain(..).collect())
     }
 }
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        let waker = self
+            .watch
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .waker
+            .take();
+        run_wakers(waker.into_iter().map(WakerAction::Drop));
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1677,6 +1688,76 @@ mod tests {
             assert_eq!(drops.load(Ordering::SeqCst), 1, "{outcome}");
             assert_eq!(wakes.load(Ordering::SeqCst), 1, "{outcome}");
             assert!(matches!(sub.drain(), Err(Error::SubscriptionClosed)));
+        }
+    }
+
+    #[test]
+    fn subscription_drop_defers_waker_destructor_until_storage_locks_are_released() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct DropWake(Box<dyn Fn() + Send + Sync>);
+        impl std::task::Wake for DropWake {
+            fn wake(self: Arc<Self>) {
+                panic!("subscription drop must not wake");
+            }
+        }
+        impl Drop for DropWake {
+            fn drop(&mut self) {
+                (self.0)();
+            }
+        }
+
+        for outcome in ["success", "error", "unwind"] {
+            let registry = Registry::new();
+            registry.mount_sqlite("main", ":memory:").unwrap();
+            let session = registry.session([Grant::new(
+                Scope::Mount("main".into()),
+                [Operation::SqlRead, Operation::Subscribe],
+            )]);
+            let mut subscription = session.subscribe(Scope::Mount("main".into()), 1).unwrap();
+            let watch = subscription.watch.clone();
+            let reentrant = session.clone();
+            let drops = Arc::new(AtomicUsize::new(0));
+            let observed = drops.clone();
+            subscription
+                .set_waker(
+                    Arc::new(DropWake(Box::new(move || {
+                        let unlocked = match watch.try_lock() {
+                            Ok(guard) => {
+                                drop(guard);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                        let idle = ACTIVE.with(|active| active.borrow().is_empty());
+                        if unlocked
+                            && idle
+                            && reentrant.transaction_mount("main", |_| Ok(())).is_ok()
+                        {
+                            observed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })))
+                    .into(),
+                )
+                .unwrap();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.transaction_mount("main", |_| -> Result<()> {
+                    drop(subscription);
+                    assert_eq!(drops.load(Ordering::SeqCst), 0);
+                    match outcome {
+                        "error" => Err(Error::Codec("abort".into())),
+                        "unwind" => panic!("abort transaction"),
+                        _ => Ok(()),
+                    }
+                })
+            }));
+            match outcome {
+                "error" => assert!(matches!(result, Ok(Err(Error::Codec(_))))),
+                "unwind" => assert!(result.is_err()),
+                _ => result.unwrap().unwrap(),
+            }
+            assert_eq!(drops.load(Ordering::SeqCst), 1, "{outcome}");
         }
     }
 

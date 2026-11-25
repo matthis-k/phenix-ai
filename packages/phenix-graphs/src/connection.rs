@@ -160,16 +160,23 @@ impl ConnectionQueue {
     }
     /// Dispose one request's accepted packets without touching any other
     /// request's FIFO positions. Unindexed requests cannot own a packet here.
-    fn discard_request(&mut self, request: RequestId) -> usize {
-        let Some(count) = self.request_counts.remove(&request) else {
-            return 0;
+    fn detach_request(&mut self, request: RequestId) -> Vec<Packet> {
+        let Some(count) = self.request_counts.get(&request).copied() else {
+            return vec![];
         };
-        let before = self.packets.len();
-        self.packets.retain(|packet| {
-            packet.metadata().and_then(|metadata| metadata.request()) != Some(request)
-        });
-        debug_assert_eq!(before - self.packets.len(), count);
-        count
+        let mut retained = VecDeque::with_capacity(self.packets.len().saturating_sub(count));
+        let mut discarded = Vec::with_capacity(count);
+        for packet in std::mem::take(&mut self.packets) {
+            if packet.metadata().and_then(|metadata| metadata.request()) == Some(request) {
+                discarded.push(packet);
+            } else {
+                retained.push_back(packet);
+            }
+        }
+        self.packets = retained;
+        self.request_counts.remove(&request);
+        debug_assert_eq!(discarded.len(), count);
+        discarded
     }
     pub fn close_writer(&mut self) {
         self.writer_closed = true;
@@ -287,13 +294,19 @@ impl ConnectionSet {
     pub fn pop_at(&mut self, index: usize, offset: usize) -> Option<Packet> {
         self.queues.get_mut(index)?.pop_at(offset)
     }
-    /// Explicit request disposal, not delivery or rollback. Unrelated packets
-    /// retain their exact FIFO order and queue reader/writer state is unchanged.
-    pub fn discard_request(&mut self, request: crate::runtime::RequestId) -> usize {
-        self.queues
-            .iter_mut()
-            .map(|queue| queue.discard_request(request))
-            .sum()
+    /// Detach a request's accepted packets, not delivery or rollback. The caller
+    /// owns their destruction after queue and request lifecycle state is settled.
+    /// Unrelated packets retain exact FIFO order and reader/writer state is unchanged.
+    pub fn detach_request(&mut self, request: crate::runtime::RequestId) -> Vec<Packet> {
+        let total = self.queues.iter().fold(0_usize, |total, queue| {
+            total.saturating_add(queue.request_count(request))
+        });
+        let mut discarded = Vec::with_capacity(total);
+        for queue in &mut self.queues {
+            discarded.extend(queue.detach_request(request));
+        }
+        debug_assert_eq!(discarded.len(), total);
+        discarded
     }
     pub fn close_writer(&mut self, index: usize) -> Result<(), ConnectionError> {
         self.queues
@@ -412,12 +425,16 @@ impl ConnectionSet {
         Ok(())
     }
     /// Cancellation disposal is explicit and countable, not successful delivery.
-    pub fn cancel(&mut self) -> usize {
+    /// Returned packets remain caller-owned so payload destruction happens after
+    /// queue state has reached its terminal form.
+    pub fn cancel(&mut self) -> Vec<Packet> {
         self.cancelled = true;
-        self.queues
-            .iter_mut()
-            .map(|queue| queue.close_reader().len())
-            .sum()
+        let count = self.queues.iter().map(ConnectionQueue::len).sum();
+        let mut packets = Vec::with_capacity(count);
+        for queue in &mut self.queues {
+            packets.extend(queue.close_reader());
+        }
+        packets
     }
 }
 
@@ -439,6 +456,13 @@ pub struct PreparedFanout {
     committed: bool,
 }
 impl PreparedFanout {
+    pub(crate) fn into_packets(self) -> Vec<Packet> {
+        self.prepared
+            .into_iter()
+            .map(|(_, packet)| packet)
+            .collect()
+    }
+
     /// Scheduler-only capture projection stamp, before the atomic commit.
     pub(crate) fn stamp_capture(&mut self, connection: usize, name: &str) {
         let (_, packet) = self

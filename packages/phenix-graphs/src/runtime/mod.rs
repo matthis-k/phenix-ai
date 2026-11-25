@@ -10,7 +10,7 @@ use crate::connection::{
 };
 use crate::network::CompiledNetwork;
 use crate::process::{
-    ActivationJob, CompletedStep, DispatchResult, HandoffError, HandoffState,
+    ActivationJob, CancelledProcess, CompletedStep, DispatchResult, HandoffError, HandoffState,
     LocalProcessDispatcher, ProcessContext, ProcessDispatcher, ProcessExecutionGuard,
     ProcessHandoff, ResourceGrant, Step, StepTicket,
 };
@@ -36,6 +36,23 @@ pub use request::{
 };
 pub use wake::{ProcessNotifier, SessionNotifier, WakeHandle, WakeListener};
 use wake::{WakeSignal, WakeSlot};
+
+pub(super) fn drop_packets_catching(packets: impl IntoIterator<Item = Packet>) -> bool {
+    let mut panicked = false;
+    for packet in packets {
+        panicked |=
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(packet))).is_err();
+    }
+    panicked
+}
+
+pub(super) fn drop_prepared_catching(pending: Vec<PreparedFanout>) -> bool {
+    let mut panicked = false;
+    for fanout in pending {
+        panicked |= drop_packets_catching(fanout.into_packets());
+    }
+    panicked
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RequestFailurePolicy {
@@ -718,10 +735,11 @@ impl NetworkSession {
             self.fail_input(index, "abandoned accepted input on Finished");
             return;
         }
+        let mut destructor_panicked = false;
         let (writers, readers, retired_wake) = {
             let p = &mut self.processes[index];
             if p.handoff.state() == HandoffState::Idle {
-                p.handoff.finish_idle().unwrap();
+                destructor_panicked = p.handoff.finish_idle().is_err();
             }
             p.done = true;
             p.request = None;
@@ -748,6 +766,12 @@ impl NetworkSession {
             let packets = self.transport.close_reader(queue).unwrap();
             debug_assert!(packets.is_empty());
             self.dirty_queue(queue);
+        }
+        if destructor_panicked {
+            self.fail(format!(
+                "owned destructor panicked while finishing {}",
+                self.compiled.processes()[index].path()
+            ));
         }
     }
     // An idle process with empty, writer-open inputs has no native packet or
@@ -1316,7 +1340,8 @@ impl NetworkSession {
     }
     fn fail(&mut self, error: String) {
         // Failure is not rollback: retain committed captures for host draining.
-        self.stop_processes();
+        let (cancelled, pending) = self.stop_processes();
+        let mut disposed = Vec::new();
         for index in 0..self.transport.queues().len() {
             self.transport.close_writer(index).unwrap();
             if !matches!(self.endpoints[index].1, QueueEndpoint::Capture(_)) {
@@ -1328,37 +1353,59 @@ impl NetworkSession {
                             scope.disposal.queued_packets.saturating_add(1);
                     }
                 }
-                self.disposed_packets = self
-                    .disposed_packets
-                    .saturating_add(self.transport.close_reader(index).unwrap().len());
+                let packets = self.transport.close_reader(index).unwrap();
+                self.disposed_packets = self.disposed_packets.saturating_add(packets.len());
+                disposed.extend(packets);
             }
         }
         self.failure = Some(error);
         self.terminal = Some(SessionState::Failed);
+        let mut destructor_panicked = false;
+        for process in cancelled {
+            destructor_panicked |= process.dispose().is_err();
+        }
+        destructor_panicked |= drop_prepared_catching(pending);
+        destructor_panicked |= drop_packets_catching(disposed);
+        if destructor_panicked {
+            let diagnostic = self.failure.take().unwrap_or_default();
+            self.failure = Some(format!(
+                "{diagnostic}; destructor panicked during failure cleanup"
+            ));
+        }
     }
-    fn stop_processes(&mut self) {
+    fn stop_processes(&mut self) -> (Vec<CancelledProcess>, Vec<PreparedFanout>) {
         self.dispatched_at.clear();
+        let mut cancelled = Vec::new();
+        let mut pending = Vec::new();
         for p in &mut self.processes {
-            let ticket = p.handoff.cancel();
+            let request = p.request;
+            let retired = p.handoff.cancel_detach();
+            let ticket = retired.ticket();
             if let Some(request) = p.request
                 && let Some(scope) = self.requests.get_mut(&request)
             {
                 scope.disposal.activations += 1;
-                if let Some(pending) = &p.pending {
-                    scope.disposal.prepared_packets += pending.retained_packets();
-                }
                 if let Some(ticket) = ticket {
                     scope.cancelled_jobs.push(ticket);
                     scope.disposal.handed_jobs += 1;
                 }
             }
-            p.pending = None;
+            if let Some(prepared) = p.pending.take() {
+                if let Some(request) = request
+                    && let Some(scope) = self.requests.get_mut(&request)
+                {
+                    scope.disposal.prepared_packets += prepared.retained_packets();
+                }
+                pending.push(prepared);
+            }
+            cancelled.push(retired);
             p.pending_targets.clear();
             p.wake.active.store(false, Ordering::Release);
             p.request = None;
         }
         self.ready.clear();
         self.signal.invalidate();
+        (cancelled, pending)
     }
     pub fn cancel(&mut self) {
         // A terminal result is final. In particular, do not turn a failure
@@ -1366,7 +1413,7 @@ impl NetworkSession {
         if self.terminal.is_some() || self.is_completed() {
             return;
         }
-        self.stop_processes();
+        let (cancelled, pending) = self.stop_processes();
         for queue in self.transport.queues() {
             for packet in queue.packets() {
                 if let Some(request) = packet.metadata().and_then(|m| m.request())
@@ -1376,10 +1423,18 @@ impl NetworkSession {
                 }
             }
         }
-        self.disposed_packets = self
-            .disposed_packets
-            .saturating_add(self.transport.cancel());
+        let packets = self.transport.cancel();
+        self.disposed_packets = self.disposed_packets.saturating_add(packets.len());
         self.terminal = Some(SessionState::Cancelled);
+        let mut destructor_panicked = false;
+        for process in cancelled {
+            destructor_panicked |= process.dispose().is_err();
+        }
+        destructor_panicked |= drop_prepared_catching(pending);
+        destructor_panicked |= drop_packets_catching(packets);
+        if destructor_panicked {
+            self.failure = Some("destructor panicked during session cancellation cleanup".into());
+        }
     }
     fn is_completed(&self) -> bool {
         self.processes.iter().all(|p| p.done)

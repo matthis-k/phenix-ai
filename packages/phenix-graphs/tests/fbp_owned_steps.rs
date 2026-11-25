@@ -5,7 +5,7 @@ use phenix_graph::process::*;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct Counter {
     value: Cell<i64>,
@@ -203,6 +203,119 @@ impl Process for ProbedProcess {
 }
 
 #[test]
+fn handoff_cancel_reports_panicking_destructor_after_revoking_ownership() {
+    struct PanickingDrop;
+    impl Process for PanickingDrop {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for PanickingDrop {
+        fn drop(&mut self) {
+            panic!("process destructor panic");
+        }
+    }
+
+    let mut handoff = ProcessHandoff::new(Box::new(PanickingDrop));
+    assert_eq!(
+        handoff.cancel(),
+        Err(phenix_graph::process::HandoffCancelError::DestructorPanicked { ticket: None })
+    );
+    assert_eq!(handoff.state(), HandoffState::Cancelled);
+    assert_eq!(handoff.cancel(), Ok(None));
+}
+
+#[test]
+fn completion_and_idle_finish_contain_panicking_destructors() {
+    struct PanicValue(Arc<AtomicBool>);
+    impl Drop for PanicValue {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("completed context destructor panic");
+            }
+        }
+    }
+    struct Completes;
+    impl Process for Completes {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    struct PanicProcessDrop(Arc<AtomicBool>);
+    impl Process for PanicProcessDrop {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Complete)
+        }
+    }
+    impl Drop for PanicProcessDrop {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("idle process destructor panic");
+            }
+        }
+    }
+
+    let context_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(Completes));
+    handoff
+        .admit(ProcessContext::new(
+            BTreeMap::from([(
+                "value".into(),
+                Value::local(PanicValue(context_drops.clone())),
+            )]),
+            vec![],
+        ))
+        .unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert_eq!(
+        handoff.complete(completion).unwrap().unwrap_err(),
+        "owned destructor panicked during completion"
+    );
+    assert_eq!(handoff.state(), HandoffState::Failed);
+    assert!(context_drops.load(Ordering::SeqCst));
+
+    let process_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(PanicProcessDrop(process_drops.clone())));
+    handoff.admit(ProcessContext::default()).unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert!(matches!(
+        handoff.complete(completion).unwrap(),
+        Ok(Step::Complete)
+    ));
+    assert_eq!(handoff.state(), HandoffState::Idle);
+    assert_eq!(handoff.finish_idle(), Err(HandoffError::DestructorPanicked));
+    assert_eq!(handoff.state(), HandoffState::Finished);
+    assert!(process_drops.load(Ordering::SeqCst));
+
+    struct Finishes;
+    impl Process for Finishes {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, String> {
+            Ok(Step::Finished)
+        }
+    }
+    struct PanicLeaseDrop(Arc<AtomicBool>);
+    impl Drop for PanicLeaseDrop {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("finished process lease destructor panic");
+            }
+        }
+    }
+
+    let lease_drops = Arc::new(AtomicBool::new(false));
+    let mut handoff = ProcessHandoff::new(Box::new(Finishes))
+        .with_lease(Arc::new(PanicLeaseDrop(lease_drops.clone())));
+    handoff.admit(ProcessContext::default()).unwrap();
+    let completion = handoff.next_job().unwrap().run();
+    assert_eq!(
+        handoff.complete(completion).unwrap().unwrap_err(),
+        "owned destructor panicked during completion"
+    );
+    assert_eq!(handoff.state(), HandoffState::Failed);
+    assert!(lease_drops.load(Ordering::SeqCst));
+}
+
+#[test]
 fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventory() {
     let drops = Arc::new(AtomicUsize::new(0));
     let process = ProbedProcess {
@@ -212,7 +325,7 @@ fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventor
     let mut handoff = ProcessHandoff::new(Box::new(process));
     handoff.admit(ProcessContext::default()).unwrap();
     let job = handoff.next_job().unwrap();
-    assert_eq!(handoff.cancel(), Some(job.ticket()));
+    assert_eq!(handoff.cancel().unwrap(), Some(job.ticket()));
     assert_eq!(drops.load(Ordering::SeqCst), 0);
     let (error, completion) = handoff.complete(job.run()).unwrap_err();
     assert_eq!(error, HandoffError::StaleCompletion);
@@ -220,7 +333,7 @@ fn cancellation_invalidates_before_late_completion_and_preserves_runner_inventor
     assert!(handoff.admit(inputs(1)).is_err());
     drop(completion);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(handoff.cancel().is_none());
+    assert!(handoff.cancel().unwrap().is_none());
 }
 
 #[test]
@@ -317,7 +430,7 @@ fn late_completion_drops_process_before_code_lease() {
     }));
     handoff.admit(ProcessContext::default()).unwrap();
     let job = handoff.next_job().unwrap();
-    handoff.cancel();
+    handoff.cancel().unwrap();
     let (_, completion) = handoff.complete(job.run()).unwrap_err();
     assert_eq!(alive.load(Ordering::SeqCst), 1);
     drop(completion);
@@ -483,7 +596,7 @@ fn late_emission_payload_drops_before_its_job_releases_code_lease() {
     }));
     handoff.admit(ProcessContext::default()).unwrap();
     let completion = handoff.next_job().unwrap().run();
-    handoff.cancel();
+    handoff.cancel().unwrap();
     let (_, completion) = handoff.complete(completion).unwrap_err();
     assert_eq!(alive.load(Ordering::SeqCst), 1);
     drop(completion);
