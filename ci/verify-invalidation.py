@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix="phenix-invalidation-", dir="/tmp/openco
     shutil.copytree(root, source, ignore=shutil.ignore_patterns(".git", "target"))
     baseline = inventory(source)
     for relative, unchanged, changed in [
-        ("docs/infrastructure.md", set(baseline), set()),
+        ("docs/infrastructure.md", set(baseline) - {"docs"}, {"docs"}),
         ("packages/phenix-storage/src/lib.rs", {"graph", "workflow"}, {"storage", "clippy", "format"}),
         ("packages/phenix-graphs/src/lib.rs", {"storage", "workflow"}, {"graph", "kernel", "clippy", "format"}),
         ("packages/phenix-schema/src/lib.rs", {"workflow"}, {"storage", "graph", "kernel", "integration", "clippy", "format", "kernel-smoke"}),
