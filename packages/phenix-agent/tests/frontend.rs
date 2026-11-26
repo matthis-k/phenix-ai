@@ -3,6 +3,7 @@
 use phenix_agent::{
     AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, MODEL_CONTRACT,
     PROMPT, PROMPT_CONTRACT,
+    environment::{EnvironmentRoutes, environment_grants},
     mock::{self, MockModel, MockTool},
 };
 use phenix_graph::{
@@ -20,6 +21,9 @@ const DECODE: &str = "frontend-decode";
 const ENCODE: &str = "frontend-encode";
 const INPUT: &str = "frontend-request";
 const OUTPUT: &str = "frontend-update";
+const ENVIRONMENT: &str = "environment-extension";
+const REMOTE: &str = "remote-provider";
+const REMOTE_PATH: &str = "remote-tool";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MockPrompt(String);
@@ -84,6 +88,15 @@ impl PluginInstance for Frontend {
 
 #[test]
 fn independent_frontend_and_native_ingress_share_one_loop() {
+    exercise_frontend(false);
+}
+
+#[test]
+fn frontend_and_environment_extensions_compose_without_knowing_each_other() {
+    exercise_frontend(true);
+}
+
+fn exercise_frontend(extended: bool) {
     let mut catalog = PluginCatalog::new();
     let contracts = catalog
         .register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))
@@ -92,12 +105,24 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
     let model = catalog.register(mock::MODEL_PLUGIN, Ok).unwrap();
     let tool = catalog.register(mock::TOOL_PLUGIN, Ok).unwrap();
     let frontend = catalog.register(FRONTEND, |_: ()| Ok(Frontend)).unwrap();
+    let remote = catalog.register(REMOTE, Ok).unwrap();
+    let environment = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
-    let stages = vec![
+    let mut stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
         host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
         host.plugins()
-            .prepare_load(&model, MockModel::default())
+            .prepare_load(
+                &model,
+                MockModel {
+                    environment_by_prompt: [
+                        ("remote".into(), "remote".into()),
+                        ("missing".into(), "missing".into()),
+                    ]
+                    .into(),
+                    ..MockModel::default()
+                },
+            )
             .unwrap(),
         host.plugins()
             .prepare_load(&tool, MockTool::default())
@@ -136,6 +161,49 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
             ..Default::default()
         },
     );
+    if extended {
+        stages.push(
+            host.plugins()
+                .prepare_load(
+                    &environment,
+                    EnvironmentRoutes {
+                        environments: ["remote".into()].into(),
+                    },
+                )
+                .unwrap(),
+        );
+        stages.push(
+            host.plugins()
+                .prepare_load(
+                    &remote,
+                    MockTool {
+                        path: REMOTE_PATH.into(),
+                        prefix: "remote".into(),
+                    },
+                )
+                .unwrap(),
+        );
+        options.imports.allow.as_mut().unwrap().insert((
+            Key::new(ENVIRONMENT, "env-remote"),
+            Key::new(REMOTE, "tool"),
+        ));
+        options.composition.insert(
+            Key::new(REMOTE, "main"),
+            CompositionPolicy {
+                grants: [Footprint::Component(REMOTE_PATH.into())].into(),
+                ..Default::default()
+            },
+        );
+        options.composition.insert(
+            Key::new(ENVIRONMENT, "main"),
+            CompositionPolicy {
+                grants: environment_grants(&[("remote".into(), REMOTE_PATH.into())].into())
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
     let candidate = host
         .prepare(stages, options, "frontend", |_| Ok(()))
         .unwrap();
@@ -157,7 +225,19 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
         .compiled()
         .bind_capture(OUTPUT, OutputKey::<MockUpdate>::new(OUTPUT))
         .unwrap();
-    for (external, prompt) in [(true, "external"), (false, "native")] {
+    for (external, prompt) in [
+        (true, "external"),
+        (false, "native"),
+        (true, "remote"),
+        (false, "remote"),
+        (true, "missing"),
+        (false, "native"),
+    ] {
+        let expected = match (extended, prompt) {
+            (true, "remote") => "remote(remote)".into(),
+            (_, "remote" | "missing") => "tool failed: environment unavailable: ".into(),
+            _ => format!("lookup({prompt})"),
+        };
         generation
             .with_session(|session| {
                 let request = session.begin_bound_request(None).unwrap();
@@ -193,7 +273,7 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
                         Ok(RequestStatus::Settled { .. })
                     ) {
                         assert_eq!(original, translated);
-                        assert!(original.contains(&AgentEvent::Delta(format!("lookup({prompt})"))));
+                        assert!(original.contains(&AgentEvent::Delta(expected)));
                         assert_eq!(original.last(), Some(&AgentEvent::Completed));
                         session.release_request(request).unwrap();
                         return;
