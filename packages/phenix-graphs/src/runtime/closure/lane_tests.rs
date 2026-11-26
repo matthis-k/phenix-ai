@@ -464,11 +464,7 @@ fn sealed_zero_input_source_delegation_blocks_downstream_absence_until_completio
                 auto_start_sources: false,
                 request_queue_policy: policy,
                 dispatcher: delegated.clone(),
-                readiness: [(
-                    "sink".into(),
-                    Readiness::optional(vec![], vec!["a".into()]),
-                )]
-                .into(),
+                readiness: [("sink".into(), Readiness::optional(vec![], vec!["a".into()]))].into(),
                 ..Default::default()
             });
         let source = s.compiled.physical_process_index("source").unwrap();

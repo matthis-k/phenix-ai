@@ -199,10 +199,8 @@ fn request_optional_cycle_does_not_invent_mutual_absence_proofs() {
     .unwrap();
     let mut opts = SessionOptions::default();
     for name in ["a", "b"] {
-        opts.readiness.insert(
-            name.into(),
-            Readiness::optional(vec![], vec!["in".into()]),
-        );
+        opts.readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["in".into()]));
     }
     let mut s = b
         .build()

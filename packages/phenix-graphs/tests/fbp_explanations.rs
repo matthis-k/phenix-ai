@@ -167,7 +167,9 @@ fn builtin_assessments_match_next_actual_reservation_and_count_distinct_ports() 
                     let available =
                         matches!(explanation.readiness, ReadyAssessment::Available { .. });
                     assert_eq!(available, second_port, "{policy:?}: {explanation:?}");
-                    if matches!(policy.declaration().rule, Some(SelectionRule::AtLeast(_))) && !second_port {
+                    if matches!(policy.declaration().rule, Some(SelectionRule::AtLeast(_)))
+                        && !second_port
+                    {
                         assert!(matches!(&candidate(&explanation, Some(id)).assessment,
                             ReadyAssessment::Blocked { reasons } if reasons.contains(&ReadinessBlock::Threshold { available_ports: 1, required_ports: 2 })));
                     }
@@ -1348,11 +1350,7 @@ fn all_optional_cycle_observation_is_not_replayed_and_invalidated_ticket_invento
         .compile()
         .unwrap()
         .start_with_options(SessionOptions {
-            readiness: [(
-                "p".into(),
-                Readiness::optional(vec![], vec!["a".into()]),
-            )]
-            .into(),
+            readiness: [("p".into(), Readiness::optional(vec![], vec!["a".into()]))].into(),
             request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
             ..Default::default()
         });

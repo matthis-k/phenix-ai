@@ -94,10 +94,9 @@ fn sealed_optional_watch_is_idempotent_and_isolated_across_requests() {
         .unwrap();
     let mut options = SessionOptions::default();
     for name in ["optional", "unrelated"] {
-        options.readiness.insert(
-            name.into(),
-            Readiness::optional(vec![], vec!["opt".into()]),
-        );
+        options
+            .readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut session = builder
         .build()

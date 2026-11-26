@@ -273,7 +273,10 @@ pub(crate) fn compiled(
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "join".into(),
-        Readiness::optional(vec!["context".into()], vec!["local".into(), "remote".into()]),
+        Readiness::optional(
+            vec!["context".into()],
+            vec!["local".into(), "remote".into()],
+        ),
     );
     options.readiness.insert(
         "tools.local".into(),

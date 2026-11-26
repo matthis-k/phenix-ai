@@ -3600,10 +3600,8 @@ fn all_optional_closure_obligations_settle_in_upstream_order_without_new_packets
     .unwrap();
     let mut opts = options();
     for name in ["m_first", "a_last"] {
-        opts.readiness.insert(
-            name.into(),
-            Readiness::optional(vec![], vec!["opt".into()]),
-        );
+        opts.readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut s = b
         .build()
@@ -3780,10 +3778,8 @@ fn optional_scope_cannot_settle_behind_another_requests_handed_job() {
     .unwrap();
     let mut opts = options();
     for name in ["consumer", "unrelated"] {
-        opts.readiness.insert(
-            name.into(),
-            Readiness::optional(vec![], vec!["opt".into()]),
-        );
+        opts.readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut s = b
         .build()
@@ -5240,7 +5236,10 @@ impl Process for RequiredStage {
                 .get::<i64>()?,
             22
         );
-        if matches!(self.policy.declaration().rule, Some(SelectionRule::Optional { .. })) {
+        if matches!(
+            self.policy.declaration().rule,
+            Some(SelectionRule::Optional { .. })
+        ) {
             assert!(cx.is_closed("c"));
             assert_eq!(cx.is_request_closed("c"), self.scoped);
             assert_eq!(cx.is_eos("c"), !self.scoped);

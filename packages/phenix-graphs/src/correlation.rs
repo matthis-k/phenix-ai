@@ -167,17 +167,23 @@ struct LanePolicy {
 }
 impl ReadinessPolicy for LanePolicy {
     fn declaration(&self) -> PolicyDeclaration {
-        let rule = self.lane.and_then(|lane| match self.policy.declaration().rule.as_ref()? {
-            SelectionRule::All => Some(SelectionRule::Optional {
-                required: self.names.iter().map(|name| lane_name(lane, name)).collect(),
-                optional: vec![],
-            }),
-            SelectionRule::Optional { required, optional } => Some(SelectionRule::Optional {
-                required: required.iter().map(|name| lane_name(lane, name)).collect(),
-                optional: optional.iter().map(|name| lane_name(lane, name)).collect(),
-            }),
-            _ => None,
-        });
+        let rule = self
+            .lane
+            .and_then(|lane| match self.policy.declaration().rule.as_ref()? {
+                SelectionRule::All => Some(SelectionRule::Optional {
+                    required: self
+                        .names
+                        .iter()
+                        .map(|name| lane_name(lane, name))
+                        .collect(),
+                    optional: vec![],
+                }),
+                SelectionRule::Optional { required, optional } => Some(SelectionRule::Optional {
+                    required: required.iter().map(|name| lane_name(lane, name)).collect(),
+                    optional: optional.iter().map(|name| lane_name(lane, name)).collect(),
+                }),
+                _ => None,
+            });
         PolicyDeclaration {
             rule,
             correlated: false,

@@ -87,7 +87,8 @@ pub struct Readiness {
 impl Readiness {
     pub const ANY: Self = Self::declared_static(&Any, Any::DECLARATION);
     pub const ALL: Self = Self::declared_static(&All, All::DECLARATION);
-    pub const CORRELATED_ALL: Self = Self::declared_static(&CorrelatedAll, CorrelatedAll::DECLARATION);
+    pub const CORRELATED_ALL: Self =
+        Self::declared_static(&CorrelatedAll, CorrelatedAll::DECLARATION);
 
     /// Capture a policy's immutable declaration once, at construction.
     pub fn new(policy: Arc<dyn ReadinessPolicy>) -> Self {
@@ -409,7 +410,11 @@ impl ReadinessPolicy for Optional {
     }
 }
 
-fn select_optional(required: &[String], optional: &[String], snapshot: &ReadinessSnapshot) -> Vec<String> {
+fn select_optional(
+    required: &[String],
+    optional: &[String],
+    snapshot: &ReadinessSnapshot,
+) -> Vec<String> {
     let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
     if required
         .iter()

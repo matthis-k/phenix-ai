@@ -32,10 +32,9 @@ fn measure(optional_nodes: usize, iterations: usize, scoped: bool) -> (f64, f64,
                 one(),
             )
             .unwrap();
-        options.readiness.insert(
-            name,
-            Readiness::optional(vec![], vec!["input".into()]),
-        );
+        options
+            .readiness
+            .insert(name, Readiness::optional(vec![], vec!["input".into()]));
     }
     let begin = Instant::now();
     let graph = builder.build().unwrap().compile().unwrap();
