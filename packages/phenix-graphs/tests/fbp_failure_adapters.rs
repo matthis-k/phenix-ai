@@ -2,7 +2,8 @@
 use phenix_graph::{
     CallbackPhase, Failure, FailureKind, GraphOrigin, InputKey, ProcessContext, Value, ValueError,
     connection::{
-        ConnectionError, ConnectionQueue, ConnectionSet, EdgeAdapter, FanoutTarget, Packet,
+        AdapterRef, ConnectionError, ConnectionQueue, ConnectionSet, EdgeAdapter, FanoutTarget,
+        Packet,
         PacketDestructorPanicked,
     },
 };
@@ -75,7 +76,7 @@ fn queue(value: &Value) -> ConnectionQueue {
 fn target(connection: usize, adapter: Arc<dyn EdgeAdapter>) -> FanoutTarget {
     FanoutTarget {
         connection,
-        preparation: Some(adapter),
+        preparation: AdapterRef::Owned(adapter),
     }
 }
 

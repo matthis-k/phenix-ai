@@ -270,15 +270,41 @@ impl EdgeAdapter for IdentityEdgeAdapter {
     }
 }
 
+/// Named standard preparation; a process may use this or another adapter.
+pub static IDENTITY: IdentityEdgeAdapter = IdentityEdgeAdapter;
+
+/// An adapter with its actual ownership. Static Rust implementations have no
+/// instance owner to retain; owned callbacks pin their exact definition.
+pub enum AdapterRef {
+    Static(&'static dyn EdgeAdapter),
+    Owned(Arc<dyn EdgeAdapter>),
+}
+
+impl AdapterRef {
+    fn adapter(&self) -> &dyn EdgeAdapter {
+        match self {
+            Self::Static(adapter) => *adapter,
+            Self::Owned(adapter) => adapter.as_ref(),
+        }
+    }
+
+    fn owner(&self) -> Option<Arc<dyn Send + Sync>> {
+        match self {
+            Self::Static(_) => None,
+            Self::Owned(adapter) => Some(Arc::new(adapter.clone())),
+        }
+    }
+}
+
 pub struct FanoutTarget {
     pub connection: usize,
-    pub preparation: Option<Arc<dyn EdgeAdapter>>,
+    pub preparation: AdapterRef,
 }
 impl FanoutTarget {
     pub fn identity(connection: usize) -> Self {
         Self {
             connection,
-            preparation: None,
+            preparation: AdapterRef::Static(&IDENTITY),
         }
     }
 }
@@ -377,37 +403,31 @@ impl ConnectionSet {
         let mut prepared: Vec<(usize, Packet)> = Vec::with_capacity(targets.len());
         let preparation = (|| {
             for target in targets {
-                let mut value = match &target.preparation {
-                    Some(preparation) => {
-                        // Pin the exact immutable callback definition, not the input
-                        // payload or a process instance. Its causes may escape alone.
-                        let owner: Arc<dyn Send + Sync> = Arc::new(preparation.clone());
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            preparation.prepare(&packet.value)
-                        }));
-                        let result = match result {
-                            Ok(result) => result,
-                            Err(payload) => Err(crate::process::callback_panicked(
-                                CallbackPhase::Adapter,
-                                payload,
-                            )),
-                        };
-                        let mut value = result.map_err(|failure| {
-                            PrepareError::Adapter(
-                                failure
-                                    .retain_leases(packet.value.known_leases())
-                                    .retain_leases(std::slice::from_ref(&owner)),
-                            )
-                        })?;
-                        // Local payloads can have adapter-defined destructors. Wire
-                        // envelopes contain only host-owned schema/bytes, not code.
-                        if value.is_local() {
-                            value = value.with_lease(owner);
-                        }
-                        value
-                    }
-                    None => packet.value.clone(),
+                let owner = target.preparation.owner();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    target.preparation.adapter().prepare(&packet.value)
+                }));
+                let result = match result {
+                    Ok(result) => result,
+                    Err(payload) => Err(crate::process::callback_panicked(
+                        CallbackPhase::Adapter,
+                        payload,
+                    )),
                 };
+                let mut value = result.map_err(|failure| {
+                    PrepareError::Adapter(
+                        failure
+                            .retain_leases(packet.value.known_leases())
+                            .retain_leases(owner.as_slice()),
+                    )
+                })?;
+                // Local payloads can have adapter-defined destructors. Wire
+                // envelopes contain only host-owned schema/bytes, not code.
+                if value.is_local()
+                    && let Some(owner) = owner
+                {
+                    value = value.with_lease(owner);
+                }
                 // New adapter payloads may still depend on the source's code/resources.
                 value.retain_leases_from(&packet.value);
                 if value.identity() != self.queues[target.connection].identity {
@@ -560,10 +580,7 @@ fn packet_cleanup(target: &FanoutTarget, input: &Value) -> Failure {
     )
     .with_kind(FailureKind::Cleanup)
     .retain_leases(input.known_leases());
-    match &target.preparation {
-        Some(adapter) => failure.retain_leases(&[Arc::new(adapter.clone())]),
-        None => failure,
-    }
+    failure.retain_leases(target.preparation.owner().as_slice())
 }
 
 pub struct PreparedFanout {
