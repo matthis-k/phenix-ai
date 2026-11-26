@@ -25,7 +25,9 @@ fn turn(generation: &Generation, prompt: &str) -> Vec<AgentEvent> {
             for _ in 0..64 {
                 session.run_until_idle(1);
                 assert!(session.failure().is_none());
-                while let Some(packet) = session.take_bound_request_output(request, &capture).unwrap()
+                while let Some(packet) = session
+                    .take_bound_request_output(request, &capture)
+                    .unwrap()
                 {
                     session
                         .validate_bound_capture(request, &capture, &packet)
