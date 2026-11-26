@@ -365,14 +365,10 @@ pub fn fixture(groups: usize, previews: bool) -> (Vec<PluginSnapshot>, BuildOpti
                     },
                 )
                 .unwrap();
-            trace
-                .roots
-                .lock()
-                .unwrap()
-                .insert(
-                    name.clone(),
-                    phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone()),
-                );
+            trace.roots.lock().unwrap().insert(
+                name.clone(),
+                phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone()),
+            );
             snapshots.push(snapshot);
             let key = Key::new(&name, "main");
             options.inspect_network.insert(key.clone());
