@@ -102,6 +102,7 @@ pub const CONTRACTS_PLUGIN: &str = "agent-contracts";
 pub const LOOP_PLUGIN: &str = "agent-loop";
 pub const MODEL_CONTRACT: &str = "model";
 pub const TOOL_CONTRACT: &str = "tool";
+pub const PROMPT_CONTRACT: &str = "prompt";
 pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
@@ -156,6 +157,21 @@ pub fn tool_contract() -> Contract {
     .unwrap()
 }
 
+/// Typed prompt ingress seam; frontends attach before model-input construction.
+pub fn prompt_contract() -> Contract {
+    Contract::new(
+        "agent/prompt@1",
+        Arc::new(
+            Interface::new(
+                [PortDef::local::<String>("input")],
+                [PortDef::local::<ModelInput>("output")],
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap()
+}
+
 /// Shared application contracts are available independently of any loop preset.
 pub struct AgentContracts;
 
@@ -168,6 +184,10 @@ impl PluginInstance for AgentContracts {
         registrar.add(ContractDefinition {
             id: TOOL_CONTRACT.into(),
             contract: tool_contract(),
+        })?;
+        registrar.add(ContractDefinition {
+            id: PROMPT_CONTRACT.into(),
+            contract: prompt_contract(),
         })
     }
 }
@@ -320,7 +340,12 @@ impl PluginInstance for AgentLoop {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let environments = self.environments.clone();
         let mut contribution = Contribution::new("main", NetworkPatch::new([]))
-            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT));
+            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+            .offer(
+                "prompt",
+                PROMPT_ADAPTER,
+                Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT),
+            );
         for environment in &environments {
             contribution = contribution.import(
                 environment_port(environment),
@@ -397,7 +422,11 @@ impl PluginInstance for AgentLoop {
                     }),
                     Edit::Add {
                         path: PROMPT_ADAPTER.into(),
-                        definition: Arc::new(ComponentDef::map(ModelInput::Prompt)),
+                        definition: Arc::new(
+                            ComponentDef::map(ModelInput::Prompt)
+                                .claim(&prompt_contract())
+                                .expect("prompt adapter implements its declared contract"),
+                        ),
                     },
                     Edit::Connect(ConnectionDef {
                         from: port(PROMPT_ADAPTER, "output"),
