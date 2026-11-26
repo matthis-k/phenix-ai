@@ -69,7 +69,7 @@ mod inputs;
 mod producer;
 mod query;
 mod source;
-pub use host::{DerivedGeneration, DerivedHost};
+pub use host::DerivedHost;
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
 pub use query::{DerivedRuntime, QueryBinding, QueryHandle, QuerySpec};

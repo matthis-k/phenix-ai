@@ -89,6 +89,14 @@ pub struct QuerySpec<T: Clone + Send + Sync + 'static> {
     value: DerivedRef<T>,
 }
 impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
+    /// Resolve and execute this query against the exact published generation.
+    pub fn query_generation(
+        &self,
+        generation: &phenix_kernel::host::Generation,
+    ) -> Result<Leased<T>, Error> {
+        generation.with_kernel(|kernel| self.bind_kernel(kernel)?.query())
+    }
+
     pub fn bind_kernel<'a>(&self, kernel: &'a Kernel) -> Result<QueryHandle<'a, T>, Error> {
         self.bind_preparation(&kernel.binding())?.bind_kernel(kernel)
     }

@@ -60,18 +60,7 @@ fn collect_catalog(snapshots: &[PluginSnapshot]) -> Result<ContributionCatalog, 
             collect!(ContractDefinition, definitions);
             collect!(NetworkOffer, offers);
             collect!(ContractRequirement, requirements);
-            if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
-                continue;
-            }
-            let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
-                ConfigurationError::ContributionType {
-                    key: key.clone(),
-                    expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
-                }
-            })?;
-            if pending.insert(key.clone(), handle).is_some() {
-                return Err(ConfigurationError::DuplicateContribution { key: key.clone() }.into());
-            }
+            collect!(RegisteredContribution, pending);
         }
     }
     let mut identities = BTreeMap::new();
