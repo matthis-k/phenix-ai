@@ -13,11 +13,7 @@ use phenix_graph::{
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{
-    collections::BTreeSet,
-    num::NonZeroUsize,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc};
 
 pub mod environment;
 pub mod mock;
