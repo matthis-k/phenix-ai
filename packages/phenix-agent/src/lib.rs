@@ -24,10 +24,7 @@ pub mod mock;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelInput {
     Prompt(String),
-    ToolResult {
-        call: ToolCall,
-        outcome: ToolOutcome,
-    },
+    ToolResult(ToolResult),
 }
 
 /// A tool's domain outcome is data for the model, not a scheduler failure.
@@ -42,6 +39,13 @@ pub enum ToolOutcome {
 pub struct ToolCall {
     pub prompt: String,
     pub environment: String,
+}
+
+/// Tool feedback contains only a call and its outcome, never a user prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolResult {
+    pub call: ToolCall,
+    pub outcome: ToolOutcome,
 }
 
 /// Ordered model events on the public capture. Completion is explicit.
@@ -60,6 +64,7 @@ pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
 const TOOL_ROUTER: &str = "agent-tool-router";
+const TOOL_FEEDBACK: &str = "agent-tool-feedback";
 const UNAVAILABLE: &str = "unavailable";
 
 fn environment_port(environment: &str) -> String {
@@ -100,7 +105,7 @@ pub fn tool_contract() -> Contract {
         Arc::new(
             Interface::new(
                 [PortDef::local::<ToolCall>("input")],
-                [PortDef::local::<ModelInput>("output")],
+                [PortDef::local::<ToolResult>("output")],
             )
             .unwrap(),
         ),
@@ -165,7 +170,7 @@ impl Process for ToolRouter {
         } else {
             (
                 UNAVAILABLE.into(),
-                Value::local(ModelInput::ToolResult {
+                Value::local(ToolResult {
                     call,
                     outcome: ToolOutcome::Failed {
                         output: String::new(),
@@ -201,7 +206,7 @@ impl PluginInstance for AgentLoop {
                     environments
                         .iter()
                         .map(|name| PortDef::local::<ToolCall>(environment_port(name)))
-                        .chain([PortDef::local::<ModelInput>(UNAVAILABLE)]),
+                        .chain([PortDef::local::<ToolResult>(UNAVAILABLE)]),
                 )?;
                 let routes = environments.clone();
                 let router = ComponentDef::primitive(
@@ -221,8 +226,17 @@ impl PluginInstance for AgentLoop {
                         port(TOOL_ROUTER, "input"),
                         capacity(),
                     )?,
+                    Edit::Add {
+                        path: TOOL_FEEDBACK.into(),
+                        definition: Arc::new(ComponentDef::map(ModelInput::ToolResult)),
+                    },
                     Edit::Connect(ConnectionDef {
                         from: port(TOOL_ROUTER, UNAVAILABLE),
+                        to: port(TOOL_FEEDBACK, "input"),
+                        capacity: capacity(),
+                    }),
+                    Edit::Connect(ConnectionDef {
+                        from: port(TOOL_FEEDBACK, "output"),
                         to: port(model.path(), model_input.name()),
                         capacity: capacity(),
                     }),
@@ -247,7 +261,7 @@ impl PluginInstance for AgentLoop {
                     let output = environment_port(environment);
                     let tool = context.bind_import(&output)?;
                     let tool_input = tool.input::<ToolCall>("input")?;
-                    let result = tool.output::<ModelInput>("output")?;
+                    let result = tool.output::<ToolResult>("output")?;
                     edits.push(Edit::Connect(ConnectionDef {
                         from: port(TOOL_ROUTER, &output),
                         to: port(tool.path(), tool_input.name()),
@@ -256,7 +270,7 @@ impl PluginInstance for AgentLoop {
                     if feedback.insert(tool.path().to_owned()) {
                         edits.push(context.connect_bound_output(
                             &result,
-                            port(model.path(), model_input.name()),
+                            port(TOOL_FEEDBACK, "input"),
                             capacity(),
                         )?);
                     }
@@ -278,8 +292,13 @@ pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<
             port(model, "tool"),
             port(TOOL_ROUTER, "input"),
         )),
+        Footprint::Component(TOOL_FEEDBACK.into()),
         Footprint::Connection(ConnectionKey::new(
             port(TOOL_ROUTER, UNAVAILABLE),
+            port(TOOL_FEEDBACK, "input"),
+        )),
+        Footprint::Connection(ConnectionKey::new(
+            port(TOOL_FEEDBACK, "output"),
             port(model, "input"),
         )),
         Footprint::Component(PROMPT_ADAPTER.into()),
@@ -297,7 +316,7 @@ pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<
         )));
         grants.push(Footprint::Connection(ConnectionKey::new(
             port(tool, "output"),
-            port(model, "input"),
+            port(TOOL_FEEDBACK, "input"),
         )));
     }
     grants
