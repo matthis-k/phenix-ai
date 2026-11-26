@@ -177,7 +177,11 @@ impl PluginInstance for MockTool {
                 definition: Arc::new(definition),
             }]),
         )
-        .offer("tool", &self.path, Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
+        .offer(
+            "tool",
+            &self.path,
+            Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+        )
         .register(registrar)
     }
 }
@@ -241,7 +245,8 @@ pub fn host_with_options(
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
-        host.plugins().prepare_load(&loop_key, AgentLoop::default())?,
+        host.plugins()
+            .prepare_load(&loop_key, AgentLoop::default())?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
