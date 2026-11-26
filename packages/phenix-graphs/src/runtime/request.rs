@@ -449,7 +449,7 @@ impl NetworkSession {
             // Registration and dirtying share the existing reachability pass:
             // no second O(V) traversal on every request seal.
             if first_seal
-                && (matches!(&self.processes[index].policy, Readiness::Optional { .. })
+                && (self.processes[index].policy.watches_scoped_closure()
                     || self.processes[index].notification_driven)
             {
                 *self.scoped_readiness_poll.entry(index).or_default() += 1;

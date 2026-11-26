@@ -463,7 +463,7 @@ impl NetworkSession {
                             index,
                             *port,
                             request,
-                            p.waiting.is_none() && matches!(policy, Readiness::CorrelatedAll),
+                            p.waiting.is_none() && policy.correlated(),
                         ),
                         closure: self.input_closure_proof(index, *port, request),
                         fresh: self.closure_fresh(index, *port, request),

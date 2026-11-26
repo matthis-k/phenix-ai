@@ -151,17 +151,11 @@ impl NetworkSession {
         if scope.terminal.is_some() || p.done || !scope.reachable.contains(&index) {
             return false;
         }
-        let names = match &p.policy {
-            Readiness::Optional { required, optional } if required.is_empty() => {
-                optional.as_slice()
-            }
-            Readiness::Custom(_) => scope
-                .closure_ports
-                .get(&index)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-            _ => return false,
-        };
+        let names = scope
+            .closure_ports
+            .get(&index)
+            .map(Vec::as_slice)
+            .unwrap_or_else(|| p.policy.declared_closure_ports());
         names.iter().any(|name| {
             let port = p
                 .inputs

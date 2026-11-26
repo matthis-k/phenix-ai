@@ -359,7 +359,7 @@ impl RuntimeProcess {
         !self.done
             && (self.source
                 || self.inputs.is_empty()
-                || matches!(&self.policy, Readiness::Custom(_)) && !self.notification_driven
+                || self.policy.opaque() && !self.notification_driven
                 || self.waiting.is_some()
                 || self.waiting_policy.is_some())
     }

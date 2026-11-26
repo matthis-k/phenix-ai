@@ -153,6 +153,106 @@ pub(super) fn validate_policy_ports<'a>(
     Ok(())
 }
 
+impl Readiness {
+    pub(super) fn correlated(&self) -> bool {
+        matches!(self, Self::CorrelatedAll)
+    }
+
+    pub(super) fn opaque(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+
+    pub(super) fn watches_scoped_closure(&self) -> bool {
+        matches!(self, Self::Optional { .. })
+    }
+
+    pub(super) fn has_zero_packet_closure(&self) -> bool {
+        matches!(self, Self::Optional { required, .. } if required.is_empty())
+    }
+
+    pub(super) fn declared_closure_ports(&self) -> &[String] {
+        match self {
+            Self::Optional { required, optional } if required.is_empty() => optional,
+            _ => &[],
+        }
+    }
+
+    /// Pure staged exhaustion assessment, independent of queues or scheduler.
+    fn staged_error(&self, snapshot: &ReadinessSnapshot) -> Option<ReadinessError> {
+        let missing = |name: &String| {
+            snapshot
+                .heads
+                .iter()
+                .find(|h| &h.port == name)
+                .is_some_and(|h| !h.available && h.closed)
+        };
+        match self {
+            Self::Optional { required, .. } => required
+                .iter()
+                .find(|name| missing(name))
+                .map(|name| ReadinessError::RequiredClosed { port: name.clone() }),
+            Self::All | Self::CorrelatedAll => snapshot
+                .heads
+                .iter()
+                .find(|h| !h.available && h.closed)
+                .map(|h| {
+                    ReadinessError::RequiredClosed {
+                        port: h.port.clone(),
+                    }
+                }),
+            Self::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
+                Some(ReadinessError::AnyExhausted)
+            }
+            Self::AtLeast(n)
+                if snapshot
+                    .heads
+                    .iter()
+                    .filter(|h| h.available || !h.closed)
+                    .count()
+                    < n.get() =>
+            {
+                Some(ReadinessError::ThresholdExhausted { required: n.get() })
+            }
+            _ => None,
+        }
+    }
+
+    /// Passive selection for declarative policies; opaque callbacks are never evaluated here.
+    fn passive_selection(&self, snapshot: &ReadinessSnapshot) -> Option<Vec<String>> {
+        let available: Vec<_> = snapshot
+            .heads
+            .iter()
+            .filter(|h| h.available)
+            .map(|h| h.port.clone())
+            .collect();
+        Some(match self {
+            Self::Any => available.into_iter().take(1).collect(),
+            Self::All | Self::CorrelatedAll if available.len() == snapshot.heads.len() => {
+                available
+            }
+            Self::AtLeast(n) if available.len() >= n.get() => {
+                available.into_iter().take(n.get()).collect()
+            }
+            Self::Optional { required, optional } => {
+                let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
+                if required
+                    .iter()
+                    .all(|n| found(n).is_some_and(|h| h.available))
+                    && optional
+                        .iter()
+                        .all(|n| found(n).is_some_and(|h| h.available || h.closed))
+                {
+                    required.iter().chain(optional).cloned().collect()
+                } else {
+                    vec![]
+                }
+            }
+            Self::Custom(_) => return None,
+            _ => vec![],
+        })
+    }
+}
+
 impl NetworkSession {
     pub(super) fn validate_policy(&self, index: usize, policy: &Readiness) -> Result<(), Failure> {
         validate_policy_ports(
@@ -217,10 +317,7 @@ impl NetworkSession {
             // Without this, a crossed peer head can indefinitely strand an
             // already-owned WaitInput even when its own next packet is queued.
             // All other policies retain strict head-only staged reservations.
-            let correlated = matches!(
-                p.waiting_policy.as_ref().unwrap_or(&p.policy),
-                Readiness::CorrelatedAll
-            );
+            let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
             let queue = self.packet_for(index, port, p.request, correlated);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
@@ -254,7 +351,7 @@ impl NetworkSession {
     ) -> Vec<Option<RequestId>> {
         let p = &self.processes[index];
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        let correlated = matches!(policy, Readiness::CorrelatedAll);
+        let correlated = policy.correlated();
         let mut candidates = vec![];
         for port in order {
             let input = &p.inputs[*port];
@@ -311,10 +408,7 @@ impl NetworkSession {
         request: Option<RequestId>,
     ) -> ReadinessSnapshot {
         let p = &self.processes[index];
-        let correlated = matches!(
-            p.waiting_policy.as_ref().unwrap_or(&p.policy),
-            Readiness::CorrelatedAll
-        );
+        let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         ReadinessSnapshot {
             request,
             correlation_lane: None,
@@ -334,88 +428,28 @@ impl NetworkSession {
         snapshot: &ReadinessSnapshot,
     ) -> Option<Failure> {
         let p = &self.processes[index];
-        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        if p.handoff.state() == HandoffState::WaitingInput {
-            let missing = |name: &String| {
-                snapshot
-                    .heads
-                    .iter()
-                    .find(|h| &h.port == name)
-                    .is_some_and(|h| !h.available && h.closed)
-            };
-            let impossible = match policy {
-                Readiness::Optional { required, .. } => required
-                    .iter()
-                    .find(|name| missing(name))
-                    .map(|name| ReadinessError::RequiredClosed { port: name.clone() }.failure()),
-                Readiness::All | Readiness::CorrelatedAll => snapshot
-                    .heads
-                    .iter()
-                    .find(|h| !h.available && h.closed)
-                    .map(|h| {
-                        ReadinessError::RequiredClosed {
-                            port: h.port.clone(),
-                        }
-                        .failure()
-                    }),
-                Readiness::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
-                    Some(ReadinessError::AnyExhausted.failure())
-                }
-                Readiness::AtLeast(n)
-                    if snapshot
-                        .heads
-                        .iter()
-                        .filter(|h| h.available || !h.closed)
-                        .count()
-                        < n.get() =>
-                {
-                    Some(ReadinessError::ThresholdExhausted { required: n.get() }.failure())
-                }
-                _ => None,
-            };
-            return impossible;
+        if p.handoff.state() != HandoffState::WaitingInput {
+            return None;
         }
-        None
+        p.waiting_policy
+            .as_ref()
+            .unwrap_or(&p.policy)
+            .staged_error(snapshot)
+            .map(ReadinessError::failure)
     }
-    /// None is opaque application readiness, never an invitation to call it.
+
     pub(super) fn builtin_selection_names(
         &self,
         index: usize,
         snapshot: &ReadinessSnapshot,
     ) -> Option<Vec<String>> {
         let p = &self.processes[index];
-        let count = p.inputs.len();
-        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        let available: Vec<_> = snapshot
-            .heads
-            .iter()
-            .filter(|h| h.available)
-            .map(|h| h.port.clone())
-            .collect();
-        Some(match policy {
-            Readiness::Any => available.into_iter().take(1).collect(),
-            Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
-            Readiness::AtLeast(n) if available.len() >= n.get() => {
-                available.into_iter().take(n.get()).collect()
-            }
-            Readiness::Optional { required, optional } => {
-                let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
-                if required
-                    .iter()
-                    .all(|n| found(n).is_some_and(|h| h.available))
-                    && optional
-                        .iter()
-                        .all(|n| found(n).is_some_and(|h| h.available || h.closed))
-                {
-                    required.iter().chain(optional).cloned().collect()
-                } else {
-                    vec![]
-                }
-            }
-            Readiness::Custom(_) => return None,
-            _ => vec![],
-        })
+        p.waiting_policy
+            .as_ref()
+            .unwrap_or(&p.policy)
+            .passive_selection(snapshot)
     }
+
     pub(super) fn selected_ports(
         &self,
         index: usize,
@@ -424,10 +458,7 @@ impl NetworkSession {
     ) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
         let request = snapshot.request;
-        let correlated = matches!(
-            p.waiting_policy.as_ref().unwrap_or(&p.policy),
-            Readiness::CorrelatedAll
-        );
+        let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         let mut ports = vec![];
         for name in names {
             let port = p
@@ -496,7 +527,7 @@ impl NetworkSession {
             };
             if names.is_empty() {
                 if p.handoff.state() == HandoffState::WaitingInput
-                    && matches!(policy, Readiness::Custom(_))
+                    && policy.opaque()
                     && snapshot.heads.iter().all(|h| h.available || h.closed)
                 {
                     return Err(ReadinessError::CustomExhausted.failure());
@@ -528,13 +559,11 @@ impl NetworkSession {
         let request = selected.request;
         self.processes[index].request = request;
         if self.request_queue_policy == RequestQueuePolicy::BoundedLanes
-            || matches!(
-                self.processes[index]
-                    .waiting_policy
-                    .as_ref()
-                    .unwrap_or(&self.processes[index].policy),
-                Readiness::CorrelatedAll
-            )
+            || self.processes[index]
+                .waiting_policy
+                .as_ref()
+                .unwrap_or(&self.processes[index].policy)
+                .correlated()
         {
             self.request_cursors
                 .insert(index, request.map_or(0, |id| self.requests[&id].lane + 1));
