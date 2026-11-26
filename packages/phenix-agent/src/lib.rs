@@ -19,7 +19,18 @@ pub mod mock;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelInput {
     Prompt(String),
-    ToolResult { call: ToolCall, output: String },
+    ToolResult {
+        call: ToolCall,
+        outcome: ToolOutcome,
+    },
+}
+
+/// A tool's domain outcome is data for the model, not a scheduler failure.
+/// Failed executions may still carry output; a reason is mandatory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolOutcome {
+    Succeeded { output: String },
+    Failed { output: String, reason: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

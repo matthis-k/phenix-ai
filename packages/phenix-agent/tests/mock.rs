@@ -79,6 +79,63 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 }
 
 #[test]
+fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
+    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, tool_contract};
+    use phenix_graph::{
+        ComponentDef,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::Arc;
+
+    struct ExternalTool;
+    impl PluginInstance for ExternalTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let definition = ComponentDef::map(|call: ToolCall| ModelInput::ToolResult {
+                call,
+                outcome: ToolOutcome::Failed {
+                    output: "partial output".into(),
+                    reason: "denied".into(),
+                },
+            })
+            .claim(&tool_contract())
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let host =
+        mock::host_with_options(MockModel::default(), ExternalTool, mock::options()).unwrap();
+    let generation = host.active().unwrap();
+    for prompt in ["first", "second"] {
+        assert_eq!(
+            turn(&generation, prompt),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: prompt.into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("tool failed: denied: partial output".into()),
+                AgentEvent::Completed,
+            ]
+        );
+    }
+}
+
+#[test]
 fn missing_host_graph_grant_prevents_publication() {
     let mut options = mock::options();
     options
@@ -88,11 +145,11 @@ fn missing_host_graph_grant_prevents_publication() {
 }
 
 #[test]
-fn independently_authored_loop_does_not_require_basic_preset() {
-    use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT};
+fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
+    use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, MODEL_CONTRACT};
     use phenix_graph::compose::{Footprint, NetworkPatch};
     use phenix_kernel::{
-        CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
+        BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use std::num::NonZeroUsize;
@@ -131,9 +188,6 @@ fn independently_authored_loop_does_not_require_basic_preset() {
     let model_key = catalog
         .register(mock::MODEL_PLUGIN, |model: MockModel| Ok(model))
         .unwrap();
-    let tool_key = catalog
-        .register(mock::TOOL_PLUGIN, |tool: MockTool| Ok(tool))
-        .unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
@@ -147,12 +201,17 @@ fn independently_authored_loop_does_not_require_basic_preset() {
                 },
             )
             .unwrap(),
-        host.plugins()
-            .prepare_load(&tool_key, MockTool::default())
-            .unwrap(),
     ];
-    let mut options = mock::options();
-    options.composition.remove(&Key::new(LOOP_PLUGIN, "main"));
+    let mut options = BuildOptions::default();
+    options.execution.max_requests = NonZeroUsize::new(1).unwrap();
+    options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
+    options.composition.insert(
+        Key::new(mock::MODEL_PLUGIN, "main"),
+        CompositionPolicy {
+            grants: [Footprint::Component(mock::MODEL_PATH.into())].into(),
+            ..Default::default()
+        },
+    );
     options.composition.insert(
         Key::new(ALTERNATE, "main"),
         CompositionPolicy {
@@ -175,10 +234,6 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         .execution
         .discard_outputs
         .insert((mock::MODEL_PATH.into(), "tool".into()));
-    options
-        .execution
-        .discard_outputs
-        .insert((mock::TOOL_PATH.into(), "output".into()));
     let candidate = host
         .prepare(stages, options, "alternate", |_| Ok(()))
         .unwrap();
