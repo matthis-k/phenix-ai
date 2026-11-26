@@ -76,6 +76,45 @@ fn options() -> SessionOptions {
     }
 }
 
+#[test]
+fn standard_and_external_selectors_execute_the_same_input_contract() {
+    struct ExternalAny;
+    impl ReadinessPolicy for ExternalAny {
+        fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+            snapshot
+                .heads
+                .iter()
+                .filter(|head| head.available)
+                .take(1)
+                .map(|head| head.port.clone())
+                .collect()
+        }
+    }
+
+    for policy in [Readiness::Any, Readiness::Custom(Arc::new(ExternalAny))] {
+        let effects = Arc::new(AtomicUsize::new(0));
+        let mut config = options();
+        config.readiness.insert("counter".into(), policy);
+        let mut session = counter(effects.clone()).start_with_options(config);
+        for (value, expected) in [(2_i64, 2_i64), (3, 5)] {
+            session.inject("input", Value::of(value)).unwrap();
+            session.run_until_idle(64);
+            assert!(session.failure().is_none());
+            assert_eq!(
+                session
+                    .take_output("output")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                expected
+            );
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), 2);
+    }
+}
+
 struct ReadinessCalls(Arc<AtomicUsize>, Arc<AtomicBool>);
 impl ReadinessPolicy for ReadinessCalls {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
