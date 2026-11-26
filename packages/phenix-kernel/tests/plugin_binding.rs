@@ -1,6 +1,8 @@
 mod support;
 use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
-use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key, plugin_binding::bind_component};
+use phenix_kernel::{
+    BuildOptions, ContractDefinition, Kernel, Key, plugin_binding::bind_component,
+};
 use phenix_plugin::{Code, Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 struct Locator;
@@ -72,11 +74,9 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             &origin,
             &phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone())
         );
-        assert!(
-            origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
-                snapshot.revision_identity().clone(),
-            ))
-        );
+        assert!(origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+            snapshot.revision_identity().clone(),
+        )));
         bind_component::<Locator>(
             &snapshot,
             "offer",
@@ -84,7 +84,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             &support::contract("example/service@1"),
             &compiled,
         )
-            .unwrap();
+        .unwrap();
         let stage = plugins.prepare_reload(&key, config.clone()).unwrap();
         let candidate = stage.candidate().unwrap();
         drop(stage);
@@ -101,9 +101,9 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
                     &support::contract("example/service@1"),
                     &compiled,
                 )
-                    .err()
-                    .unwrap()
-                    .code,
+                .err()
+                .unwrap()
+                .code,
                 Code::Denied
             );
         }
@@ -116,7 +116,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             &support::contract("example/service@1"),
             &compiled,
         )
-            .unwrap();
+        .unwrap();
         let mut options = BuildOptions::default();
         support::grant(
             &mut options,

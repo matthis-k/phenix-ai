@@ -214,26 +214,16 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &compiled,
         )
-            .err()
-            .unwrap();
-        let mismatch = bind_component::<OtherOffer>(
-            &no_locator,
-            "main",
-            |_| None,
-            &required,
-            &compiled,
-        )
-            .err()
-            .unwrap();
-        let missing_kind = bind_component::<OtherKind>(
-            &no_locator,
-            "main",
-            |_| None,
-            &required,
-            &compiled,
-        )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
+        let mismatch =
+            bind_component::<OtherOffer>(&no_locator, "main", |_| None, &required, &compiled)
+                .err()
+                .unwrap();
+        let missing_kind =
+            bind_component::<OtherKind>(&no_locator, "main", |_| None, &required, &compiled)
+                .err()
+                .unwrap();
         let missing_id = bind_component::<Offer>(
             &no_locator,
             "absent",
@@ -241,8 +231,8 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &compiled,
         )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
         let located = set.reload(&key, Some("service".into())).unwrap();
         let missing_origin = bind_component::<Offer>(
             &located,
@@ -251,8 +241,8 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &compiled,
         )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
         let old_graph = graph(Some(&located), true);
         let current = set.reload(&key, Some("service".into())).unwrap();
         let wrong_origin = bind_component::<Offer>(
@@ -262,8 +252,8 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &old_graph,
         )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
         let missing_unit = bind_component::<Offer>(
             &current,
             "main",
@@ -271,8 +261,8 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &NetworkBuilder::new().build().unwrap().compile().unwrap(),
         )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
         let unclaimed = graph(Some(&current), false);
         let schema = bind_component::<Offer>(
             &current,
@@ -281,8 +271,8 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
             &required,
             &unclaimed,
         )
-            .err()
-            .unwrap();
+        .err()
+        .unwrap();
         vec![
             missing_locator,
             mismatch,

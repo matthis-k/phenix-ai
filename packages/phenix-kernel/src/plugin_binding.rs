@@ -59,13 +59,11 @@ pub fn bind_component<C: Contribution>(
                 Box::new(cause),
             )
         })?;
-        if !unit
-            .origin
-            .as_ref()
-            .is_some_and(|origin| {
-                origin.belongs_to(&GraphOrigin::from_root(snapshot.revision_identity().clone()))
-            })
-        {
+        if !unit.origin.as_ref().is_some_and(|origin| {
+            origin.belongs_to(&GraphOrigin::from_root(
+                snapshot.revision_identity().clone(),
+            ))
+        }) {
             return Err(Failure::with_source(
                 Code::Denied,
                 format!("compiled unit {path}: contribution generation origin mismatch"),

@@ -80,12 +80,9 @@ fn compiled(
     network
         .add(
             "service",
-            Arc::new(
-                definition.with_origin(
-                    phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone())
-                        .child(),
-                ),
-            ),
+            Arc::new(definition.with_origin(
+                phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone()).child(),
+            )),
         )
         .unwrap();
     network.build().unwrap().compile().unwrap()
@@ -107,8 +104,8 @@ fn plugin_request_checks_final_selected_unit() {
         &required,
         &compiled(&snapshot, false, false),
     )
-        .err()
-        .unwrap();
+    .err()
+    .unwrap();
     assert_eq!(error.code, Code::SchemaRejected);
     let context = error.context.as_ref().unwrap();
     assert_eq!(context.plugin, "provider");
@@ -133,7 +130,7 @@ fn plugin_request_checks_final_selected_unit() {
         &required,
         &network,
     )
-        .unwrap();
+    .unwrap();
     assert_eq!(action.increment, 41);
     assert!(
         bind_component::<ProviderAction>(
@@ -143,7 +140,7 @@ fn plugin_request_checks_final_selected_unit() {
             &contract(true),
             &network,
         )
-            .is_err()
+        .is_err()
     );
     let missing = plugins.reload(&key, Some("missing".into())).unwrap();
     assert_eq!(
@@ -154,9 +151,9 @@ fn plugin_request_checks_final_selected_unit() {
             &required,
             &network,
         )
-            .err()
-            .unwrap()
-            .code,
+        .err()
+        .unwrap()
+        .code,
         Code::MissingBinding
     );
     let no_locator = plugins.reload(&key, None).unwrap();
@@ -168,7 +165,7 @@ fn plugin_request_checks_final_selected_unit() {
             &required,
             &network,
         )
-            .is_err()
+        .is_err()
     );
     plugins.unload(&key).unwrap();
     assert_eq!(
@@ -179,8 +176,8 @@ fn plugin_request_checks_final_selected_unit() {
             &required,
             &network,
         )
-            .unwrap()
-            .increment,
+        .unwrap()
+        .increment,
         41
     );
     assert_eq!(action.increment, 41);
@@ -200,7 +197,7 @@ fn module_offers_use_the_same_compiled_unit_validation() {
         &contract(false),
         &compiled(&snapshot, true, true),
     )
-        .unwrap();
+    .unwrap();
 }
 
 #[test]
@@ -222,8 +219,8 @@ fn missing_compiled_unit_retains_actual_network_cause_and_module_path() {
                 &required,
                 &compiled(&snapshot, true, module),
             )
-                .err()
-                .unwrap();
+            .err()
+            .unwrap();
             assert_eq!(error.code, Code::MissingBinding);
             assert!(error.message.contains(path));
             assert!(error.message.contains(required.id()));
@@ -261,7 +258,7 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
             &contract(false),
             &network,
         )
-            .unwrap();
+        .unwrap();
         let stage = plugins.prepare_reload(&key, 2).unwrap();
         let rejected = stage.candidate().unwrap();
         drop(stage);
@@ -277,8 +274,8 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
                 &contract(false),
                 &network,
             )
-                .err()
-                .unwrap();
+            .err()
+            .unwrap();
             assert_eq!(error.code, Code::Denied);
             assert!(error.message.contains("origin mismatch"));
         }
@@ -291,8 +288,8 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
                 &contract(false),
                 &network,
             )
-                .unwrap()
-                .increment,
+            .unwrap()
+            .increment,
             1
         );
     }
