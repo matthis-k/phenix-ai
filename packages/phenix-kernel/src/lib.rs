@@ -166,6 +166,7 @@ mod build;
 mod config_error;
 mod exclusive;
 pub mod host;
+pub mod plugin_binding;
 mod producer_ownership;
 pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 
@@ -711,9 +712,6 @@ impl phenix_plugin::Contribution for NetworkOffer {
     const KIND: &'static str = "network.offer";
     fn id(&self) -> &str {
         &self.id
-    }
-    fn component_path(&self) -> Option<&str> {
-        Some(&self.unit)
     }
 }
 

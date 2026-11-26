@@ -145,9 +145,6 @@ dependencies = [
 [[package]]
 name = "phenix-plugin"
 version = "0.1.0"
-dependencies = [
- "phenix-graph",
-]
 
 [[package]]
 name = "phenix-schema"

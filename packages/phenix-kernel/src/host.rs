@@ -996,10 +996,10 @@ mod tests {
             assert_eq!(host.epoch, u64::MAX);
             assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
             assert_eq!(host.plugins().snapshots().count(), 1);
-            assert_eq!(
-                host.plugins().snapshot(&key).unwrap().graph_origin(),
-                snapshot.graph_origin()
-            );
+            assert!(Arc::ptr_eq(
+                host.plugins().snapshot(&key).unwrap().revision_identity(),
+                snapshot.revision_identity()
+            ));
             assert_eq!(
                 host.plugins().snapshot(&key).unwrap().revision(),
                 snapshot.revision()
