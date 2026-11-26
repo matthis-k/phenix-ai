@@ -89,10 +89,12 @@ struct EffectTool;
 impl PluginInstance for EffectTool {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let contract = tool_contract();
-        let definition =
-            ComponentDef::primitive(contract.required().clone(), Arc::new(EffectProcess::default))
-                .claim(&contract)
-                .unwrap();
+        let definition = ComponentDef::primitive(
+            contract.required().clone(),
+            Arc::new(EffectProcess::default),
+        )
+        .claim(&contract)
+        .unwrap();
         Contribution::new(
             "main",
             NetworkPatch::new([Edit::Add {
