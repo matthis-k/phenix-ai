@@ -2,7 +2,7 @@
 //! No network, credentials, shell, external effects, or durable history.
 
 use crate::{
-    AgentContracts, AgentEvent, BasicLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
+    AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
     ModelInput, TOOL_CONTRACT, ToolCall, ToolOutcome, loop_grants, model_contract, tool_contract,
 };
 use phenix_graph::{
@@ -13,7 +13,11 @@ use phenix_kernel::{
     BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::{collections::VecDeque, num::NonZeroUsize, sync::Arc};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    num::NonZeroUsize,
+    sync::Arc,
+};
 
 pub const MODEL_PLUGIN: &str = "mock-model";
 pub const TOOL_PLUGIN: &str = "mock-tool";
@@ -24,6 +28,8 @@ pub const TOOL_PATH: &str = "tool";
 pub struct MockModel {
     pub label: String,
     pub use_tool: bool,
+    pub environment: String,
+    pub environment_by_prompt: BTreeMap<String, String>,
 }
 
 impl Default for MockModel {
@@ -31,6 +37,8 @@ impl Default for MockModel {
         Self {
             label: "mock".into(),
             use_tool: true,
+            environment: "local".into(),
+            environment_by_prompt: BTreeMap::new(),
         }
     }
 }
@@ -65,6 +73,12 @@ impl Process for ModelProcess {
             ModelInput::Prompt(prompt) if self.config.use_tool => {
                 let call = ToolCall {
                     prompt: prompt.clone(),
+                    environment: self
+                        .config
+                        .environment_by_prompt
+                        .get(prompt)
+                        .unwrap_or(&self.config.environment)
+                        .clone(),
                 };
                 self.pending.push_back(ProcessEmission::new(
                     "events",
@@ -133,12 +147,14 @@ impl PluginInstance for MockModel {
 #[derive(Clone, Debug)]
 pub struct MockTool {
     pub prefix: String,
+    pub path: String,
 }
 
 impl Default for MockTool {
     fn default() -> Self {
         Self {
             prefix: "lookup".into(),
+            path: TOOL_PATH.into(),
         }
     }
 }
@@ -157,11 +173,11 @@ impl PluginInstance for MockTool {
         Contribution::new(
             "main",
             NetworkPatch::new([Edit::Add {
-                path: TOOL_PATH.into(),
+                path: self.path.clone(),
                 definition: Arc::new(definition),
             }]),
         )
-        .offer("tool", TOOL_PATH, Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
+        .offer("tool", &self.path, Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
         .register(registrar)
     }
 }
@@ -178,7 +194,10 @@ pub fn options() -> BuildOptions {
                 Key::new(LOOP_PLUGIN, "model"),
                 Key::new(MODEL_PLUGIN, "model"),
             ),
-            (Key::new(LOOP_PLUGIN, "tool"), Key::new(TOOL_PLUGIN, "tool")),
+            (
+                Key::new(LOOP_PLUGIN, "env-local"),
+                Key::new(TOOL_PLUGIN, "tool"),
+            ),
         ]
         .into(),
     );
@@ -194,7 +213,9 @@ pub fn options() -> BuildOptions {
     options.composition.insert(
         Key::new(LOOP_PLUGIN, "main"),
         CompositionPolicy {
-            grants: loop_grants(MODEL_PATH, TOOL_PATH).into(),
+            grants: loop_grants(MODEL_PATH, &[("local".into(), TOOL_PATH.into())].into())
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
     );
@@ -214,13 +235,13 @@ pub fn host_with_options(
 ) -> Result<KernelHost, CallbackError> {
     let mut catalog = PluginCatalog::new();
     let contracts_key = catalog.register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))?;
-    let loop_key = catalog.register(LOOP_PLUGIN, |_: ()| Ok(BasicLoop))?;
+    let loop_key = catalog.register(LOOP_PLUGIN, Ok)?;
     let model_key = catalog.register(MODEL_PLUGIN, Ok)?;
     let tool_key = catalog.register(TOOL_PLUGIN, Ok)?;
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
-        host.plugins().prepare_load(&loop_key, ())?,
+        host.plugins().prepare_load(&loop_key, AgentLoop::default())?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
