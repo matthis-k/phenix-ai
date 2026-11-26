@@ -219,9 +219,7 @@ pub fn options() -> BuildOptions {
     options.composition.insert(
         Key::new(LOOP_PLUGIN, "main"),
         CompositionPolicy {
-            grants: loop_grants(MODEL_PATH, TOOL_PATH)
-                .into_iter()
-                .collect(),
+            grants: loop_grants(MODEL_PATH, TOOL_PATH).into_iter().collect(),
             ..Default::default()
         },
     );
