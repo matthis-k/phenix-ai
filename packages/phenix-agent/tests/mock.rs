@@ -90,9 +90,7 @@ fn missing_host_graph_grant_prevents_publication() {
 #[test]
 fn independently_authored_loop_does_not_require_basic_preset() {
     use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT};
-    use phenix_graph::{
-        compose::{Footprint, NetworkPatch},
-        };
+    use phenix_graph::compose::{Footprint, NetworkPatch};
     use phenix_kernel::{
         CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
@@ -182,12 +180,7 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         .discard_outputs
         .insert((mock::TOOL_PATH.into(), "output".into()));
     let candidate = host
-        .prepare(
-            stages,
-            options,
-                "alternate",
-            |_| Ok(()),
-        )
+        .prepare(stages, options, "alternate", |_| Ok(()))
         .unwrap();
     host.publish(candidate).unwrap();
     assert_eq!(

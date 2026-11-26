@@ -215,12 +215,7 @@ pub fn host_with_options(
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
-    let candidate = host.prepare(
-        stages,
-        options,
-        "mock-agent",
-        |_| Ok(()),
-    )?;
+    let candidate = host.prepare(stages, options, "mock-agent", |_| Ok(()))?;
     host.publish(candidate)?;
     Ok(host)
 }
