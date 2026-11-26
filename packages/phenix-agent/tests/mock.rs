@@ -57,7 +57,8 @@ fn ordinary_plugins_execute_feedback_and_stream_ordered_events() {
             turn(&generation, prompt),
             [
                 AgentEvent::ToolRequested(ToolCall {
-                    prompt: prompt.into()
+                    prompt: prompt.into(),
+                    environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
                 AgentEvent::Delta(format!("lookup({prompt})")),
@@ -73,6 +74,7 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
         MockModel {
             label: "direct".into(),
             use_tool: false,
+            ..MockModel::default()
         },
         MockTool::default(),
     )
@@ -135,9 +137,122 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     prompt: prompt.into(),
+                    environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
                 AgentEvent::Delta("tool failed: denied: partial output".into()),
+                AgentEvent::Completed,
+            ]
+        );
+    }
+}
+
+#[test]
+fn configured_environments_route_each_call_without_privileged_providers() {
+    use phenix_agent::{AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, loop_grants};
+    use phenix_graph::compose::Footprint;
+    use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
+    use phenix_plugin::PluginCatalog;
+
+    const REMOTE: &str = "remote-provider";
+    const REMOTE_PATH: &str = "remote-tool";
+    let mut catalog = PluginCatalog::new();
+    let contracts = catalog
+        .register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))
+        .unwrap();
+    let loop_key = catalog.register(LOOP_PLUGIN, Ok).unwrap();
+    let model_key = catalog.register(mock::MODEL_PLUGIN, Ok).unwrap();
+    let local_key = catalog.register(mock::TOOL_PLUGIN, Ok).unwrap();
+    let remote_key = catalog.register(REMOTE, Ok).unwrap();
+    let mut host = KernelHost::new(catalog.instance());
+    let stages = vec![
+        host.plugins().prepare_load(&contracts, ()).unwrap(),
+        host.plugins()
+            .prepare_load(
+                &loop_key,
+                AgentLoop {
+                    environments: ["local".into(), "remote".into()].into(),
+                },
+            )
+            .unwrap(),
+        host.plugins()
+            .prepare_load(
+                &model_key,
+                MockModel {
+                    environment_by_prompt: [
+                        ("remote".into(), "remote".into()),
+                        ("missing".into(), "unconfigured".into()),
+                    ]
+                    .into(),
+                    ..MockModel::default()
+                },
+            )
+            .unwrap(),
+        host.plugins()
+            .prepare_load(&local_key, MockTool::default())
+            .unwrap(),
+        host.plugins()
+            .prepare_load(
+                &remote_key,
+                MockTool {
+                    path: REMOTE_PATH.into(),
+                    prefix: "remote".into(),
+                },
+            )
+            .unwrap(),
+    ];
+    let mut options = mock::options();
+    options.imports.allow.as_mut().unwrap().insert((
+        Key::new(LOOP_PLUGIN, "env-remote"),
+        Key::new(REMOTE, "tool"),
+    ));
+    options.composition.insert(
+        Key::new(REMOTE, "main"),
+        CompositionPolicy {
+            grants: [Footprint::Component(REMOTE_PATH.into())].into(),
+            ..Default::default()
+        },
+    );
+    options.composition.insert(
+        Key::new(LOOP_PLUGIN, "main"),
+        CompositionPolicy {
+            grants: loop_grants(
+                mock::MODEL_PATH,
+                &[
+                    ("local".into(), mock::TOOL_PATH.into()),
+                    ("remote".into(), REMOTE_PATH.into()),
+                ]
+                .into(),
+            )
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+    let candidate = host
+        .prepare(stages, options, "advanced", |_| Ok(()))
+        .unwrap();
+    host.publish(candidate).unwrap();
+    let generation = host.active().unwrap();
+    for (prompt, environment, response) in [
+        ("local", "local", "lookup(local)"),
+        ("remote", "remote", "remote(remote)"),
+        (
+            "missing",
+            "unconfigured",
+            "tool failed: environment unavailable: ",
+        ),
+        ("local", "local", "lookup(local)"),
+    ] {
+        assert_eq!(
+            turn(&generation, prompt),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: prompt.into(),
+                    environment: environment.into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta(response.into()),
                 AgentEvent::Completed,
             ]
         );
@@ -162,6 +277,7 @@ fn frontend_cannot_submit_internal_tool_feedback() {
             let forged = ModelInput::ToolResult {
                 call: ToolCall {
                     prompt: "forged".into(),
+                    environment: "local".into(),
                 },
                 outcome: ToolOutcome::Succeeded {
                     output: "untrusted".into(),

@@ -5,13 +5,18 @@
 //! These local Rust messages are not a provider or protocol wire format.
 
 use phenix_graph::{
-    ComponentDef, Contract, Interface, NetworkError, PortDef,
+    ComponentDef, Contract, Failure as GraphFailure, Interface, NetworkError, PortDef, Process,
+    ProcessContext, ProcessEmission, Step, Value,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
     network::{ConnectionDef, PortPath},
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+    sync::Arc,
+};
 
 pub mod mock;
 
@@ -36,6 +41,7 @@ pub enum ToolOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolCall {
     pub prompt: String,
+    pub environment: String,
 }
 
 /// Ordered model events on the public capture. Completion is explicit.
@@ -53,6 +59,12 @@ pub const TOOL_CONTRACT: &str = "tool";
 pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
+const TOOL_ROUTER: &str = "agent-tool-router";
+const UNAVAILABLE: &str = "unavailable";
+
+fn environment_port(environment: &str) -> String {
+    format!("env-{environment}")
+}
 
 fn capacity() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
@@ -112,50 +124,145 @@ impl PluginInstance for AgentContracts {
     }
 }
 
-/// A preset is an ordinary plugin; it needs no runtime privileges.
-pub struct BasicLoop;
+/// One loop mechanism; the default is a single local environment.
+/// Host import policy authorizes the provider for every configured environment.
+pub struct AgentLoop {
+    pub environments: BTreeSet<String>,
+}
 
-impl PluginInstance for BasicLoop {
+impl Default for AgentLoop {
+    fn default() -> Self {
+        Self {
+            environments: ["local".into()].into(),
+        }
+    }
+}
+
+struct ToolRouter {
+    environments: BTreeSet<String>,
+    emitted: bool,
+}
+
+impl Process for ToolRouter {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+        if self.emitted {
+            self.emitted = false;
+            return Ok(Step::Complete);
+        }
+        let Some(value) = context.take("input") else {
+            return Ok(if context.is_eos("input") {
+                Step::Finished
+            } else {
+                Step::Complete
+            });
+        };
+        let call = value
+            .borrow::<ToolCall>()
+            .ok_or_else(|| GraphFailure::application_message("router expected a tool call"))?
+            .clone();
+        let (output, value) = if self.environments.contains(&call.environment) {
+            (environment_port(&call.environment), Value::local(call))
+        } else {
+            (
+                UNAVAILABLE.into(),
+                Value::local(ModelInput::ToolResult {
+                    call,
+                    outcome: ToolOutcome::Failed {
+                        output: String::new(),
+                        reason: "environment unavailable".into(),
+                    },
+                }),
+            )
+        };
+        self.emitted = true;
+        Ok(Step::Emit(ProcessEmission::new(output, value)))
+    }
+}
+
+impl PluginInstance for AgentLoop {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        Contribution::new("main", NetworkPatch::new([]))
-            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
-            .import("tool", Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
-            .prepare(|context| {
+        let environments = self.environments.clone();
+        let mut contribution = Contribution::new("main", NetworkPatch::new([]))
+            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT));
+        for environment in &environments {
+            contribution = contribution.import(
+                environment_port(environment),
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            );
+        }
+        contribution
+            .prepare(move |context| {
                 let model = context.bind_import("model")?;
-                let tool = context.bind_import("tool")?;
                 let model_input = model.input::<ModelInput>("input")?;
-                let tool_input = tool.input::<ToolCall>("input")?;
                 let model_tool = model.output::<ToolCall>("tool")?;
-                let result = tool.output::<ModelInput>("output")?;
                 let events = model.output::<AgentEvent>("events")?;
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new([
-                        context.connect_bound_output(
-                            &model_tool,
-                            port(tool.path(), tool_input.name()),
-                            capacity(),
-                        )?,
-                        context.connect_bound_output(
+                let interface = Interface::new(
+                    [PortDef::local::<ToolCall>("input")],
+                    environments
+                        .iter()
+                        .map(|name| PortDef::local::<ToolCall>(environment_port(name)))
+                        .chain([PortDef::local::<ModelInput>(UNAVAILABLE)]),
+                )?;
+                let routes = environments.clone();
+                let router = ComponentDef::primitive(
+                    Arc::new(interface),
+                    Arc::new(move || ToolRouter {
+                        environments: routes.clone(),
+                        emitted: false,
+                    }),
+                );
+                let mut edits = vec![
+                    Edit::Add {
+                        path: TOOL_ROUTER.into(),
+                        definition: Arc::new(router),
+                    },
+                    context.connect_bound_output(
+                        &model_tool,
+                        port(TOOL_ROUTER, "input"),
+                        capacity(),
+                    )?,
+                    Edit::Connect(ConnectionDef {
+                        from: port(TOOL_ROUTER, UNAVAILABLE),
+                        to: port(model.path(), model_input.name()),
+                        capacity: capacity(),
+                    }),
+                    Edit::Add {
+                        path: PROMPT_ADAPTER.into(),
+                        definition: Arc::new(ComponentDef::map(ModelInput::Prompt)),
+                    },
+                    Edit::Connect(ConnectionDef {
+                        from: port(PROMPT_ADAPTER, "output"),
+                        to: port(model.path(), model_input.name()),
+                        capacity: capacity(),
+                    }),
+                    Edit::ExposeInput {
+                        name: PROMPT.into(),
+                        targets: vec![port(PROMPT_ADAPTER, "input")],
+                        capacity: capacity(),
+                    },
+                    context.expose_bound_output(EVENTS, &events)?,
+                ];
+                let mut feedback = BTreeSet::new();
+                for environment in &environments {
+                    let output = environment_port(environment);
+                    let tool = context.bind_import(&output)?;
+                    let tool_input = tool.input::<ToolCall>("input")?;
+                    let result = tool.output::<ModelInput>("output")?;
+                    edits.push(Edit::Connect(ConnectionDef {
+                        from: port(TOOL_ROUTER, &output),
+                        to: port(tool.path(), tool_input.name()),
+                        capacity: capacity(),
+                    }));
+                    if feedback.insert(tool.path().to_owned()) {
+                        edits.push(context.connect_bound_output(
                             &result,
                             port(model.path(), model_input.name()),
                             capacity(),
-                        )?,
-                        Edit::Add {
-                            path: PROMPT_ADAPTER.into(),
-                            definition: Arc::new(ComponentDef::map(ModelInput::Prompt)),
-                        },
-                        Edit::Connect(ConnectionDef {
-                            from: port(PROMPT_ADAPTER, "output"),
-                            to: port(model.path(), model_input.name()),
-                            capacity: capacity(),
-                        }),
-                        Edit::ExposeInput {
-                            name: PROMPT.into(),
-                            targets: vec![port(PROMPT_ADAPTER, "input")],
-                            capacity: capacity(),
-                        },
-                        context.expose_bound_output(EVENTS, &events)?,
-                    ])),
+                        )?);
+                    }
+                }
+                Ok(CandidateArtifacts {
+                    patch: Some(NetworkPatch::new(edits)),
                     ..Default::default()
                 })
             })
@@ -163,12 +270,16 @@ impl PluginInstance for BasicLoop {
     }
 }
 
-/// Exact host policy for the preset's wiring, independent of plugin payloads.
-pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 6] {
-    [
-        Footprint::Connection(ConnectionKey::new(port(model, "tool"), port(tool, "input"))),
+/// Exact host grants for the configured graph; names are not authority by themselves.
+pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<Footprint> {
+    let mut grants = vec![
+        Footprint::Component(TOOL_ROUTER.into()),
         Footprint::Connection(ConnectionKey::new(
-            port(tool, "output"),
+            port(model, "tool"),
+            port(TOOL_ROUTER, "input"),
+        )),
+        Footprint::Connection(ConnectionKey::new(
+            port(TOOL_ROUTER, UNAVAILABLE),
             port(model, "input"),
         )),
         Footprint::Component(PROMPT_ADAPTER.into()),
@@ -178,7 +289,18 @@ pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 6] {
         )),
         Footprint::InputExport(PROMPT.into()),
         Footprint::OutputExport(EVENTS.into()),
-    ]
+    ];
+    for (environment, tool) in environments {
+        grants.push(Footprint::Connection(ConnectionKey::new(
+            port(TOOL_ROUTER, &environment_port(environment)),
+            port(tool, "input"),
+        )));
+        grants.push(Footprint::Connection(ConnectionKey::new(
+            port(tool, "output"),
+            port(model, "input"),
+        )));
+    }
+    grants
 }
 
 /// Check the complete shape and claim when defining a provider component.
