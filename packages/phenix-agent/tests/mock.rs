@@ -117,7 +117,8 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
         }
     }
 
-    let host = mock::host_with_options(MockModel::default(), ExternalTool, mock::options()).unwrap();
+    let host =
+        mock::host_with_options(MockModel::default(), ExternalTool, mock::options()).unwrap();
     let generation = host.active().unwrap();
     for prompt in ["first", "second"] {
         assert_eq!(
@@ -151,7 +152,7 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-    use std::{num::NonZeroUsize, sync::Arc};
+    use std::num::NonZeroUsize;
 
     const ALTERNATE: &str = "alternate-loop";
     struct DirectLoop;
