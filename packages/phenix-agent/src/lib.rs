@@ -35,6 +35,7 @@ pub enum AgentEvent {
     Completed,
 }
 
+pub const CONTRACTS_PLUGIN: &str = "agent-contracts";
 pub const LOOP_PLUGIN: &str = "agent-loop";
 pub const MODEL_CONTRACT: &str = "model";
 pub const TOOL_CONTRACT: &str = "tool";
@@ -83,10 +84,10 @@ pub fn tool_contract() -> Contract {
     .unwrap()
 }
 
-/// A preset is an ordinary plugin; it needs no runtime privileges.
-pub struct BasicLoop;
+/// Shared application contracts are available independently of any loop preset.
+pub struct AgentContracts;
 
-impl PluginInstance for BasicLoop {
+impl PluginInstance for AgentContracts {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         registrar.add(ContractDefinition {
             id: MODEL_CONTRACT.into(),
@@ -95,10 +96,18 @@ impl PluginInstance for BasicLoop {
         registrar.add(ContractDefinition {
             id: TOOL_CONTRACT.into(),
             contract: tool_contract(),
-        })?;
+        })
+    }
+}
+
+/// A preset is an ordinary plugin; it needs no runtime privileges.
+pub struct BasicLoop;
+
+impl PluginInstance for BasicLoop {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         Contribution::new("main", NetworkPatch::new([]))
-            .import("model", Key::new(LOOP_PLUGIN, MODEL_CONTRACT))
-            .import("tool", Key::new(LOOP_PLUGIN, TOOL_CONTRACT))
+            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+            .import("tool", Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
             .prepare(|context| {
                 let model = context.bind_import("model")?;
                 let tool = context.bind_import("tool")?;

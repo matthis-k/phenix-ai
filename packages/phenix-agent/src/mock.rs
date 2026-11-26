@@ -2,7 +2,8 @@
 //! No network, credentials, shell, external effects, or durable history.
 
 use crate::{
-    AgentEvent, BasicLoop, LOOP_PLUGIN, MODEL_CONTRACT, ModelInput, TOOL_CONTRACT, ToolCall,
+    AgentContracts, AgentEvent, BasicLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
+    ModelInput, TOOL_CONTRACT, ToolCall,
     loop_grants, model_contract, tool_contract,
 };
 use phenix_graph::{
@@ -111,7 +112,7 @@ impl PluginInstance for MockModel {
                 definition: Arc::new(definition),
             }]),
         )
-        .offer("model", MODEL_PATH, Key::new(LOOP_PLUGIN, MODEL_CONTRACT))
+        .offer("model", MODEL_PATH, Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
         .register(registrar)
     }
 }
@@ -145,7 +146,7 @@ impl PluginInstance for MockTool {
                 definition: Arc::new(definition),
             }]),
         )
-        .offer("tool", TOOL_PATH, Key::new(LOOP_PLUGIN, TOOL_CONTRACT))
+        .offer("tool", TOOL_PATH, Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
         .register(registrar)
     }
 }
@@ -192,11 +193,13 @@ pub fn host_with_options(
     options: BuildOptions,
 ) -> Result<KernelHost, CallbackError> {
     let mut catalog = PluginCatalog::new();
+    let contracts_key = catalog.register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))?;
     let loop_key = catalog.register(LOOP_PLUGIN, |_: ()| Ok(BasicLoop))?;
     let model_key = catalog.register(MODEL_PLUGIN, |model: MockModel| Ok(model))?;
     let tool_key = catalog.register(TOOL_PLUGIN, |tool: MockTool| Ok(tool))?;
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
+        host.plugins().prepare_load(&contracts_key, ())?,
         host.plugins().prepare_load(&loop_key, ())?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
