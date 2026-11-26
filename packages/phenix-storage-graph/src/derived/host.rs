@@ -74,7 +74,7 @@ impl DerivedGeneration {
     pub fn query<T: Clone + Send + Sync + 'static>(
         &self,
         spec: &QuerySpec<T>,
-    ) -> Result<super::QueryValue<T>, Error> {
+    ) -> Result<phenix_graph::Leased<T>, Error> {
         self.with_kernel(|kernel| spec.bind_kernel(kernel)?.query())
     }
 }

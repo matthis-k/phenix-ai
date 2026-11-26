@@ -813,7 +813,7 @@ fn query_value_clones_retain_the_actual_application_code_lease() {
     let mut runtime = configured(plugin, Arc::new(LocalProcessDispatcher), config);
     runtime.start().unwrap();
     let value = runtime.bind_query(&spec).unwrap().query().unwrap();
-    let retained = value.clone();
+    let retained: phenix_graph::Leased<i64> = value.clone();
     drop(runtime);
     drop(spec);
     assert!(weak.upgrade().is_some());

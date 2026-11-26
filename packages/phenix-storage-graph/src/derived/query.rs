@@ -1,6 +1,6 @@
 use super::*;
 use phenix_graph::{
-    BoundDeclaration, CaptureHandle, Failure, IngressHandle, InputKey, OutputKey, Value,
+    BoundDeclaration, CaptureHandle, Failure, IngressHandle, InputKey, Leased, OutputKey,
     network::CompiledNetwork,
     process::{ProcessDispatcher, ProcessExecutionGuard},
     runtime::{RequestFailurePolicy, RequestStatus, SessionOptions, SessionState},
@@ -21,21 +21,6 @@ impl ProcessExecutionGuard for HostOnlyGuard {
     fn enter(&self) -> Result<Box<dyn std::any::Any>, Failure> {
         let guard = DispatchGuard(DISPATCHING.replace(true));
         Ok(Box::new(guard))
-    }
-}
-
-/// A typed value retaining the actual native code lease, including across clones.
-/// Borrowing cannot escape this wrapper's lifetime. No bare owned extraction is
-/// offered: T may itself contain plugin-defined code or destruction behavior.
-#[derive(Clone, Debug)]
-pub struct QueryValue<T: Send + Sync + 'static> {
-    value: Value,
-    marker: PhantomData<T>,
-}
-impl<T: Send + Sync + 'static> std::ops::Deref for QueryValue<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        self.value.borrow().expect("validated query value")
     }
 }
 
@@ -241,13 +226,13 @@ pub struct QueryHandle<'a, T: Clone + Send + Sync + 'static> {
     binding: QueryBinding<T>,
 }
 impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
-    pub fn query(&self) -> Result<QueryValue<T>, Error> {
+    pub fn query(&self) -> Result<Leased<T>, Error> {
         self.query_with_budget(65_536)
     }
     /// Bounded synchronous driver. A deferred dispatcher must complete within the
     /// budget; unresolved work cancels only this request. Runner-owned invalidated
     /// jobs are returned in `Error::RequestInterrupted`, never silently forgotten.
-    pub fn query_with_budget(&self, budget: usize) -> Result<QueryValue<T>, Error> {
+    pub fn query_with_budget(&self, budget: usize) -> Result<Leased<T>, Error> {
         if DISPATCHING.get() {
             return Err(Error::NestedQuery);
         }
@@ -357,13 +342,12 @@ impl<T: Clone + Send + Sync + 'static> QueryHandle<'_, T> {
                                 }
                                 if output.selected {
                                     count += 1;
-                                    if packet.value().borrow::<T>().is_none() {
-                                        return Err(Error::InvalidPublication);
-                                    }
-                                    selected = Some(QueryValue {
-                                        value: packet.into_value(),
-                                        marker: PhantomData,
-                                    });
+                                    selected = Some(
+                                        packet
+                                            .value()
+                                            .leased_shared::<T>()
+                                            .map_err(|_| Error::InvalidPublication)?,
+                                    );
                                 }
                             }
                         }
