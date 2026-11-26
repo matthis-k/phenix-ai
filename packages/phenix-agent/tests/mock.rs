@@ -145,11 +145,11 @@ fn missing_host_graph_grant_prevents_publication() {
 }
 
 #[test]
-fn independently_authored_loop_does_not_require_basic_preset() {
-    use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT};
+fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
+    use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, MODEL_CONTRACT};
     use phenix_graph::compose::{Footprint, NetworkPatch};
     use phenix_kernel::{
-        CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
+        BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
     use std::num::NonZeroUsize;
@@ -188,9 +188,6 @@ fn independently_authored_loop_does_not_require_basic_preset() {
     let model_key = catalog
         .register(mock::MODEL_PLUGIN, |model: MockModel| Ok(model))
         .unwrap();
-    let tool_key = catalog
-        .register(mock::TOOL_PLUGIN, |tool: MockTool| Ok(tool))
-        .unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
@@ -204,12 +201,17 @@ fn independently_authored_loop_does_not_require_basic_preset() {
                 },
             )
             .unwrap(),
-        host.plugins()
-            .prepare_load(&tool_key, MockTool::default())
-            .unwrap(),
     ];
-    let mut options = mock::options();
-    options.composition.remove(&Key::new(LOOP_PLUGIN, "main"));
+    let mut options = BuildOptions::default();
+    options.execution.max_requests = NonZeroUsize::new(1).unwrap();
+    options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
+    options.composition.insert(
+        Key::new(mock::MODEL_PLUGIN, "main"),
+        CompositionPolicy {
+            grants: [Footprint::Component(mock::MODEL_PATH.into())].into(),
+            ..Default::default()
+        },
+    );
     options.composition.insert(
         Key::new(ALTERNATE, "main"),
         CompositionPolicy {
@@ -232,10 +234,6 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         .execution
         .discard_outputs
         .insert((mock::MODEL_PATH.into(), "tool".into()));
-    options
-        .execution
-        .discard_outputs
-        .insert((mock::TOOL_PATH.into(), "output".into()));
     let candidate = host
         .prepare(stages, options, "alternate", |_| Ok(()))
         .unwrap();
