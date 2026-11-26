@@ -237,7 +237,11 @@ fn configured_environments_route_each_call_without_privileged_providers() {
     for (prompt, environment, response) in [
         ("local", "local", "lookup(local)"),
         ("remote", "remote", "remote(remote)"),
-        ("missing", "unconfigured", "tool failed: environment unavailable: "),
+        (
+            "missing",
+            "unconfigured",
+            "tool failed: environment unavailable: ",
+        ),
         ("local", "local", "lookup(local)"),
     ] {
         assert_eq!(
