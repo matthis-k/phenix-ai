@@ -3,7 +3,7 @@
 
 use super::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_INVOCATION, TOOL_ROUTER,
-    ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, port, tool_router,
+    ToolInvocation, UNAVAILABLE, capacity, environment_port, port, tool_router,
 };
 use phenix_graph::{
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
@@ -28,8 +28,8 @@ pub struct EnvironmentRoutes {
 impl PluginInstance for EnvironmentRoutes {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let environments = self.environments.clone();
-        let mut contribution = Contribution::new("main", NetworkPatch::new([]))
-            .after([Key::new(LOOP_PLUGIN, "main")]);
+        let mut contribution =
+            Contribution::new("main", NetworkPatch::new([])).after([Key::new(LOOP_PLUGIN, "main")]);
         for environment in &environments {
             contribution = contribution.import(
                 environment_port(environment),
@@ -38,7 +38,10 @@ impl PluginInstance for EnvironmentRoutes {
         }
         contribution
             .prepare(move |context| {
-                let router = tool_router(environments.clone(), std::convert::identity::<ToolInvocation>)?;
+                let router = tool_router(
+                    environments.clone(),
+                    std::convert::identity::<ToolInvocation>,
+                )?;
                 let mut edits = vec![
                     Edit::Add {
                         path: ROUTER.into(),
