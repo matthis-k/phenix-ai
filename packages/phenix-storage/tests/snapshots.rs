@@ -221,9 +221,6 @@ impl Backend for Legacy {
     }
 }
 impl TypedKv for Legacy {
-    fn supports_revisioned_reads(&self) -> bool {
-        true
-    }
     fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
         self.0.get(d, k)
     }
@@ -233,6 +230,11 @@ impl TypedKv for Legacy {
     fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
         self.0.delete(d, k)
     }
+    fn revisioned_read(&mut self) -> Option<&mut dyn phenix_storage::RevisionedRead> {
+        Some(self)
+    }
+}
+impl phenix_storage::RevisionedRead for Legacy {
     fn get_revisioned(
         &mut self,
         d: &str,

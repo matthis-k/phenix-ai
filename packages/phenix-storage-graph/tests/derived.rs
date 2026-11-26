@@ -1,3 +1,4 @@
+use phenix_storage::AtomicReadMany;
 mod support;
 use phenix_graph::{
     Value,
@@ -121,9 +122,20 @@ impl Backend for ReadProbe {
     }
 }
 impl TypedKv for ReadProbe {
-    fn supports_atomic_read_many(&self) -> bool {
-        true
+    fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
+        self.memory.get(d, k)
     }
+    fn put(&mut self, d: &str, k: &str, v: Vec<u8>) -> phenix_storage::Result<()> {
+        self.memory.put(d, k, v)
+    }
+    fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
+        self.memory.delete(d, k)
+    }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        Some(self)
+    }
+}
+impl AtomicReadMany for ReadProbe {
     fn read_many(
         &mut self,
         keys: &[phenix_storage::snapshot::ReadKey<'_>],
@@ -134,15 +146,6 @@ impl TypedKv for ReadProbe {
         } else {
             self.memory.read_many(keys)
         }
-    }
-    fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
-        self.memory.get(d, k)
-    }
-    fn put(&mut self, d: &str, k: &str, v: Vec<u8>) -> phenix_storage::Result<()> {
-        self.memory.put(d, k, v)
-    }
-    fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
-        self.memory.delete(d, k)
     }
 }
 

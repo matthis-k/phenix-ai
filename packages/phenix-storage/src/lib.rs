@@ -329,52 +329,50 @@ pub trait Backend: Send {
     }
 }
 pub trait TypedKv: Send {
-    /// Opt in only when get_revisioned is implemented. Independent of batch/CAS.
-    fn supports_revisioned_reads(&self) -> bool {
-        false
-    }
-    /// Opt in only for a coherent, versioned snapshot over the entire batch.
-    fn supports_atomic_read_many(&self) -> bool {
-        false
-    }
-    fn read_many(
-        &mut self,
-        _keys: &[snapshot::ReadKey<'_>],
-    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
-        Err(Error::UnsupportedCapability {
-            capability: Capability::AtomicReadMany,
-        })
-    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()>;
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool>;
-    /// Opt in only when compare_exchange is implemented. All successful
-    /// puts must invalidate older tokens, including delete/recreate cycles.
-    /// Durable backends must retain that guarantee across reopen.
-    fn supports_compare_exchange(&self) -> bool {
-        false
+
+    /// Optional capabilities are independent. Probe again before each operation.
+    fn revisioned_read(&mut self) -> Option<&mut dyn RevisionedRead> {
+        None
     }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        None
+    }
+    fn atomic_compare_exchange(&mut self) -> Option<&mut dyn CompareExchange> {
+        None
+    }
+}
+
+/// Read a value and its revision coherently.
+pub trait RevisionedRead: Send {
     fn get_revisioned(
         &mut self,
-        _dataset: &str,
-        _key: &str,
-    ) -> Result<Option<Revisioned<Vec<u8>>>> {
-        Err(Error::UnsupportedCapability {
-            capability: Capability::RevisionedRead,
-        })
-    }
-    /// Must atomically compare and mutate within this backend's resource boundary.
+        dataset: &str,
+        key: &str,
+    ) -> Result<Option<Revisioned<Vec<u8>>>>;
+}
+
+/// Return a coherent versioned snapshot over the entire ordered batch.
+pub trait AtomicReadMany: Send {
+    fn read_many(
+        &mut self,
+        keys: &[snapshot::ReadKey<'_>],
+    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>>;
+}
+
+/// Compare and mutate atomically within the backend's resource boundary.
+/// Successful puts invalidate older tokens, including delete/recreate cycles.
+/// Durable backends retain that guarantee across reopen.
+pub trait CompareExchange: Send {
     fn compare_exchange(
         &mut self,
-        _dataset: &str,
-        _key: &str,
-        _expected: Option<&Revision>,
-        _value: Vec<u8>,
-    ) -> Result<Revision> {
-        Err(Error::UnsupportedCapability {
-            capability: Capability::CompareExchange,
-        })
-    }
+        dataset: &str,
+        key: &str,
+        expected: Option<&Revision>,
+        value: Vec<u8>,
+    ) -> Result<Revision>;
 }
 /// Lends a connection with no installed authorizer or active transaction.
 /// The registry installs its SQL policy only for the duration of each transaction,
@@ -405,20 +403,6 @@ impl Backend for MemoryBackend {
     }
 }
 impl TypedKv for MemoryBackend {
-    fn supports_revisioned_reads(&self) -> bool {
-        true
-    }
-    fn supports_atomic_read_many(&self) -> bool {
-        true
-    }
-    fn read_many(
-        &mut self,
-        keys: &[snapshot::ReadKey<'_>],
-    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
-        keys.iter()
-            .map(|k| self.get_revisioned(k.dataset, k.key))
-            .collect()
-    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .values
@@ -434,12 +418,32 @@ impl TypedKv for MemoryBackend {
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
         Ok(self.values.remove(&(dataset.into(), key.into())).is_some())
     }
-    fn supports_compare_exchange(&self) -> bool {
-        true
+    fn revisioned_read(&mut self) -> Option<&mut dyn RevisionedRead> {
+        Some(self)
     }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        Some(self)
+    }
+    fn atomic_compare_exchange(&mut self) -> Option<&mut dyn CompareExchange> {
+        Some(self)
+    }
+}
+impl RevisionedRead for MemoryBackend {
     fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
         Ok(self.values.get(&(dataset.into(), key.into())).cloned())
     }
+}
+impl AtomicReadMany for MemoryBackend {
+    fn read_many(
+        &mut self,
+        keys: &[snapshot::ReadKey<'_>],
+    ) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
+        keys.iter()
+            .map(|k| self.get_revisioned(k.dataset, k.key))
+            .collect()
+    }
+}
+impl CompareExchange for MemoryBackend {
     fn compare_exchange(
         &mut self,
         dataset: &str,
@@ -629,12 +633,59 @@ impl SqliteBackend {
     }
 }
 impl TypedKv for SqliteBackend {
-    fn supports_revisioned_reads(&self) -> bool {
-        true
+    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
+        self.reset_sql_authority()?;
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .0
+            .query_row(
+                "SELECT value FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+                rusqlite::params![dataset, key],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
-    fn supports_atomic_read_many(&self) -> bool {
-        true
+    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
+        self.write_revisioned(dataset, key, None, value)?;
+        Ok(())
     }
+    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
+        self.reset_sql_authority()?;
+        Ok(self.0.execute(
+            "DELETE FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+            rusqlite::params![dataset, key],
+        )? != 0)
+    }
+    fn revisioned_read(&mut self) -> Option<&mut dyn RevisionedRead> {
+        Some(self)
+    }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        Some(self)
+    }
+    fn atomic_compare_exchange(&mut self) -> Option<&mut dyn CompareExchange> {
+        Some(self)
+    }
+}
+impl RevisionedRead for SqliteBackend {
+    fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
+        self.reset_sql_authority()?;
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .0
+            .query_row(
+                "SELECT value, revision FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
+                rusqlite::params![dataset, key],
+                |r| {
+                    Ok(Revisioned {
+                        value: r.get(0)?,
+                        revision: Revision(r.get::<_, i64>(1)?.to_be_bytes().to_vec()),
+                    })
+                },
+            )
+            .optional()?)
+    }
+}
+impl AtomicReadMany for SqliteBackend {
     fn read_many(
         &mut self,
         keys: &[snapshot::ReadKey<'_>],
@@ -664,49 +715,8 @@ impl TypedKv for SqliteBackend {
         tx.commit()?;
         Ok(entries)
     }
-    fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
-        self.reset_sql_authority()?;
-        use rusqlite::OptionalExtension;
-        Ok(self
-            .0
-            .query_row(
-                "SELECT value FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
-                rusqlite::params![dataset, key],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-    fn put(&mut self, dataset: &str, key: &str, value: Vec<u8>) -> Result<()> {
-        self.write_revisioned(dataset, key, None, value)?;
-        Ok(())
-    }
-    fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
-        self.reset_sql_authority()?;
-        Ok(self.0.execute(
-            "DELETE FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
-            rusqlite::params![dataset, key],
-        )? != 0)
-    }
-    fn supports_compare_exchange(&self) -> bool {
-        true
-    }
-    fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
-        self.reset_sql_authority()?;
-        use rusqlite::OptionalExtension;
-        Ok(self
-            .0
-            .query_row(
-                "SELECT value, revision FROM __phenix_kv WHERE dataset = ?1 AND key = ?2",
-                rusqlite::params![dataset, key],
-                |r| {
-                    Ok(Revisioned {
-                        value: r.get(0)?,
-                        revision: Revision(r.get::<_, i64>(1)?.to_be_bytes().to_vec()),
-                    })
-                },
-            )
-            .optional()?)
-    }
+}
+impl CompareExchange for SqliteBackend {
     fn compare_exchange(
         &mut self,
         dataset: &str,
@@ -1015,9 +1025,9 @@ impl Session {
             match mount.backend.typed_kv() {
                 Some(kv) => (
                     true,
-                    kv.supports_revisioned_reads(),
-                    kv.supports_atomic_read_many(),
-                    kv.supports_compare_exchange(),
+                    kv.revisioned_read().is_some(),
+                    kv.atomic_read_many().is_some(),
+                    kv.atomic_compare_exchange().is_some(),
                 ),
                 None => (false, false, false, false),
             };
@@ -1076,12 +1086,12 @@ impl Session {
                 .ok_or(Error::UnsupportedCapability {
                     capability: Capability::TypedKv,
                 })?;
-            if !values.supports_revisioned_reads() {
-                return Err(Error::UnsupportedCapability {
+            values
+                .revisioned_read()
+                .ok_or(Error::UnsupportedCapability {
                     capability: Capability::RevisionedRead,
-                });
-            }
-            values.get_revisioned(address.dataset(), key)?
+                })?
+                .get_revisioned(address.dataset(), key)?
         };
         bytes
             .map(|v| {
@@ -1118,7 +1128,7 @@ impl Session {
                 .ok_or(Error::UnsupportedCapability {
                     capability: Capability::TypedKv,
                 })?;
-            if !values.supports_compare_exchange() {
+            if values.atomic_compare_exchange().is_none() {
                 return Err(Error::UnsupportedCapability {
                     capability: Capability::CompareExchange,
                 });
@@ -1137,7 +1147,7 @@ impl Session {
             .ok_or(Error::UnsupportedCapability {
                 capability: Capability::TypedKv,
             })?;
-        if !values.supports_compare_exchange() {
+        if !values.atomic_compare_exchange().is_some() {
             return Err(Error::UnsupportedCapability {
                 capability: Capability::CompareExchange,
             });
