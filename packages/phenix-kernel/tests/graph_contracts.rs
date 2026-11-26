@@ -413,7 +413,8 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
         Kernel::build_with_options(
             "host",
             snapshots,
-            build_options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
+            build_options.with_dispatcher(Arc::new(LocalProcessDispatcher))
+        )
         .err()
         .unwrap()
         .to_string()

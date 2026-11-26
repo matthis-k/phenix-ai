@@ -85,8 +85,7 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
     host_options.execution.discard_outputs = options.execution.discard_outputs.clone();
     let dispatcher = Arc::new(CountingDispatcher::default());
     options.execution.dispatcher = dispatcher.clone();
-    let mut kernel = Kernel::build_with_options("bounded", [snapshot.clone()], options)
-    .unwrap();
+    let mut kernel = Kernel::build_with_options("bounded", [snapshot.clone()], options).unwrap();
     kernel.start().unwrap();
     kernel.inject("input", Value::local(0_i64)).unwrap();
     let report = kernel.run_steps(8).unwrap();
@@ -122,12 +121,7 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
     let host_dispatcher = Arc::new(CountingDispatcher::default());
     host_options.execution.dispatcher = host_dispatcher.clone();
     let candidate = host
-        .prepare(
-            vec![],
-            host_options,
-            "configured",
-            |_| Ok(()),
-        )
+        .prepare(vec![], host_options, "configured", |_| Ok(()))
         .unwrap();
     let generation = host.publish(candidate).unwrap();
     generation.inject("input", Value::local(0_i64)).unwrap();

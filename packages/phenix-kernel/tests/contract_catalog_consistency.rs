@@ -190,7 +190,8 @@ fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
         Kernel::build_with_options(
             "host",
             [snapshot],
-            options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher))
+        )
         .err()
         .unwrap()
         .to_string()

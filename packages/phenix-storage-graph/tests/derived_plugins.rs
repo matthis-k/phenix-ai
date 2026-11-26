@@ -163,7 +163,8 @@ fn reader_snapshots_rebuild_and_failed_candidate_does_not_poison_exports() {
         DerivedRuntime::build_with_options(
             "failed",
             snapshots.clone(),
-            build_options().with_dispatcher(Arc::new(LocalProcessDispatcher)))
+            build_options().with_dispatcher(Arc::new(LocalProcessDispatcher))
+        )
         .is_err()
     );
     fail.store(false, Ordering::SeqCst);

@@ -2145,7 +2145,7 @@ mod tests {
             }
         }
     }
-    use phenix_storage::{RevisionedRead, AtomicReadMany, CompareExchange};
+    use phenix_storage::{AtomicReadMany, CompareExchange, RevisionedRead};
 
     impl TypedKv for TrackedBackend {
         fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {

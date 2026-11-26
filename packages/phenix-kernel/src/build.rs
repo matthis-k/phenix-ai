@@ -329,7 +329,11 @@ impl Kernel {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, ResolutionError> {
-        Self::build_with_options(name, snapshots, BuildOptions::default().with_dispatcher(dispatcher))
+        Self::build_with_options(
+            name,
+            snapshots,
+            BuildOptions::default().with_dispatcher(dispatcher),
+        )
     }
 
     /// Discover compatible offers, apply trusted eligibility and selections,

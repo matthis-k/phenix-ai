@@ -156,7 +156,11 @@ fn build(
     snapshots: Vec<PluginSnapshot>,
     options: BuildOptions,
 ) -> Result<Kernel, phenix_kernel::ResolutionError> {
-    Kernel::build_with_options(name, snapshots, options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
+    Kernel::build_with_options(
+        name,
+        snapshots,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+    )
 }
 
 #[test]

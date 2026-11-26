@@ -119,7 +119,8 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             Kernel::build_with_options(
                 "host",
                 [sibling],
-                options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher))
+            )
             .err()
             .unwrap()
             .to_string()

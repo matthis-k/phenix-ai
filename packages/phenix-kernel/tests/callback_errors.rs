@@ -305,8 +305,7 @@ fn panicking_host_binding_returns_typed_error_without_replacing_active_generatio
     let error = host
         .prepare(
             vec![],
-            BuildOptions::default(),
-            Arc::new(LocalProcessDispatcher),
+            BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "panicking-binding",
             |_| -> Result<(), CallbackError> {
                 panic!("intentional host binding panic");

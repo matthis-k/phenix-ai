@@ -48,7 +48,11 @@ impl DerivedRuntime {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, Error> {
-        Self::build_with_options(name, snapshots, BuildOptions::default().with_dispatcher(dispatcher))
+        Self::build_with_options(
+            name,
+            snapshots,
+            BuildOptions::default().with_dispatcher(dispatcher),
+        )
     }
     pub fn build_with_options(
         name: impl Into<String>,

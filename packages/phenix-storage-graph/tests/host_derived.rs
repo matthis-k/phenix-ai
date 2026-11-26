@@ -73,7 +73,8 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
             phenix_kernel::BuildOptions {
                 composition: config.composition.clone(),
                 ..Default::default()
-            }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+            }
+            .with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "old",
             |binding| {
                 assert_eq!(starts.load(Ordering::SeqCst), 0);
@@ -97,7 +98,8 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
         phenix_kernel::BuildOptions {
             composition: config.composition.clone(),
             ..Default::default()
-        }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+        }
+        .with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "failed",
         |_| Err("binding rejected".into()),
     );
@@ -476,7 +478,8 @@ fn wake_observer_captures_updates_and_reload_switches_sources_without_candidate_
             phenix_kernel::BuildOptions {
                 composition: config.composition.clone(),
                 ..Default::default()
-            }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+            }
+            .with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "old-observer",
             |_| Ok(()),
         )

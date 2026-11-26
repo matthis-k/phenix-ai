@@ -347,11 +347,7 @@ pub trait TypedKv: Send {
 
 /// Read a value and its revision coherently.
 pub trait RevisionedRead: Send {
-    fn get_revisioned(
-        &mut self,
-        dataset: &str,
-        key: &str,
-    ) -> Result<Option<Revisioned<Vec<u8>>>>;
+    fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>>;
 }
 
 /// Return a coherent versioned snapshot over the entire ordered batch.

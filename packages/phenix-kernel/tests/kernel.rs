@@ -550,7 +550,12 @@ fn open_ingress_driver_kernel(
         ],
     );
     snapshots.push(support::snapshot("driver-open-input", OpenIngress));
-    Kernel::build_with_options(name, snapshots, options.with_dispatcher(Arc::new(LocalProcessDispatcher))).unwrap()
+    Kernel::build_with_options(
+        name,
+        snapshots,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+    )
+    .unwrap()
 }
 
 #[test]

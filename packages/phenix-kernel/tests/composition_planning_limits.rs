@@ -232,7 +232,8 @@ fn later_valid_batch_cannot_repair_a_rejected_kernel_prefix() {
         Kernel::build_with_options(
             "prefix",
             [snapshot],
-            options.with_dispatcher(Arc::new(LocalProcessDispatcher))),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher))
+        ),
         Err(ResolutionError::Compilation { .. })
     ));
     assert_eq!(called.load(Ordering::SeqCst), 1);

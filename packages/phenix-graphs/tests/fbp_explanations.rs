@@ -278,8 +278,11 @@ fn passive_inspection_retains_opaque_correlation_declaration() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = Readiness::from_policy(CorrelatedOpaque(calls.clone()));
     let expected = policy.declaration().clone();
-    let session = pair(vec![], Inputs::default())
+    let mut session = pair(vec![], Inputs::default())
         .start_with_options(options(policy, RequestQueuePolicy::SharedFifo));
+    // Supply an actual scheduler candidate before assessing opaque selection.
+    let id = session.begin_request(None).unwrap();
+    session.inject_request(id, "a", Value::of(1_i64)).unwrap();
     let before = calls.load(Ordering::SeqCst);
     let explanation = session.explain_process(0, Instant::now()).unwrap();
     assert_eq!(explanation.policy, expected);

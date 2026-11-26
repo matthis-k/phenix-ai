@@ -204,9 +204,12 @@ pub fn build(n: usize, previews: bool, dense: bool, configure: fn(&mut BuildOpti
     })];
     let mut options = options(n, previews, dense);
     configure(&mut options);
-    let mut kernel =
-        Kernel::build_with_options("q3", snapshots, options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
-            .unwrap();
+    let mut kernel = Kernel::build_with_options(
+        "q3",
+        snapshots,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
+    )
+    .unwrap();
     assert_eq!(counts.activated.load(Ordering::SeqCst), 0);
     kernel.start().unwrap();
     assert_eq!(
