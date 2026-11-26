@@ -396,8 +396,7 @@ pub fn build(root: &Path, project: &str) -> Result<Demo, String> {
     let mut kernel = Kernel::build_with_options(
         "scoped-storage",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .map_err(|error| error.to_string())?;
     kernel.start().map_err(|error| error.to_string())?;

@@ -244,8 +244,7 @@ fn prepare(
     let options = options(providers, owner);
     host.prepare(
         stages,
-        options,
-        Arc::new(LocalProcessDispatcher),
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "portable",
         |_| Ok(()),
     )
@@ -314,8 +313,7 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
     let candidate = host
         .prepare(
             stages,
-            initial_options,
-            Arc::new(LocalProcessDispatcher),
+            initial_options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "portable",
             |_| Ok(()),
         )
@@ -357,8 +355,7 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
                 matches!(
                     host.prepare(
                         vec![stage],
-                        candidate_options,
-                        Arc::new(LocalProcessDispatcher),
+                        candidate_options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                         "portable",
                         |_| Ok(())
                     ),
@@ -394,8 +391,7 @@ fn host_selects_portable_node_and_nested_module_and_preserves_active_on_bad_repl
             .publish(
                 host.prepare(
                     vec![stage],
-                    candidate_options,
-                    Arc::new(LocalProcessDispatcher),
+                    candidate_options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "portable",
                     |_| Ok(()),
                 )

@@ -162,8 +162,7 @@ fn build(
     Kernel::build_with_options(
         "imports",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
 }
 
@@ -557,8 +556,7 @@ fn self_imports_do_not_create_an_inter_composer_cycle() {
         let mut kernel = Kernel::build_with_options(
             "imports",
             plugins.snapshots(),
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         kernel.start().unwrap();

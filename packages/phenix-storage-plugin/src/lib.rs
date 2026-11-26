@@ -1045,9 +1045,9 @@ impl PreparedStorage {
                     match backend.typed_kv() {
                         Some(kv) => (
                             true,
-                            kv.supports_revisioned_reads(),
-                            kv.supports_atomic_read_many(),
-                            kv.supports_compare_exchange(),
+                            kv.revisioned_read().is_some(),
+                            kv.atomic_read_many().is_some(),
+                            kv.atomic_compare_exchange().is_some(),
                         ),
                         None => (false, false, false, false),
                     };
@@ -2145,50 +2145,9 @@ mod tests {
             }
         }
     }
+    use phenix_storage::{AtomicReadMany, CompareExchange, RevisionedRead};
+
     impl TypedKv for TrackedBackend {
-        fn supports_revisioned_reads(&self) -> bool {
-            self.config.actual.revisioned_read
-        }
-        fn supports_atomic_read_many(&self) -> bool {
-            self.config.actual.atomic_read_many
-        }
-        fn supports_compare_exchange(&self) -> bool {
-            self.config.actual.compare_exchange
-        }
-        fn get_revisioned(
-            &mut self,
-            dataset: &str,
-            key: &str,
-        ) -> phenix_storage::Result<Option<phenix_storage::Revisioned<Vec<u8>>>> {
-            assert!(self.config.actual.revisioned_read);
-            self.config
-                .payloads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.memory.get_revisioned(dataset, key)
-        }
-        fn read_many(
-            &mut self,
-            keys: &[phenix_storage::snapshot::ReadKey<'_>],
-        ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
-            assert!(self.config.actual.atomic_read_many);
-            self.config
-                .payloads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.memory.read_many(keys)
-        }
-        fn compare_exchange(
-            &mut self,
-            dataset: &str,
-            key: &str,
-            expected: Option<&phenix_storage::Revision>,
-            value: Vec<u8>,
-        ) -> phenix_storage::Result<phenix_storage::Revision> {
-            assert!(self.config.actual.compare_exchange);
-            self.config
-                .payloads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.memory.compare_exchange(dataset, key, expected, value)
-        }
         fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
             self.config
                 .payloads
@@ -2206,6 +2165,55 @@ mod tests {
                 .payloads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.memory.delete(dataset, key)
+        }
+        fn revisioned_read(&mut self) -> Option<&mut dyn RevisionedRead> {
+            (self.config.actual.revisioned_read).then_some(self)
+        }
+        fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+            (self.config.actual.atomic_read_many).then_some(self)
+        }
+        fn atomic_compare_exchange(&mut self) -> Option<&mut dyn CompareExchange> {
+            (self.config.actual.compare_exchange).then_some(self)
+        }
+    }
+    impl RevisionedRead for TrackedBackend {
+        fn get_revisioned(
+            &mut self,
+            dataset: &str,
+            key: &str,
+        ) -> phenix_storage::Result<Option<phenix_storage::Revisioned<Vec<u8>>>> {
+            assert!(self.config.actual.revisioned_read);
+            self.config
+                .payloads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.memory.get_revisioned(dataset, key)
+        }
+    }
+    impl AtomicReadMany for TrackedBackend {
+        fn read_many(
+            &mut self,
+            keys: &[phenix_storage::snapshot::ReadKey<'_>],
+        ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
+            assert!(self.config.actual.atomic_read_many);
+            self.config
+                .payloads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.memory.read_many(keys)
+        }
+    }
+    impl CompareExchange for TrackedBackend {
+        fn compare_exchange(
+            &mut self,
+            dataset: &str,
+            key: &str,
+            expected: Option<&phenix_storage::Revision>,
+            value: Vec<u8>,
+        ) -> phenix_storage::Result<phenix_storage::Revision> {
+            assert!(self.config.actual.compare_exchange);
+            self.config
+                .payloads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.memory.compare_exchange(dataset, key, expected, value)
         }
     }
     impl Drop for TrackedBackend {

@@ -48,17 +48,20 @@ impl DerivedRuntime {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, Error> {
-        Self::build_with_options(name, snapshots, dispatcher, BuildOptions::default())
+        Self::build_with_options(
+            name,
+            snapshots,
+            BuildOptions::default().with_dispatcher(dispatcher),
+        )
     }
     pub fn build_with_options(
         name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         mut options: BuildOptions,
     ) -> Result<Self, Error> {
         Self::guard_options(&mut options.execution);
         Ok(Self {
-            kernel: Kernel::build_with_options(name, snapshots, dispatcher, options)
+            kernel: Kernel::build_with_options(name, snapshots, options)
                 .map_err(|e| Error::Kernel(Box::new(e)))?,
         })
     }

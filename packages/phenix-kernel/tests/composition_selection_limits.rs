@@ -110,8 +110,7 @@ fn main_selection_limits_preserve_typed_errors_and_release_prepared_artifacts() 
         let error = Kernel::build_with_options(
             "main-limit",
             [support::snapshot("plugin", plugin)],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .err()
         .expect("selection must exhaust the host budget");
@@ -145,8 +144,7 @@ fn zero_budget_self_import_preview_fails_before_preparation() {
     let error = Kernel::build_with_options(
         "preview-limit",
         [support::snapshot("plugin", plugin)],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .err()
     .expect("self-import preview must exhaust the host budget");
@@ -176,8 +174,7 @@ fn default_limits_preserve_normal_and_self_import_builds() {
         let mut kernel = Kernel::build_with_options(
             "default-limit",
             [support::snapshot("plugin", plugin)],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         assert_eq!(prepared.load(Ordering::SeqCst), 1);

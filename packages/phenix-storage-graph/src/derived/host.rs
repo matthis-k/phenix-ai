@@ -1,5 +1,4 @@
 use super::{DerivedRuntime, Error, QuerySpec};
-use phenix_graph::process::ProcessDispatcher;
 use phenix_kernel::{
     BuildOptions,
     host::{Binding, Candidate, Generation, KernelHost, LifecycleError},
@@ -44,12 +43,11 @@ impl DerivedHost {
         &self,
         stages: Vec<StagedPlugin>,
         mut options: BuildOptions,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         name: impl Into<String>,
         bind: impl FnOnce(&Binding<'_>) -> Result<(), phenix_kernel::CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
         DerivedRuntime::guard_options(&mut options.execution);
-        self.host.prepare(stages, options, dispatcher, name, bind)
+        self.host.prepare(stages, options, name, bind)
     }
 
     pub fn publish(&mut self, candidate: Candidate) -> Result<DerivedGeneration, LifecycleError> {

@@ -42,8 +42,7 @@ fn main() -> Result<(), phenix_kernel::CallbackError> {
     let mut kernel = Kernel::build_with_options(
         "example",
         plugins.snapshots(),
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )?;
     drop(plugins);
     kernel.start()?;

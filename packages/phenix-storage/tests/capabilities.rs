@@ -63,15 +63,6 @@ impl Backend for Independent {
     }
 }
 impl TypedKv for Independent {
-    fn supports_revisioned_reads(&self) -> bool {
-        self.control.flags.load(SeqCst) & REV != 0
-    }
-    fn supports_atomic_read_many(&self) -> bool {
-        self.control.flags.load(SeqCst) & BATCH != 0
-    }
-    fn supports_compare_exchange(&self) -> bool {
-        self.control.flags.load(SeqCst) & CAS != 0
-    }
     fn get(&mut self, dataset: &str, key: &str) -> Result<Option<Vec<u8>>> {
         self.control.plain.fetch_add(1, SeqCst);
         self.values.get(dataset, key)
@@ -82,6 +73,17 @@ impl TypedKv for Independent {
     fn delete(&mut self, dataset: &str, key: &str) -> Result<bool> {
         self.values.delete(dataset, key)
     }
+    fn revisioned_read(&mut self) -> Option<&mut dyn phenix_storage::RevisionedRead> {
+        (self.control.flags.load(SeqCst) & REV != 0).then_some(self)
+    }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn phenix_storage::AtomicReadMany> {
+        (self.control.flags.load(SeqCst) & BATCH != 0).then_some(self)
+    }
+    fn atomic_compare_exchange(&mut self) -> Option<&mut dyn phenix_storage::CompareExchange> {
+        (self.control.flags.load(SeqCst) & CAS != 0).then_some(self)
+    }
+}
+impl phenix_storage::RevisionedRead for Independent {
     fn get_revisioned(&mut self, dataset: &str, key: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
         self.control.revision.fetch_add(1, SeqCst);
         let value = self.values.get_revisioned(dataset, key);
@@ -90,10 +92,14 @@ impl TypedKv for Independent {
         }
         value
     }
+}
+impl phenix_storage::AtomicReadMany for Independent {
     fn read_many(&mut self, keys: &[ReadKey<'_>]) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
         self.control.batch.fetch_add(1, SeqCst);
         self.values.read_many(keys)
     }
+}
+impl phenix_storage::CompareExchange for Independent {
     fn compare_exchange(
         &mut self,
         dataset: &str,
@@ -366,7 +372,7 @@ fn cas_capability_loss_during_encoding_prevents_mutation() {
 }
 
 #[test]
-fn overriding_optional_payload_methods_does_not_opt_in() {
+fn implementing_capability_traits_without_exposing_them_does_not_opt_in() {
     struct NoOptIn;
     impl Backend for NoOptIn {
         fn typed_kv(&mut self) -> Option<&mut dyn TypedKv> {
@@ -383,12 +389,18 @@ fn overriding_optional_payload_methods_does_not_opt_in() {
         fn delete(&mut self, _: &str, _: &str) -> Result<bool> {
             panic!("unexpected delete")
         }
+    }
+    impl phenix_storage::RevisionedRead for NoOptIn {
         fn get_revisioned(&mut self, _: &str, _: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
-            panic!("predicate must gate revision payload")
+            panic!("capability reference must gate revision payload")
         }
+    }
+    impl phenix_storage::AtomicReadMany for NoOptIn {
         fn read_many(&mut self, _: &[ReadKey<'_>]) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
-            panic!("predicate must gate batch payload")
+            panic!("capability reference must gate batch payload")
         }
+    }
+    impl phenix_storage::CompareExchange for NoOptIn {
         fn compare_exchange(
             &mut self,
             _: &str,
@@ -396,7 +408,7 @@ fn overriding_optional_payload_methods_does_not_opt_in() {
             _: Option<&Revision>,
             _: Vec<u8>,
         ) -> Result<Revision> {
-            panic!("predicate must gate CAS payload")
+            panic!("capability reference must gate CAS payload")
         }
     }
     let registry = Registry::new();

@@ -259,6 +259,38 @@ impl ReadinessPolicy for Opaque {
 }
 
 #[test]
+fn passive_inspection_retains_opaque_correlation_declaration() {
+    struct CorrelatedOpaque(Arc<AtomicUsize>);
+    impl ReadinessPolicy for CorrelatedOpaque {
+        fn declaration(&self) -> PolicyDeclaration {
+            PolicyDeclaration {
+                rule: None,
+                correlated: true,
+            }
+        }
+
+        fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            vec![]
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = Readiness::from_policy(CorrelatedOpaque(calls.clone()));
+    let expected = policy.declaration().clone();
+    let mut session = pair(vec![], Inputs::default())
+        .start_with_options(options(policy, RequestQueuePolicy::SharedFifo));
+    // Supply an actual scheduler candidate before assessing opaque selection.
+    let id = session.begin_request(None).unwrap();
+    session.inject_request(id, "a", Value::of(1_i64)).unwrap();
+    let before = calls.load(Ordering::SeqCst);
+    let explanation = session.explain_process(0, Instant::now()).unwrap();
+    assert_eq!(explanation.policy, expected);
+    assert_eq!(explanation.readiness, ReadyAssessment::UnknownCustom);
+    assert_eq!(calls.load(Ordering::SeqCst), before);
+}
+
+#[test]
 fn custom_is_opaque_and_repeated_format_drop_queries_do_not_call_or_consume_notifications() {
     for notified in [false, true] {
         for queues in [

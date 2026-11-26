@@ -162,8 +162,7 @@ fn host_final_binding_failure_archival_successor_and_alias_authentication() {
             let candidate = host
                 .prepare(
                     vec![stage],
-                    options(queue, failure),
-                    Arc::new(LocalProcessDispatcher),
+                    options(queue, failure).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "first",
                     |binding| {
                         handles = Some(bind(binding));
@@ -184,8 +183,7 @@ fn host_final_binding_failure_archival_successor_and_alias_authentication() {
             for panic in [false, true] {
                 let rejected = host.prepare(
                     vec![],
-                    options(queue, failure),
-                    Arc::new(LocalProcessDispatcher),
+                    options(queue, failure).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "failed",
                     |binding| {
                         escaped = Some(bind(binding));
@@ -210,8 +208,7 @@ fn host_final_binding_failure_archival_successor_and_alias_authentication() {
             let candidate = host
                 .prepare(
                     vec![],
-                    options(queue, failure),
-                    Arc::new(LocalProcessDispatcher),
+                    options(queue, failure).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "successor",
                     |binding| {
                         next_handles = Some(bind(binding));
@@ -411,8 +408,7 @@ fn preview_endpoints_never_become_final_authority() {
     let kernel = Kernel::build_with_options(
         "preview",
         [support::snapshot("preview", Preview(escaped.clone()))],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     let preview = escaped.lock().unwrap().take().unwrap();
@@ -512,8 +508,7 @@ fn final_bound_source_and_wakes_keep_actual_session_request_authority() {
             let candidate = host
                 .prepare(
                     vec![stage],
-                    options,
-                    Arc::new(LocalProcessDispatcher),
+                    options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "source",
                     |binding| {
                         let declaration = binding.declaration("source")?;

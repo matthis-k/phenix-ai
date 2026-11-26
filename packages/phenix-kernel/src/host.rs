@@ -6,7 +6,7 @@
 //!
 //! # Host publication
 //!
-//! `KernelHost::prepare(stages, options, dispatcher, name, bind)` builds the exact
+//! `KernelHost::prepare(stages, options, name, bind)` builds the exact
 //! candidate inventory, invokes the nonadmitting binding hook, then activates producers
 //! without polling. The hook receives only:
 //!
@@ -68,7 +68,6 @@ use phenix_graph::{
     BoundDeclaration, CaptureHandle, IngressHandle, InputKey, OutputKey, SourceHandle, Value,
     component::DefinitionKey,
     network::{CompiledNetwork, ComponentSnapshot, NetworkError},
-    process::ProcessDispatcher,
     runtime::{
         InjectionError, NetworkSession, ProcessNotifier, RequestError, RequestId,
         RequestInjectionError, RunReport,
@@ -410,7 +409,6 @@ impl KernelHost {
         &self,
         stages: Vec<StagedPlugin>,
         options: BuildOptions,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         name: impl Into<String>,
         bind: impl FnOnce(&Binding<'_>) -> Result<(), CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
@@ -422,7 +420,7 @@ impl KernelHost {
             .plugins
             .candidate_snapshots(&stages)
             .map_err(LifecycleError::Plugins)?;
-        let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
+        let mut kernel = Kernel::build_with_options(name, snapshots, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             bind(&Binding { kernel: &kernel })
@@ -872,8 +870,7 @@ mod tests {
                 let candidate = host
                     .prepare(
                         vec![],
-                        BuildOptions::default(),
-                        Arc::new(LocalProcessDispatcher),
+                        BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                         "replacement",
                         |_| Ok(()),
                     )
@@ -912,8 +909,7 @@ mod tests {
         let first = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "initial",
                 |_| Ok(()),
             )
@@ -922,8 +918,7 @@ mod tests {
         let replacement = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "replacement",
                 |_| Ok(()),
             )
@@ -946,8 +941,7 @@ mod tests {
         let next = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "next",
                 |_| Ok(()),
             )
@@ -971,8 +965,7 @@ mod tests {
         let candidate = host
             .prepare(
                 vec![stage],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "last",
                 |_| Ok(()),
             )
@@ -989,8 +982,7 @@ mod tests {
         for stages in [vec![], vec![stage]] {
             let result = host.prepare(
                 stages,
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "exhausted",
                 |_| panic!("binding must not run after epoch exhaustion"),
             );

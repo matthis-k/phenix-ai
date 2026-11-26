@@ -452,8 +452,7 @@ pub fn build_with_policy(
     let runtime = DerivedRuntime::build_with_options(
         "derived-plugins",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        build_options(),
+        build_options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .map_err(text)?;
     let [writer, derive, subscriber]: [_; 3] = views.try_into().map_err(|_| "three views")?;

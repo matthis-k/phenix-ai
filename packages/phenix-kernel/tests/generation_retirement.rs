@@ -125,8 +125,7 @@ fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Candidate {
     );
     host.prepare(
         stages,
-        options,
-        Arc::new(LocalProcessDispatcher),
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "retirement",
         |_| Ok(()),
     )

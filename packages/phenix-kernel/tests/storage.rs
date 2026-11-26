@@ -168,8 +168,7 @@ fn subscription_lifecycle(sqlite: bool, retry: bool) {
     let mut kernel = Kernel::build_with_options(
         "subscription-lifecycle",
         plugins.snapshots(),
-        Arc::new(phenix_graph::process::LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(phenix_graph::process::LocalProcessDispatcher)),
     )
     .unwrap();
     assert!(probe.markers.lock().unwrap().is_empty());
