@@ -91,7 +91,7 @@ fn fanout_retry() {
             let count = preparations.clone();
             FanoutTarget {
                 connection,
-                preparation: Some(Arc::new(move |v: &Value| {
+                preparation: phenix_graph::connection::AdapterRef::Owned(Arc::new(move |v: &Value| {
                     count.fetch_add(1, Ordering::Relaxed);
                     Ok(v.clone())
                 })),

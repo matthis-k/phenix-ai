@@ -366,11 +366,11 @@ fn partial_adapter_error_keeps_original_cause_and_reports_prepared_payload_clean
             &[
                 FanoutTarget {
                     connection: 0,
-                    preparation: Some(first),
+                    preparation: phenix_graph::connection::AdapterRef::Owned(first),
                 },
                 FanoutTarget {
                     connection: 1,
-                    preparation: Some(second),
+                    preparation: phenix_graph::connection::AdapterRef::Owned(second),
                 },
             ],
         )
