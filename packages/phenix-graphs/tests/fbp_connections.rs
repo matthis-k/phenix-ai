@@ -48,7 +48,11 @@ fn default_and_explicit_static_identity_have_the_same_value_semantics() {
     set.commit(&mut transaction).unwrap();
     for index in 0..2 {
         assert_eq!(
-            set.pop(index).unwrap().into_value().into_owned::<i64>().unwrap(),
+            set.pop(index)
+                .unwrap()
+                .into_value()
+                .into_owned::<i64>()
+                .unwrap(),
             42
         );
     }

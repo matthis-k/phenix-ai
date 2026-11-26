@@ -63,9 +63,7 @@ pub struct BackendProvider {
 }
 
 impl BackendProvider {
-    pub fn new(
-        open: impl Fn() -> Result<Box<dyn Backend>, Error> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn new(open: impl Fn() -> Result<Box<dyn Backend>, Error> + Send + Sync + 'static) -> Self {
         Self {
             open: Box::new(open),
             features: None,
@@ -85,10 +83,9 @@ impl BackendProvider {
 
     pub fn sqlite(path: std::path::PathBuf) -> Self {
         let open_path = path.clone();
-        let mut provider = Self::new(move || {
-            Ok(Box::new(phenix_storage::SqliteBackend::open(&open_path)?))
-        })
-        .with_features(BackendFeatures::SQLITE);
+        let mut provider =
+            Self::new(move || Ok(Box::new(phenix_storage::SqliteBackend::open(&open_path)?)))
+                .with_features(BackendFeatures::SQLITE);
         provider.sqlite_path = Some(path);
         provider
     }
@@ -106,7 +103,10 @@ impl BackendOffer {
         id: impl Into<String>,
         open: impl Fn() -> Result<Box<dyn Backend>, CallbackError> + Send + Sync + 'static,
     ) -> Self {
-        Self::from_provider(id, BackendProvider::new(move || open().map_err(Error::Open)))
+        Self::from_provider(
+            id,
+            BackendProvider::new(move || open().map_err(Error::Open)),
+        )
     }
 
     pub fn from_provider(id: impl Into<String>, provider: BackendProvider) -> Self {
@@ -438,7 +438,9 @@ impl BackendPlacement {
         let provider = match self {
             Self::Local(provider) => ProviderRef::Local(provider),
             Self::Offer { snapshot, id } => ProviderRef::Leased(
-                snapshot.get::<BackendOffer>(&id).ok_or(Error::MissingOffer)?,
+                snapshot
+                    .get::<BackendOffer>(&id)
+                    .ok_or(Error::MissingOffer)?,
             ),
         };
         Ok(PreparedBackend { provider })
@@ -981,7 +983,11 @@ impl PreparedStorage {
     /// Failure publishes no sessions. Already-opened backends are dropped with
     /// the private registry; durable files/data are deliberately not deleted.
     pub fn activate(self) -> Result<ActivatedStorage, Error> {
-        validate_sqlite_paths(self.mounts.values().filter_map(PreparedBackend::sqlite_path))?;
+        validate_sqlite_paths(
+            self.mounts
+                .values()
+                .filter_map(PreparedBackend::sqlite_path),
+        )?;
         #[cfg(not(unix))]
         if self.xdg_paths.is_some()
             && self
@@ -1779,7 +1785,13 @@ mod tests {
         let prepared = PreparedStorage::prepare(requirements, identity, policy).unwrap();
         assert!(!root.exists());
         assert!(
-            prepared.mounts().values().next().unwrap().sqlite_path().is_some_and(|path| path.starts_with(&root))
+            prepared
+                .mounts()
+                .values()
+                .next()
+                .unwrap()
+                .sqlite_path()
+                .is_some_and(|path| path.starts_with(&root))
         );
     }
 

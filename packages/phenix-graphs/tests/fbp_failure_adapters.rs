@@ -3,8 +3,7 @@ use phenix_graph::{
     CallbackPhase, Failure, FailureKind, GraphOrigin, InputKey, ProcessContext, Value, ValueError,
     connection::{
         AdapterRef, ConnectionError, ConnectionQueue, ConnectionSet, EdgeAdapter, FanoutTarget,
-        Packet,
-        PacketDestructorPanicked,
+        Packet, PacketDestructorPanicked,
     },
 };
 use std::{

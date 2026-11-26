@@ -257,7 +257,7 @@ fn preparation_forwards_connection_but_not_adapter_strings() {
             &packet,
             &[FanoutTarget {
                 connection: 0,
-                preparation: Some(Arc::new(|_: &Value| {
+                preparation: phenix_graph::connection::AdapterRef::Owned(Arc::new(|_: &Value| {
                     Err(phenix_graph::Failure::application_message("adapter failed"))
                 })),
             }],

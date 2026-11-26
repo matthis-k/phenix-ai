@@ -475,8 +475,7 @@ impl SqliteBackend {
         connection.authorizer(Some(adapter_authorizer))?;
         // Migrate adapter metadata under the same cross-connection write lock
         // used by CAS. Publication always follows a successful commit.
-        let tx =
-            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS __phenix_kv (
             dataset TEXT NOT NULL,
