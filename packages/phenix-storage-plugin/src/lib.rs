@@ -454,7 +454,10 @@ pub struct StoragePolicy {
     /// these and ResourceBinding::allowed must both approve every operation.
     pub plugin_access:
         BTreeMap<String, BTreeMap<ResourceId, std::collections::BTreeSet<Operation>>>,
-    xdg_paths: Option<XdgPaths>,
+    /// Host-selected XDG filesystem requirements, independent of placement generation.
+    /// Manual and preset policies with the same paths receive the same checks.
+    /// None leaves filesystem security to the trusted host.
+    pub xdg_paths: Option<XdgPaths>,
 }
 
 impl StoragePolicy {
@@ -1510,6 +1513,19 @@ mod tests {
             &requirements,
             BackendPlacement::Sqlite(root.join("manual.sqlite")),
         );
+        let declarations = snapshots(vec![("reader", request([Operation::Read]))]);
+        let protected_requirements =
+            ResourceRequirements::collect(declarations, &identity).unwrap();
+        let mut protected = self::policy(
+            &protected_requirements,
+            BackendPlacement::Sqlite(root.join("manual.sqlite")),
+        );
+        protected.xdg_paths = Some(paths.clone());
+        assert!(matches!(
+            PreparedStorage::prepare(protected_requirements, identity.clone(), protected),
+            Err(Error::UnsafeXdgPath)
+        ));
+        assert!(!root.join("manual.sqlite").exists());
         let prepared = PreparedStorage::prepare(requirements, identity, manual).unwrap();
         assert!(prepared.xdg_paths().is_none());
         drop(prepared.activate().unwrap());
