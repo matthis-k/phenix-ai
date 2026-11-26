@@ -14,11 +14,12 @@ use phenix_graph::{
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     num::NonZeroUsize,
     sync::Arc,
 };
 
+pub mod environment;
 pub mod mock;
 
 /// A turn starts with a prompt and can continue with tool feedback.
@@ -192,26 +193,39 @@ impl PluginInstance for AgentContracts {
     }
 }
 
-/// One loop mechanism; the default is a single local environment.
-/// Host import policy authorizes the provider for every configured environment.
-pub struct AgentLoop {
-    pub environments: BTreeSet<String>,
-}
+/// Standalone local agent loop. Additional routing is an ordinary extension.
+pub struct AgentLoop;
 
-impl Default for AgentLoop {
-    fn default() -> Self {
-        Self {
-            environments: ["local".into()].into(),
-        }
-    }
-}
-
-struct ToolRouter {
+struct ToolRouter<T> {
     environments: BTreeSet<String>,
+    fallback: fn(ToolInvocation) -> T,
     emitted: bool,
 }
 
-impl Process for ToolRouter {
+// The same router mechanism is usable with either a failure or a forwarding
+// fallback. The fallback port's type follows its actual behavior.
+fn tool_router<T: Send + Sync + 'static>(
+    environments: BTreeSet<String>,
+    fallback: fn(ToolInvocation) -> T,
+) -> Result<ComponentDef, phenix_graph::InterfaceError> {
+    let interface = Interface::new(
+        [PortDef::local::<ToolInvocation>("input")],
+        environments
+            .iter()
+            .map(|name| PortDef::local::<ToolInvocation>(environment_port(name)))
+            .chain([PortDef::local::<T>(UNAVAILABLE)]),
+    )?;
+    Ok(ComponentDef::primitive(
+        Arc::new(interface),
+        Arc::new(move || ToolRouter {
+            environments: environments.clone(),
+            fallback,
+            emitted: false,
+        }),
+    ))
+}
+
+impl<T: Send + Sync + 'static> Process for ToolRouter<T> {
     fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
         if self.emitted {
             self.emitted = false;
@@ -234,10 +248,7 @@ impl Process for ToolRouter {
         } else {
             (
                 UNAVAILABLE.into(),
-                Value::local(invocation.complete(ToolOutcome::Failed {
-                    output: String::new(),
-                    reason: "environment unavailable".into(),
-                })),
+                Value::local((self.fallback)(invocation)),
             )
         };
         self.emitted = true;
@@ -338,42 +349,29 @@ impl Process for ToolFeedback {
 
 impl PluginInstance for AgentLoop {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let environments = self.environments.clone();
-        let mut contribution = Contribution::new("main", NetworkPatch::new([]))
+        Contribution::new("main", NetworkPatch::new([]))
             .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+            .import("env-local", Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
             .offer(
                 "prompt",
                 PROMPT_ADAPTER,
                 Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT),
-            );
-        for environment in &environments {
-            contribution = contribution.import(
-                environment_port(environment),
-                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
-            );
-        }
-        contribution
-            .prepare(move |context| {
+            )
+            .prepare(|context| {
                 let model = context.bind_import("model")?;
                 let model_input = model.input::<ModelInput>("input")?;
                 let model_tool = model.output::<ToolCall>("tool")?;
                 let events = model.output::<AgentEvent>("events")?;
-                let interface = Interface::new(
-                    [PortDef::local::<ToolInvocation>("input")],
-                    environments
-                        .iter()
-                        .map(|name| PortDef::local::<ToolInvocation>(environment_port(name)))
-                        .chain([PortDef::local::<ToolResult>(UNAVAILABLE)]),
-                )?;
-                let routes = environments.clone();
-                let router = ComponentDef::primitive(
-                    Arc::new(interface),
-                    Arc::new(move || ToolRouter {
-                        environments: routes.clone(),
-                        emitted: false,
-                    }),
-                );
-                let mut edits = vec![
+                let router = tool_router(["local".into()].into(), |invocation| {
+                    invocation.complete(ToolOutcome::Failed {
+                        output: String::new(),
+                        reason: "environment unavailable".into(),
+                    })
+                })?;
+                let tool = context.bind_import("env-local")?;
+                let tool_input = tool.input::<ToolInvocation>("input")?;
+                let result = tool.output::<ToolResult>("output")?;
+                let edits = vec![
                     Edit::Add {
                         path: TOOL_INVOCATION.into(),
                         definition: Arc::new(ComponentDef::map(ToolInvocation::new)),
@@ -439,26 +437,17 @@ impl PluginInstance for AgentLoop {
                         capacity: capacity(),
                     },
                     context.expose_bound_output(EVENTS, &events)?,
-                ];
-                let mut feedback = BTreeSet::new();
-                for environment in &environments {
-                    let output = environment_port(environment);
-                    let tool = context.bind_import(&output)?;
-                    let tool_input = tool.input::<ToolInvocation>("input")?;
-                    let result = tool.output::<ToolResult>("output")?;
-                    edits.push(Edit::Connect(ConnectionDef {
-                        from: port(TOOL_ROUTER, &output),
+                    Edit::Connect(ConnectionDef {
+                        from: port(TOOL_ROUTER, "env-local"),
                         to: port(tool.path(), tool_input.name()),
                         capacity: capacity(),
-                    }));
-                    if feedback.insert(tool.path().to_owned()) {
-                        edits.push(context.connect_bound_output(
-                            &result,
-                            port(TOOL_FEEDBACK, "input"),
-                            capacity(),
-                        )?);
-                    }
-                }
+                    }),
+                    context.connect_bound_output(
+                        &result,
+                        port(TOOL_FEEDBACK, "input"),
+                        capacity(),
+                    )?,
+                ];
                 Ok(CandidateArtifacts {
                     patch: Some(NetworkPatch::new(edits)),
                     ..Default::default()
@@ -469,8 +458,8 @@ impl PluginInstance for AgentLoop {
 }
 
 /// Exact host grants for the configured graph; names are not authority by themselves.
-pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<Footprint> {
-    let mut grants = vec![
+pub fn loop_grants(model: &str, tool: &str) -> Vec<Footprint> {
+    vec![
         Footprint::Component(TOOL_INVOCATION.into()),
         Footprint::Connection(ConnectionKey::new(
             port(model, "tool"),
@@ -501,18 +490,15 @@ pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<
         )),
         Footprint::InputExport(PROMPT.into()),
         Footprint::OutputExport(EVENTS.into()),
-    ];
-    for (environment, tool) in environments {
-        grants.push(Footprint::Connection(ConnectionKey::new(
-            port(TOOL_ROUTER, &environment_port(environment)),
+        Footprint::Connection(ConnectionKey::new(
+            port(TOOL_ROUTER, "env-local"),
             port(tool, "input"),
-        )));
-        grants.push(Footprint::Connection(ConnectionKey::new(
+        )),
+        Footprint::Connection(ConnectionKey::new(
             port(tool, "output"),
             port(TOOL_FEEDBACK, "input"),
-        )));
-    }
-    grants
+        )),
+    ]
 }
 
 /// Check the complete shape and claim when defining a provider component.
