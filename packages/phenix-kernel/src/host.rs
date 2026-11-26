@@ -429,23 +429,21 @@ impl KernelHost {
             .map_err(LifecycleError::Plugins)?;
         let mut kernel = Kernel::build_with_options(name, snapshots, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bind(&kernel.binding())
-        }))
-        .unwrap_or_else(|payload| {
-            Err(kernel
-                .lease_failure(phenix_graph::process::callback_panicked(
-                    phenix_graph::CallbackPhase::GenerationBind,
-                    payload,
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| bind(&kernel.binding())))
+            .unwrap_or_else(|payload| {
+                Err(kernel
+                    .lease_failure(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::GenerationBind,
+                        payload,
+                    ))
+                    .into())
+            })
+            .map_err(|cause| {
+                LifecycleError::Binding(phenix_plugin::lease_callback_error(
+                    cause,
+                    kernel.code_lease.clone(),
                 ))
-                .into())
-        })
-        .map_err(|cause| {
-            LifecycleError::Binding(phenix_plugin::lease_callback_error(
-                cause,
-                kernel.code_lease.clone(),
-            ))
-        })?;
+            })?;
         kernel.start().map_err(LifecycleError::Start)?;
         if let Some(wake) = &self.wake {
             if wake.is_shutdown() {
