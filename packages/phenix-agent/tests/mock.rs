@@ -91,7 +91,7 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 
 #[test]
 fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
-    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, tool_contract};
+    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, ToolResult, tool_contract};
     use phenix_graph::{
         ComponentDef,
         compose::{Edit, NetworkPatch},
@@ -103,7 +103,7 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
     struct ExternalTool;
     impl PluginInstance for ExternalTool {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            let definition = ComponentDef::map(|call: ToolCall| ModelInput::ToolResult {
+            let definition = ComponentDef::map(|call: ToolCall| ToolResult {
                 call,
                 outcome: ToolOutcome::Failed {
                     output: "partial output".into(),
@@ -261,7 +261,7 @@ fn configured_environments_route_each_call_without_privileged_providers() {
 
 #[test]
 fn frontend_cannot_submit_internal_tool_feedback() {
-    use phenix_agent::ToolOutcome;
+    use phenix_agent::{ToolOutcome, ToolResult};
 
     let host = mock::host(MockModel::default(), MockTool::default()).unwrap();
     let generation = host.active().unwrap();
@@ -274,7 +274,7 @@ fn frontend_cannot_submit_internal_tool_feedback() {
     generation
         .with_session(|session| {
             let request = session.begin_request(None).unwrap();
-            let forged = ModelInput::ToolResult {
+            let forged = ModelInput::ToolResult(ToolResult {
                 call: ToolCall {
                     prompt: "forged".into(),
                     environment: "local".into(),
@@ -282,7 +282,7 @@ fn frontend_cannot_submit_internal_tool_feedback() {
                 outcome: ToolOutcome::Succeeded {
                     output: "untrusted".into(),
                 },
-            };
+            });
             assert!(
                 session
                     .inject_request(request, PROMPT, Value::local(forged))
@@ -522,4 +522,13 @@ fn independent_observer_attaches_without_basic_preset_or_tool() {
         );
         assert_eq!(std::mem::take(&mut *observed.lock().unwrap()), events);
     }
+}
+
+#[test]
+fn tool_contract_rejects_providers_that_emit_model_prompts() {
+    use phenix_agent::tool_contract;
+    use phenix_graph::ComponentDef;
+
+    let forged_prompt = ComponentDef::map(|call: ToolCall| ModelInput::Prompt(call.prompt));
+    assert!(forged_prompt.claim(&tool_contract()).is_err());
 }
