@@ -204,15 +204,18 @@ pub(super) fn validate_policy_ports<'a>(
     ports: impl Iterator<Item = &'a str>,
     policy: &Readiness,
 ) -> Result<(), ReadinessError> {
-    let names: BTreeSet<&str> = ports.collect();
     match policy.declaration().rule.as_ref() {
-        Some(SelectionRule::AtLeast(n)) if n.get() > names.len() => {
-            return Err(ReadinessError::Threshold {
-                required: n.get(),
-                ports: names.len(),
-            });
+        Some(SelectionRule::AtLeast(n)) => {
+            let count = ports.collect::<BTreeSet<_>>().len();
+            if n.get() > count {
+                return Err(ReadinessError::Threshold {
+                    required: n.get(),
+                    ports: count,
+                });
+            }
         }
         Some(SelectionRule::Optional { required, optional }) => {
+            let names: BTreeSet<&str> = ports.collect();
             let mut seen = BTreeSet::new();
             for name in required.iter().chain(optional) {
                 if !names.contains(name.as_str()) || !seen.insert(name) {
@@ -796,5 +799,54 @@ mod packet_only_selection_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_validation_tests {
+    use super::*;
+
+    #[test]
+    fn unconstrained_policies_do_not_enumerate_input_names() {
+        struct Opaque;
+
+        impl ReadinessPolicy for Opaque {
+            fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+                vec![]
+            }
+        }
+
+        for policy in [
+            Readiness::ANY,
+            Readiness::ALL,
+            Readiness::CORRELATED_ALL,
+            Readiness::from_policy(Opaque),
+        ] {
+            let ports = std::iter::from_fn(|| -> Option<&'static str> {
+                panic!("policy has no input-name constraints")
+            });
+            assert_eq!(validate_policy_ports(ports, &policy), Ok(()));
+        }
+    }
+
+    #[test]
+    fn constrained_policies_still_validate_distinct_inputs_and_names() {
+        assert_eq!(
+            validate_policy_ports(
+                ["a", "a"].into_iter(),
+                &Readiness::at_least(NonZeroUsize::new(2).unwrap()),
+            ),
+            Err(ReadinessError::Threshold {
+                required: 2,
+                ports: 1,
+            })
+        );
+        assert_eq!(
+            validate_policy_ports(
+                ["a"].into_iter(),
+                &Readiness::optional(vec!["a".into()], vec!["b".into()]),
+            ),
+            Err(ReadinessError::InvalidOptional { port: "b".into() })
+        );
     }
 }
