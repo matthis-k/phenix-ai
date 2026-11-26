@@ -663,3 +663,116 @@ fn invocation_identity_is_independent_of_call_arguments() {
     assert_eq!(first, first.clone());
     assert_ne!(first, second);
 }
+
+#[test]
+fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, ToolResult, tool_contract,
+    };
+    use phenix_graph::{
+        ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct DuplicateProcess {
+        duplicate: Option<ToolResult>,
+        emitted: bool,
+    }
+
+    impl Process for DuplicateProcess {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+            if let Some(result) = self.duplicate.take() {
+                return Ok(Step::Emit(ProcessEmission::new(
+                    "output",
+                    Value::local(result),
+                )));
+            }
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("input") else {
+                return Ok(if context.is_eos("input") {
+                    Step::Finished
+                } else {
+                    Step::Complete
+                });
+            };
+            let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
+            let result = invocation.complete(ToolOutcome::Succeeded {
+                output: "once".into(),
+            });
+            self.duplicate = Some(result.clone());
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "output",
+                Value::local(result),
+            )))
+        }
+    }
+
+    struct DuplicateTool;
+
+    impl PluginInstance for DuplicateTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let contract = tool_contract();
+            let definition = ComponentDef::primitive(
+                contract.required().clone(),
+                Arc::new(DuplicateProcess::default),
+            )
+            .claim(&contract)
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let host =
+        mock::host_with_options(MockModel::default(), DuplicateTool, mock::options()).unwrap();
+    let generation = host.active().unwrap();
+    let ingress = generation
+        .compiled()
+        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
+        .unwrap();
+    let capture = generation
+        .compiled()
+        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))
+        .unwrap();
+    generation
+        .with_session(|session| {
+            let request = session.begin_bound_request(None).unwrap();
+            session
+                .inject_bound_request(request, &ingress, "real".to_owned())
+                .unwrap();
+            session.close_request(request).unwrap();
+            for _ in 0..64 {
+                session.run_until_idle(1);
+                if let Some(failure) = session.failure() {
+                    assert_eq!(failure.summary(), "unsolicited tool feedback");
+                    return;
+                }
+                while session
+                    .take_bound_request_output(request, &capture)
+                    .unwrap()
+                    .is_some()
+                {}
+            }
+            panic!("duplicate completion was not rejected");
+        })
+        .unwrap();
+}
