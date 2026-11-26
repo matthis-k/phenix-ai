@@ -35,7 +35,7 @@ impl ProcessFactory for AbsentFactory {
     }
 
     fn readiness(&self) -> Readiness {
-        Readiness::Custom(Arc::new(SelectAbsence(self.0)))
+        Readiness::new(Arc::new(SelectAbsence(self.0)))
     }
 }
 

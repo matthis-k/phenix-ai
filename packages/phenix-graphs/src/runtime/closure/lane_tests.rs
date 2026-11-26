@@ -242,12 +242,9 @@ fn exhaustive_small_topologies_match_original_and_own_lane_oracles() {
                         let kind = (state >> (index * 2)) & 3;
                         s.processes[index].request = (kind == 1).then_some(request);
                         s.processes[index].policy = if kind == 3 {
-                            Readiness::Optional {
-                                required: vec![],
-                                optional: vec!["a".into()],
-                            }
+                            Readiness::optional(vec![], vec!["a".into()])
                         } else {
-                            Readiness::Any
+                            Readiness::ANY
                         };
                         if kind == 2 && s.requests[&request].reachable.contains(&index) {
                             let queue = if policy == RequestQueuePolicy::BoundedLanes {
@@ -296,12 +293,9 @@ fn diamond_cycle_self_loop_and_witness_precedence() {
                 for index in 0..4 {
                     s.processes[index].request = (owner_mask & (1 << index) != 0).then_some(r);
                     s.processes[index].policy = if obligation_mask & (1 << index) != 0 {
-                        Readiness::Optional {
-                            required: vec![],
-                            optional: vec!["a".into()],
-                        }
+                        Readiness::optional(vec![], vec!["a".into()])
                     } else {
-                        Readiness::Any
+                        Readiness::ANY
                     };
                 }
                 compare(&s, r);
@@ -472,10 +466,7 @@ fn sealed_zero_input_source_delegation_blocks_downstream_absence_until_completio
                 dispatcher: delegated.clone(),
                 readiness: [(
                     "sink".into(),
-                    Readiness::Optional {
-                        required: vec![],
-                        optional: vec!["a".into()],
-                    },
+                    Readiness::optional(vec![], vec!["a".into()]),
                 )]
                 .into(),
                 ..Default::default()

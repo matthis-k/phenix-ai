@@ -2136,7 +2136,7 @@ mod tests {
                     .start_with_options(SessionOptions {
                         readiness: BTreeMap::from([(
                             "sink".to_owned(),
-                            Readiness::Custom(Arc::new(InspectInventory(
+                            Readiness::new(Arc::new(InspectInventory(
                                 weak.clone(),
                                 selections.clone(),
                             ))),

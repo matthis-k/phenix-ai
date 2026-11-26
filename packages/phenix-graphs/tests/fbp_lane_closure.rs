@@ -133,11 +133,8 @@ fn overlapping_reused_lanes_preserve_upstream_packets_owners_and_closure_obligat
                 .unwrap();
             }
             let readiness = match custom {
-                None => Readiness::Optional {
-                    required: vec![],
-                    optional: vec!["in".into()],
-                },
-                Some(notified) => Readiness::Custom(Arc::new(Closed(notified))),
+                None => Readiness::optional(vec![], vec!["in".into()]),
+                Some(notified) => Readiness::new(Arc::new(Closed(notified))),
             };
             let network = b.build().unwrap().compile().unwrap();
             let root_index = network

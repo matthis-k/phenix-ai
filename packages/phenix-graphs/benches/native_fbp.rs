@@ -203,7 +203,7 @@ fn split_join() {
     b.expose_input("in", split.input::<i64>("in").unwrap(), one())
         .unwrap();
     let mut opts = SessionOptions::default();
-    opts.readiness.insert("join".into(), Readiness::All);
+    opts.readiness.insert("join".into(), Readiness::ALL);
     let mut s = b
         .build()
         .unwrap()

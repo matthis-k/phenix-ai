@@ -52,7 +52,7 @@ fn direct_injection_preserves_eager_reservation_and_driver_executes() {
     let mut session = compiled.start_with_options(SessionOptions {
         readiness: BTreeMap::from([(
             "sink".to_owned(),
-            Readiness::Custom(Arc::new(CountingReadiness(selections.clone()))),
+            Readiness::new(Arc::new(CountingReadiness(selections.clone()))),
         )]),
         ..Default::default()
     });
@@ -91,7 +91,7 @@ fn invalid_session_options_do_not_spawn_any_process_factory() {
     let invalid_readiness = SessionOptions {
         readiness: BTreeMap::from([(
             "worker".to_owned(),
-            Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+            Readiness::at_least(NonZeroUsize::new(2).unwrap()),
         )]),
         ..Default::default()
     };

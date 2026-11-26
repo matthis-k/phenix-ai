@@ -13,7 +13,7 @@ use std::sync::Arc;
 fn cancellation_cannot_overwrite_preflight_failure() {
     let graph = NetworkBuilder::new().build().unwrap().compile().unwrap();
     let mut options = SessionOptions::default();
-    options.readiness.insert("missing".into(), Readiness::All);
+    options.readiness.insert("missing".into(), Readiness::ALL);
     let mut session = graph.start_with_options(options);
     assert_eq!(session.state(), SessionState::Failed);
     let failure = session

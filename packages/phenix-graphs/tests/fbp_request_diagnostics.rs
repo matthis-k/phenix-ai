@@ -119,7 +119,7 @@ fn options(policy: RequestQueuePolicy, gate: &Arc<Gate>) -> SessionOptions {
     for name in ["a-drain", "b-drain"] {
         options
             .readiness
-            .insert(name.into(), Readiness::Custom(gate.clone()));
+            .insert(name.into(), Readiness::new(gate.clone()));
     }
     options
 }

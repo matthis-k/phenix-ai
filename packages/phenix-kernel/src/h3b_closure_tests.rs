@@ -292,7 +292,7 @@ fn eager_readiness_self_retirement_finishes_permitted_admission_only() {
                 .start_with_options(SessionOptions {
                     readiness: std::collections::BTreeMap::from([(
                         "sink".into(),
-                        Readiness::Custom(Arc::new(Retire(weak.clone(), drops.clone()))),
+                        Readiness::new(Arc::new(Retire(weak.clone(), drops.clone()))),
                     )]),
                     ..Default::default()
                 }),

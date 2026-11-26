@@ -173,19 +173,13 @@ pub(crate) fn readiness_options(
     if mode == "fan-in" {
         options.readiness.insert(
             "sink".into(),
-            phenix_graph::runtime::Readiness::Optional {
-                required: vec![],
-                optional: vec!["opt".into()],
-            },
+            phenix_graph::runtime::Readiness::optional(vec![], vec!["opt".into()]),
         );
     } else {
         for index in 0..breadth {
             options.readiness.insert(
                 format!("optional-{index}"),
-                phenix_graph::runtime::Readiness::Optional {
-                    required: vec![],
-                    optional: vec!["opt".into()],
-                },
+                phenix_graph::runtime::Readiness::optional(vec![], vec!["opt".into()]),
             );
         }
     }
@@ -380,10 +374,7 @@ mod tests {
         let mut opts = SessionOptions::default();
         opts.readiness.insert(
             "sink".into(),
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["opt".into()],
-            },
+            Readiness::optional(vec![], vec!["opt".into()]),
         );
         let mut session = network.start_with_options(opts);
         let id = session.begin_request(None).unwrap();

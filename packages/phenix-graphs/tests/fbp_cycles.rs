@@ -201,10 +201,7 @@ fn request_optional_cycle_does_not_invent_mutual_absence_proofs() {
     for name in ["a", "b"] {
         opts.readiness.insert(
             name.into(),
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["in".into()],
-            },
+            Readiness::optional(vec![], vec!["in".into()]),
         );
     }
     let mut s = b

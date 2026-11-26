@@ -191,7 +191,7 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
     let mut options = fixture_options(false);
     options.execution.readiness.insert(
         "worker".into(),
-        phenix_graph::runtime::Readiness::Custom(Arc::new(ReentrantReadiness {
+        phenix_graph::runtime::Readiness::new(Arc::new(ReentrantReadiness {
             kernel: kernel_ref.clone(),
             failures: failures.clone(),
         })),

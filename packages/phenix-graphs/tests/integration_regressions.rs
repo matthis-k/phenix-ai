@@ -367,7 +367,7 @@ fn generated_dags_and_contributor_orders_match_an_independent_reference() {
                 patch.footprints(),
                 patch,
             ));
-            options.readiness.insert(path, Readiness::All);
+            options.readiness.insert(path, Readiness::ALL);
             parents.push(incoming);
             biases.push(bias);
         }

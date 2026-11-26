@@ -230,7 +230,7 @@ fn options(providers: &BTreeMap<&str, provider::Plugin>, owner: &str) -> BuildOp
         } else {
             config.path.into()
         };
-        options.execution.readiness.insert(physical, Readiness::All);
+        options.execution.readiness.insert(physical, Readiness::ALL);
     }
     support::grant(&mut options, Key::new("consumer", "main"), grants);
     options

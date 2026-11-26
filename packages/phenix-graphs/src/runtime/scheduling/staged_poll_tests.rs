@@ -108,8 +108,8 @@ fn unresolved_waits_are_polled_but_successful_reservations_remove_historical_mem
     let custom = Heads::new(true);
     for group in [
         None,
-        Some(Readiness::Any),
-        Some(Readiness::Custom(custom.clone())),
+        Some(Readiness::ANY),
+        Some(Readiness::new(custom.clone())),
     ] {
         for queue_policy in [
             RequestQueuePolicy::SharedFifo,
@@ -137,7 +137,7 @@ fn unresolved_waits_are_polled_but_successful_reservations_remove_historical_mem
                 assert!(session.next_job().is_none());
                 assert_eq!(session.always_poll, BTreeSet::from([index]));
             }
-            if matches!(&group, Some(Readiness::Custom(_))) {
+            if group.as_ref().is_some_and(Readiness::opaque) {
                 assert!(custom.selections.load(Ordering::Relaxed) >= selections + 2);
             }
             session
@@ -172,7 +172,7 @@ fn base_polling_survives_resume_but_finish_overrides_every_poll_reason() {
     for notified in [false, true] {
         let policy = Heads::new(notified);
         let mut session = stages(None).start_with_options(SessionOptions {
-            readiness: [("stage".into(), Readiness::Custom(policy.clone()))].into(),
+            readiness: [("stage".into(), Readiness::new(policy.clone()))].into(),
             ..Default::default()
         });
         let index = session.compiled.physical_process_index("stage").unwrap();
@@ -216,7 +216,7 @@ fn base_polling_survives_resume_but_finish_overrides_every_poll_reason() {
     step(&mut session, index);
     // A retained historical wait must not defeat the done check either.
     session.processes[index].waiting = Some("historical".into());
-    session.processes[index].waiting_policy = Some(Readiness::Any);
+    session.processes[index].waiting_policy = Some(Readiness::ANY);
     session.finish(index);
     assert!(session.processes[index].done);
     assert!(session.always_poll.is_empty());
@@ -232,7 +232,7 @@ fn cancellation_detaches_staged_membership_under_both_failure_and_queue_policies
             RequestQueuePolicy::SharedFifo,
             RequestQueuePolicy::BoundedLanes,
         ] {
-            for group in [None, Some(Readiness::Any)] {
+            for group in [None, Some(Readiness::ANY)] {
                 let mut session = stages(group).start_with_options(SessionOptions {
                     request_failure_policy: failure_policy,
                     request_queue_policy: queue_policy,
@@ -433,12 +433,9 @@ fn last_scoped_watcher_release_alone_resynchronizes_suppressed_publication_event
             options.readiness.insert(
                 name.into(),
                 if notified {
-                    Readiness::Custom(Heads::new(true))
+                    Readiness::new(Heads::new(true))
                 } else {
-                    Readiness::Optional {
-                        required: vec!["input".into()],
-                        optional: vec![],
-                    }
+                    Readiness::optional(vec!["input".into()], vec![])
                 },
             );
         }

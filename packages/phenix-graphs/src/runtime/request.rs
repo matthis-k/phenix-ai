@@ -237,11 +237,9 @@ impl NetworkSession {
         }
         let lane = self.lane_allocator.candidate(self.max_requests);
         let mut closure_ports = BTreeMap::new();
-        for &index in &self.custom_readiness {
+        for &index in &self.opaque_readiness {
             let process = &self.processes[index];
-            let Readiness::Custom(policy) = &process.policy else {
-                unreachable!("indexed base readiness policy is immutable");
-            };
+            let policy = &process.policy;
             let ports = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 policy.closure_ports(lane)
             }))

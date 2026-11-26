@@ -427,7 +427,7 @@ fn start(compiled: &CompiledNetwork, policy: RequestQueuePolicy) -> NetworkSessi
     let session = compiled.start_with_options(SessionOptions {
         request_queue_policy: policy,
         request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
-        readiness: [("left/monitor".into(), Readiness::Any)].into(),
+        readiness: [("left/monitor".into(), Readiness::ANY)].into(),
         capture_capacity: one(),
         max_requests: one(),
         ..Default::default()
@@ -839,7 +839,7 @@ fn addressed_notifiers_and_wakes_isolate_nested_peers_after_q2_reindex() {
                 readiness: paths
                     .iter()
                     .zip(&gates)
-                    .map(|(path, gate)| ((*path).into(), Readiness::Custom(gate.clone())))
+                    .map(|(path, gate)| ((*path).into(), Readiness::new(gate.clone())))
                     .collect(),
                 ..Default::default()
             });

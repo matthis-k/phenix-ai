@@ -37,13 +37,13 @@ impl<T> Drop for BoundConfiguration<T> {
 struct BoundReadiness(BoundConfiguration<Readiness>);
 impl BoundReadiness {
     fn policy(&self) -> &dyn ReadinessPolicy {
-        let Some(Readiness::Custom(policy)) = &self.0.value else {
-            unreachable!("custom bound policy")
-        };
-        policy.as_ref()
+        self.0.value.as_ref().expect("configured readiness")
     }
 }
 impl ReadinessPolicy for BoundReadiness {
+    fn declaration(&self) -> PolicyDeclaration {
+        self.policy().declaration()
+    }
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
         self.policy().select(snapshot)
     }
@@ -171,13 +171,7 @@ impl BoundSessionOptions {
             &mut self.readiness,
             readiness,
             "readiness",
-            |mut entry| {
-                if matches!(entry.value, Some(Readiness::Custom(_))) {
-                    Readiness::Custom(Arc::new(BoundReadiness(entry)))
-                } else {
-                    entry.value.take().expect("configured readiness")
-                }
-            },
+            |entry| Readiness::from_policy(BoundReadiness(entry)),
             &mut failure,
         );
         lower_configuration(

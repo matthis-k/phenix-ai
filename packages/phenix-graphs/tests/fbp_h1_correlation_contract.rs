@@ -103,7 +103,7 @@ fn options(queue_policy: RequestQueuePolicy) -> SessionOptions {
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     options
 }
 
@@ -333,7 +333,7 @@ fn staged_continuation_wakes_on_late_owner_packet_behind_foreign_fifo_head() {
 #[test]
 fn ordinary_all_staged_wait_remains_head_only_under_shared_fifo() {
     let mut options = options(RequestQueuePolicy::SharedFifo);
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), Readiness::ALL);
     options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     let mut session = network(true).start_with_options(options);
     let a = session.begin_request(None).unwrap();

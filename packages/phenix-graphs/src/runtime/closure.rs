@@ -100,10 +100,11 @@ impl NetworkSession {
         if available == 0 {
             return p.handoff.state() == HandoffState::WaitingInput;
         }
-        match p.waiting_policy.as_ref().unwrap_or(&p.policy) {
-            Readiness::All | Readiness::CorrelatedAll => available < p.inputs.len(),
-            Readiness::AtLeast(n) => available < n.get(),
-            Readiness::Optional { required, optional } => {
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        match &policy.declaration().rule {
+            Some(SelectionRule::All) => available < p.inputs.len(),
+            Some(SelectionRule::AtLeast(n)) => available < n.get(),
+            Some(SelectionRule::Optional { required, optional }) => {
                 required.iter().any(|name| {
                     let port = p.inputs.iter().position(|port| &port.name == name).unwrap();
                     self.closed(index, port)

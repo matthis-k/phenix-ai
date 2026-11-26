@@ -34,10 +34,7 @@ fn measure(optional_nodes: usize, iterations: usize, scoped: bool) -> (f64, f64,
             .unwrap();
         options.readiness.insert(
             name,
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["input".into()],
-            },
+            Readiness::optional(vec![], vec!["input".into()]),
         );
     }
     let begin = Instant::now();
