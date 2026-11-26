@@ -3,7 +3,8 @@
 
 use crate::{
     AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
-    ModelInput, TOOL_CONTRACT, ToolCall, ToolOutcome, loop_grants, model_contract, tool_contract,
+    ModelInput, TOOL_CONTRACT, ToolCall, ToolOutcome, ToolResult, loop_grants, model_contract,
+    tool_contract,
 };
 use phenix_graph::{
     ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
@@ -88,7 +89,7 @@ impl Process for ModelProcess {
                     .push_back(ProcessEmission::new("tool", Value::local(call)));
             }
             ModelInput::Prompt(prompt) => self.answer(prompt),
-            ModelInput::ToolResult { outcome, .. } => match outcome {
+            ModelInput::ToolResult(ToolResult { outcome, .. }) => match outcome {
                 ToolOutcome::Succeeded { output } => self.answer(output),
                 ToolOutcome::Failed { output, reason } => {
                     self.answer(&format!("tool failed: {reason}: {output}"));
@@ -162,7 +163,7 @@ impl Default for MockTool {
 impl PluginInstance for MockTool {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let prefix = self.prefix.clone();
-        let definition = ComponentDef::map(move |call: ToolCall| ModelInput::ToolResult {
+        let definition = ComponentDef::map(move |call: ToolCall| ToolResult {
             outcome: ToolOutcome::Succeeded {
                 output: format!("{prefix}({})", call.prompt),
             },
