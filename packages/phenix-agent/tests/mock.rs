@@ -91,7 +91,9 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 
 #[test]
 fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
-    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, ToolResult, tool_contract};
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract,
+    };
     use phenix_graph::{
         ComponentDef,
         compose::{Edit, NetworkPatch},
@@ -103,12 +105,11 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
     struct ExternalTool;
     impl PluginInstance for ExternalTool {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            let definition = ComponentDef::map(|call: ToolCall| ToolResult {
-                call,
-                outcome: ToolOutcome::Failed {
+            let definition = ComponentDef::map(|invocation: ToolInvocation| {
+                invocation.complete(ToolOutcome::Failed {
                     output: "partial output".into(),
                     reason: "denied".into(),
-                },
+                })
             })
             .claim(&tool_contract())
             .unwrap();
@@ -261,7 +262,7 @@ fn configured_environments_route_each_call_without_privileged_providers() {
 
 #[test]
 fn frontend_cannot_submit_internal_tool_feedback() {
-    use phenix_agent::{ToolOutcome, ToolResult};
+    use phenix_agent::{ToolInvocation, ToolOutcome};
 
     let host = mock::host(MockModel::default(), MockTool::default()).unwrap();
     let generation = host.active().unwrap();
@@ -274,15 +275,15 @@ fn frontend_cannot_submit_internal_tool_feedback() {
     generation
         .with_session(|session| {
             let request = session.begin_request(None).unwrap();
-            let forged = ModelInput::ToolResult(ToolResult {
-                call: ToolCall {
+            let forged = ModelInput::ToolResult(
+                ToolInvocation::new(ToolCall {
                     prompt: "forged".into(),
                     environment: "local".into(),
-                },
-                outcome: ToolOutcome::Succeeded {
+                })
+                .complete(ToolOutcome::Succeeded {
                     output: "untrusted".into(),
-                },
-            });
+                }),
+            );
             assert!(
                 session
                     .inject_request(request, PROMPT, Value::local(forged))
@@ -526,16 +527,29 @@ fn independent_observer_attaches_without_basic_preset_or_tool() {
 
 #[test]
 fn tool_contract_rejects_providers_that_emit_model_prompts() {
-    use phenix_agent::tool_contract;
+    use phenix_agent::{ToolInvocation, tool_contract};
     use phenix_graph::ComponentDef;
 
-    let forged_prompt = ComponentDef::map(|call: ToolCall| ModelInput::Prompt(call.prompt));
+    let forged_prompt = ComponentDef::map(|invocation: ToolInvocation| {
+        ModelInput::Prompt(invocation.call().prompt.clone())
+    });
     assert!(forged_prompt.claim(&tool_contract()).is_err());
 }
 
 #[test]
-fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
-    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, ToolResult, tool_contract};
+fn fresh_identical_invocation_cannot_replace_dispatched_invocation() {
+    assert_invalid_tool_feedback(false);
+}
+
+#[test]
+fn previous_result_cannot_be_replayed_for_identical_call() {
+    assert_invalid_tool_feedback(true);
+}
+
+fn assert_invalid_tool_feedback(replay: bool) {
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, ToolResult, tool_contract,
+    };
     use phenix_graph::{
         ComponentDef,
         compose::{Edit, NetworkPatch},
@@ -544,16 +558,23 @@ fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
     use phenix_plugin::{Failure, PluginInstance, Registrar};
     use std::sync::Arc;
 
-    struct WrongCallTool;
+    struct WrongCallTool(bool);
     impl PluginInstance for WrongCallTool {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            let definition = ComponentDef::map(|mut call: ToolCall| {
-                call.environment = "forged".into();
-                ToolResult {
-                    call,
-                    outcome: ToolOutcome::Succeeded {
-                        output: "untrusted".into(),
-                    },
+            let replay = self.0;
+            let previous = std::sync::Mutex::new(None::<ToolResult>);
+            let definition = ComponentDef::map(move |invocation: ToolInvocation| {
+                let outcome = ToolOutcome::Succeeded {
+                    output: "untrusted".into(),
+                };
+                if replay {
+                    previous
+                        .lock()
+                        .unwrap()
+                        .get_or_insert_with(|| invocation.complete(outcome))
+                        .clone()
+                } else {
+                    ToolInvocation::new(invocation.call().clone()).complete(outcome)
                 }
             })
             .claim(&tool_contract())
@@ -575,8 +596,15 @@ fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
     }
 
     let host =
-        mock::host_with_options(MockModel::default(), WrongCallTool, mock::options()).unwrap();
+        mock::host_with_options(MockModel::default(), WrongCallTool(replay), mock::options())
+            .unwrap();
     let generation = host.active().unwrap();
+    if replay {
+        assert_eq!(
+            turn(&generation, "real").last(),
+            Some(&AgentEvent::Completed)
+        );
+    }
     let ingress = generation
         .compiled()
         .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
@@ -595,7 +623,11 @@ fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
             let mut events = Vec::new();
             for _ in 0..64 {
                 session.run_until_idle(1);
-                if session.failure().is_some() {
+                if let Some(failure) = session.failure() {
+                    assert_eq!(
+                        failure.summary(),
+                        "tool feedback does not match dispatched invocation"
+                    );
                     assert_eq!(
                         events,
                         [AgentEvent::ToolRequested(ToolCall {
@@ -615,4 +647,19 @@ fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
             panic!("mismatched feedback did not fail");
         })
         .unwrap();
+}
+
+#[test]
+fn invocation_identity_is_independent_of_call_arguments() {
+    use phenix_agent::ToolInvocation;
+
+    let call = ToolCall {
+        prompt: "same".into(),
+        environment: "local".into(),
+    };
+    let first = ToolInvocation::new(call.clone());
+    let second = ToolInvocation::new(call);
+    assert_eq!(first.call(), second.call());
+    assert_eq!(first, first.clone());
+    assert_ne!(first, second);
 }
