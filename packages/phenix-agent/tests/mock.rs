@@ -86,3 +86,109 @@ fn missing_host_graph_grant_prevents_publication() {
         .remove(&phenix_kernel::Key::new("agent-loop", "main"));
     assert!(mock::host_with_options(MockModel::default(), MockTool::default(), options).is_err());
 }
+
+#[test]
+fn independently_authored_loop_does_not_require_basic_preset() {
+    use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT};
+    use phenix_graph::compose::{Footprint, NetworkPatch};
+    use phenix_kernel::{
+        CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
+    };
+    use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
+    use std::num::NonZeroUsize;
+
+    const ALTERNATE: &str = "alternate-loop";
+    struct DirectLoop;
+    impl PluginInstance for DirectLoop {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            Contribution::new("main", NetworkPatch::new([]))
+                .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+                .prepare(|context| {
+                    let model = context.bind_import("model")?;
+                    let input = model.input::<ModelInput>("input")?;
+                    let events = model.output::<AgentEvent>("events")?;
+                    Ok(CandidateArtifacts {
+                        patch: Some(NetworkPatch::new([
+                            context.expose_bound_input(
+                                PROMPT,
+                                &[input],
+                                NonZeroUsize::new(1).unwrap(),
+                            )?,
+                            context.expose_bound_output(EVENTS, &events)?,
+                        ])),
+                        ..Default::default()
+                    })
+                })
+                .register(registrar)
+        }
+    }
+
+    let mut catalog = PluginCatalog::new();
+    let contracts = catalog
+        .register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))
+        .unwrap();
+    let loop_key = catalog.register(ALTERNATE, |_: ()| Ok(DirectLoop)).unwrap();
+    let model_key = catalog
+        .register(mock::MODEL_PLUGIN, |model: MockModel| Ok(model))
+        .unwrap();
+    let tool_key = catalog
+        .register(mock::TOOL_PLUGIN, |tool: MockTool| Ok(tool))
+        .unwrap();
+    let mut host = KernelHost::new(catalog.instance());
+    let stages = vec![
+        host.plugins().prepare_load(&contracts, ()).unwrap(),
+        host.plugins().prepare_load(&loop_key, ()).unwrap(),
+        host.plugins()
+            .prepare_load(
+                &model_key,
+                MockModel {
+                    use_tool: false,
+                    ..MockModel::default()
+                },
+            )
+            .unwrap(),
+        host.plugins()
+            .prepare_load(&tool_key, MockTool::default())
+            .unwrap(),
+    ];
+    let mut options = mock::options();
+    options.composition.remove(&Key::new(LOOP_PLUGIN, "main"));
+    options.composition.insert(
+        Key::new(ALTERNATE, "main"),
+        CompositionPolicy {
+            grants: [
+                Footprint::InputExport(PROMPT.into()),
+                Footprint::OutputExport(EVENTS.into()),
+            ]
+            .into(),
+            ..Default::default()
+        },
+    );
+    options.imports.allow = Some(
+        [(
+            Key::new(ALTERNATE, "model"),
+            Key::new(mock::MODEL_PLUGIN, "model"),
+        )]
+        .into(),
+    );
+    options
+        .execution
+        .discard_outputs
+        .insert((mock::MODEL_PATH.into(), "tool".into()));
+    options
+        .execution
+        .discard_outputs
+        .insert((mock::TOOL_PATH.into(), "output".into()));
+    let candidate = host
+        .prepare(stages, options, "alternate", |_| Ok(()))
+        .unwrap();
+    host.publish(candidate).unwrap();
+    assert_eq!(
+        turn(&host.active().unwrap(), "hello"),
+        [
+            AgentEvent::Delta("mock: ".into()),
+            AgentEvent::Delta("hello".into()),
+            AgentEvent::Completed,
+        ]
+    );
+}
