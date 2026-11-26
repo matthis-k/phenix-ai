@@ -11,10 +11,7 @@ use phenix_graph::{
     network::{ConnectionDef, PortPath},
     runtime::RequestStatus,
 };
-use phenix_kernel::{
-    CandidateArtifacts, CompositionPolicy, Contribution, Key,
-    host::KernelHost,
-};
+use phenix_kernel::{CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -111,7 +108,10 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
     ];
     let mut options = mock::options();
     options.imports.allow.as_mut().unwrap().extend([
-        (Key::new(FRONTEND, "prompt"), Key::new(LOOP_PLUGIN, "prompt")),
+        (
+            Key::new(FRONTEND, "prompt"),
+            Key::new(LOOP_PLUGIN, "prompt"),
+        ),
         (
             Key::new(FRONTEND, "model"),
             Key::new(mock::MODEL_PLUGIN, "model"),
@@ -179,9 +179,8 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
                     session.run_until_idle(1);
                     assert!(session.failure().is_none());
                     assert!(session.request_failure(request).unwrap().is_none());
-                    while let Some(packet) = session
-                        .take_bound_request_output(request, &events)
-                        .unwrap()
+                    while let Some(packet) =
+                        session.take_bound_request_output(request, &events).unwrap()
                     {
                         original.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
                     }
