@@ -367,7 +367,13 @@ impl Kernel {
         // Distinct composers retain their exact plugin revision's ancestry.
         let origins: BTreeMap<_, _> = pending
             .iter()
-            .map(|(key, contribution)| (key.clone(), contribution.graph_origin().child()))
+            .map(|(key, contribution)| {
+                (
+                    key.clone(),
+                    phenix_graph::GraphOrigin::from_root(contribution.revision_identity().clone())
+                        .child(),
+                )
+            })
             .collect();
         let mut leases = Vec::new();
         let mut keys = Vec::new();

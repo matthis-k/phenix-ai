@@ -1,6 +1,6 @@
 mod support;
 use phenix_graph::{compose::NetworkPatch, process::LocalProcessDispatcher};
-use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key};
+use phenix_kernel::{BuildOptions, ContractDefinition, Kernel, Key, plugin_binding::bind_component};
 use phenix_plugin::{Code, Failure, PluginCatalog, PluginInstance, Registrar};
 use std::sync::Arc;
 struct Locator;
@@ -8,9 +8,6 @@ impl phenix_plugin::Contribution for Locator {
     const KIND: &'static str = "test.locator";
     fn id(&self) -> &str {
         "offer"
-    }
-    fn component_path(&self) -> Option<&str> {
-        Some("service")
     }
 }
 #[derive(Clone)]
@@ -71,10 +68,22 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         .unwrap();
         let compiled = kernel.compiled().clone();
         let origin = compiled.inspect("service").unwrap().origin.unwrap();
-        assert_ne!(&origin, snapshot.graph_origin());
-        assert!(origin.belongs_to(snapshot.graph_origin()));
-        snapshot
-            .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
+        assert_ne!(
+            &origin,
+            &phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone())
+        );
+        assert!(
+            origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+                snapshot.revision_identity().clone(),
+            ))
+        );
+        bind_component::<Locator>(
+            &snapshot,
+            "offer",
+            |_| Some("service"),
+            &support::contract("example/service@1"),
+            &compiled,
+        )
             .unwrap();
         let stage = plugins.prepare_reload(&key, config.clone()).unwrap();
         let candidate = stage.candidate().unwrap();
@@ -85,8 +94,13 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         assert_eq!(snapshot.revision(), foreign.revision());
         for other in [candidate, replacement, foreign] {
             assert_eq!(
-                other
-                    .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
+                bind_component::<Locator>(
+                    &other,
+                    "offer",
+                    |_| Some("service"),
+                    &support::contract("example/service@1"),
+                    &compiled,
+                )
                     .err()
                     .unwrap()
                     .code,
@@ -95,8 +109,13 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         }
         drop(kernel);
         plugins.unload(&key).unwrap();
-        snapshot
-            .bind::<Locator>("offer", &support::contract("example/service@1"), &compiled)
+        bind_component::<Locator>(
+            &snapshot,
+            "offer",
+            |_| Some("service"),
+            &support::contract("example/service@1"),
+            &compiled,
+        )
             .unwrap();
         let mut options = BuildOptions::default();
         support::grant(

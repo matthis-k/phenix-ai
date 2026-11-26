@@ -6,9 +6,10 @@ use phenix_graph::{
     network::{CompiledNetwork, NetworkBuilder, NetworkError},
     process::{Process, ProcessContext, Step},
 };
+use phenix_kernel::plugin_binding::{BindingFault, bind_component};
 use phenix_plugin::{
-    BindingFault, CallbackPhase, Code, Contribution, Failure, LifecycleFault, PluginCatalog,
-    PluginInstance, PluginSet, PluginSnapshot, Registrar, RegistryFault, StagedPlugin,
+    CallbackPhase, Code, Contribution, Failure, LifecycleFault, PluginCatalog, PluginInstance,
+    PluginSet, PluginSnapshot, Registrar, RegistryFault, StagedPlugin,
 };
 use std::{
     any::TypeId,
@@ -42,9 +43,6 @@ impl Contribution for Offer {
     const KIND: &'static str = "test.offer";
     fn id(&self) -> &str {
         self.0
-    }
-    fn component_path(&self) -> Option<&str> {
-        self.1.as_deref()
     }
 }
 struct OtherOffer;
@@ -159,7 +157,9 @@ fn graph(snapshot: Option<&PluginSnapshot>, claimed: bool) -> CompiledNetwork {
         definition = definition.claim(&required).unwrap();
     }
     if let Some(snapshot) = snapshot {
-        definition = definition.with_origin(snapshot.graph_origin().child());
+        definition = definition.with_origin(
+            phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone()).child(),
+        );
     }
     let mut builder = NetworkBuilder::new();
     builder.add("service", Arc::new(definition)).unwrap();
@@ -207,44 +207,80 @@ fn public_binding_causes_keep_only_their_exact_revisions_and_preserve_network_so
         let no_locator = set.load(&key, None).unwrap();
         let compiled = graph(None, true);
         let required = contract();
-        let missing_locator = no_locator
-            .bind::<Offer>("main", &required, &compiled)
+        let missing_locator = bind_component::<Offer>(
+            &no_locator,
+            "main",
+            |offer| offer.1.as_deref(),
+            &required,
+            &compiled,
+        )
             .err()
             .unwrap();
-        let mismatch = no_locator
-            .bind::<OtherOffer>("main", &required, &compiled)
+        let mismatch = bind_component::<OtherOffer>(
+            &no_locator,
+            "main",
+            |_| None,
+            &required,
+            &compiled,
+        )
             .err()
             .unwrap();
-        let missing_kind = no_locator
-            .bind::<OtherKind>("main", &required, &compiled)
+        let missing_kind = bind_component::<OtherKind>(
+            &no_locator,
+            "main",
+            |_| None,
+            &required,
+            &compiled,
+        )
             .err()
             .unwrap();
-        let missing_id = no_locator
-            .bind::<Offer>("absent", &required, &compiled)
+        let missing_id = bind_component::<Offer>(
+            &no_locator,
+            "absent",
+            |offer| offer.1.as_deref(),
+            &required,
+            &compiled,
+        )
             .err()
             .unwrap();
         let located = set.reload(&key, Some("service".into())).unwrap();
-        let missing_origin = located
-            .bind::<Offer>("main", &required, &compiled)
+        let missing_origin = bind_component::<Offer>(
+            &located,
+            "main",
+            |offer| offer.1.as_deref(),
+            &required,
+            &compiled,
+        )
             .err()
             .unwrap();
         let old_graph = graph(Some(&located), true);
         let current = set.reload(&key, Some("service".into())).unwrap();
-        let wrong_origin = current
-            .bind::<Offer>("main", &required, &old_graph)
+        let wrong_origin = bind_component::<Offer>(
+            &current,
+            "main",
+            |offer| offer.1.as_deref(),
+            &required,
+            &old_graph,
+        )
             .err()
             .unwrap();
-        let missing_unit = current
-            .bind::<Offer>(
-                "main",
-                &required,
-                &NetworkBuilder::new().build().unwrap().compile().unwrap(),
-            )
+        let missing_unit = bind_component::<Offer>(
+            &current,
+            "main",
+            |offer| offer.1.as_deref(),
+            &required,
+            &NetworkBuilder::new().build().unwrap().compile().unwrap(),
+        )
             .err()
             .unwrap();
         let unclaimed = graph(Some(&current), false);
-        let schema = current
-            .bind::<Offer>("main", &required, &unclaimed)
+        let schema = bind_component::<Offer>(
+            &current,
+            "main",
+            |offer| offer.1.as_deref(),
+            &required,
+            &unclaimed,
+        )
             .err()
             .unwrap();
         vec![

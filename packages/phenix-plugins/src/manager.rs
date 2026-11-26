@@ -6,7 +6,6 @@
 use crate::registry::RegistryFault;
 use crate::{CallbackPhase, Code, Failure, identifier};
 use crate::{Contribution, Contributions, PluginInstance, Registrar};
-use phenix_graph::{GraphOrigin, contract::Contract, network::CompiledNetwork};
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet},
@@ -17,30 +16,6 @@ use std::{
 
 type Configuration = Box<dyn Any + Send>;
 type Constructor = dyn Fn(Configuration) -> Result<Box<dyn PluginInstance>, Failure> + Send + Sync;
-
-/// Framework binding failures, without exposing graph-origin authority tokens.
-#[derive(Debug, PartialEq, Eq)]
-pub enum BindingFault {
-    MissingComponentLocator {
-        plugin: String,
-        revision: u64,
-        kind: &'static str,
-        contribution: String,
-    },
-    GenerationOriginMismatch {
-        plugin: String,
-        revision: u64,
-        contribution: String,
-        path: String,
-        has_origin: bool,
-    },
-}
-impl std::fmt::Display for BindingFault {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for BindingFault {}
 
 /// The operation whose committed stage must contain a candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,7 +193,7 @@ impl PluginCatalog {
 // Field drop order is deliberate: contributions (which may contain plugin code)
 // are dropped before implementation state, and both before the factory/code lease.
 struct Loaded {
-    graph_origin: GraphOrigin,
+    revision_identity: Arc<()>,
     contributions: Contributions,
     _implementation: Box<dyn PluginInstance>,
     _factory: Arc<Factory>,
@@ -229,16 +204,8 @@ struct Loaded {
 /// A cloneable lease on an exact plugin revision. Existing users remain pinned
 /// when the plugin is unloaded or a newer revision is activated.
 ///
-/// Component binding resolves the actual locator in the compiled network,
-/// checks exact revision provenance and validates the claimed contract. A
-/// missing locator, origin, claim, or incompatible contract fails closed.
-/// The result pins the revision, not the network or a transferable validation
-/// certificate. Revalidate against the final compiled network after composition.
-///
-/// Raw hosts must attach a snapshot or code lease before exposing executable
-/// compiled declarations. Kernel attaches these leases to final and preview
-/// compiled networks and retains any supplied application lease. Detached
-/// factories, sessions, jobs, and values carry the required ownership.
+/// The snapshot pins the revision, not any domain-specific runtime object.
+/// Hosts retain the required leases when they expose executable contributions.
 #[derive(Clone)]
 pub struct PluginSnapshot {
     loaded: Arc<Loaded>,
@@ -253,25 +220,22 @@ impl PluginSnapshot {
         self.loaded.revision
     }
 
-    /// Trusted hosts use this exact revision's token when composing its units.
-    /// A token does not itself retain plugin executable code or grant authority.
-    pub fn graph_origin(&self) -> &GraphOrigin {
-        &self.loaded.graph_origin
+    /// Exact revision identity, independent of the plugin's name and revision number.
+    /// This token does not retain executable code or grant authority.
+    pub fn revision_identity(&self) -> &Arc<()> {
+        &self.loaded.revision_identity
     }
 
     pub fn keys(&self) -> impl Iterator<Item = (&str, &str, &str)> {
         self.loaded.contributions.keys()
     }
 
-    /// Bind against the actual immutable compiled unit, requiring its explicit
-    /// graph-owned claim and composition ancestry from this exact revision.
-    /// The handle pins this plugin revision, not the graph;
-    /// callers must not reuse this validation for a different compiled graph.
+    /// Resolve a typed contribution, then apply the caller's domain validation.
+    /// A retained validation failure pins this revision and its concrete cause.
     pub fn bind<C: Contribution>(
         &self,
         id: &str,
-        requested: &Contract,
-        graph: &CompiledNetwork,
+        validate: impl FnOnce(&C) -> Result<(), Failure>,
     ) -> Result<ContributionHandle<C>, Failure> {
         (|| {
             let index = self
@@ -290,57 +254,7 @@ impl PluginSnapshot {
                 index,
                 _value: PhantomData,
             };
-            let path = handle.component_path().ok_or_else(|| {
-                Failure::with_source(
-                    Code::MissingBinding,
-                    "contribution has no component locator",
-                    Box::new(BindingFault::MissingComponentLocator {
-                        plugin: self.name().into(),
-                        revision: self.revision(),
-                        kind: C::KIND,
-                        contribution: id.into(),
-                    }),
-                )
-            })?;
-            let unit = graph.inspect(path).map_err(|cause| {
-                Failure::with_source(
-                    Code::MissingBinding,
-                    format!(
-                        "compiled graph unit not found: {path}, contract {}",
-                        requested.id()
-                    ),
-                    Box::new(cause),
-                )
-            })?;
-            if !unit
-                .origin
-                .as_ref()
-                .is_some_and(|origin| origin.belongs_to(self.graph_origin()))
-            {
-                return Err(Failure::with_source(
-                    Code::Denied,
-                    format!("compiled unit {path}: contribution generation origin mismatch"),
-                    Box::new(BindingFault::GenerationOriginMismatch {
-                        plugin: self.name().into(),
-                        revision: self.revision(),
-                        contribution: id.into(),
-                        path: path.into(),
-                        has_origin: unit.origin.is_some(),
-                    }),
-                ));
-            }
-            graph
-                .check_implementation(path, requested)
-                .map_err(|error| {
-                    Failure::with_source(
-                        Code::SchemaRejected,
-                        format!(
-                            "compiled unit {path}, contribution {id}, contract {}",
-                            requested.id()
-                        ),
-                        Box::new(error),
-                    )
-                })?;
+            validate(&handle)?;
             Ok(handle)
         })()
         .map_err(|error: Failure| {
@@ -353,8 +267,7 @@ impl PluginSnapshot {
             error
         })
     }
-    /// Return a contribution with the plugin's lifetime attached. Graph
-    /// adapters should retain these handles inside their compiled actions.
+    /// Return a contribution with the plugin's lifetime attached.
     pub fn get<C: Contribution>(&self, id: &str) -> Option<ContributionHandle<C>> {
         let index = self.loaded.contributions.find_index::<C>(id)?;
         Some(ContributionHandle {
@@ -367,10 +280,9 @@ impl PluginSnapshot {
 
 /// Typed contribution whose lifetime pins both plugin state and code.
 ///
-/// The origin token identifies the exact revision by allocation identity, not
-/// a plugin name or revision number. Kernel adds a distinct child origin for
-/// each producing contribution. Origin is provenance, not a write grant or a
-/// lease. A contribution handle retains both its state and its code.
+/// The identity token identifies the exact revision by allocation identity.
+/// Identity alone is not a lease or permission; the handle retains both
+/// implementation state and code.
 pub struct ContributionHandle<C: Contribution> {
     loaded: Arc<Loaded>,
     index: usize,
@@ -388,9 +300,9 @@ impl<C: Contribution> Clone for ContributionHandle<C> {
 }
 
 impl<C: Contribution> ContributionHandle<C> {
-    /// Composition provenance for the exact leased plugin revision.
-    pub fn graph_origin(&self) -> &GraphOrigin {
-        &self.loaded.graph_origin
+    /// Exact identity of the leased plugin revision.
+    pub fn revision_identity(&self) -> &Arc<()> {
+        &self.loaded.revision_identity
     }
 }
 
@@ -501,7 +413,7 @@ impl PluginSet {
             ));
         }
         Ok(Arc::new(Loaded {
-            graph_origin: GraphOrigin::default(),
+            revision_identity: Arc::new(()),
             contributions,
             _implementation: instance,
             _factory: factory,
@@ -847,26 +759,16 @@ mod tests {
             })
             .unwrap();
         let snapshot = catalog.instance().load(&key, 1).unwrap();
-        let graph = phenix_graph::network::NetworkBuilder::new()
-            .build()
-            .unwrap()
-            .compile()
-            .unwrap();
-        let contract = Contract::new(
-            "test/binding@1",
-            Arc::new(phenix_graph::Interface::new([], []).unwrap()),
-        )
-        .unwrap();
         let mismatch = snapshot
-            .bind::<OtherPatch>("calculate", &contract, &graph)
+            .bind::<OtherPatch>("calculate", |_| Ok(()))
             .err()
             .unwrap();
         let missing_kind = snapshot
-            .bind::<ResourceOffer>("calculate", &contract, &graph)
+            .bind::<ResourceOffer>("calculate", |_| Ok(()))
             .err()
             .unwrap();
         let missing_id = snapshot
-            .bind::<GraphPatch>("absent", &contract, &graph)
+            .bind::<GraphPatch>("absent", |_| Ok(()))
             .err()
             .unwrap();
         for (error, fault) in [
