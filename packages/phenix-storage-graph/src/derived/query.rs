@@ -90,16 +90,7 @@ pub struct QuerySpec<T: Clone + Send + Sync + 'static> {
 }
 impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
     pub fn bind_kernel<'a>(&self, kernel: &'a Kernel) -> Result<QueryHandle<'a, T>, Error> {
-        let compiled = kernel.compiled();
-        self.resolve(
-            |key| compiled.bind_definition(key),
-            || compiled.bind_ingress(self.value.refresh_route(), InputKey::new("run")),
-            || compiled.bind_capture(&self.capture, OutputKey::<T>::new("value")),
-            || compiled.bind_capture(&self.value.root.errors, OutputKey::<Failure>::new("error")),
-            || compiled.declaration(""),
-            |name| compiled.capture(name),
-        )?
-        .bind_kernel(kernel)
+        self.bind_preparation(&kernel.binding())?.bind_kernel(kernel)
     }
     /// Resolve immutable authority during preparation, without admission or reads.
     /// The result can only execute with this exact compiled generation's Kernel.
@@ -107,57 +98,39 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
         &self,
         binding: &phenix_kernel::host::Binding<'_>,
     ) -> Result<QueryBinding<T>, Error> {
-        self.resolve(
-            |key| binding.bind_definition(key),
-            || binding.bind_ingress(self.value.refresh_route(), InputKey::new("run")),
-            || binding.bind_capture(&self.capture, OutputKey::<T>::new("value")),
-            || binding.bind_capture(&self.value.root.errors, OutputKey::<Failure>::new("error")),
-            || binding.declaration(""),
-            |name| binding.capture(name),
-        )
-    }
-    pub fn validate_binding(
-        &self,
-        binding: &phenix_kernel::host::Binding<'_>,
-    ) -> Result<(), Error> {
-        self.bind_preparation(binding).map(drop)
-    }
-    fn resolve(
-        &self,
-        definition: impl Fn(DefinitionKey) -> Result<BoundDeclaration, NetworkError>,
-        ingress: impl FnOnce() -> Result<IngressHandle<RefreshCause>, NetworkError>,
-        selected: impl FnOnce() -> Result<CaptureHandle, NetworkError>,
-        errors: impl FnOnce() -> Result<CaptureHandle, NetworkError>,
-        boundary: impl FnOnce() -> Result<BoundDeclaration, NetworkError>,
-        capture: impl Fn(&str) -> Result<CaptureHandle, NetworkError>,
-    ) -> Result<QueryBinding<T>, Error> {
         // Definition errors precede route errors, including ambiguous occurrences.
-        let tap = definition(self.definition)?;
-        let root = definition(self.value.root.definition.definition_key())?;
-        let refresh =
-            ingress().map_err(|_| Error::InvalidRefreshRoute(self.value.refresh_route().into()))?;
+        let tap = binding.bind_definition(self.definition)?;
+        let root = binding.bind_definition(self.value.root.definition.definition_key())?;
+        let refresh = binding
+            .bind_ingress(self.value.refresh_route(), InputKey::new("run"))
+            .map_err(|_| Error::InvalidRefreshRoute(self.value.refresh_route().into()))?;
         if !refresh.matches_input(&root.input_key(InputKey::new("run"))?)? {
             return Err(Error::InvalidRefreshRoute(
                 self.value.refresh_route().into(),
             ));
         }
-        let selected = selected().map_err(|_| Error::InvalidPublication)?;
+        let selected = binding
+            .bind_capture(&self.capture, OutputKey::<T>::new("value"))
+            .map_err(|_| Error::InvalidPublication)?;
         if !selected.matches_output(&tap.output_key(OutputKey::<T>::new("value"))?)? {
             return Err(Error::InvalidPublication);
         }
-        let root_value =
-            capture(&self.value.root.capture).map_err(|_| Error::InvalidPublication)?;
+        let root_value = binding
+            .capture(&self.value.root.capture)
+            .map_err(|_| Error::InvalidPublication)?;
         if !(self.value.root.matches_value)(&root, &root_value)? {
             return Err(Error::InvalidPublication);
         }
-        let errors = errors().map_err(|_| Error::InvalidPublication)?;
+        let errors = binding
+            .bind_capture(&self.value.root.errors, OutputKey::<Failure>::new("error"))
+            .map_err(|_| Error::InvalidPublication)?;
         if !errors.matches_output(&root.output_key(OutputKey::<Failure>::new("error"))?)? {
             return Err(Error::InvalidPublication);
         }
         let mut captures = Vec::new();
         // Enumerate aliases only at binding. Erased captures include unrelated
         // heterogeneous observations; every export can backpressure publication.
-        for name in boundary()?.interface().outputs().keys() {
+        for name in binding.declaration("")?.interface().outputs().keys() {
             let handle = if name == selected.name() {
                 selected.clone()
             } else if name == root_value.name() {
@@ -165,7 +138,7 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
             } else if name == errors.name() {
                 errors.clone()
             } else {
-                capture(name)?
+                binding.capture(name)?
             };
             captures.push(QueryCapture {
                 selected: name == selected.name(),
@@ -181,6 +154,13 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
             captures,
             marker: PhantomData,
         })
+    }
+
+    pub fn validate_binding(
+        &self,
+        binding: &phenix_kernel::host::Binding<'_>,
+    ) -> Result<(), Error> {
+        self.bind_preparation(binding).map(drop)
     }
 }
 
