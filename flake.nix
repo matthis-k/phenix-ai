@@ -115,7 +115,10 @@
       allPackages = map (path: manifests.${path}.package.name) members;
       integrationPackages = lib.filter (
         name:
-        lib.hasInfix "integration" name || name == "phenix-storage-graph" || name == "phenix-storage-plugin"
+        lib.hasInfix "integration" name
+        || name == "phenix-storage-graph"
+        || name == "phenix-storage-plugin"
+        || name == "phenix-agent"
       ) allPackages;
       docSource = lib.fileset.toSource {
         root = ./.;
