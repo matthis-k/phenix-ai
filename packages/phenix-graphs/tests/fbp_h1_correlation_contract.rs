@@ -165,7 +165,7 @@ fn crossed_multiplicity_preserves_request_local_fifo_and_settles_both_scopes() {
 }
 
 #[test]
-fn external_policy_can_declare_checked_request_correlation() {
+fn declared_and_external_policies_share_checked_request_correlation() {
     use phenix_graph::runtime::{
         PolicyDeclaration, ReadinessPolicy, ReadinessSnapshot, SelectionRule,
     };
@@ -179,44 +179,40 @@ fn external_policy_can_declare_checked_request_correlation() {
             }
         }
 
-        fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-            if snapshot.heads.iter().all(|head| head.available) {
-                snapshot
-                    .heads
-                    .iter()
-                    .map(|head| head.port.clone())
-                    .collect()
-            } else {
-                vec![]
-            }
+        fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+            panic!("declared rule must be the authoritative selector");
         }
     }
 
-    let mut config = options(RequestQueuePolicy::SharedFifo);
-    config
-        .readiness
-        .insert("join".into(), Readiness::from_policy(ExternalJoin));
-    let mut session = network(true).start_with_options(config);
-    let a = session.begin_request(None).unwrap();
-    let b = session.begin_request(None).unwrap();
+    for policy in [
+        Readiness::CORRELATED_ALL,
+        Readiness::declared(SelectionRule::All, true),
+        Readiness::from_policy(ExternalJoin),
+    ] {
+        let mut config = options(RequestQueuePolicy::SharedFifo);
+        config.readiness.insert("join".into(), policy);
+        let mut session = network(true).start_with_options(config);
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
 
-    session.inject_request_local(b, "right", 200_i64).unwrap();
-    session.inject_request_local(a, "left", 10_i64).unwrap();
-    session.inject_request_local(a, "right", 1_i64).unwrap();
-    session.inject_request_local(a, "right", 2_i64).unwrap();
-    session.close_request(a).unwrap();
-    assert!(!session.run_until_idle(32).budget_exhausted);
-    assert_eq!(captured(&mut session, a), [13]);
-    assert_eq!(session.request_work(b).unwrap().queued, 1);
-    session.release_request(a).unwrap();
+        session.inject_request_local(b, "right", 200_i64).unwrap();
+        session.inject_request_local(a, "left", 10_i64).unwrap();
+        session.inject_request_local(a, "right", 1_i64).unwrap();
+        session.inject_request_local(a, "right", 2_i64).unwrap();
+        session.close_request(a).unwrap();
+        assert!(!session.run_until_idle(32).budget_exhausted);
+        assert_eq!(captured(&mut session, a), [13]);
+        assert_eq!(session.request_work(b).unwrap().queued, 1);
+        session.release_request(a).unwrap();
 
-    session.inject_request_local(b, "left", 20_i64).unwrap();
-    session.inject_request_local(b, "right", 201_i64).unwrap();
-    session.close_request(b).unwrap();
-    assert!(!session.run_until_idle(32).budget_exhausted);
-    assert_eq!(captured(&mut session, b), [421]);
-    session.release_request(b).unwrap();
-    assert!(session.failure().is_none());
+        session.inject_request_local(b, "left", 20_i64).unwrap();
+        session.inject_request_local(b, "right", 201_i64).unwrap();
+        session.close_request(b).unwrap();
+        assert!(!session.run_until_idle(32).budget_exhausted);
+        assert_eq!(captured(&mut session, b), [421]);
+        session.release_request(b).unwrap();
+        assert!(session.failure().is_none());
+    }
 }
 
 #[test]
