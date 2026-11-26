@@ -729,7 +729,10 @@ impl PreparedBackend {
                         cause,
                         std::sync::Arc::new(lease.clone()),
                     )),
-                    other => other,
+                    other => Error::Open(lease_callback_error(
+                        Box::new(other),
+                        std::sync::Arc::new(lease.clone()),
+                    )),
                 })?;
                 Ok(Box::new(LeasedBackend {
                     backend,
@@ -1010,7 +1013,7 @@ impl PreparedStorage {
         let registry = Registry::new();
         for (name, provider) in self.mounts {
             let path = provider.sqlite_path().map(std::path::Path::to_path_buf);
-            registry.mount_with(&name, || {
+            registry.mount_with(&name, || -> Result<Box<dyn Backend>, Error> {
                 if let Some(path) = &path {
                     if let Some(root) = private_roots.get(&name) {
                         private_xdg_file(root, path, true)?;
@@ -1336,6 +1339,29 @@ mod tests {
         policy
     }
 
+    #[test]
+    fn standard_and_local_provider_share_preparation_and_activation() {
+        for placement in [
+            BackendPlacement::memory(),
+            BackendPlacement::Local(
+                BackendProvider::new(|| Ok(Box::new(phenix_storage::MemoryBackend::default())))
+                    .with_features(BackendFeatures::MEMORY),
+            ),
+        ] {
+            let requirements = requirements(vec![("reader", request([Operation::Read]))]);
+            let policy = policy(&requirements, placement);
+            let prepared =
+                PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
+                    .unwrap();
+            assert_eq!(
+                prepared.mounts()["main"].capabilities(),
+                Some(BackendFeatures::MEMORY)
+            );
+            let active = prepared.activate().unwrap();
+            assert!(active.views.contains_key("reader"));
+        }
+    }
+
     // Test host decisions, deliberately independent of requested operations.
     fn approve_fixture_requests(requirements: &ResourceRequirements, policy: &mut StoragePolicy) {
         let allowed: std::collections::BTreeSet<_> = [
@@ -1454,9 +1480,9 @@ mod tests {
             let mut policy = StoragePolicy::xdg(&requirements, &paths).unwrap();
             approve_fixture_requests(&requirements, &mut policy);
             let path = match policy.mounts.values().next().unwrap() {
-            BackendPlacement::Local(provider) => provider.sqlite_path.clone().unwrap(),
-            _ => unreachable!(),
-        };
+                BackendPlacement::Local(provider) => provider.sqlite_path.clone().unwrap(),
+                _ => unreachable!(),
+            };
             private_xdg_file(&root.join("phenix"), &path, true).unwrap();
             match case {
                 "root-mode" => std::fs::set_permissions(
@@ -2765,9 +2791,7 @@ mod tests {
             PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
                 .unwrap();
         assert_eq!(old.opens.load(SeqCst), 0);
-        assert!(
-            prepared.mounts()["main"].offer_id() == Some("tracked")
-        );
+        assert_eq!(prepared.mounts()["main"].offer_id(), Some("tracked"));
         assert_eq!(
             prepared.mounts()["main"].capabilities(),
             Some(BackendFeatures::MEMORY)
