@@ -3,7 +3,7 @@
 
 use super::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_INVOCATION, TOOL_ROUTER,
-    ToolInvocation, UNAVAILABLE, capacity, environment_port, port, tool_router,
+    ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, port, tool_router,
 };
 use phenix_graph::{
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
