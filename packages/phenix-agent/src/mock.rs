@@ -3,7 +3,7 @@
 
 use crate::{
     AgentContracts, AgentEvent, BasicLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
-    ModelInput, TOOL_CONTRACT, ToolCall, loop_grants, model_contract, tool_contract,
+    ModelInput, TOOL_CONTRACT, ToolCall, ToolOutcome, loop_grants, model_contract, tool_contract,
 };
 use phenix_graph::{
     ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
@@ -74,7 +74,12 @@ impl Process for ModelProcess {
                     .push_back(ProcessEmission::new("tool", Value::local(call)));
             }
             ModelInput::Prompt(prompt) => self.answer(prompt),
-            ModelInput::ToolResult { output, .. } => self.answer(output),
+            ModelInput::ToolResult { outcome, .. } => match outcome {
+                ToolOutcome::Succeeded { output } => self.answer(output),
+                ToolOutcome::Failed { output, reason } => {
+                    self.answer(&format!("tool failed: {reason}: {output}"));
+                }
+            },
         }
         Ok(Step::Emit(
             self.pending.pop_front().expect("one or more emissions"),
@@ -142,7 +147,9 @@ impl PluginInstance for MockTool {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let prefix = self.prefix.clone();
         let definition = ComponentDef::map(move |call: ToolCall| ModelInput::ToolResult {
-            output: format!("{prefix}({})", call.prompt),
+            outcome: ToolOutcome::Succeeded {
+                output: format!("{prefix}({})", call.prompt),
+            },
             call,
         })
         .claim(&tool_contract())
@@ -198,16 +205,18 @@ pub fn host(model: MockModel, tool: MockTool) -> Result<KernelHost, CallbackErro
     host_with_options(model, tool, options())
 }
 
+/// Compose independently authored providers under the same host-selected roles.
+/// Providers must offer the canonical contracts and stay within host grants.
 pub fn host_with_options(
-    model: MockModel,
-    tool: MockTool,
+    model: impl PluginInstance + 'static,
+    tool: impl PluginInstance + 'static,
     options: BuildOptions,
 ) -> Result<KernelHost, CallbackError> {
     let mut catalog = PluginCatalog::new();
     let contracts_key = catalog.register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))?;
     let loop_key = catalog.register(LOOP_PLUGIN, |_: ()| Ok(BasicLoop))?;
-    let model_key = catalog.register(MODEL_PLUGIN, |model: MockModel| Ok(model))?;
-    let tool_key = catalog.register(TOOL_PLUGIN, |tool: MockTool| Ok(tool))?;
+    let model_key = catalog.register(MODEL_PLUGIN, Ok)?;
+    let tool_key = catalog.register(TOOL_PLUGIN, Ok)?;
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,

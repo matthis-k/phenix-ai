@@ -79,6 +79,62 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 }
 
 #[test]
+fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
+    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, tool_contract};
+    use phenix_graph::{
+        ComponentDef,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::Arc;
+
+    struct ExternalTool;
+    impl PluginInstance for ExternalTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let definition = ComponentDef::map(|call: ToolCall| ModelInput::ToolResult {
+                call,
+                outcome: ToolOutcome::Failed {
+                    output: "partial output".into(),
+                    reason: "denied".into(),
+                },
+            })
+            .claim(&tool_contract())
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let host = mock::host_with_options(MockModel::default(), ExternalTool, mock::options()).unwrap();
+    let generation = host.active().unwrap();
+    for prompt in ["first", "second"] {
+        assert_eq!(
+            turn(&generation, prompt),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: prompt.into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("tool failed: denied: partial output".into()),
+                AgentEvent::Completed,
+            ]
+        );
+    }
+}
+
+#[test]
 fn missing_host_graph_grant_prevents_publication() {
     let mut options = mock::options();
     options
