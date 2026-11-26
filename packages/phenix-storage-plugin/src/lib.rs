@@ -52,40 +52,72 @@ use phenix_storage::{
 };
 use std::collections::BTreeMap;
 
-pub type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, CallbackError> + Send + Sync;
+type OpenBackend = dyn Fn() -> Result<Box<dyn Backend>, Error> + Send + Sync;
 
-/// A plugin *offers* a backend factory. Only the trusted host can choose a
-/// physical mount name, location, configuration and storage authority.
-///
-/// A provider used by preparation must declare its features. Optional KV feature
-/// promises are independent. Missing advertised support rejects the plan before
-/// factory invocation. Activation probes actual support but cannot establish
-/// atomicity, token uniqueness, truthful observation, or schema compatibility
-/// before opening. Durable backends enforce schemas through `Backend::register_dataset`.
-///
-/// Preparation pins the exact offer revision. Opened backends retain that lease
-/// through backend destruction. Replacement or logical unload does not replace
-/// existing backend instances. The lower-level `mount_offer` is available to
-/// trusted hosts without this plan.
-pub struct BackendOffer {
-    id: String,
+/// A configured backend factory and its declared capabilities. Both local
+/// placements and plugin offers carry this same provider value.
+pub struct BackendProvider {
     open: Box<OpenBackend>,
     features: Option<BackendFeatures>,
+    sqlite_path: Option<std::path::PathBuf>,
+}
+
+impl BackendProvider {
+    pub fn new(
+        open: impl Fn() -> Result<Box<dyn Backend>, Error> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            open: Box::new(open),
+            features: None,
+            sqlite_path: None,
+        }
+    }
+
+    pub fn with_features(mut self, features: BackendFeatures) -> Self {
+        self.features = Some(features);
+        self
+    }
+
+    pub fn memory() -> Self {
+        Self::new(|| Ok(Box::new(phenix_storage::MemoryBackend::default())))
+            .with_features(BackendFeatures::MEMORY)
+    }
+
+    pub fn sqlite(path: std::path::PathBuf) -> Self {
+        let open_path = path.clone();
+        let mut provider = Self::new(move || {
+            Ok(Box::new(phenix_storage::SqliteBackend::open(&open_path)?))
+        })
+        .with_features(BackendFeatures::SQLITE);
+        provider.sqlite_path = Some(path);
+        provider
+    }
+}
+
+/// A plugin offers an ordinary configured provider. Only the trusted host
+/// selects it and grants storage authority. The exact revision is retained
+/// through opening, failures and backend destruction.
+pub struct BackendOffer {
+    id: String,
+    provider: BackendProvider,
 }
 impl BackendOffer {
     pub fn new(
         id: impl Into<String>,
         open: impl Fn() -> Result<Box<dyn Backend>, CallbackError> + Send + Sync + 'static,
     ) -> Self {
+        Self::from_provider(id, BackendProvider::new(move || open().map_err(Error::Open)))
+    }
+
+    pub fn from_provider(id: impl Into<String>, provider: BackendProvider) -> Self {
         Self {
             id: id.into(),
-            open: Box::new(open),
-            features: None,
+            provider,
         }
     }
-    /// Trusted host preflight relies on this provider's declared contract.
+
     pub fn with_features(mut self, features: BackendFeatures) -> Self {
-        self.features = Some(features);
+        self.provider = self.provider.with_features(features);
         self
     }
 }
@@ -166,17 +198,6 @@ impl Backend for LeasedBackend {
     }
 }
 
-fn open_backend(lease: &ContributionHandle<BackendOffer>) -> Result<Box<dyn Backend>, Error> {
-    (lease.open)().map_err(|cause| {
-        // The opener's captures need not include its provider. Retain the exact
-        // resolved revision, including its immutable offer, before the cause escapes.
-        Error::Open(lease_callback_error(
-            cause,
-            std::sync::Arc::new(lease.clone()),
-        ))
-    })
-}
-
 /// Install one selected backend offer in a trusted host's Registry. The
 /// provider's exact revision is pinned by the installed backend. No graph
 /// activation, storage grant, or code unload occurs as part of this operation.
@@ -189,12 +210,11 @@ pub fn mount_offer(
     let lease = snapshot
         .get::<BackendOffer>(offer_id)
         .ok_or(Error::MissingOffer)?;
-    registry.mount_with(mount_name, || -> Result<Box<dyn Backend>, Error> {
-        let backend = open_backend(&lease)?;
-        Ok(Box::new(LeasedBackend {
-            backend,
-            _lease: lease,
-        }))
+    registry.mount_with(mount_name, || {
+        PreparedBackend {
+            provider: ProviderRef::Leased(lease),
+        }
+        .open()
     })?;
     Ok(())
 }
@@ -398,13 +418,33 @@ impl BackendFeatures {
 }
 
 pub enum BackendPlacement {
-    Memory,
-    Sqlite(std::path::PathBuf),
+    Local(BackendProvider),
     Offer {
         snapshot: PluginSnapshot,
         id: String,
     },
 }
+
+impl BackendPlacement {
+    pub fn memory() -> Self {
+        Self::Local(BackendProvider::memory())
+    }
+
+    pub fn sqlite(path: std::path::PathBuf) -> Self {
+        Self::Local(BackendProvider::sqlite(path))
+    }
+
+    fn prepare(self) -> Result<PreparedBackend, Error> {
+        let provider = match self {
+            Self::Local(provider) => ProviderRef::Local(provider),
+            Self::Offer { snapshot, id } => ProviderRef::Leased(
+                snapshot.get::<BackendOffer>(&id).ok_or(Error::MissingOffer)?,
+            ),
+        };
+        Ok(PreparedBackend { provider })
+    }
+}
+
 pub struct ResourceBinding {
     pub target: BindingTarget,
     pub allowed: std::collections::BTreeSet<Operation>,
@@ -502,7 +542,7 @@ impl StoragePolicy {
                 }
                 ResourceKind::Sql => BindingTarget::SqlMount(mount.clone()),
             };
-            policy.mounts.insert(mount, BackendPlacement::Sqlite(path));
+            policy.mounts.insert(mount, BackendPlacement::sqlite(path));
             policy.resources.insert(
                 resource.clone(),
                 ResourceBinding {
@@ -644,18 +684,58 @@ fn private_xdg_file(
 }
 
 /// A planned mount action, not an opened backend. Offer handles pin provider code.
-pub enum PreparedBackend {
-    Memory,
-    Sqlite(std::path::PathBuf),
-    Offer(ContributionHandle<BackendOffer>),
+pub struct PreparedBackend {
+    provider: ProviderRef,
 }
+
+// This distinction is ownership, not backend behavior.
+enum ProviderRef {
+    Local(BackendProvider),
+    Leased(ContributionHandle<BackendOffer>),
+}
+
 impl PreparedBackend {
+    fn provider(&self) -> &BackendProvider {
+        match &self.provider {
+            ProviderRef::Local(provider) => provider,
+            ProviderRef::Leased(lease) => &lease.provider,
+        }
+    }
+
     /// Provider-declared capabilities; activation verifies the opened backend.
     pub fn capabilities(&self) -> Option<BackendFeatures> {
-        match self {
-            Self::Memory => Some(BackendFeatures::MEMORY),
-            Self::Sqlite(_) => Some(BackendFeatures::SQLITE),
-            Self::Offer(lease) => lease.features,
+        self.provider().features
+    }
+
+    /// Host-managed SQLite path, if declared by the provider.
+    pub fn sqlite_path(&self) -> Option<&std::path::Path> {
+        self.provider().sqlite_path.as_deref()
+    }
+
+    pub fn offer_id(&self) -> Option<&str> {
+        match &self.provider {
+            ProviderRef::Local(_) => None,
+            ProviderRef::Leased(lease) => Some(lease.id()),
+        }
+    }
+
+    fn open(self) -> Result<Box<dyn Backend>, Error> {
+        let result = (self.provider().open)();
+        match self.provider {
+            ProviderRef::Local(_) => result,
+            ProviderRef::Leased(lease) => {
+                let backend = result.map_err(|error| match error {
+                    Error::Open(cause) => Error::Open(lease_callback_error(
+                        cause,
+                        std::sync::Arc::new(lease.clone()),
+                    )),
+                    other => other,
+                })?;
+                Ok(Box::new(LeasedBackend {
+                    backend,
+                    _lease: lease,
+                }))
+            }
         }
     }
 }
@@ -772,34 +852,15 @@ impl PreparedStorage {
         }
         let mut mounts = BTreeMap::new();
         let mut features = BTreeMap::new();
-        validate_sqlite_paths(
-            policy
-                .mounts
-                .values()
-                .filter_map(|placement| match placement {
-                    BackendPlacement::Sqlite(path) => Some(path.as_path()),
-                    _ => None,
-                }),
-        )?;
         for (name, placement) in policy.mounts {
             // Reuse canonical mount validation without allocating a registry.
             Address::parse(&format!("store://{name}/validation"))?;
-            let (backend, caps) = match placement {
-                BackendPlacement::Memory => (PreparedBackend::Memory, BackendFeatures::MEMORY),
-                BackendPlacement::Sqlite(path) => {
-                    (PreparedBackend::Sqlite(path), BackendFeatures::SQLITE)
-                }
-                BackendPlacement::Offer { snapshot, id } => {
-                    let lease = snapshot
-                        .get::<BackendOffer>(&id)
-                        .ok_or(Error::MissingOffer)?;
-                    let caps = lease.features.ok_or(Error::UnsupportedCapability)?;
-                    (PreparedBackend::Offer(lease), caps)
-                }
-            };
+            let backend = placement.prepare()?;
+            let caps = backend.capabilities().ok_or(Error::UnsupportedCapability)?;
             mounts.insert(name.clone(), backend);
             features.insert(name, caps);
         }
+        validate_sqlite_paths(mounts.values().filter_map(PreparedBackend::sqlite_path))?;
         let mut targets = BTreeMap::new();
         let mut users: BTreeMap<String, Vec<bool>> = BTreeMap::new();
         for (resource, kind) in requirements.iter() {
@@ -882,7 +943,7 @@ impl PreparedStorage {
             }
         }
         for (mount, backend) in &mounts {
-            if let PreparedBackend::Sqlite(path) = backend {
+            if let Some(path) = backend.sqlite_path() {
                 if let Some(paths) = &policy.xdg_paths {
                     let root = xdg_root(paths, &policy.resources, mount, path)?;
                     private_xdg_file(&root, path, false)?;
@@ -917,10 +978,7 @@ impl PreparedStorage {
     /// Failure publishes no sessions. Already-opened backends are dropped with
     /// the private registry; durable files/data are deliberately not deleted.
     pub fn activate(self) -> Result<ActivatedStorage, Error> {
-        validate_sqlite_paths(self.mounts.values().filter_map(|backend| match backend {
-            PreparedBackend::Sqlite(path) => Some(path.as_path()),
-            _ => None,
-        }))?;
+        validate_sqlite_paths(self.mounts.values().filter_map(PreparedBackend::sqlite_path))?;
         #[cfg(not(unix))]
         if self.xdg_paths.is_some()
             && self
@@ -942,7 +1000,7 @@ impl PreparedStorage {
         let mut private_roots = BTreeMap::new();
         if let Some(paths) = &self.xdg_paths {
             for (mount, backend) in &self.mounts {
-                if let PreparedBackend::Sqlite(path) = backend {
+                if let Some(path) = backend.sqlite_path() {
                     let root = xdg_root(paths, &self.resources, mount, path)?;
                     private_xdg_file(&root, path, false)?;
                     private_roots.insert(mount.clone(), root);
@@ -950,68 +1008,60 @@ impl PreparedStorage {
             }
         }
         let registry = Registry::new();
-        for (name, backend) in self.mounts {
-            match backend {
-                PreparedBackend::Memory => registry.mount_memory(&name)?,
-                PreparedBackend::Sqlite(path) => {
+        for (name, provider) in self.mounts {
+            let path = provider.sqlite_path().map(std::path::Path::to_path_buf);
+            registry.mount_with(&name, || {
+                if let Some(path) = &path {
                     if let Some(root) = private_roots.get(&name) {
-                        private_xdg_file(root, &path, true)?;
+                        private_xdg_file(root, path, true)?;
                     } else if let Some(parent) = path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
-                    registry.mount_sqlite(&name, &path)?;
-                    if let Some(root) = private_roots.get(&name) {
-                        private_xdg_file(root, &path, false)?;
-                    }
                 }
-                PreparedBackend::Offer(lease) => {
-                    let mut backend = open_backend(&lease)?;
-                    // Probe the provider before mounting it or issuing sessions.
-                    // Built-in memory/SQLite capabilities are fixed.
-                    let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
-                        match backend.typed_kv() {
-                            Some(kv) => (
-                                true,
-                                kv.supports_revisioned_reads(),
-                                kv.supports_atomic_read_many(),
-                                kv.supports_compare_exchange(),
-                            ),
-                            None => (false, false, false, false),
-                        };
-                    let sql = backend.sql().is_some();
-                    let actual = BackendFeatures {
-                        typed_kv,
-                        revisioned_read,
-                        atomic_read_many,
-                        compare_exchange,
-                        sql,
-                        invalidation: true, // Registry writes always publish notices.
+                let mut backend = provider.open()?;
+                if let Some(path) = &path
+                    && let Some(root) = private_roots.get(&name)
+                {
+                    private_xdg_file(root, path, false)?;
+                }
+                // All providers follow the same actual-capability verification.
+                let (typed_kv, revisioned_read, atomic_read_many, compare_exchange) =
+                    match backend.typed_kv() {
+                        Some(kv) => (
+                            true,
+                            kv.supports_revisioned_reads(),
+                            kv.supports_atomic_read_many(),
+                            kv.supports_compare_exchange(),
+                        ),
+                        None => (false, false, false, false),
                     };
-                    for (id, request) in self.requirements.requests.values().flatten() {
-                        let target_mount = match &self.resources[id].target {
-                            BindingTarget::Dataset(address) => address.mount(),
-                            BindingTarget::SqlMount(mount) => mount,
-                        };
-                        if target_mount != name {
-                            continue;
-                        }
-                        let supported = match request.spec.kind {
-                            ResourceKind::TypedKv(_) => typed_kv,
-                            ResourceKind::Sql => sql,
-                        };
-                        if !supported || request.required.iter().any(|cap| !actual.supports(*cap)) {
-                            return Err(Error::UnsupportedCapability);
-                        }
+                let sql = backend.sql().is_some();
+                let actual = BackendFeatures {
+                    typed_kv,
+                    revisioned_read,
+                    atomic_read_many,
+                    compare_exchange,
+                    sql,
+                    invalidation: true, // Registry writes always publish notices.
+                };
+                for (id, request) in self.requirements.requests.values().flatten() {
+                    let target_mount = match &self.resources[id].target {
+                        BindingTarget::Dataset(address) => address.mount(),
+                        BindingTarget::SqlMount(mount) => mount,
+                    };
+                    if target_mount != name {
+                        continue;
                     }
-                    registry.mount_boxed(
-                        &name,
-                        Box::new(LeasedBackend {
-                            backend,
-                            _lease: lease,
-                        }),
-                    )?;
+                    let supported = match request.spec.kind {
+                        ResourceKind::TypedKv(_) => typed_kv,
+                        ResourceKind::Sql => sql,
+                    };
+                    if !supported || request.required.iter().any(|cap| !actual.supports(*cap)) {
+                        return Err(Error::UnsupportedCapability);
+                    }
                 }
-            }
+                Ok(backend)
+            })?;
         }
         for (id, kind) in self.requirements.iter() {
             if let (ResourceKind::TypedKv(schema), BindingTarget::Dataset(address)) =
@@ -1337,7 +1387,7 @@ mod tests {
         let mut policy = StoragePolicy::xdg(&requirements, &paths).unwrap();
         approve_fixture_requests(&requirements, &mut policy);
         let path = match policy.mounts.values().next().unwrap() {
-            BackendPlacement::Sqlite(path) => path.clone(),
+            BackendPlacement::Local(provider) => provider.sqlite_path.clone().unwrap(),
             _ => unreachable!(),
         };
         let prepared =
@@ -1404,9 +1454,9 @@ mod tests {
             let mut policy = StoragePolicy::xdg(&requirements, &paths).unwrap();
             approve_fixture_requests(&requirements, &mut policy);
             let path = match policy.mounts.values().next().unwrap() {
-                BackendPlacement::Sqlite(path) => path.clone(),
-                _ => unreachable!(),
-            };
+            BackendPlacement::Local(provider) => provider.sqlite_path.clone().unwrap(),
+            _ => unreachable!(),
+        };
             private_xdg_file(&root.join("phenix"), &path, true).unwrap();
             match case {
                 "root-mode" => std::fs::set_permissions(
@@ -1478,7 +1528,7 @@ mod tests {
         let mut policy = StoragePolicy::xdg(&requirements, &paths).unwrap();
         approve_fixture_requests(&requirements, &mut policy);
         let path = match policy.mounts.values().next().unwrap() {
-            BackendPlacement::Sqlite(path) => path.clone(),
+            BackendPlacement::Local(provider) => provider.sqlite_path.clone().unwrap(),
             _ => unreachable!(),
         };
         let prepared = PreparedStorage::prepare(requirements, identity.clone(), policy).unwrap();
@@ -1501,7 +1551,7 @@ mod tests {
         let mut policy = StoragePolicy::xdg(&requirements, &paths).unwrap();
         approve_fixture_requests(&requirements, &mut policy);
         *policy.mounts.values_mut().next().unwrap() =
-            BackendPlacement::Sqlite(root.join("manual.sqlite"));
+            BackendPlacement::sqlite(root.join("manual.sqlite"));
         assert!(matches!(
             PreparedStorage::prepare(requirements, identity.clone(), policy),
             Err(Error::UnsafeXdgPath)
@@ -1511,14 +1561,14 @@ mod tests {
         let requirements = ResourceRequirements::collect(declarations, &identity).unwrap();
         let manual = self::policy(
             &requirements,
-            BackendPlacement::Sqlite(root.join("manual.sqlite")),
+            BackendPlacement::sqlite(root.join("manual.sqlite")),
         );
         let declarations = snapshots(vec![("reader", request([Operation::Read]))]);
         let protected_requirements =
             ResourceRequirements::collect(declarations, &identity).unwrap();
         let mut protected = self::policy(
             &protected_requirements,
-            BackendPlacement::Sqlite(root.join("manual.sqlite")),
+            BackendPlacement::sqlite(root.join("manual.sqlite")),
         );
         protected.xdg_paths = Some(paths.clone());
         assert!(matches!(
@@ -1567,7 +1617,7 @@ mod tests {
         for authorized in [false, true] {
             let requirements =
                 ResourceRequirements::collect(declarations.clone(), &identity).unwrap();
-            let mut policy = self::policy(&requirements, BackendPlacement::Sqlite(path.clone()));
+            let mut policy = self::policy(&requirements, BackendPlacement::sqlite(path.clone()));
             for (id, binding) in &mut policy.resources {
                 if id.name == "phenix.test/other" {
                     binding.target =
@@ -1596,7 +1646,7 @@ mod tests {
     fn prepare_rejects_permissions_kinds_and_capabilities_without_opening() {
         let identity = Identity::user("alice").unwrap();
         let requirements = requirements(vec![("writer", request([Operation::Write]))]);
-        let mut policy = policy(&requirements, BackendPlacement::Memory);
+        let mut policy = policy(&requirements, BackendPlacement::memory());
         policy
             .resources
             .values_mut()
@@ -1612,14 +1662,14 @@ mod tests {
         let mut sql = request([Operation::SqlRead]);
         sql.spec.kind = ResourceKind::Sql;
         let requirements = self::requirements(vec![("reader", sql)]);
-        let policy = self::policy(&requirements, BackendPlacement::Memory);
+        let policy = self::policy(&requirements, BackendPlacement::memory());
         assert!(matches!(
             PreparedStorage::prepare(requirements, identity.clone(), policy),
             Err(Error::UnsupportedCapability)
         ));
 
         let requirements = self::requirements(vec![("writer", request([Operation::Write]))]);
-        let mut policy = self::policy(&requirements, BackendPlacement::Memory);
+        let mut policy = self::policy(&requirements, BackendPlacement::memory());
         policy
             .plugin_access
             .insert("writer".into(), BTreeMap::new());
@@ -1682,7 +1732,7 @@ mod tests {
         }
         // An explicit allowlist for another plugin cannot authorize this one.
         let requirements = ResourceRequirements::collect(declarations.clone(), &identity).unwrap();
-        let mut policy = self::policy(&requirements, BackendPlacement::Memory);
+        let mut policy = self::policy(&requirements, BackendPlacement::memory());
         let permissions = policy.plugin_access.remove("reader").unwrap();
         policy
             .plugin_access
@@ -1703,7 +1753,7 @@ mod tests {
         let prepared = PreparedStorage::prepare(requirements, identity, policy).unwrap();
         assert!(!root.exists());
         assert!(
-            matches!(prepared.mounts().values().next().unwrap(), PreparedBackend::Sqlite(path) if path.starts_with(&root))
+            prepared.mounts().values().next().unwrap().sqlite_path().is_some_and(|path| path.starts_with(&root))
         );
     }
 
@@ -1714,7 +1764,7 @@ mod tests {
             request([Operation::Write]).require(Capability::CompareExchange),
         )]);
         let id = requirements.iter().next().unwrap().0.clone();
-        let mut policy = policy(&requirements, BackendPlacement::Memory);
+        let mut policy = policy(&requirements, BackendPlacement::memory());
         policy.resources.get_mut(&id).unwrap().allowed = [Operation::Write].into();
         policy.plugin_access.insert(
             "writer".into(),
@@ -1745,7 +1795,8 @@ mod tests {
             prepared.mounts()["main"].capabilities(),
             Some(BackendFeatures::MEMORY)
         );
-        assert!(matches!(prepared.mounts()["main"], PreparedBackend::Memory));
+        assert!(prepared.mounts()["main"].sqlite_path().is_none());
+        assert!(prepared.mounts()["main"].offer_id().is_none());
         assert_eq!(
             prepared.registrations().collect::<Vec<_>>(),
             vec![(&address, &TextCodec.schema())]
@@ -1783,7 +1834,7 @@ mod tests {
         let identity = Identity::user("alice").unwrap();
         let requirements = ResourceRequirements::collect([snapshot], &identity).unwrap();
         assert_eq!(drops.load(SeqCst), 1);
-        let policy = policy(&requirements, BackendPlacement::Memory);
+        let policy = policy(&requirements, BackendPlacement::memory());
         let prepared = PreparedStorage::prepare(requirements, identity, policy).unwrap();
         let active = prepared.activate().unwrap();
         assert!(active.views.contains_key("requester"));
@@ -1827,7 +1878,7 @@ mod tests {
             requirements.requests()["reader"][0].1.operations,
             [Operation::Read].into()
         );
-        let policy = policy(&requirements, BackendPlacement::Memory);
+        let policy = policy(&requirements, BackendPlacement::memory());
         let active =
             PreparedStorage::prepare(requirements, Identity::user("alice").unwrap(), policy)
                 .unwrap()
@@ -1866,7 +1917,7 @@ mod tests {
         let same_resource = requirements(vec![("a", first.clone()), ("b", first.clone())]);
         let isolated = policy(
             &same_resource,
-            BackendPlacement::Sqlite(std::env::temp_dir().join("phenix-prepare-only.sqlite")),
+            BackendPlacement::sqlite(std::env::temp_dir().join("phenix-prepare-only.sqlite")),
         );
         assert!(matches!(
             PreparedStorage::prepare(same_resource, Identity::user("alice").unwrap(), isolated),
@@ -1877,7 +1928,7 @@ mod tests {
         let snapshots = snapshots(vec![("plugin", first.clone()), ("other", second.clone())]);
         let identity = Identity::user("alice").unwrap();
         let requirements = ResourceRequirements::collect(snapshots.clone(), &identity).unwrap();
-        let policy = policy(&requirements, BackendPlacement::Memory);
+        let policy = policy(&requirements, BackendPlacement::memory());
         assert!(matches!(
             PreparedStorage::prepare(requirements, identity.clone(), policy),
             Err(Error::UnsupportedCapability)
@@ -1910,7 +1961,7 @@ mod tests {
         let requirements = ResourceRequirements::collect(snapshots, &identity).unwrap();
         let mut policy = self::policy(
             &requirements,
-            BackendPlacement::Sqlite(
+            BackendPlacement::sqlite(
                 std::env::temp_dir().join(format!("phenix-sql-{}.sqlite", std::process::id())),
             ),
         );
@@ -2415,10 +2466,10 @@ mod tests {
             other.spec.name = "phenix.test/other".into();
             let requirements =
                 requirements(vec![("one", request([Operation::Read])), ("two", other)]);
-            let mut policy = policy(&requirements, BackendPlacement::Sqlite(first.clone()));
+            let mut policy = policy(&requirements, BackendPlacement::sqlite(first.clone()));
             policy
                 .mounts
-                .insert("other".into(), BackendPlacement::Sqlite(second.clone()));
+                .insert("other".into(), BackendPlacement::sqlite(second.clone()));
             policy.resources.values_mut().last().unwrap().target =
                 BindingTarget::Dataset(Address::parse("store://other/settings").unwrap());
             let prepared =
@@ -2677,11 +2728,11 @@ mod tests {
                 requirements(vec![("one", request([Operation::Read])), ("two", other)]);
             let mut policy = policy(
                 &requirements,
-                BackendPlacement::Sqlite(root.join("one.sqlite")),
+                BackendPlacement::sqlite(root.join("one.sqlite")),
             );
             policy
                 .mounts
-                .insert("other".into(), BackendPlacement::Sqlite(root.join(alias)));
+                .insert("other".into(), BackendPlacement::sqlite(root.join(alias)));
             policy.resources.values_mut().last().unwrap().target =
                 BindingTarget::Dataset(Address::parse("store://other/settings").unwrap());
             assert!(matches!(
@@ -2715,7 +2766,7 @@ mod tests {
                 .unwrap();
         assert_eq!(old.opens.load(SeqCst), 0);
         assert!(
-            matches!(&prepared.mounts()["main"], PreparedBackend::Offer(offer) if offer.id() == "tracked")
+            prepared.mounts()["main"].offer_id() == Some("tracked")
         );
         assert_eq!(
             prepared.mounts()["main"].capabilities(),
@@ -2998,7 +3049,7 @@ mod tests {
                 requirements.requests()["writer"][0].1.required,
                 [Capability::CompareExchange].into()
             );
-            let mut policy = policy(&requirements, BackendPlacement::Memory);
+            let mut policy = policy(&requirements, BackendPlacement::memory());
             policy.resources.get_mut(&id).unwrap().allowed =
                 [Operation::Read, Operation::Write].into();
             policy.plugin_access.insert(
@@ -3045,7 +3096,7 @@ mod tests {
             ));
 
             let requirements = ResourceRequirements::collect(declarations, &identity).unwrap();
-            let mut policy = self::policy(&requirements, BackendPlacement::Memory);
+            let mut policy = self::policy(&requirements, BackendPlacement::memory());
             policy
                 .plugin_access
                 .get_mut("reader")

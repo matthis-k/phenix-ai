@@ -345,7 +345,7 @@ pub fn host_policy(root: &Path, identity: &Identity) -> Result<StoragePolicy, St
     let mut policy = StoragePolicy::default();
     policy.mounts.insert(
         "project".into(),
-        BackendPlacement::Sqlite(paths.directory(&a).map_err(text)?.join("values.sqlite")),
+        BackendPlacement::sqlite(paths.directory(&a).map_err(text)?.join("values.sqlite")),
     );
     for (dataset, spec) in [("a", A), ("b", B)] {
         let resource = spec.resource_spec().resolve(identity).map_err(text)?;
