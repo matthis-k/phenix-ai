@@ -20,6 +20,7 @@ Graph, Plugin, Storage, and Schema work without Kernel. Graph has no dependency 
 
 ## Extension parity
 
+- Preserve concrete types and static dispatch for typed construction and data access. Erase types at heterogeneous runtime extension boundaries; make runtime-selected behavioral contracts dyn-compatible. Use ordinary closures for single-operation contracts and avoid making the enforcing runtime generic over its plugins.
 - Represent intentionally open domains with a common type or behavioral contract. Named constants, constructors, and standard implementations are ordinary members of that domain. Adding an implementation within the contract must not require changing its consumer.
 - Defaults supply ordinary values; presets assemble ordinary configuration or contributions through public APIs. Make precedence, selection, and required capabilities explicit. Equivalent configuration must not behave differently because of its construction path or origin.
 - Standard and external implementations use the same registration, resolution, validation, execution, and lifecycle contracts. Expose the operations needed to reproduce standard behavior. Keep authority, provenance, and code ownership explicit and independent of implementation origin.

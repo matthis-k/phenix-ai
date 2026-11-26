@@ -1147,12 +1147,12 @@ impl Session {
             .ok_or(Error::UnsupportedCapability {
                 capability: Capability::TypedKv,
             })?;
-        if !values.atomic_compare_exchange().is_some() {
-            return Err(Error::UnsupportedCapability {
+        let revision = values
+            .atomic_compare_exchange()
+            .ok_or(Error::UnsupportedCapability {
                 capability: Capability::CompareExchange,
-            });
-        }
-        let revision = values.compare_exchange(address.dataset(), key, expected, bytes)?;
+            })?
+            .compare_exchange(address.dataset(), key, expected, bytes)?;
         let wakes = lock(&self.inner)?.emit(
             Scope::Dataset(address.clone()),
             Some(key.into()),

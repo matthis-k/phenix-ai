@@ -10,33 +10,6 @@ pub struct SessionObservation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PolicyExplanation {
-    Any,
-    All,
-    CorrelatedAll,
-    AtLeast(usize),
-    Optional {
-        required: Vec<String>,
-        optional: Vec<String>,
-    },
-    Custom,
-}
-impl From<&Readiness> for PolicyExplanation {
-    fn from(policy: &Readiness) -> Self {
-        match &policy.declaration().rule {
-            Some(SelectionRule::Any) => Self::Any,
-            Some(SelectionRule::All) if policy.correlated() => Self::CorrelatedAll,
-            Some(SelectionRule::All) => Self::All,
-            Some(SelectionRule::AtLeast(n)) => Self::AtLeast(n.get()),
-            Some(SelectionRule::Optional { required, optional }) => Self::Optional {
-                required: required.clone(),
-                optional: optional.clone(),
-            },
-            None => Self::Custom,
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadinessDeclaration {
     Initial,
     WaitInput(String),
@@ -169,7 +142,8 @@ pub struct ProcessExplanation {
     pub job: Option<JobExplanation>,
     pub publication: Option<PublicationExplanation>,
     pub declaration: ReadinessDeclaration,
-    pub policy: PolicyExplanation,
+    /// Exact declared facts, including correlation for opaque implementations.
+    pub policy: PolicyDeclaration,
     pub notification_driven: bool,
     pub cursor: usize,
     pub input_order: Vec<usize>,
@@ -538,7 +512,7 @@ impl NetworkSession {
             } else {
                 ReadinessDeclaration::Initial
             },
-            policy: policy.into(),
+            policy: policy.declaration().clone(),
             notification_driven: p.notification_driven,
             cursor: p.cursor,
             input_order: order,
