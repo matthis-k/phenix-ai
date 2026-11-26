@@ -9,6 +9,7 @@ use crate::{
 use phenix_graph::{
     ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
     compose::{Edit, Footprint, NetworkPatch},
+    runtime::RequestFailurePolicy,
 };
 use phenix_kernel::{
     BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost,
@@ -187,9 +188,11 @@ impl PluginInstance for MockTool {
 
 /// The host approves only the known provider placements and loop wiring.
 /// One admitted request at a time avoids claiming independent process state.
+/// Stateless mock processes can be recreated on request failure or cancellation.
 pub fn options() -> BuildOptions {
     let mut options = BuildOptions::default();
     options.execution.max_requests = NonZeroUsize::new(1).unwrap();
+    options.execution.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
     options.imports.allow = Some(
         [
