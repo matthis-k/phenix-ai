@@ -81,7 +81,7 @@ fn concurrent_process_notifiers_coalesce_and_preserve_every_target() {
             .unwrap();
         options.readiness.insert(
             path,
-            Readiness::Custom(Arc::new(ExternalGate(gates[i].clone()))),
+            Readiness::new(Arc::new(ExternalGate(gates[i].clone()))),
         );
     }
     let network = builder.build().unwrap().compile().unwrap();

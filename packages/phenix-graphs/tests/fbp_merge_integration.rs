@@ -42,15 +42,9 @@ impl ProcessFactory for PolicyFactory {
 #[test]
 fn resolved_factory_readiness_is_validated_before_scheduling() {
     for policy in [
-        Readiness::Optional {
-            required: vec![],
-            optional: vec!["missing".into()],
-        },
-        Readiness::Optional {
-            required: vec![],
-            optional: vec![],
-        },
-        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::optional(vec![], vec!["missing".into()]),
+        Readiness::optional(vec![], vec![]),
+        Readiness::at_least(NonZeroUsize::new(2).unwrap()),
     ] {
         let mut builder = NetworkBuilder::new();
         let root = builder
@@ -97,7 +91,7 @@ impl Process for Join {
             cx.take("a")
                 .ok_or_else(|| phenix_graph::Failure::application_message("missing initial a"))?;
             self.phase = 1;
-            return Ok(Step::WaitInputs(Readiness::CorrelatedAll));
+            return Ok(Step::WaitInputs(Readiness::CORRELATED_ALL));
         }
         if self.phase == 2 {
             self.phase = 0;
@@ -129,9 +123,9 @@ fn bounded_join(staged: bool) -> CompiledNetwork {
         ),
         Arc::new(move || Join { phase: 0, staged }),
         if staged {
-            Readiness::Any
+            Readiness::ANY
         } else {
-            Readiness::CorrelatedAll
+            Readiness::CORRELATED_ALL
         },
         CorrelationBounds {
             max_live: two,
@@ -281,7 +275,7 @@ fn leased_factory_readiness_keeps_targeted_notification_contract() {
             .node(
                 "sink",
                 Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap()),
-                Arc::new(PolicyFactory(Readiness::Custom(Arc::new(NotifiedPolicy {
+                Arc::new(PolicyFactory(Readiness::new(Arc::new(NotifiedPolicy {
                     calls: calls.clone(),
                     enabled: enabled.clone(),
                 })))),

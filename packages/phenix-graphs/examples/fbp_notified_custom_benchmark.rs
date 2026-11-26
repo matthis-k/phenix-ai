@@ -72,7 +72,7 @@ fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, us
         let allowed = Arc::new(AtomicBool::new(false));
         options.readiness.insert(
             name,
-            Readiness::Custom(Arc::new(Gate {
+            Readiness::new(Arc::new(Gate {
                 notified,
                 allowed: allowed.clone(),
                 calls: calls.clone(),

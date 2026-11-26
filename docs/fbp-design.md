@@ -18,6 +18,13 @@ Read the [glossary](../GLOSSARY.md) for domain terms. The sections below specify
 
 Graph, Plugin, Storage, and Schema work without Kernel. Graph has no dependency on Storage or Kernel. Bridges depend on the libraries they connect. The agent application owns product policy. Graph accepts opaque capabilities; the resource library enforces their authority.
 
+## Extension parity
+
+- Represent intentionally open domains with a common type or behavioral contract. Named constants, constructors, and standard implementations are ordinary members of that domain. Adding an implementation within the contract must not require changing its consumer.
+- Defaults supply ordinary values; presets assemble ordinary configuration or contributions through public APIs. Make precedence, selection, and required capabilities explicit. Equivalent configuration must not behave differently because of its construction path or origin.
+- Standard and external implementations use the same registration, resolution, validation, execution, and lifecycle contracts. Expose the operations needed to reproduce standard behavior. Keep authority, provenance, and code ownership explicit and independent of implementation origin.
+- Use enums for intentionally closed alternatives, structural forms, protocol outcomes, and state machines. Keep mandatory invariants in the enforcing library. Do not introduce extension points for behavior that is intentionally closed. Internal specialization must preserve the contract and be justified by measurements.
+
 ## Network semantics
 
 - Primitives and composites expose the same interface. The compiler flattens composites. One runtime executes the resulting processes.
@@ -83,4 +90,4 @@ These requirements retain the scope of the original acceptance findings. Track i
 
 ## Acceptance
 
-Use tests for public contracts, actual mock networks, negative paths, stale authority, backpressure, cancellation, cleanup, and retained generations. Use oracles for compiler and selector equivalence, bounded interleaving models for concurrency, and paired benchmarks for performance claims. Exercise default and no-default feature builds. Do not claim more than the tests and exact-head CI establish.
+Use tests for public contracts, actual mock networks, negative paths, stale authority, backpressure, cancellation, cleanup, and retained generations. Use oracles for compiler and selector equivalence, bounded interleaving models for concurrency, and paired benchmarks for performance claims. Test open extension contracts with independently authored implementations using only public APIs. Compare equivalent default, preset, and explicit configurations, including resolution, authorization, failure, and cleanup. Exercise default and no-default feature builds. Do not claim more than the tests and exact-head CI establish.

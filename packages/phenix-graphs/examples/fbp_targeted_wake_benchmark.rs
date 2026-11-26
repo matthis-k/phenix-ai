@@ -88,7 +88,7 @@ fn measure(processes: usize, iterations: usize) -> (f64, f64, f64, f64, f64) {
     // waiter-0 receives inputs/wakes. Custom readiness must remain polled.
     if processes > 1 {
         opts.readiness
-            .insert("waiter-1".into(), Readiness::Custom(Arc::new(NeverReady)));
+            .insert("waiter-1".into(), Readiness::new(Arc::new(NeverReady)));
     }
     let begin = Instant::now();
     let mut session = network.start_with_options(opts);

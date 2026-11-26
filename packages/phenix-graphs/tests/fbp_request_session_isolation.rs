@@ -89,7 +89,7 @@ fn start_bounded(
         capture_capacity: one(),
         ..Default::default()
     };
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), Readiness::ALL);
     active.push(compiled.start_with_options(options));
     Some(active.len() - 1)
 }
@@ -170,7 +170,7 @@ fn correlated_shared_session_keeps_crossed_request_pairs_isolated() {
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     let mut session = compiled.start_with_options(options);
     let first = session.begin_request(Some("out")).unwrap();
     let second = session.begin_request(Some("out")).unwrap();
@@ -226,7 +226,7 @@ fn cancelling_queued_shared_request_preserves_other_correlated_work() {
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     let mut session = compiled.start_with_options(options);
     let cancelled = session.begin_request(Some("out")).unwrap();
     let survivor = session.begin_request(Some("out")).unwrap();
@@ -283,7 +283,7 @@ fn request_scoped_capture_skips_unrelated_buffered_head_without_reordering_globa
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     let mut session = compiled.start_with_options(options);
     let first = session.begin_request(Some("out")).unwrap();
     let second = session.begin_request(Some("out")).unwrap();
@@ -345,7 +345,7 @@ fn request_scoped_capture_preserves_same_request_fifo_and_foreign_authentication
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     let mut session = compiled.start_with_options(options.clone());
     let mut other = compiled.start_with_options(options);
     let own = session.begin_request(None).unwrap();
@@ -395,7 +395,7 @@ fn saturated_shared_join() -> (
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     let mut session = compiled.start_with_options(options);
     let first = session.begin_request(Some("out")).unwrap();
     let second = session.begin_request(Some("out")).unwrap();

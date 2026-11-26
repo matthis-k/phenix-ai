@@ -93,7 +93,7 @@ impl ProcessFactory for CountingFactory {
     }
     fn readiness(&self) -> Readiness {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Readiness::Custom(Arc::new(CountingPolicy(self.0.clone())))
+        Readiness::new(Arc::new(CountingPolicy(self.0.clone())))
     }
 }
 struct CountingPolicy(Arc<AtomicUsize>);

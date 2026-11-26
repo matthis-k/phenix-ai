@@ -1070,7 +1070,7 @@ fn late_timeout_returns_contain_destructor_panics_and_keep_the_exact_job_lease()
                         max_requests: NonZeroUsize::new(2).unwrap(),
                         readiness: BTreeMap::from([(
                             "b".into(),
-                            phenix_graph::runtime::Readiness::All,
+                            phenix_graph::runtime::Readiness::ALL,
                         )]),
                         request_queue_policy,
                         request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,

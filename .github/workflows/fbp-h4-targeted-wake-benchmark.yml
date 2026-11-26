@@ -35,6 +35,8 @@ jobs:
           mkdir -p artifacts
           cp candidate/packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs \
              baseline/packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs
+          # Only translate constructor syntax for the pinned historical runtime.
+          sed -i 's/Readiness::new(Arc::new(NeverReady))/Readiness::Custom(Arc::new(NeverReady))/g' baseline/packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs
           sha256sum candidate/packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs \
                      baseline/packages/phenix-graphs/examples/fbp_targeted_wake_benchmark.rs \
             > artifacts/source-hashes.txt

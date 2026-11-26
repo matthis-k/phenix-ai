@@ -393,12 +393,11 @@ impl NetworkSession {
         // notifications for external selection changes. The default stays
         // polled. Query once and contain plugin panics as session failure.
         let mut always_poll = BTreeSet::new();
-        let mut custom_readiness = Vec::new();
+        let mut opaque_readiness = Vec::new();
         for (index, process) in processes.iter_mut().enumerate() {
-            if initial_failure.is_none()
-                && let Readiness::Custom(policy) = &process.policy
-            {
-                custom_readiness.push(index);
+            if initial_failure.is_none() && process.policy.opaque() {
+                let policy = &process.policy;
+                opaque_readiness.push(index);
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     policy.notification_driven()
                 })) {
@@ -429,7 +428,7 @@ impl NetworkSession {
             downstream,
             transport: ConnectionSet::new(queues),
             processes,
-            custom_readiness,
+            opaque_readiness,
             ingress,
             captures,
             request_lanes: BTreeMap::new(),

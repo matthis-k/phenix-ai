@@ -26,6 +26,57 @@ fn publish(set: &mut ConnectionSet, value: i64, destinations: &[usize]) {
 }
 
 #[test]
+fn default_and_explicit_static_identity_have_the_same_value_semantics() {
+    let local = || {
+        ConnectionQueue::new(
+            NonZeroUsize::new(1).unwrap(),
+            TypeIdentity::Local(TypeId::of::<i64>()),
+        )
+    };
+    struct ExternalIdentity;
+    impl EdgeAdapter for ExternalIdentity {
+        fn prepare(&self, value: &Value) -> Result<Value, phenix_graph::Failure> {
+            Ok(value.clone())
+        }
+    }
+    static EXTERNAL_IDENTITY: ExternalIdentity = ExternalIdentity;
+    let mut set = ConnectionSet::new(vec![local(), local(), queue(1), queue(1)]);
+    let targets = [
+        FanoutTarget::identity(0),
+        FanoutTarget {
+            connection: 1,
+            preparation: AdapterRef::Static(&EXTERNAL_IDENTITY),
+        },
+    ];
+    let mut transaction = set
+        .prepare(&Packet::new(Value::local(42_i64)), &targets)
+        .unwrap();
+    set.commit(&mut transaction).unwrap();
+    for index in 0..2 {
+        assert_eq!(
+            set.pop(index)
+                .unwrap()
+                .into_value()
+                .into_owned::<i64>()
+                .unwrap(),
+            42
+        );
+    }
+    let targets = [
+        FanoutTarget::identity(2),
+        FanoutTarget {
+            connection: 3,
+            preparation: AdapterRef::Static(&EXTERNAL_IDENTITY),
+        },
+    ];
+    let mut transaction = set.prepare(&packet(42), &targets).unwrap();
+    set.commit(&mut transaction).unwrap();
+    for index in 2..4 {
+        assert_eq!(set.pop(index).unwrap().value().get::<i64>().unwrap(), 42);
+    }
+}
+
+#[test]
 fn capacity_one_full_returns_exact_payload_without_overwriting_fifo() {
     let mut queue = queue(1);
     queue.push(packet(1)).unwrap();
@@ -159,11 +210,11 @@ fn blocked_retries_never_repeat_preparation_callbacks() {
     let targets = [
         FanoutTarget {
             connection: 0,
-            preparation: Some(adapter.clone()),
+            preparation: AdapterRef::Owned(adapter.clone()),
         },
         FanoutTarget {
             connection: 1,
-            preparation: Some(adapter),
+            preparation: AdapterRef::Owned(adapter),
         },
     ];
     let mut transaction = set.prepare(&packet(2), &targets).unwrap();
@@ -260,7 +311,7 @@ fn preparation_error_and_panic_cannot_partially_deliver() {
                 FanoutTarget::identity(0),
                 FanoutTarget {
                     connection: 1,
-                    preparation: Some(failing),
+                    preparation: AdapterRef::Owned(failing),
                 },
             ],
         );
@@ -288,7 +339,7 @@ fn duplicate_and_invalid_selection_reject_before_any_preparation() {
                 &[
                     FanoutTarget {
                         connection: 0,
-                        preparation: Some(adapter.clone()),
+                        preparation: AdapterRef::Owned(adapter.clone()),
                     },
                     FanoutTarget::identity(second),
                 ],
@@ -310,7 +361,7 @@ fn adapter_output_identity_is_validated_before_any_mutation() {
                 FanoutTarget::identity(0),
                 FanoutTarget {
                     connection: 1,
-                    preparation: Some(invalid),
+                    preparation: AdapterRef::Owned(invalid),
                 },
             ],
         )
@@ -552,7 +603,7 @@ fn fanout_inherits_source_leases_and_preserves_adapter_output_leases() {
                 FanoutTarget::identity(0),
                 FanoutTarget {
                     connection: 1,
-                    preparation: Some(adapter),
+                    preparation: AdapterRef::Owned(adapter),
                 },
             ],
         )
@@ -615,7 +666,7 @@ fn pure_preparation_can_convert_wire_to_local_without_an_extra_codec() {
             &packet(42),
             &[FanoutTarget {
                 connection: 0,
-                preparation: Some(adapter),
+                preparation: AdapterRef::Owned(adapter),
             }],
         )
         .unwrap();
@@ -659,7 +710,7 @@ fn known_closed_destinations_reject_before_running_adapters() {
                 &[
                     FanoutTarget {
                         connection: 0,
-                        preparation: Some(adapter),
+                        preparation: AdapterRef::Owned(adapter),
                     },
                     FanoutTarget::identity(1),
                 ],
@@ -692,11 +743,11 @@ fn failed_preparation_drops_prior_prepared_values_exactly_once() {
         &[
             FanoutTarget {
                 connection: 0,
-                preparation: Some(first),
+                preparation: AdapterRef::Owned(first),
             },
             FanoutTarget {
                 connection: 1,
-                preparation: Some(fail),
+                preparation: AdapterRef::Owned(fail),
             },
         ],
     );

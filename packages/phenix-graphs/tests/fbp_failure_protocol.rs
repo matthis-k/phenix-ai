@@ -366,11 +366,11 @@ fn partial_adapter_error_keeps_original_cause_and_reports_prepared_payload_clean
             &[
                 FanoutTarget {
                     connection: 0,
-                    preparation: Some(first),
+                    preparation: phenix_graph::connection::AdapterRef::Owned(first),
                 },
                 FanoutTarget {
                     connection: 1,
-                    preparation: Some(second),
+                    preparation: phenix_graph::connection::AdapterRef::Owned(second),
                 },
             ],
         )
@@ -1097,7 +1097,7 @@ fn rejected_emission_and_payload_panic_terminate_only_the_original_request() {
         let compiled = graph.build().unwrap().compile().unwrap();
         let mut session = compiled.start_with_options(SessionOptions {
             lease: Some(code),
-            readiness: [("sink".into(), Readiness::Any)].into(),
+            readiness: [("sink".into(), Readiness::ANY)].into(),
             request_queue_policy: queue,
             request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
             ..Default::default()

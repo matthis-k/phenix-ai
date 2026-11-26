@@ -553,7 +553,7 @@ fn nested_renamed_flattened_records_execute_unique_move_only_local_and_wire_leav
         assert_eq!(compiled.ingress_capacities(), manual.ingress_capacities());
         let mut session = compiled.start_with_options(SessionOptions {
             capture_capacity: cap(3),
-            readiness: [("assemble".into(), Readiness::All)].into(),
+            readiness: [("assemble".into(), Readiness::ALL)].into(),
             ..Default::default()
         });
         for (id, n, label) in [(11, 7_i64, "a"), (12, -2, "b"), (13, 19, "c")] {
@@ -591,7 +591,7 @@ fn all_record_authors_report_later_leaf_decode_failure_without_publishing_a_capt
     for author in authors() {
         let compiled = record_network(author);
         let mut session = compiled.start_with_options(SessionOptions {
-            readiness: [("assemble".into(), Readiness::All)].into(),
+            readiness: [("assemble".into(), Readiness::ALL)].into(),
             ..Default::default()
         });
         session.inject("owned", Value::local(Owned(31))).unwrap();

@@ -270,7 +270,7 @@ pub fn host_policy(root: &Path, identity: &Identity) -> Result<StoragePolicy, St
     let mut policy = StoragePolicy::default();
     policy
         .mounts
-        .insert("project".into(), BackendPlacement::Sqlite(path));
+        .insert("project".into(), BackendPlacement::sqlite(path));
     // SQL shares this mount's application tables; reserved storage tables remain blocked.
     policy.shared_sql_mounts.insert("project".into());
     policy.resources.insert(

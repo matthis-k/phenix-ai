@@ -152,7 +152,7 @@ fn readiness_callback_does_not_hold_wake_mutex_while_entering_plugin_lock() {
         let mut options = SessionOptions::default();
         options.readiness.insert(
             "worker".into(),
-            Readiness::Custom(Arc::new(LockingReadiness {
+            Readiness::new(Arc::new(LockingReadiness {
                 probe: probe.clone(),
             })),
         );
@@ -312,7 +312,7 @@ fn targeted_process_notification_cannot_deadlock_with_external_readiness_mutex()
         let mut options = SessionOptions::default();
         options.readiness.insert(
             "worker".into(),
-            Readiness::Custom(Arc::new(LockingReadiness {
+            Readiness::new(Arc::new(LockingReadiness {
                 probe: probe.clone(),
             })),
         );

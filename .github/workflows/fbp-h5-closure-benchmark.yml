@@ -47,12 +47,14 @@ jobs:
             (cd baseline && nix develop --command rustc -vV)
           } > artifacts/environment.txt
           cat artifacts/environment.txt
-      - name: Compile byte-identical closure workload on both implementations
+      - name: Compile equivalent closure workload against both implementations
         shell: bash
         run: |
           set -euo pipefail
           cp candidate/packages/phenix-graphs/examples/fbp_closure_benchmark.rs \
             baseline/packages/phenix-graphs/examples/fbp_closure_benchmark.rs
+          # Only translate constructor syntax for the pinned historical runtime.
+          sed -i 's/Readiness::optional(vec!\[\], vec!\["opt".into()\])/Readiness::Optional { required: vec![], optional: vec!["opt".into()] }/g' baseline/packages/phenix-graphs/examples/fbp_closure_benchmark.rs
           sha256sum candidate/packages/phenix-graphs/examples/fbp_closure_benchmark.rs \
             baseline/packages/phenix-graphs/examples/fbp_closure_benchmark.rs \
             > artifacts/benchmark-source-sha256.txt

@@ -273,14 +273,14 @@ pub(crate) fn compiled(
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "join".into(),
-        Readiness::Optional {
-            required: vec!["context".into()],
-            optional: vec!["local".into(), "remote".into()],
-        },
+        Readiness::optional(
+            vec!["context".into()],
+            vec!["local".into(), "remote".into()],
+        ),
     );
     options.readiness.insert(
         "tools.local".into(),
-        Readiness::Custom(Arc::new(Gate {
+        Readiness::new(Arc::new(Gate {
             allowed: local_allowed,
             notified,
         })),
@@ -306,15 +306,12 @@ pub(crate) fn compiled(
         options.readiness.insert(
             name,
             if index % 2 == 0 {
-                Readiness::Custom(Arc::new(Gate {
+                Readiness::new(Arc::new(Gate {
                     allowed: Arc::new(AtomicBool::new(false)),
                     notified,
                 }))
             } else {
-                Readiness::Optional {
-                    required: vec![],
-                    optional: vec!["in".into()],
-                }
+                Readiness::optional(vec![], vec!["in".into()])
             },
         );
     }

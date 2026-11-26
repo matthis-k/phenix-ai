@@ -465,7 +465,74 @@ impl TypedKv for MemoryBackend {
         Ok(revision)
     }
 }
-struct SqliteBackend(Connection);
+pub struct SqliteBackend(Connection);
+impl SqliteBackend {
+    /// Open and initialize the same backend used by registry mounting.
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let mut connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        connection.pragma_update(None, "foreign_keys", true)?;
+        connection.authorizer(Some(adapter_authorizer))?;
+        // Migrate adapter metadata under the same cross-connection write lock
+        // used by CAS. Publication always follows a successful commit.
+        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS __phenix_kv (
+            dataset TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (dataset, key)
+        );
+        CREATE TABLE IF NOT EXISTS __phenix_schema (
+            dataset TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            structure TEXT NOT NULL,
+            codec TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS __phenix_revision_clock (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            sequence INTEGER NOT NULL
+        )",
+        )?;
+        let has_revision = {
+            let mut statement = tx.prepare("PRAGMA table_info(__phenix_kv)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .iter()
+                .any(|name| name == "revision")
+        };
+        if !has_revision {
+            // Legacy rows predate revision tokens. Zero is never allocated again.
+            tx.execute_batch(
+                "ALTER TABLE __phenix_kv ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
+            )?;
+            tx.execute("INSERT INTO __phenix_revision_clock VALUES (1, 0)", [])?;
+        } else {
+            use rusqlite::OptionalExtension;
+            let clock: Option<i64> = tx
+                .query_row(
+                    "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let maximum: i64 = tx.query_row(
+                "SELECT coalesce(max(revision), 0) FROM __phenix_kv",
+                [],
+                |r| r.get(0),
+            )?;
+            // Never reconstruct a clock from live rows: deleted rows may have
+            // issued larger tokens. Missing metadata must fail closed.
+            if clock.is_none_or(|clock| clock < maximum || clock < 0) {
+                return Err(Error::SchemaMismatch);
+            }
+        }
+        tx.commit()?;
+        Ok(Self(connection))
+    }
+}
 impl Backend for SqliteBackend {
     fn register_dataset(&mut self, dataset: &str, schema: &Schema) -> Result<()> {
         use rusqlite::OptionalExtension;
@@ -838,71 +905,7 @@ impl Registry {
     }
     /// The host owns path selection; logical addresses never select files.
     pub fn mount_sqlite(&self, name: &str, path: impl AsRef<std::path::Path>) -> Result<()> {
-        self.mount_with(name, || {
-            let mut connection = Connection::open(path)?;
-            connection.busy_timeout(std::time::Duration::from_secs(5))?;
-            connection.pragma_update(None, "foreign_keys", true)?;
-            connection.authorizer(Some(adapter_authorizer))?;
-            // Migrate adapter metadata under the same cross-connection write lock
-            // used by CAS. Publication always follows a successful commit.
-            let tx =
-                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            tx.execute_batch(
-                "CREATE TABLE IF NOT EXISTS __phenix_kv (
-                dataset TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value BLOB NOT NULL,
-                PRIMARY KEY (dataset, key)
-            );
-            CREATE TABLE IF NOT EXISTS __phenix_schema (
-                dataset TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                revision INTEGER NOT NULL,
-                structure TEXT NOT NULL,
-                codec TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS __phenix_revision_clock (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                sequence INTEGER NOT NULL
-            )",
-            )?;
-            let has_revision = {
-                let mut statement = tx.prepare("PRAGMA table_info(__phenix_kv)")?;
-                let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-                columns
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-                    .iter()
-                    .any(|name| name == "revision")
-            };
-            if !has_revision {
-                // Legacy rows predate revision tokens. Zero is never allocated again.
-                tx.execute_batch(
-                    "ALTER TABLE __phenix_kv ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
-                )?;
-                tx.execute("INSERT INTO __phenix_revision_clock VALUES (1, 0)", [])?;
-            } else {
-                use rusqlite::OptionalExtension;
-                let clock: Option<i64> = tx
-                    .query_row(
-                        "SELECT sequence FROM __phenix_revision_clock WHERE id = 1",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                let maximum: i64 = tx.query_row(
-                    "SELECT coalesce(max(revision), 0) FROM __phenix_kv",
-                    [],
-                    |r| r.get(0),
-                )?;
-                // Never reconstruct a clock from live rows: deleted rows may have
-                // issued larger tokens. Missing metadata must fail closed.
-                if clock.is_none_or(|clock| clock < maximum || clock < 0) {
-                    return Err(Error::SchemaMismatch);
-                }
-            }
-            tx.commit()?;
-            Ok(Box::new(SqliteBackend(connection)))
-        })
+        self.mount_with(name, || Ok(Box::new(SqliteBackend::open(path)?)))
     }
     pub fn register(&self, address: &Address, schema: Schema) -> Result<()> {
         let mount = lock(&self.inner)?
