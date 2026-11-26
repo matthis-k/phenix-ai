@@ -6,7 +6,7 @@
 
 use phenix_graph::{
     ComponentDef, Contract, Interface, NetworkError, PortDef,
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    compose::{ConnectionKey, Footprint, NetworkPatch},
     network::PortPath,
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
@@ -133,7 +133,10 @@ impl PluginInstance for BasicLoop {
 pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 4] {
     [
         Footprint::Connection(ConnectionKey::new(port(model, "tool"), port(tool, "input"))),
-        Footprint::Connection(ConnectionKey::new(port(tool, "output"), port(model, "input"))),
+        Footprint::Connection(ConnectionKey::new(
+            port(tool, "output"),
+            port(model, "input"),
+        )),
         Footprint::InputExport(PROMPT.into()),
         Footprint::OutputExport(EVENTS.into()),
     ]

@@ -9,7 +9,9 @@ use phenix_graph::{
     ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
     compose::{Edit, Footprint, NetworkPatch},
 };
-use phenix_kernel::{BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost};
+use phenix_kernel::{
+    BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::VecDeque, num::NonZeroUsize, sync::Arc};
 
@@ -55,9 +57,9 @@ impl Process for ModelProcess {
                 Step::Complete
             });
         };
-        let input = value.borrow::<ModelInput>().ok_or_else(|| {
-            GraphFailure::application_message("model expected a typed input")
-        })?;
+        let input = value
+            .borrow::<ModelInput>()
+            .ok_or_else(|| GraphFailure::application_message("model expected a typed input"))?;
         self.active = true;
         match input {
             ModelInput::Prompt(prompt) if self.config.use_tool => {
@@ -68,12 +70,15 @@ impl Process for ModelProcess {
                     "events",
                     Value::local(AgentEvent::ToolRequested(call.clone())),
                 ));
-                self.pending.push_back(ProcessEmission::new("tool", Value::local(call)));
+                self.pending
+                    .push_back(ProcessEmission::new("tool", Value::local(call)));
             }
             ModelInput::Prompt(prompt) => self.answer(prompt),
             ModelInput::ToolResult { output, .. } => self.answer(output),
         }
-        Ok(Step::Emit(self.pending.pop_front().expect("one or more emissions")))
+        Ok(Step::Emit(
+            self.pending.pop_front().expect("one or more emissions"),
+        ))
     }
 }
 
@@ -84,7 +89,8 @@ impl ModelProcess {
             AgentEvent::Delta(text.into()),
             AgentEvent::Completed,
         ] {
-            self.pending.push_back(ProcessEmission::new("events", Value::local(event)));
+            self.pending
+                .push_back(ProcessEmission::new("events", Value::local(event)));
         }
     }
 }
@@ -157,7 +163,10 @@ pub fn options() -> BuildOptions {
     options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
     options.imports.allow = Some(
         [
-            (Key::new(LOOP_PLUGIN, "model"), Key::new(MODEL_PLUGIN, "model")),
+            (
+                Key::new(LOOP_PLUGIN, "model"),
+                Key::new(MODEL_PLUGIN, "model"),
+            ),
             (Key::new(LOOP_PLUGIN, "tool"), Key::new(TOOL_PLUGIN, "tool")),
         ]
         .into(),
@@ -200,12 +209,7 @@ pub fn host_with_options(
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
-    let candidate = host.prepare(
-        stages,
-        options,
-        "mock-agent",
-        |_| Ok(()),
-    )?;
+    let candidate = host.prepare(stages, options, "mock-agent", |_| Ok(()))?;
     host.publish(candidate)?;
     Ok(host)
 }

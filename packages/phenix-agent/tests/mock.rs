@@ -10,7 +10,11 @@ fn turn(generation: &Generation, prompt: &str) -> Vec<AgentEvent> {
         .with_session(|session| {
             let request = session.begin_request(None).unwrap();
             session
-                .inject_request(request, PROMPT, Value::local(ModelInput::Prompt(prompt.into())))
+                .inject_request(
+                    request,
+                    PROMPT,
+                    Value::local(ModelInput::Prompt(prompt.into())),
+                )
                 .unwrap();
             session.close_request(request).unwrap();
             let mut events = Vec::new();
@@ -43,7 +47,9 @@ fn ordinary_plugins_execute_feedback_and_stream_ordered_events() {
         assert_eq!(
             turn(&generation, prompt),
             [
-                AgentEvent::ToolRequested(ToolCall { prompt: prompt.into() }),
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: prompt.into()
+                }),
                 AgentEvent::Delta("mock: ".into()),
                 AgentEvent::Delta(format!("lookup({prompt})")),
                 AgentEvent::Completed,
@@ -75,6 +81,8 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 #[test]
 fn missing_host_graph_grant_prevents_publication() {
     let mut options = mock::options();
-    options.composition.remove(&phenix_kernel::Key::new("agent-loop", "main"));
+    options
+        .composition
+        .remove(&phenix_kernel::Key::new("agent-loop", "main"));
     assert!(mock::host_with_options(MockModel::default(), MockTool::default(), options).is_err());
 }
