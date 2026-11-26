@@ -343,8 +343,7 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
             for _ in 0..64 {
                 session.run_until_idle(1);
                 assert!(session.failure().is_none());
-                while let Some(packet) =
-                    session.take_bound_request_output(slow, &capture).unwrap()
+                while let Some(packet) = session.take_bound_request_output(slow, &capture).unwrap()
                 {
                     slow_events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
                 }
@@ -371,8 +370,7 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
                 session.run_until_idle(1);
                 assert!(session.failure().is_none());
                 assert!(session.request_failure(fast).unwrap().is_none());
-                while let Some(packet) =
-                    session.take_bound_request_output(fast, &capture).unwrap()
+                while let Some(packet) = session.take_bound_request_output(fast, &capture).unwrap()
                 {
                     session
                         .validate_bound_capture(fast, &capture, &packet)
