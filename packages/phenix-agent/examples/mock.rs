@@ -19,10 +19,7 @@ fn main() -> Result<(), phenix_kernel::CallbackError> {
                 let event = packet.value().borrow::<AgentEvent>().expect("typed event");
                 println!("{event:?}");
             }
-            if matches!(
-                session.request_status(request),
-                Ok(RequestStatus::Settled { .. })
-            ) {
+            if matches!(session.request_status(request), Ok(RequestStatus::Settled { .. })) {
                 session.release_request(request)?;
                 return Ok(());
             }

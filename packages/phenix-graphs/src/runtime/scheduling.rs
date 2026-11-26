@@ -64,18 +64,15 @@ impl NetworkSession {
                     // activate an idle process without physical packet data.
                     // Other policies need a packet or global EOS; reachability
                     // alone does not make them runnable.
-                    && (!matches!(
-                        &p.policy,
-                        Readiness::Optional { required, .. } if required.is_empty()
-                    ) || self
+                    && (!p.policy.has_zero_packet_closure() || self
                         .requests
                         .keys()
                         .all(|request| !self.closure_obligation(index, *request)))))
-            && !matches!(&p.policy, Readiness::Custom(_))
+            && !p.policy.opaque()
             && !p
                 .waiting_policy
                 .as_ref()
-                .is_some_and(|policy| matches!(policy, Readiness::Custom(_)))
+                .is_some_and(|policy| policy.opaque())
             && p.inputs.iter().all(|port| {
                 !port.queues.is_empty()
                     && port.queues.iter().all(|queue| {
@@ -91,7 +88,7 @@ impl NetworkSession {
     pub(super) fn unwatch_scoped_readiness(&mut self, reachable: &[usize]) {
         let was_full = self.prefer_full_refresh();
         for &index in reachable {
-            if matches!(&self.processes[index].policy, Readiness::Optional { .. })
+            if self.processes[index].policy.watches_scoped_closure()
                 || self.processes[index].notification_driven
             {
                 let count = self

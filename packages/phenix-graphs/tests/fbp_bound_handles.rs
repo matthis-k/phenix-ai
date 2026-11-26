@@ -816,7 +816,7 @@ fn checked_configuration_and_symbolic_composition_bridge_keep_owner_proofs() {
         Err(NetworkError::ForeignScope)
     ));
     let mut opts = SessionOptions::default();
-    opts.bound.readiness(&declaration, Readiness::All);
+    opts.bound.readiness(&declaration, Readiness::ALL);
     opts.bound
         .resources(&declaration, phenix_graph::ValidatedResourceSet::default());
     opts.bound.discard_output(&compiled, &output).unwrap();
@@ -843,7 +843,7 @@ fn checked_configuration_and_symbolic_composition_bridge_keep_owner_proofs() {
     assert_eq!(foreign.state(), SessionState::Failed);
     let mut opts = SessionOptions::default();
     opts.bound
-        .readiness(&compiled.declaration("").unwrap(), Readiness::All);
+        .readiness(&compiled.declaration("").unwrap(), Readiness::ALL);
     assert_eq!(
         compiled.start_with_options(opts).state(),
         SessionState::Failed
@@ -851,7 +851,7 @@ fn checked_configuration_and_symbolic_composition_bridge_keep_owner_proofs() {
     let mut opts = SessionOptions::default();
     opts.bound.readiness(
         &declaration,
-        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::at_least(NonZeroUsize::new(2).unwrap()),
     );
     assert_eq!(
         compiled.start_with_options(opts).state(),
@@ -1065,7 +1065,7 @@ fn foreign_configuration_is_rejected_before_factories_and_pure_validation_has_no
     let other = def.compile().unwrap();
     let mut opts = SessionOptions::default();
     opts.bound
-        .readiness(&compiled.declaration("worker").unwrap(), Readiness::All);
+        .readiness(&compiled.declaration("worker").unwrap(), Readiness::ALL);
     let refused = other.start_with_options(opts);
     assert_eq!(refused.state(), SessionState::Failed);
     assert_eq!(spawns.load(Ordering::SeqCst), 0);
@@ -1311,7 +1311,7 @@ fn bound_fanout_full_is_atomic_for_slow_branch_and_raw_retry() {
     for (q, f) in policies() {
         let mut opts = options(q, f);
         opts.bound
-            .readiness(&compiled.declaration("slow").unwrap(), Readiness::All);
+            .readiness(&compiled.declaration("slow").unwrap(), Readiness::ALL);
         let mut session = compiled.start_with_options(opts);
         let id = session.begin_bound_request(None).unwrap();
         session.inject_bound_request(id, &fanout, 1).unwrap();

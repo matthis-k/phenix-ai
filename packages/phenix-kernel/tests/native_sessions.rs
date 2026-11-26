@@ -126,8 +126,7 @@ fn fixture(capture: bool) -> BuiltFixture {
     let kernel = Kernel::build_with_options(
         "bounded",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     (kernel, polls, calls, drops)
@@ -191,7 +190,7 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
     let mut options = fixture_options(false);
     options.execution.readiness.insert(
         "worker".into(),
-        phenix_graph::runtime::Readiness::Custom(Arc::new(ReentrantReadiness {
+        phenix_graph::runtime::Readiness::new(Arc::new(ReentrantReadiness {
             kernel: kernel_ref.clone(),
             failures: failures.clone(),
         })),
@@ -209,8 +208,7 @@ fn producer_admission_readiness_callbacks_run_outside_producer_lock_and_reentry_
     let mut built = Kernel::build_with_options(
         "admission-callback",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     built.start().unwrap();
@@ -392,8 +390,7 @@ fn portless_sources_require_explicit_start_edits() {
         let mut kernel = Kernel::build_with_options(
             "source",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -438,8 +435,7 @@ fn dispatcher_jobs_enter_guards_on_the_executing_worker() {
     let mut kernel = Kernel::build_with_options(
         "worker",
         [snapshot],
-        Arc::new(Dispatcher(jobs.clone())),
-        options,
+        options.with_dispatcher(Arc::new(Dispatcher(jobs.clone()))),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -529,8 +525,7 @@ fn process_callback_reentry_fails_fast_without_holding_the_session_mutex() {
     let mut kernel = Kernel::build_with_options(
         "reentrant-process",
         [snapshot],
-        Arc::new(WorkerDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(WorkerDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -605,8 +600,7 @@ fn process_callback_does_not_hold_kernel_session_mutex() {
     let mut kernel = Kernel::build_with_options(
         "session-lock-probe",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -638,8 +632,7 @@ fn request_scopes_are_bounded_authenticated_and_reusable_after_release() {
     let mut kernel = Kernel::build_with_options(
         "requests",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -729,8 +722,7 @@ fn blocking_driver_observes_native_process_wakes_and_external_shutdown() {
     let mut kernel = Kernel::build_with_options(
         "wakes",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -818,8 +810,7 @@ fn blocking_driver_wakes_for_deferred_job_deadline_without_worker_notification()
     let mut kernel = Kernel::build_with_options(
         "deferred-timeout",
         [snapshot],
-        Arc::new(HoldJob(held.clone())),
-        options,
+        options.with_dispatcher(Arc::new(HoldJob(held.clone()))),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -882,8 +873,7 @@ fn prepared_binding_uses_declaration_keys_without_admission() {
     let candidate = host
         .prepare(
             vec![stage],
-            options,
-            Arc::new(LocalProcessDispatcher),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "inspect",
             |binding| {
                 let worker = binding.bind_definition(declaration)?;

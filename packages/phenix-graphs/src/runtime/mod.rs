@@ -107,7 +107,7 @@ mod diagnostics;
 mod errors;
 mod execution;
 mod observation;
-mod readiness;
+pub mod readiness;
 mod recovery;
 mod request;
 mod scheduling;
@@ -118,7 +118,10 @@ mod wake;
 pub use diagnostics::*;
 pub use errors::{CleanupStage, InputFailureReason, RuntimeError};
 pub(crate) use readiness::validate_policy;
-pub use readiness::{InputHead, Readiness, ReadinessError, ReadinessPolicy, ReadinessSnapshot};
+pub use readiness::{
+    InputHead, PolicyDeclaration, Readiness, ReadinessError, ReadinessPolicy, ReadinessSnapshot,
+    SelectionRule,
+};
 pub use request::{
     CaptureMetadata, InvalidClosurePortNames, RequestDisposal, RequestError, RequestId,
     RequestInjectionError, RequestStatus, RequestWork,
@@ -359,7 +362,7 @@ impl RuntimeProcess {
         !self.done
             && (self.source
                 || self.inputs.is_empty()
-                || matches!(&self.policy, Readiness::Custom(_)) && !self.notification_driven
+                || self.policy.opaque() && !self.notification_driven
                 || self.waiting.is_some()
                 || self.waiting_policy.is_some())
     }
@@ -381,7 +384,7 @@ pub struct NetworkSession {
     transport: ConnectionSet,
     processes: Vec<RuntimeProcess>,
     // Process IDs and base policies are fixed at construction; staged waits use waiting_policy.
-    custom_readiness: Vec<usize>,
+    opaque_readiness: Vec<usize>,
     ingress: BTreeMap<String, Vec<usize>>,
     captures: BTreeMap<String, usize>,
     request_lanes: BTreeMap<usize, RequestLane>,

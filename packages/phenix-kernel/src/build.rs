@@ -60,18 +60,7 @@ fn collect_catalog(snapshots: &[PluginSnapshot]) -> Result<ContributionCatalog, 
             collect!(ContractDefinition, definitions);
             collect!(NetworkOffer, offers);
             collect!(ContractRequirement, requirements);
-            if kind != <RegisteredContribution as phenix_plugin::Contribution>::KIND {
-                continue;
-            }
-            let handle = snapshot.get::<RegisteredContribution>(id).ok_or_else(|| {
-                ConfigurationError::ContributionType {
-                    key: key.clone(),
-                    expected: <RegisteredContribution as phenix_plugin::Contribution>::KIND,
-                }
-            })?;
-            if pending.insert(key.clone(), handle).is_some() {
-                return Err(ConfigurationError::DuplicateContribution { key: key.clone() }.into());
-            }
+            collect!(RegisteredContribution, pending);
         }
     }
     let mut identities = BTreeMap::new();
@@ -329,7 +318,11 @@ impl Kernel {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, ResolutionError> {
-        Self::build_with_options(name, snapshots, dispatcher, BuildOptions::default())
+        Self::build_with_options(
+            name,
+            snapshots,
+            BuildOptions::default().with_dispatcher(dispatcher),
+        )
     }
 
     /// Discover compatible offers, apply trusted eligibility and selections,
@@ -338,7 +331,6 @@ impl Kernel {
     pub fn build_with_options(
         _name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         mut options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
         let mut planning_used = 0;
@@ -364,7 +356,13 @@ impl Kernel {
         // Distinct composers retain their exact plugin revision's ancestry.
         let origins: BTreeMap<_, _> = pending
             .iter()
-            .map(|(key, contribution)| (key.clone(), contribution.graph_origin().child()))
+            .map(|(key, contribution)| {
+                (
+                    key.clone(),
+                    phenix_graph::GraphOrigin::from_root(contribution.revision_identity().clone())
+                        .child(),
+                )
+            })
             .collect();
         let mut leases = Vec::new();
         let mut keys = Vec::new();
@@ -569,7 +567,6 @@ impl Kernel {
         // The session propagates this lease into dispatched jobs and queued packets.
         // Do not let a caller-provided lease displace the plugin revision leases.
         options.execution.lease = Some(code_lease.clone());
-        options.execution.dispatcher = dispatcher;
         let session_identity = next_kernel_session_id();
         options.execution.execution_guards.insert(
             0,

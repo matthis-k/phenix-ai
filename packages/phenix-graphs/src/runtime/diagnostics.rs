@@ -9,7 +9,7 @@ pub struct BlockedCycle {
     pub queues: Vec<QueueWait>,
 }
 
-/// Snapshot of `Readiness::All` input heads that cannot be correlated
+/// Snapshot of an all-input, head-only readiness declaration input heads that cannot be correlated
 /// without changing their FIFO order. It is not a proof of global deadlock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CorrelationBlock {
@@ -38,10 +38,11 @@ impl NetworkSession {
             if process.done
                 || process.handoff.state() != HandoffState::Idle
                 || process.inputs.len() < 2
-                || !matches!(
-                    process.waiting_policy.as_ref().unwrap_or(&process.policy),
-                    Readiness::All
-                )
+                || {
+                    let policy = process.waiting_policy.as_ref().unwrap_or(&process.policy);
+                    policy.correlated()
+                        || !matches!(policy.declaration().rule, Some(SelectionRule::All))
+                }
             {
                 continue;
             }

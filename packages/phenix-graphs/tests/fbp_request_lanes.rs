@@ -236,7 +236,7 @@ fn finished_source_does_not_deliver_global_eos_ahead_of_a_scoped_all_join() {
         .unwrap();
     let mut options = lane_options();
     options.auto_start_sources = false;
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), Readiness::ALL);
     let mut session = builder
         .build()
         .unwrap()
@@ -686,10 +686,7 @@ fn bounded_lanes_closure_only_request_gets_a_turn_under_data_refill() {
     let mut options = lane_options();
     options.readiness.insert(
         "sink".into(),
-        Readiness::Optional {
-            required: vec![],
-            optional: vec!["in".into()],
-        },
+        Readiness::optional(vec![], vec!["in".into()]),
     );
     let mut session = builder
         .build()
@@ -865,7 +862,7 @@ fn shared_fifo_correlated_all_round_robins_continuously_ready_requests() {
         .unwrap();
     let compiled = builder.build().unwrap().compile().unwrap();
 
-    for (policy, expect_fair) in [(Readiness::All, false), (Readiness::CorrelatedAll, true)] {
+    for (policy, expect_fair) in [(Readiness::ALL, false), (Readiness::CORRELATED_ALL, true)] {
         let mut options = SessionOptions {
             max_requests: NonZeroUsize::new(2).unwrap(),
             capture_capacity: NonZeroUsize::new(16).unwrap(),

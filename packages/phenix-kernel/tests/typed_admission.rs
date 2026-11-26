@@ -165,8 +165,7 @@ fn kernel(fixture: Fixture) -> Kernel {
     Kernel::build_with_options(
         "typed",
         [support::snapshot("fixture", fixture)],
-        Arc::new(LocalProcessDispatcher),
-        options(),
+        options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap()
 }
@@ -186,8 +185,7 @@ fn real_generation_and_typed_producer_keep_one_encoded_event_across_full_retry()
     let candidate = host
         .prepare(
             vec![stage],
-            options(),
-            Arc::new(LocalProcessDispatcher),
+            options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "typed-host",
             |_| Ok(()),
         )
@@ -619,8 +617,7 @@ fn bound_full_retry_preserves_constructed_bytes_without_reencoding() {
             let mut built = Kernel::build_with_options(
                 "full",
                 [support::snapshot("fixture", Fixture::wire())],
-                Arc::new(LocalProcessDispatcher),
-                options,
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             )
             .unwrap();
             built.start().unwrap();
@@ -683,8 +680,7 @@ fn repeated_bound_raw_refusals_retain_stable_owners_without_reencoding() {
             let mut built = Kernel::build_with_options(
                 "repeated-raw-retry",
                 [support::snapshot("fixture", fixture)],
-                Arc::new(LocalProcessDispatcher),
-                options,
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             )
             .unwrap();
             built.start().unwrap();

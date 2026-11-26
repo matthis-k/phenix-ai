@@ -1,3 +1,4 @@
+use phenix_storage::AtomicReadMany;
 mod support;
 use phenix_graph::{
     Value,
@@ -121,9 +122,20 @@ impl Backend for ReadProbe {
     }
 }
 impl TypedKv for ReadProbe {
-    fn supports_atomic_read_many(&self) -> bool {
-        true
+    fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
+        self.memory.get(d, k)
     }
+    fn put(&mut self, d: &str, k: &str, v: Vec<u8>) -> phenix_storage::Result<()> {
+        self.memory.put(d, k, v)
+    }
+    fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
+        self.memory.delete(d, k)
+    }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        Some(self)
+    }
+}
+impl AtomicReadMany for ReadProbe {
     fn read_many(
         &mut self,
         keys: &[phenix_storage::snapshot::ReadKey<'_>],
@@ -134,15 +146,6 @@ impl TypedKv for ReadProbe {
         } else {
             self.memory.read_many(keys)
         }
-    }
-    fn get(&mut self, d: &str, k: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
-        self.memory.get(d, k)
-    }
-    fn put(&mut self, d: &str, k: &str, v: Vec<u8>) -> phenix_storage::Result<()> {
-        self.memory.put(d, k, v)
-    }
-    fn delete(&mut self, d: &str, k: &str) -> phenix_storage::Result<bool> {
-        self.memory.delete(d, k)
     }
 }
 
@@ -172,8 +175,7 @@ fn one_atomic_batch_per_query_no_build_or_binding_reads_and_denial_recovers() {
     let candidate = host
         .prepare(
             vec![],
-            options(&plugin),
-            Arc::new(LocalProcessDispatcher),
+            options(&plugin).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "valid binding",
             |binding| {
                 spec.validate_binding(binding)?;
@@ -811,7 +813,7 @@ fn query_value_clones_retain_the_actual_application_code_lease() {
     let mut runtime = configured(plugin, Arc::new(LocalProcessDispatcher), config);
     runtime.start().unwrap();
     let value = runtime.bind_query(&spec).unwrap().query().unwrap();
-    let retained = value.clone();
+    let retained: phenix_graph::Leased<i64> = value.clone();
     drop(runtime);
     drop(spec);
     assert!(weak.upgrade().is_some());

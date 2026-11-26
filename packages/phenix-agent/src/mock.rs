@@ -8,7 +8,6 @@ use crate::{
 use phenix_graph::{
     ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
     compose::{Edit, Footprint, NetworkPatch},
-    process::LocalProcessDispatcher,
 };
 use phenix_kernel::{
     BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost,
@@ -219,7 +218,6 @@ pub fn host_with_options(
     let candidate = host.prepare(
         stages,
         options,
-        Arc::new(LocalProcessDispatcher),
         "mock-agent",
         |_| Ok(()),
     )?;

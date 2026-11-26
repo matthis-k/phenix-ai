@@ -175,8 +175,7 @@ fn check_worker_reentry(mode: Mode) {
     let mut kernel = Kernel::build_with_options(
         "worker-guards",
         [snapshot],
-        Arc::new(JoinedWorker(probe.clone())),
-        options,
+        options.with_dispatcher(Arc::new(JoinedWorker(probe.clone()))),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -328,8 +327,7 @@ fn reused_os_worker_clears_failed_guards_without_removing_inherited_identity() {
                 let mut kernel = Kernel::build_with_options(
                     "reused-worker",
                     [snapshot],
-                    Arc::new(LocalProcessDispatcher),
-                    options,
+                    options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 )
                 .unwrap();
                 kernel.start().unwrap();
@@ -507,8 +505,7 @@ fn retained_wrong_type_admission_error_and_value_pin_application_and_plugin_code
     let mut kernel = Kernel::build_with_options(
         "admission-leases",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();

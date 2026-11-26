@@ -71,7 +71,7 @@ fn initial_and_staged_custom_snapshots_preserve_lanes_in_both_queue_modes() {
                 let initial_calls = Arc::new(AtomicUsize::new(0));
                 let staged_calls = Arc::new(AtomicUsize::new(0));
                 let steps = Arc::new(AtomicUsize::new(0));
-                let next = Readiness::Custom(Arc::new(SelectPort {
+                let next = Readiness::new(Arc::new(SelectPort {
                     port: "next",
                     lane,
                     calls: staged_calls.clone(),
@@ -113,7 +113,7 @@ fn initial_and_staged_custom_snapshots_preserve_lanes_in_both_queue_modes() {
                 if initial_custom {
                     options.readiness.insert(
                         "stage".into(),
-                        Readiness::Custom(Arc::new(SelectPort {
+                        Readiness::new(Arc::new(SelectPort {
                             port: "start",
                             lane,
                             calls: initial_calls.clone(),

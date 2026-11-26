@@ -3,12 +3,24 @@ use phenix_graph::{
     Value,
     compose::{Edit, NetworkPatch},
     network::ConnectionDef,
-    process::LocalProcessDispatcher,
+    process::{ActivationJob, DispatchResult, LocalProcessDispatcher, ProcessDispatcher},
     runtime::SessionState,
 };
 use phenix_kernel::{BuildOptions, Kernel, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
+#[derive(Default)]
+struct CountingDispatcher(AtomicUsize);
+impl ProcessDispatcher for CountingDispatcher {
+    fn dispatch(&self, job: ActivationJob) -> DispatchResult {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        LocalProcessDispatcher.dispatch(job)
+    }
+}
 struct Dag(usize);
 impl PluginInstance for Dag {
     fn contribute(&self, into: &mut Registrar) -> Result<(), Failure> {
@@ -71,13 +83,9 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
         .discard_outputs
         .extend((1..length - 1).map(|index| (format!("step-{index}"), "value".into())));
     host_options.execution.discard_outputs = options.execution.discard_outputs.clone();
-    let mut kernel = Kernel::build_with_options(
-        "bounded",
-        [snapshot.clone()],
-        Arc::new(LocalProcessDispatcher),
-        options,
-    )
-    .unwrap();
+    let dispatcher = Arc::new(CountingDispatcher::default());
+    options.execution.dispatcher = dispatcher.clone();
+    let mut kernel = Kernel::build_with_options("bounded", [snapshot.clone()], options).unwrap();
     kernel.start().unwrap();
     kernel.inject("input", Value::local(0_i64)).unwrap();
     let report = kernel.run_steps(8).unwrap();
@@ -108,19 +116,17 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
             .unwrap(),
         2
     );
+    assert_eq!(dispatcher.0.load(Ordering::SeqCst), length * 2);
     let mut host = KernelHost::new(plugins);
+    let host_dispatcher = Arc::new(CountingDispatcher::default());
+    host_options.execution.dispatcher = host_dispatcher.clone();
     let candidate = host
-        .prepare(
-            vec![],
-            host_options,
-            Arc::new(LocalProcessDispatcher),
-            "configured",
-            |_| Ok(()),
-        )
+        .prepare(vec![], host_options, "configured", |_| Ok(()))
         .unwrap();
     let generation = host.publish(candidate).unwrap();
     generation.inject("input", Value::local(0_i64)).unwrap();
     assert_eq!(generation.run_steps(length * 3).unwrap().steps, length * 2);
+    assert_eq!(host_dispatcher.0.load(Ordering::SeqCst), length * 2);
     assert_eq!(
         generation
             .with_session(|session| *session

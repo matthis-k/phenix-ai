@@ -140,8 +140,7 @@ fn independent_plugins_preserve_tails_and_overflow_per_ingress() {
     let mut kernel = Kernel::build_with_options(
         "bindings",
         plugins.snapshots(),
-        Arc::new(LocalProcessDispatcher),
-        options(&[("a", "a"), ("b", "b")]),
+        options(&[("a", "a"), ("b", "b")]).with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -194,8 +193,7 @@ fn blocking_driver_wakes_for_storage_publication() {
     let mut kernel = Kernel::build_with_options(
         "wake",
         plugins.snapshots(),
-        Arc::new(LocalProcessDispatcher),
-        options(&[("observer", "changed")]),
+        options(&[("observer", "changed")]).with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();

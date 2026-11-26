@@ -10,33 +10,6 @@ pub struct SessionObservation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PolicyExplanation {
-    Any,
-    All,
-    CorrelatedAll,
-    AtLeast(usize),
-    Optional {
-        required: Vec<String>,
-        optional: Vec<String>,
-    },
-    Custom,
-}
-impl From<&Readiness> for PolicyExplanation {
-    fn from(policy: &Readiness) -> Self {
-        match policy {
-            Readiness::Any => Self::Any,
-            Readiness::All => Self::All,
-            Readiness::CorrelatedAll => Self::CorrelatedAll,
-            Readiness::AtLeast(n) => Self::AtLeast(n.get()),
-            Readiness::Optional { required, optional } => Self::Optional {
-                required: required.clone(),
-                optional: optional.clone(),
-            },
-            Readiness::Custom(_) => Self::Custom,
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadinessDeclaration {
     Initial,
     WaitInput(String),
@@ -169,7 +142,8 @@ pub struct ProcessExplanation {
     pub job: Option<JobExplanation>,
     pub publication: Option<PublicationExplanation>,
     pub declaration: ReadinessDeclaration,
-    pub policy: PolicyExplanation,
+    /// Exact declared facts, including correlation for opaque implementations.
+    pub policy: PolicyDeclaration,
     pub notification_driven: bool,
     pub cursor: usize,
     pub input_order: Vec<usize>,
@@ -370,7 +344,7 @@ impl NetworkSession {
                 reason: reason.summary().to_owned(),
             };
         }
-        let Some(names) = self.builtin_selection_names(index, &snapshot) else {
+        let Some(names) = self.declared_selection_names(index, &snapshot) else {
             return ReadyAssessment::UnknownCustom;
         };
         if !names.is_empty() {
@@ -393,11 +367,11 @@ impl NetworkSession {
             if head.available {
                 continue;
             }
-            match policy {
-                Readiness::All | Readiness::CorrelatedAll => {
+            match &policy.declaration().rule {
+                Some(SelectionRule::All) => {
                     reasons.push(ReadinessBlock::MissingRequired { port: *port })
                 }
-                Readiness::Optional { required, optional } => {
+                Some(SelectionRule::Optional { required, optional }) => {
                     if required.contains(&head.port) {
                         reasons.push(ReadinessBlock::MissingRequired { port: *port });
                     }
@@ -409,7 +383,7 @@ impl NetworkSession {
                 _ => {}
             }
         }
-        if let Readiness::AtLeast(n) = policy {
+        if let Some(SelectionRule::AtLeast(n)) = &policy.declaration().rule {
             reasons.push(ReadinessBlock::Threshold {
                 available_ports: available,
                 required_ports: n.get(),
@@ -463,7 +437,7 @@ impl NetworkSession {
                             index,
                             *port,
                             request,
-                            p.waiting.is_none() && matches!(policy, Readiness::CorrelatedAll),
+                            p.waiting.is_none() && policy.correlated(),
                         ),
                         closure: self.input_closure_proof(index, *port, request),
                         fresh: self.closure_fresh(index, *port, request),
@@ -538,7 +512,7 @@ impl NetworkSession {
             } else {
                 ReadinessDeclaration::Initial
             },
-            policy: policy.into(),
+            policy: policy.declaration().clone(),
             notification_driven: p.notification_driven,
             cursor: p.cursor,
             input_order: order,
@@ -620,15 +594,11 @@ impl NetworkSession {
             .filter(|index| self.closure_obligation(*index, id))
             .map(|process| {
                 let p = &self.processes[process];
-                let names = match &p.policy {
-                    Readiness::Optional { optional, .. } => optional.as_slice(),
-                    Readiness::Custom(_) => scope
-                        .closure_ports
-                        .get(&process)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[]),
-                    _ => &[],
-                };
+                let names = scope
+                    .closure_ports
+                    .get(&process)
+                    .map(Vec::as_slice)
+                    .unwrap_or_else(|| p.policy.declared_closure_ports());
                 ClosureObligationExplanation {
                     process,
                     unobserved_ports: p

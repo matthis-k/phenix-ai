@@ -35,8 +35,7 @@ fn prepared_routes_adopt_only_the_exact_published_owner_and_keep_archival_author
         let candidate = host
             .prepare(
                 vec![host.plugins().prepare_load(&kind, plugin.clone()).unwrap()],
-                config(),
-                Arc::new(LocalProcessDispatcher),
+                config().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "first",
                 |binding| {
                     prepared = Some(spec.bind_preparation(binding)?);
@@ -55,8 +54,7 @@ fn prepared_routes_adopt_only_the_exact_published_owner_and_keep_archival_author
         let mut rejected = None;
         let failed = host.prepare(
             vec![],
-            config(),
-            Arc::new(LocalProcessDispatcher),
+            config().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "rejected",
             |binding| {
                 rejected = Some(spec.bind_preparation(binding)?);
@@ -80,8 +78,7 @@ fn prepared_routes_adopt_only_the_exact_published_owner_and_keep_archival_author
         let candidate = host
             .prepare(
                 vec![],
-                config(),
-                Arc::new(LocalProcessDispatcher),
+                config().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "successor",
                 |binding| {
                     let exported = binding
@@ -300,8 +297,7 @@ fn same_shaped_redirected_tap_root_and_error_captures_fail_both_resolvers() {
         let host = DerivedHost::new(catalog.instance());
         let failed = host.prepare(
             vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-            config,
-            Arc::new(LocalProcessDispatcher),
+            config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "redirected",
             |binding| {
                 assert!(
@@ -337,8 +333,7 @@ fn original_known_lease_survives_until_bindings_values_and_errors_all_drop() {
         let candidate = host
             .prepare(
                 vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-                config,
-                Arc::new(LocalProcessDispatcher),
+                config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "leased",
                 |binding| {
                     prepared = Some(spec.bind_preparation(binding)?);
@@ -415,8 +410,7 @@ fn low_level_bound_queries_preserve_both_failure_policies_and_local_source_error
                 let mut kernel = phenix_kernel::Kernel::build_with_options(
                     "failure-policy",
                     plugins.snapshots(),
-                    Arc::new(LocalProcessDispatcher),
-                    config,
+                    config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 )
                 .unwrap();
                 kernel.start().unwrap();

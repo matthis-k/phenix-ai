@@ -92,8 +92,7 @@ fn independently_authored_loop_does_not_require_basic_preset() {
     use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT};
     use phenix_graph::{
         compose::{Footprint, NetworkPatch},
-        process::LocalProcessDispatcher,
-    };
+        };
     use phenix_kernel::{
         CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
@@ -186,8 +185,7 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         .prepare(
             stages,
             options,
-            Arc::new(LocalProcessDispatcher),
-            "alternate",
+                "alternate",
             |_| Ok(()),
         )
         .unwrap();

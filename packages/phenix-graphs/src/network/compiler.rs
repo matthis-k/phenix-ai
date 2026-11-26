@@ -232,7 +232,7 @@ impl CompiledNetwork {
 
     /// Monotone root edge additions preserve every flattened process/boundary.
     /// One direct primitive-to-primitive edge charges exactly one symbolic
-    /// root connection plus one physical target under the default compiler.
+    /// root connection plus one physical target under the canonical compiler.
     /// Reject changed capacities, duplicates, nested endpoints, mixed edits
     /// and unbudgeted additions; revalidate exact port type identities.
     pub(crate) fn reuse_after_root_connection_additions(
@@ -256,7 +256,6 @@ impl CompiledNetwork {
             || before.sources != after.sources
             || !same_scope_without_connections(before, after)
             || !same_declarations(before, after)
-            || self.compilation_limits != CompileLimits::default()
         {
             return None;
         }
@@ -507,9 +506,9 @@ impl CompiledNetwork {
     }
     /// Exactly one new, unclaimed, unreferenced root primitive can be inserted
     /// without expanding the existing graph. Reindex all physical references
-    /// and pay the *exact* new compiler charges against stored default limits.
-    /// Never accept mixed changes, already claimed contracts, custom-limit
-    /// baselines, or a change to an existing declaration.
+    /// and pay the *exact* new compiler charges against the stored limits.
+    /// Never accept mixed changes, already claimed contracts, or a change to
+    /// an existing declaration.
     pub(crate) fn reuse_after_isolated_root_addition(
         &self,
         before: &NetworkDef,
@@ -520,7 +519,6 @@ impl CompiledNetwork {
             || before.sources != after.sources
             || !same_scope_except_instances(before, after)
             || !same_declarations(before, after)
-            || self.compilation_limits != CompileLimits::default()
         {
             return None;
         }
@@ -1416,7 +1414,30 @@ mod isolated_root_addition_tests {
     }
 
     #[test]
-    fn custom_limits_and_exhausted_default_limits_fall_back() {
+    fn isolated_addition_respects_configured_limits() {
+        let (before, _) = base();
+        let after = with_middle(before.clone());
+        let full = after.compile().unwrap();
+        let limits = CompileLimits {
+            max_work: full.compile_work,
+            max_instances: full.compile_instances,
+            ..CompileLimits::default()
+        };
+        let old = before.compile_with_limits(limits).unwrap();
+        let incremental = old
+            .reuse_after_isolated_root_addition(&before, &after)
+            .unwrap();
+        let canonical = after.compile_with_limits(limits).unwrap();
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(incremental.source_starts(), canonical.source_starts());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+    }
+
+    #[test]
+    fn exhausted_limits_fall_back() {
         let (before, _) = base();
         let limits = CompileLimits {
             max_instances: 2,
@@ -2947,7 +2968,7 @@ mod connected_root_admission_tests {
     }
 
     #[test]
-    fn work_and_instance_limit_overflow_and_custom_limits_are_rejected() {
+    fn work_and_instance_limit_overflow_is_rejected() {
         let (before, _) = base();
         let after = with_chain(before.clone());
         let custom = CompileLimits {
@@ -3203,20 +3224,39 @@ mod edge_addition_tests {
     }
 
     #[test]
-    fn work_limit_and_nondefault_compiles_bypass_fast_addition() {
+    fn edge_addition_respects_configured_work_limit() {
         let (before, _) = base();
         let mut after = before.clone();
         after.connections.push(edge("alpha", "omega", 1));
+        let full = after.compile().unwrap();
         let custom = CompileLimits {
-            max_work: 100,
+            max_work: full.compile_work,
             ..CompileLimits::default()
         };
         let compiled = before.compile_with_limits(custom).unwrap();
+        let incremental = compiled
+            .reuse_after_root_connection_additions(&before, &after)
+            .unwrap();
+        let canonical = after.compile_with_limits(custom).unwrap();
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        assert_eq!(incremental.compile_work, canonical.compile_work);
+        assert_eq!(incremental.compile_instances, canonical.compile_instances);
+        let exhausted = CompileLimits {
+            max_work: custom.max_work - 1,
+            ..custom
+        };
+        let compiled = before.compile_with_limits(exhausted).unwrap();
         assert!(
             compiled
                 .reuse_after_root_connection_additions(&before, &after)
                 .is_none()
         );
+        assert!(matches!(
+            after.compile_with_limits(exhausted),
+            Err(NetworkError::LimitExceeded { .. })
+        ));
         let mut simulated_full = before.compile().unwrap();
         simulated_full.compile_work = CompileLimits::default().max_work;
         assert!(

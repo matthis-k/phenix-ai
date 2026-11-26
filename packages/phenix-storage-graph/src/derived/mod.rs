@@ -57,7 +57,7 @@
 //! Storage errors use diagnostics rather than becoming ordinary derived payloads.
 //! Untagged work and replacement-factory panics can still fail the session.
 //!
-//! `QueryValue` retains native value and code ownership across clones. Synchronous
+//! Graph's `Leased<T>` retains native value and code ownership across clones. Synchronous
 //! queries cannot wait for deferred completions that themselves need independent
 //! session admission. Cancellation invalidates tickets but cannot preempt workers
 //! or undo effects. An interrupted query returns the original cause, cancelled
@@ -69,10 +69,10 @@ mod inputs;
 mod producer;
 mod query;
 mod source;
-pub use host::{DerivedGeneration, DerivedHost};
+pub use host::DerivedHost;
 pub use inputs::{CellInput, DeriveInputs, StoredInputs, TupleFunction};
 pub use producer::Observation;
-pub use query::{DerivedRuntime, QueryBinding, QueryHandle, QuerySpec, QueryValue};
+pub use query::{DerivedRuntime, QueryBinding, QueryHandle, QuerySpec};
 
 use phenix_graph::{
     component::{ComponentDef, DefinitionKey},

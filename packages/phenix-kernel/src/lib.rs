@@ -79,7 +79,7 @@
 //! activation; prepared artifacts are disposed. Retry is an explicit new build scope, not an
 //! internal counter reset. Prefix validation and callback observations remain intact;
 //! later contributions cannot repair an invalid prefix by batching the build.
-//! The build's dispatcher argument overrides `execution.dispatcher`; a snapshot code
+//! The dispatcher is selected in `execution.dispatcher`; a snapshot code
 //! lease is added without discarding an application-provided lease.
 //!
 //! Side-effect-only processes declare no outputs. Intentionally unconnected emissions
@@ -118,7 +118,7 @@
 //! ```
 //!
 //! `Kernel::build(name, snapshots, Arc<dyn ProcessDispatcher>)` and
-//! `build_with_options(name, snapshots, dispatcher, options)` do not activate producers.
+//! `build_with_options(name, snapshots, options)` do not activate producers.
 //! `start(&mut self)` activates in dependency order; failures release all partial
 //! producers and permit retry without reconstructing candidate artifacts.
 //!
@@ -166,6 +166,7 @@ mod build;
 mod config_error;
 mod exclusive;
 pub mod host;
+pub mod plugin_binding;
 mod producer_ownership;
 pub use config_error::{CandidateError, ConfigurationError, DefinitionRole};
 
@@ -712,9 +713,6 @@ impl phenix_plugin::Contribution for NetworkOffer {
     fn id(&self) -> &str {
         &self.id
     }
-    fn component_path(&self) -> Option<&str> {
-        Some(&self.unit)
-    }
 }
 
 /// A local declarative import. Only the trusted host can select its provider.
@@ -742,13 +740,21 @@ pub struct BuildOptions {
     /// Cumulative logical composition planning policy for this entire build,
     /// including every prefix and self-import preview. Not a total work/time cap.
     pub planning_limits: PlanningLimits,
-    /// The build dispatcher argument is authoritative; the kernel adds snapshot leases.
+    /// Native session options. The kernel adds its mandatory guards and snapshot leases.
     pub execution: SessionOptions,
     /// Trusted exact write authority, keyed by contribution identity. No implicit grants.
     pub composition: BTreeMap<Key, CompositionPolicy>,
     /// Exact contributions allowed to inspect the entire compiled candidate
     /// during preparation. Empty by default; distinct from graph write grants.
     pub inspect_network: BTreeSet<Key>,
+}
+
+impl BuildOptions {
+    /// Set the runtime dispatcher in the canonical session options.
+    pub fn with_dispatcher(mut self, dispatcher: Arc<dyn ProcessDispatcher>) -> Self {
+        self.execution.dispatcher = dispatcher;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2136,7 +2142,7 @@ mod tests {
                     .start_with_options(SessionOptions {
                         readiness: BTreeMap::from([(
                             "sink".to_owned(),
-                            Readiness::Custom(Arc::new(InspectInventory(
+                            Readiness::new(Arc::new(InspectInventory(
                                 weak.clone(),
                                 selections.clone(),
                             ))),

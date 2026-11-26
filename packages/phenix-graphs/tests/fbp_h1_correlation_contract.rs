@@ -103,7 +103,7 @@ fn options(queue_policy: RequestQueuePolicy) -> SessionOptions {
     };
     options
         .readiness
-        .insert("join".into(), Readiness::CorrelatedAll);
+        .insert("join".into(), Readiness::CORRELATED_ALL);
     options
 }
 
@@ -161,6 +161,57 @@ fn crossed_multiplicity_preserves_request_local_fifo_and_settles_both_scopes() {
             session.release_request(request).unwrap();
         }
         assert!(session.failure().is_none(), "{policy:?}");
+    }
+}
+
+#[test]
+fn declared_and_external_policies_share_checked_request_correlation() {
+    use phenix_graph::runtime::{
+        PolicyDeclaration, ReadinessPolicy, ReadinessSnapshot, SelectionRule,
+    };
+
+    struct ExternalJoin;
+    impl ReadinessPolicy for ExternalJoin {
+        fn declaration(&self) -> PolicyDeclaration {
+            PolicyDeclaration {
+                rule: Some(SelectionRule::All),
+                correlated: true,
+            }
+        }
+
+        fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+            panic!("declared rule must be the authoritative selector");
+        }
+    }
+
+    for policy in [
+        Readiness::CORRELATED_ALL,
+        Readiness::declared(SelectionRule::All, true),
+        Readiness::from_policy(ExternalJoin),
+    ] {
+        let mut config = options(RequestQueuePolicy::SharedFifo);
+        config.readiness.insert("join".into(), policy);
+        let mut session = network(true).start_with_options(config);
+        let a = session.begin_request(None).unwrap();
+        let b = session.begin_request(None).unwrap();
+
+        session.inject_request_local(b, "right", 200_i64).unwrap();
+        session.inject_request_local(a, "left", 10_i64).unwrap();
+        session.inject_request_local(a, "right", 1_i64).unwrap();
+        session.inject_request_local(a, "right", 2_i64).unwrap();
+        session.close_request(a).unwrap();
+        assert!(!session.run_until_idle(32).budget_exhausted);
+        assert_eq!(captured(&mut session, a), [13]);
+        assert_eq!(session.request_work(b).unwrap().queued, 1);
+        session.release_request(a).unwrap();
+
+        session.inject_request_local(b, "left", 20_i64).unwrap();
+        session.inject_request_local(b, "right", 201_i64).unwrap();
+        session.close_request(b).unwrap();
+        assert!(!session.run_until_idle(32).budget_exhausted);
+        assert_eq!(captured(&mut session, b), [421]);
+        session.release_request(b).unwrap();
+        assert!(session.failure().is_none());
     }
 }
 
@@ -333,7 +384,7 @@ fn staged_continuation_wakes_on_late_owner_packet_behind_foreign_fifo_head() {
 #[test]
 fn ordinary_all_staged_wait_remains_head_only_under_shared_fifo() {
     let mut options = options(RequestQueuePolicy::SharedFifo);
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), Readiness::ALL);
     options.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     let mut session = network(true).start_with_options(options);
     let a = session.begin_request(None).unwrap();

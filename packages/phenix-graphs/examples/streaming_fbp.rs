@@ -213,7 +213,7 @@ fn main() {
         .unwrap();
     let mut options = SessionOptions::default();
     // Any would reserve just one branch, not a matched split pair.
-    options.readiness.insert("join".into(), Readiness::All);
+    options.readiness.insert("join".into(), Readiness::ALL);
     let mut session = b
         .build()
         .unwrap()
