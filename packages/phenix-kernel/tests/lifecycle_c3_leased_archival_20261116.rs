@@ -88,8 +88,7 @@ fn archival_requests_cloned_sessions_and_jobs_keep_authority_only_in_their_owner
         let candidate = host
             .prepare(
                 vec![stage],
-                options(),
-                Arc::new(LocalProcessDispatcher),
+                options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "old",
                 |_| Ok(()),
             )
@@ -127,8 +126,7 @@ fn archival_requests_cloned_sessions_and_jobs_keep_authority_only_in_their_owner
         let candidate = host
             .prepare(
                 stages,
-                options(),
-                Arc::new(LocalProcessDispatcher),
+                options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "new",
                 |_| Ok(()),
             )

@@ -214,8 +214,7 @@ fn build(
     Kernel::build_with_options(
         "portable",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
 }
 fn execute(kernel: &Kernel, value: i64) {
@@ -414,8 +413,7 @@ fn selection_and_definition_mismatches_are_not_structural_fallbacks() {
         Kernel::build_with_options(
             "host",
             snapshots,
-            Arc::new(LocalProcessDispatcher),
-            build_options
+            build_options.with_dispatcher(Arc::new(LocalProcessDispatcher))
         )
         .err()
         .unwrap()

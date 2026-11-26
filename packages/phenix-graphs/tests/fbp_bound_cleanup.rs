@@ -117,7 +117,7 @@ impl ProcessFactory for Factory {
     }
     fn readiness(&self) -> Readiness {
         self.0.factory_readiness.fetch_add(1, Ordering::SeqCst);
-        Readiness::Any
+        Readiness::ANY
     }
     fn correlation_lanes(&self) -> Option<NonZeroUsize> {
         self.0.correlation.fetch_add(1, Ordering::SeqCst);
@@ -174,7 +174,7 @@ fn policy(
     calls: &Arc<Calls>,
     hostile: bool,
 ) -> Readiness {
-    Readiness::Custom(Arc::new(Policy {
+    Readiness::new(Arc::new(Policy {
         probe: probe(name, log, owners, hostile),
         calls: calls.clone(),
     }))
@@ -482,7 +482,7 @@ fn foreign_selector_validates_whole_inventory_before_replacement_or_registration
     });
     options
         .readiness
-        .insert("worker".into(), Readiness::Custom(dynamic.clone()));
+        .insert("worker".into(), Readiness::new(dynamic.clone()));
     options
         .bound
         .readiness(&declaration, policy("bound", &log, &owners, &calls, true));

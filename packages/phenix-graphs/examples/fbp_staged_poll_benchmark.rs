@@ -102,7 +102,7 @@ fn measure(processes: usize, iterations: usize, staged: bool, driver: Driver) ->
                 .unwrap();
         }
         // Ordinary packet readiness, not custom or optional polling.
-        options.readiness.insert(name, Readiness::Any);
+        options.readiness.insert(name, Readiness::ANY);
         inputs.push((first, second));
     }
     let network = builder.build().unwrap().compile().unwrap();

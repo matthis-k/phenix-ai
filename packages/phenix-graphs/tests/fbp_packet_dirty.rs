@@ -276,7 +276,7 @@ fn mixed_custom_node_is_polled_without_disabling_unrelated_packet_nodes() {
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "special".into(),
-        Readiness::Custom(Arc::new(GatedPolicy {
+        Readiness::new(Arc::new(GatedPolicy {
             calls: calls.clone(),
             allowed: allowed.clone(),
         })),
@@ -440,7 +440,7 @@ fn notified_custom_reevaluates_only_on_targeted_or_generic_notification() {
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "targeted".into(),
-        Readiness::Custom(Arc::new(NotifiedPolicy {
+        Readiness::new(Arc::new(NotifiedPolicy {
             calls: calls.clone(),
             allowed: allowed.clone(),
         })),
@@ -526,7 +526,7 @@ fn generic_notifier_still_drives_opted_in_custom_policy() {
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "custom".into(),
-        Readiness::Custom(Arc::new(NotifiedPolicy {
+        Readiness::new(Arc::new(NotifiedPolicy {
             calls: calls.clone(),
             allowed: allowed.clone(),
         })),
@@ -566,7 +566,7 @@ fn notification_contract_panic_fails_session_instead_of_escaping_start() {
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "custom".into(),
-        Readiness::Custom(Arc::new(PanicNotificationContract)),
+        Readiness::new(Arc::new(PanicNotificationContract)),
     );
     let session = builder
         .build()

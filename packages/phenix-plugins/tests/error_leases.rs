@@ -1,4 +1,3 @@
-use phenix_graph::{Interface, contract::Contract, network::NetworkBuilder};
 use phenix_plugin::{
     CallbackPhase, Code, Contribution, Failure, PluginCatalog, PluginInstance, Registrar,
 };
@@ -78,10 +77,6 @@ impl Contribution for Artifact {
         self.0.check();
         "artifact"
     }
-    fn component_path(&self) -> Option<&str> {
-        self.0.check();
-        Some("missing")
-    }
 }
 struct Plugin {
     life: Life,
@@ -159,12 +154,11 @@ fn retained_constructor_contribution_and_bind_failures_pin_their_owners_in_drop_
             let mut plugins = catalog.instance();
             if matches!(phase, Phase::Bind) {
                 let snapshot = plugins.load(&key, ()).unwrap();
-                let contract =
-                    Contract::new("test/empty@1", Arc::new(Interface::new([], []).unwrap()))
-                        .unwrap();
-                let compiled = NetworkBuilder::new().build().unwrap().compile().unwrap();
                 snapshot
-                    .bind::<Artifact>("artifact", &contract, &compiled)
+                    .bind::<Artifact>("artifact", |artifact| {
+                        artifact.0.check();
+                        Err(Failure::new(Code::MissingBinding, "host rejected artifact"))
+                    })
                     .err()
                     .unwrap()
             } else {

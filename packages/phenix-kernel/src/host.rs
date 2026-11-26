@@ -6,7 +6,7 @@
 //!
 //! # Host publication
 //!
-//! `KernelHost::prepare(stages, options, dispatcher, name, bind)` builds the exact
+//! `KernelHost::prepare(stages, options, name, bind)` builds the exact
 //! candidate inventory, invokes the nonadmitting binding hook, then activates producers
 //! without polling. The hook receives only:
 //!
@@ -68,7 +68,6 @@ use phenix_graph::{
     BoundDeclaration, CaptureHandle, IngressHandle, InputKey, OutputKey, SourceHandle, Value,
     component::DefinitionKey,
     network::{CompiledNetwork, ComponentSnapshot, NetworkError},
-    process::ProcessDispatcher,
     runtime::{
         InjectionError, NetworkSession, ProcessNotifier, RequestError, RequestId,
         RequestInjectionError, RunReport,
@@ -295,8 +294,8 @@ pub struct Candidate {
     generation: Arc<Generation>,
 }
 
-/// Preparation-only inspection capability. It exposes exports and deployment
-/// identities, but no kernel, session admission, or producer access.
+/// Read-only binding capability for a compiled kernel. It exposes exports and
+/// deployment identities, but no kernel, session admission, or producer access.
 /// Exports are arbitrary application values; their external effects are not
 /// sandboxed or rolled back by the host.
 ///
@@ -314,6 +313,13 @@ pub struct Candidate {
 /// ```
 pub struct Binding<'a> {
     kernel: &'a Kernel,
+}
+
+impl Kernel {
+    /// The same restricted binding view used during host preparation.
+    pub fn binding(&self) -> Binding<'_> {
+        Binding { kernel: self }
+    }
 }
 
 impl Binding<'_> {
@@ -410,7 +416,6 @@ impl KernelHost {
         &self,
         stages: Vec<StagedPlugin>,
         options: BuildOptions,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         name: impl Into<String>,
         bind: impl FnOnce(&Binding<'_>) -> Result<(), CallbackError>,
     ) -> Result<Candidate, LifecycleError> {
@@ -422,25 +427,23 @@ impl KernelHost {
             .plugins
             .candidate_snapshots(&stages)
             .map_err(LifecycleError::Plugins)?;
-        let mut kernel = Kernel::build_with_options(name, snapshots, dispatcher, options)
+        let mut kernel = Kernel::build_with_options(name, snapshots, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bind(&Binding { kernel: &kernel })
-        }))
-        .unwrap_or_else(|payload| {
-            Err(kernel
-                .lease_failure(phenix_graph::process::callback_panicked(
-                    phenix_graph::CallbackPhase::GenerationBind,
-                    payload,
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| bind(&kernel.binding())))
+            .unwrap_or_else(|payload| {
+                Err(kernel
+                    .lease_failure(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::GenerationBind,
+                        payload,
+                    ))
+                    .into())
+            })
+            .map_err(|cause| {
+                LifecycleError::Binding(phenix_plugin::lease_callback_error(
+                    cause,
+                    kernel.code_lease.clone(),
                 ))
-                .into())
-        })
-        .map_err(|cause| {
-            LifecycleError::Binding(phenix_plugin::lease_callback_error(
-                cause,
-                kernel.code_lease.clone(),
-            ))
-        })?;
+            })?;
         kernel.start().map_err(LifecycleError::Start)?;
         if let Some(wake) = &self.wake {
             if wake.is_shutdown() {
@@ -872,8 +875,7 @@ mod tests {
                 let candidate = host
                     .prepare(
                         vec![],
-                        BuildOptions::default(),
-                        Arc::new(LocalProcessDispatcher),
+                        BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                         "replacement",
                         |_| Ok(()),
                     )
@@ -912,8 +914,7 @@ mod tests {
         let first = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "initial",
                 |_| Ok(()),
             )
@@ -922,8 +923,7 @@ mod tests {
         let replacement = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "replacement",
                 |_| Ok(()),
             )
@@ -946,8 +946,7 @@ mod tests {
         let next = host
             .prepare(
                 vec![],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "next",
                 |_| Ok(()),
             )
@@ -971,8 +970,7 @@ mod tests {
         let candidate = host
             .prepare(
                 vec![stage],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "last",
                 |_| Ok(()),
             )
@@ -989,8 +987,7 @@ mod tests {
         for stages in [vec![], vec![stage]] {
             let result = host.prepare(
                 stages,
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "exhausted",
                 |_| panic!("binding must not run after epoch exhaustion"),
             );
@@ -999,10 +996,10 @@ mod tests {
             assert_eq!(host.epoch, u64::MAX);
             assert!(Arc::ptr_eq(&active, &host.active().unwrap()));
             assert_eq!(host.plugins().snapshots().count(), 1);
-            assert_eq!(
-                host.plugins().snapshot(&key).unwrap().graph_origin(),
-                snapshot.graph_origin()
-            );
+            assert!(Arc::ptr_eq(
+                host.plugins().snapshot(&key).unwrap().revision_identity(),
+                snapshot.revision_identity()
+            ));
             assert_eq!(
                 host.plugins().snapshot(&key).unwrap().revision(),
                 snapshot.revision()

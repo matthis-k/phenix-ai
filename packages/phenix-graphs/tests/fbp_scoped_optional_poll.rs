@@ -94,13 +94,9 @@ fn sealed_optional_watch_is_idempotent_and_isolated_across_requests() {
         .unwrap();
     let mut options = SessionOptions::default();
     for name in ["optional", "unrelated"] {
-        options.readiness.insert(
-            name.into(),
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["opt".into()],
-            },
-        );
+        options
+            .readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut session = builder
         .build()
@@ -271,12 +267,9 @@ fn assert_required_packet_waits_for_closure(notified: bool) {
     options.readiness.insert(
         "join".into(),
         if notified {
-            Readiness::Custom(Arc::new(NotifiedJoin))
+            Readiness::new(Arc::new(NotifiedJoin))
         } else {
-            Readiness::Optional {
-                required: vec!["req".into()],
-                optional: vec!["opt".into()],
-            }
+            Readiness::optional(vec!["req".into()], vec!["opt".into()])
         },
     );
     let mut session = builder

@@ -300,8 +300,7 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
                         .unwrap(),
                     host.plugins().prepare_load(&provider, false).unwrap(),
                 ],
-                options(queue, false),
-                Arc::new(LocalProcessDispatcher),
+                options(queue, false).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "base",
                 |_| Ok(()),
             )
@@ -333,8 +332,7 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
             }
             let result = host.prepare(
                 vec![stage],
-                opts,
-                Arc::new(LocalProcessDispatcher),
+                opts.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 case,
                 |binding| {
                     assert!(binding.declaration(MONITOR).is_ok());
@@ -398,8 +396,7 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
         let candidate = host
             .prepare(
                 vec![stage],
-                options(queue, true),
-                Arc::new(LocalProcessDispatcher),
+                options(queue, true).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "extended",
                 |binding| {
                     assert!(binding.declaration(MONITOR).is_ok());
@@ -478,15 +475,13 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
                 .origin
                 .as_ref()
                 .unwrap()
-                .belongs_to(provider_snapshot.graph_origin())
+                .belongs_to(&phenix_graph::GraphOrigin::from_root(
+                    provider_snapshot.revision_identity().clone(),
+                ))
         );
-        assert!(
-            old_outer
-                .origin
-                .as_ref()
-                .unwrap()
-                .belongs_to(provider_snapshot.graph_origin())
-        );
+        assert!(old_outer.origin.as_ref().unwrap().belongs_to(
+            &phenix_graph::GraphOrigin::from_root(provider_snapshot.revision_identity().clone(),)
+        ));
         assert_eq!(leaf.definition_key, old_leaf.definition_key);
         assert_eq!(leaf.origin, outer.origin);
         assert_eq!(leaf.claims, old_leaf.claims);
@@ -497,9 +492,13 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
         for path in [SIDE, MONITOR] {
             let added = active.compiled().inspect(path).unwrap();
             let origin = added.origin.as_ref().unwrap();
-            assert!(origin.belongs_to(next_snapshot.graph_origin()));
+            assert!(origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+                next_snapshot.revision_identity().clone(),
+            )));
             assert_eq!(added.declared_origin.as_ref(), Some(origin));
-            assert!(!origin.belongs_to(provider_snapshot.graph_origin()));
+            assert!(!origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+                provider_snapshot.revision_identity().clone(),
+            )));
         }
         active
             .compiled()
@@ -514,8 +513,7 @@ fn prepared_private_add_connect_and_checked_exports_reach_enclosing_monitor_atom
         let candidate = host
             .prepare(
                 vec![stage],
-                options(queue, false),
-                Arc::new(LocalProcessDispatcher),
+                options(queue, false).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "removed",
                 |_| Ok(()),
             )
@@ -571,8 +569,7 @@ fn nested_export_cannot_grow_an_exact_claimed_and_required_inner_interface() {
                         .prepare_load(&extender, extension(false))
                         .unwrap(),
                 ],
-                options(queue, false),
-                Arc::new(LocalProcessDispatcher),
+                options(queue, false).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "frozen",
                 |_| Ok(()),
             )
@@ -595,8 +592,7 @@ fn nested_export_cannot_grow_an_exact_claimed_and_required_inner_interface() {
         let error = host
             .prepare(
                 vec![stage],
-                options(queue, true),
-                Arc::new(LocalProcessDispatcher),
+                options(queue, true).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "cannot grow",
                 |_| panic!("exact inner contract must fail before final binding"),
             )

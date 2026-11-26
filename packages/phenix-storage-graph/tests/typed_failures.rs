@@ -1,3 +1,4 @@
+use phenix_storage::AtomicReadMany;
 mod support;
 
 use phenix_graph::{
@@ -243,18 +244,6 @@ impl phenix_storage::Backend for FaultBackend {
     }
 }
 impl phenix_storage::TypedKv for FaultBackend {
-    fn supports_atomic_read_many(&self) -> bool {
-        true
-    }
-    fn read_many(
-        &mut self,
-        keys: &[phenix_storage::snapshot::ReadKey<'_>],
-    ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
-        if std::mem::replace(&mut self.fail, false) {
-            return Err(actual_storage_error(self.fault));
-        }
-        self.memory.read_many(keys)
-    }
     fn get(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<Option<Vec<u8>>> {
         self.memory.get(dataset, key)
     }
@@ -263,6 +252,20 @@ impl phenix_storage::TypedKv for FaultBackend {
     }
     fn delete(&mut self, dataset: &str, key: &str) -> phenix_storage::Result<bool> {
         self.memory.delete(dataset, key)
+    }
+    fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+        Some(self)
+    }
+}
+impl AtomicReadMany for FaultBackend {
+    fn read_many(
+        &mut self,
+        keys: &[phenix_storage::snapshot::ReadKey<'_>],
+    ) -> phenix_storage::Result<Vec<Option<phenix_storage::Revisioned<Vec<u8>>>>> {
+        if std::mem::replace(&mut self.fail, false) {
+            return Err(actual_storage_error(self.fault));
+        }
+        self.memory.read_many(keys)
     }
 }
 fn assert_storage_cause(failure: &Failure, fault: StorageFault) {

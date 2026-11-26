@@ -20,7 +20,7 @@
 //!
 //! Backend implementations must opt in to each optional operation independently.
 //! An atomic batch must return a coherent versioned result of the requested length
-//! and order. A support predicate is a trusted promise, not proof of atomicity.
+//! and order. A capability implementation is a trusted promise, not proof of atomicity.
 //! No read emits an invalidation.
 use crate::*;
 
@@ -48,9 +48,6 @@ mod tests {
             }
         }
         impl TypedKv for Probe {
-            fn supports_revisioned_reads(&self) -> bool {
-                true
-            }
             fn get(&mut self, _: &str, _: &str) -> Result<Option<Vec<u8>>> {
                 panic!("preflight must not read values")
             }
@@ -60,12 +57,19 @@ mod tests {
             fn delete(&mut self, _: &str, _: &str) -> Result<bool> {
                 panic!("preflight must not delete values")
             }
-            fn supports_atomic_read_many(&self) -> bool {
-                self.atomic.load(Ordering::SeqCst)
+            fn revisioned_read(&mut self) -> Option<&mut dyn RevisionedRead> {
+                Some(self)
             }
+            fn atomic_read_many(&mut self) -> Option<&mut dyn AtomicReadMany> {
+                (self.atomic.load(Ordering::SeqCst)).then_some(self)
+            }
+        }
+        impl RevisionedRead for Probe {
             fn get_revisioned(&mut self, _: &str, _: &str) -> Result<Option<Revisioned<Vec<u8>>>> {
                 panic!("preflight must not read revisioned values")
             }
+        }
+        impl AtomicReadMany for Probe {
             fn read_many(&mut self, _: &[ReadKey<'_>]) -> Result<Vec<Option<Revisioned<Vec<u8>>>>> {
                 panic!("preflight must not read batches")
             }
@@ -492,15 +496,15 @@ impl SnapshotReader {
                     capability: Capability::TypedKv,
                 })?;
             if self.consistency == ReadConsistency::AtomicWithinMount
-                && !kv.supports_atomic_read_many()
+                && kv.atomic_read_many().is_none()
             {
                 return Err(Error::UnsupportedCapability {
                     capability: Capability::AtomicReadMany,
                 });
             }
             if self.consistency == ReadConsistency::BestEffort
-                && !kv.supports_atomic_read_many()
-                && !kv.supports_revisioned_reads()
+                && kv.atomic_read_many().is_none()
+                && kv.revisioned_read().is_none()
             {
                 return Err(Error::UnsupportedCapability {
                     capability: Capability::RevisionedRead,
@@ -552,17 +556,16 @@ impl SnapshotReader {
                     key: &self.sources[index].key,
                 })
                 .collect();
-            let batch = if kv.supports_atomic_read_many() {
-                kv.read_many(&keys)?
+            let batch = if let Some(batch) = kv.atomic_read_many() {
+                batch.read_many(&keys)?
             } else if self.consistency == ReadConsistency::BestEffort {
                 keys.iter()
                     .map(|k| {
-                        if !kv.supports_revisioned_reads() {
-                            return Err(Error::UnsupportedCapability {
+                        kv.revisioned_read()
+                            .ok_or(Error::UnsupportedCapability {
                                 capability: Capability::RevisionedRead,
-                            });
-                        }
-                        kv.get_revisioned(k.dataset, k.key)
+                            })?
+                            .get_revisioned(k.dataset, k.key)
                     })
                     .collect::<Result<Vec<_>>>()?
             } else {

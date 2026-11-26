@@ -266,8 +266,7 @@ fn query_tap_and_root_lookup_errors_survive_runtime_and_preparation_binding() {
         let error = host
             .prepare(
                 vec![],
-                options,
-                Arc::new(LocalProcessDispatcher),
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "lookup failure",
                 |binding| {
                     let error = spec

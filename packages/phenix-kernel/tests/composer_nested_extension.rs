@@ -221,8 +221,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let candidate = host
         .prepare(
             stages,
-            options(None),
-            Arc::new(LocalProcessDispatcher),
+            options(None).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "nested",
             |_| Ok(()),
         )
@@ -249,8 +248,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let candidate = host
         .prepare(
             vec![stage],
-            options(Some(LEAF_PATH)),
-            Arc::new(LocalProcessDispatcher),
+            options(Some(LEAF_PATH)).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "extended",
             |binding| {
                 let imported = binding
@@ -282,7 +280,11 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let leaf = active.compiled().inspect(LEAF_PATH).unwrap();
     let sibling = active.compiled().inspect("service/inner/sibling").unwrap();
     let provider_origin = outer.origin.as_ref().unwrap();
-    assert!(provider_origin.belongs_to(provider_snapshot.graph_origin()));
+    assert!(
+        provider_origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+            provider_snapshot.revision_identity().clone(),
+        ))
+    );
     assert_eq!(outer.declared_origin.as_ref(), Some(provider_origin));
     assert_eq!(outer.interface, old_outer.interface);
     assert_eq!(outer.claims, old_outer.claims);
@@ -296,9 +298,21 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let leaf_origin = leaf.origin.as_ref().unwrap();
     assert_eq!(leaf.declared_origin.as_ref(), Some(leaf_origin));
     assert_ne!(leaf.definition_key, old_leaf.definition_key);
-    assert!(leaf_origin.belongs_to(replacement.graph_origin()));
-    assert!(!leaf_origin.belongs_to(provider_snapshot.graph_origin()));
-    assert!(!leaf_origin.belongs_to(old_extension.graph_origin()));
+    assert!(
+        leaf_origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+            replacement.revision_identity().clone(),
+        ))
+    );
+    assert!(
+        !leaf_origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+            provider_snapshot.revision_identity().clone(),
+        ))
+    );
+    assert!(
+        !leaf_origin.belongs_to(&phenix_graph::GraphOrigin::from_root(
+            old_extension.revision_identity().clone(),
+        ))
+    );
     active
         .compiled()
         .check_implementation("service", &support::contract(OUTER))
@@ -375,8 +389,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
         let error = host
             .prepare(
                 stages,
-                options(grant),
-                Arc::new(LocalProcessDispatcher),
+                options(grant).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 case,
                 |_| Ok(()),
             )

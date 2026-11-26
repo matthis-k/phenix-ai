@@ -6,6 +6,7 @@ use phenix_graph::{
     network::NetworkBuilder,
     process::{Process, ProcessContext, Step},
 };
+use phenix_kernel::plugin_binding::bind_component;
 use phenix_plugin::{Code, Contribution, Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -17,9 +18,6 @@ impl Contribution for ProviderAction {
     const KIND: &'static str = "network.node";
     fn id(&self) -> &str {
         "model"
-    }
-    fn component_path(&self) -> Option<&str> {
-        self.path.as_deref()
     }
 }
 struct Provider(Option<String>, i64);
@@ -82,7 +80,9 @@ fn compiled(
     network
         .add(
             "service",
-            Arc::new(definition.with_origin(snapshot.graph_origin().child())),
+            Arc::new(definition.with_origin(
+                phenix_graph::GraphOrigin::from_root(snapshot.revision_identity().clone()).child(),
+            )),
         )
         .unwrap();
     network.build().unwrap().compile().unwrap()
@@ -97,10 +97,15 @@ fn plugin_request_checks_final_selected_unit() {
     let mut plugins = catalog.instance();
     let snapshot = plugins.load(&key, Some("service".into())).unwrap();
     let required = contract(false);
-    let error = snapshot
-        .bind::<ProviderAction>("model", &required, &compiled(&snapshot, false, false))
-        .err()
-        .unwrap();
+    let error = bind_component::<ProviderAction>(
+        &snapshot,
+        "model",
+        |offer| offer.path.as_deref(),
+        &required,
+        &compiled(&snapshot, false, false),
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.code, Code::SchemaRejected);
     let context = error.context.as_ref().unwrap();
     assert_eq!(context.plugin, "provider");
@@ -118,36 +123,61 @@ fn plugin_request_checks_final_selected_unit() {
             .is::<phenix_graph::network::NetworkError>()
     );
     let network = compiled(&snapshot, true, false);
-    let action = snapshot
-        .bind::<ProviderAction>("model", &required, &network)
-        .unwrap();
+    let action = bind_component::<ProviderAction>(
+        &snapshot,
+        "model",
+        |offer| offer.path.as_deref(),
+        &required,
+        &network,
+    )
+    .unwrap();
     assert_eq!(action.increment, 41);
     assert!(
-        snapshot
-            .bind::<ProviderAction>("model", &contract(true), &network)
-            .is_err()
+        bind_component::<ProviderAction>(
+            &snapshot,
+            "model",
+            |offer| offer.path.as_deref(),
+            &contract(true),
+            &network,
+        )
+        .is_err()
     );
     let missing = plugins.reload(&key, Some("missing".into())).unwrap();
     assert_eq!(
-        missing
-            .bind::<ProviderAction>("model", &required, &network)
-            .err()
-            .unwrap()
-            .code,
+        bind_component::<ProviderAction>(
+            &missing,
+            "model",
+            |offer| offer.path.as_deref(),
+            &required,
+            &network,
+        )
+        .err()
+        .unwrap()
+        .code,
         Code::MissingBinding
     );
     let no_locator = plugins.reload(&key, None).unwrap();
     assert!(
-        no_locator
-            .bind::<ProviderAction>("model", &required, &network)
-            .is_err()
+        bind_component::<ProviderAction>(
+            &no_locator,
+            "model",
+            |offer| offer.path.as_deref(),
+            &required,
+            &network,
+        )
+        .is_err()
     );
     plugins.unload(&key).unwrap();
     assert_eq!(
-        snapshot
-            .bind::<ProviderAction>("model", &required, &network)
-            .unwrap()
-            .increment,
+        bind_component::<ProviderAction>(
+            &snapshot,
+            "model",
+            |offer| offer.path.as_deref(),
+            &required,
+            &network,
+        )
+        .unwrap()
+        .increment,
         41
     );
     assert_eq!(action.increment, 41);
@@ -160,9 +190,14 @@ fn module_offers_use_the_same_compiled_unit_validation() {
         .register("provider", |_: ()| Ok(Provider(Some("service".into()), 1)))
         .unwrap();
     let snapshot = catalog.instance().load(&key, ()).unwrap();
-    snapshot
-        .bind::<ProviderAction>("model", &contract(false), &compiled(&snapshot, true, true))
-        .unwrap();
+    bind_component::<ProviderAction>(
+        &snapshot,
+        "model",
+        |offer| offer.path.as_deref(),
+        &contract(false),
+        &compiled(&snapshot, true, true),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -177,10 +212,15 @@ fn missing_compiled_unit_retains_actual_network_cause_and_module_path() {
                 .unwrap();
             let snapshot = catalog.instance().load(&key, path.into()).unwrap();
             let required = contract(false);
-            let error = snapshot
-                .bind::<ProviderAction>("model", &required, &compiled(&snapshot, true, module))
-                .err()
-                .unwrap();
+            let error = bind_component::<ProviderAction>(
+                &snapshot,
+                "model",
+                |offer| offer.path.as_deref(),
+                &required,
+                &compiled(&snapshot, true, module),
+            )
+            .err()
+            .unwrap();
             assert_eq!(error.code, Code::MissingBinding);
             assert!(error.message.contains(path));
             assert!(error.message.contains(required.id()));
@@ -211,8 +251,14 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
         let mut plugins = catalog.instance();
         let old = plugins.load(&key, 1).unwrap();
         let network = compiled(&old, true, module);
-        old.bind::<ProviderAction>("model", &contract(false), &network)
-            .unwrap();
+        bind_component::<ProviderAction>(
+            &old,
+            "model",
+            |offer| offer.path.as_deref(),
+            &contract(false),
+            &network,
+        )
+        .unwrap();
         let stage = plugins.prepare_reload(&key, 2).unwrap();
         let rejected = stage.candidate().unwrap();
         drop(stage);
@@ -221,18 +267,29 @@ fn binding_rejects_other_revisions_sets_and_uncommitted_candidates() {
         let sibling = catalog.instance().load(&key, 1).unwrap();
         assert_eq!(sibling.revision(), old.revision());
         for foreign in [&rejected, &current, &sibling] {
-            let error = foreign
-                .bind::<ProviderAction>("model", &contract(false), &network)
-                .err()
-                .unwrap();
+            let error = bind_component::<ProviderAction>(
+                foreign,
+                "model",
+                |offer| offer.path.as_deref(),
+                &contract(false),
+                &network,
+            )
+            .err()
+            .unwrap();
             assert_eq!(error.code, Code::Denied);
             assert!(error.message.contains("origin mismatch"));
         }
         plugins.unload(&key).unwrap();
         assert_eq!(
-            old.bind::<ProviderAction>("model", &contract(false), &network)
-                .unwrap()
-                .increment,
+            bind_component::<ProviderAction>(
+                &old,
+                "model",
+                |offer| offer.path.as_deref(),
+                &contract(false),
+                &network,
+            )
+            .unwrap()
+            .increment,
             1
         );
     }

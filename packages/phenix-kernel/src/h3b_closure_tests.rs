@@ -146,8 +146,7 @@ fn queued_direct_drains_and_external_retirement_dispose_one_busy_or_full_event()
             let candidate = publish.then(|| {
                 host.prepare(
                     vec![],
-                    BuildOptions::default(),
-                    Arc::new(LocalProcessDispatcher),
+                    BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "successor",
                     |_| Ok(()),
                 )
@@ -292,7 +291,7 @@ fn eager_readiness_self_retirement_finishes_permitted_admission_only() {
                 .start_with_options(SessionOptions {
                     readiness: std::collections::BTreeMap::from([(
                         "sink".into(),
-                        Readiness::Custom(Arc::new(Retire(weak.clone(), drops.clone()))),
+                        Readiness::new(Arc::new(Retire(weak.clone(), drops.clone()))),
                     )]),
                     ..Default::default()
                 }),

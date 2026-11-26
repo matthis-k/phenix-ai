@@ -302,8 +302,7 @@ pub fn build(sqlite: bool, capacity: usize) -> Result<Demo, String> {
     let kernel = Kernel::build_with_options(
         "storage",
         plugins.snapshots(),
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .map_err(|error| error.to_string())?;
     Ok(Demo {

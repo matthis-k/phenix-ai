@@ -44,8 +44,7 @@ fn full_preparation_inspection_is_default_denied_and_granted_per_exact_contribut
         let kernel = Kernel::build_with_options(
             "inspection",
             [snapshot.clone()],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         for (id, expected_value) in ["a", "b"].into_iter().zip(expected) {

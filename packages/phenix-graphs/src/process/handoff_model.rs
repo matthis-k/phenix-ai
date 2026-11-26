@@ -374,7 +374,7 @@ impl Process for Scripted {
             Action::Emit => Step::Emit(ProcessEmission::new("out", Value::of(17_u64))),
             Action::Yield => Step::Yield,
             Action::WaitInput => Step::WaitInput("next".into()),
-            Action::WaitInputs => Step::WaitInputs(Readiness::Any),
+            Action::WaitInputs => Step::WaitInputs(Readiness::ANY),
             Action::WaitWake => Step::WaitWake,
             Action::Complete => Step::Complete,
             Action::Finished => Step::Finished,

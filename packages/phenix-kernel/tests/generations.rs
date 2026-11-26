@@ -182,8 +182,7 @@ impl PluginInstance for Plugin {
 fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Result<Candidate, LifecycleError> {
     host.prepare(
         stages,
-        options(),
-        Arc::new(LocalProcessDispatcher),
+        options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "generation",
         |_| Ok(()),
     )
@@ -332,8 +331,7 @@ fn resolution_compile_composition_binding_and_nth_start_failure_leave_active_unc
         let result = if mode == 2 {
             host.prepare(
                 stages,
-                options(),
-                Arc::new(LocalProcessDispatcher),
+                options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "binding",
                 |_| Err("store refused".into()),
             )

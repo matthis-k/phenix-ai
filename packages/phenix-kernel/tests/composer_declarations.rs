@@ -243,8 +243,7 @@ fn multiple_offers_and_self_imports_derive_the_actual_composer_identity() {
     let mut kernel = Kernel::build_with_options(
         "self-imports",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     assert_eq!(
@@ -410,8 +409,7 @@ fn self_import_preview_and_prepared_replacement_require_their_exact_write_grants
         let error = Kernel::build_with_options(
             "authority",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .err()
         .expect("imports must not confer write authority");
@@ -521,8 +519,7 @@ fn repeated_after_and_route_append_and_prepare_replaces() {
     let mut kernel = Kernel::build_with_options(
         "append-and-replace",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     assert_eq!(*log.lock().unwrap(), ["b", "z", "a"]);

@@ -3,7 +3,7 @@
 use crate::{Code, Failure, identifier};
 use std::{
     any::{Any, TypeId},
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet, btree_map},
 };
 
 /// Captured registry validation data, available through [`Failure`]'s source chain.
@@ -60,11 +60,6 @@ impl std::error::Error for RegistryFault {}
 pub trait Contribution: Any + Send + Sync {
     const KIND: &'static str;
     fn id(&self) -> &str;
-    /// Logical path of the actual native component offered by this contribution.
-    /// This locator is not a shape declaration, membership claim or permission.
-    fn component_path(&self) -> Option<&str> {
-        None
-    }
 }
 
 struct Entry {
@@ -76,8 +71,7 @@ struct Entry {
 
 pub struct Registrar {
     owner: String,
-    names: BTreeSet<(&'static str, String)>,
-    entries: Vec<Entry>,
+    entries: BTreeMap<(&'static str, String), Box<dyn Any + Send + Sync>>,
 }
 impl Registrar {
     /// Called by the trusted host with its selected package identity.
@@ -93,8 +87,7 @@ impl Registrar {
         }
         Ok(Self {
             owner,
-            names: BTreeSet::new(),
-            entries: Vec::new(),
+            entries: BTreeMap::new(),
         })
     }
     pub fn owner(&self) -> &str {
@@ -113,24 +106,21 @@ impl Registrar {
                 }),
             ));
         }
-        if !self.names.insert((C::KIND, id.clone())) {
-            return Err(Failure::with_source(
+        match self.entries.entry((C::KIND, id)) {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Box::new(value));
+                Ok(())
+            }
+            btree_map::Entry::Occupied(entry) => Err(Failure::with_source(
                 Code::DescriptorInvalid,
                 "duplicate contribution",
                 Box::new(RegistryFault::DuplicateContribution {
                     owner: self.owner.clone(),
                     kind: C::KIND,
-                    id,
+                    id: entry.key().1.clone(),
                 }),
-            ));
+            )),
         }
-        self.entries.push(Entry {
-            owner: self.owner.clone(),
-            kind: C::KIND,
-            id,
-            value: Box::new(value),
-        });
-        Ok(())
     }
     /// Admit a same-owner bundle atomically, including its reserved names.
     /// Only stored identities are inspected; erased payload callbacks never run.
@@ -157,7 +147,7 @@ impl Registrar {
                 ));
             }
             let name = (entry.kind, entry.id.clone());
-            if self.names.contains(&name) || !names.insert(name) {
+            if self.entries.contains_key(&name) || !names.insert(name) {
                 return Err(Failure::with_source(
                     Code::DescriptorInvalid,
                     "duplicate contribution",
@@ -169,13 +159,25 @@ impl Registrar {
                 ));
             }
         }
-        self.names.extend(names);
-        self.entries.extend(batch.entries);
+        self.entries.extend(
+            batch
+                .entries
+                .into_iter()
+                .map(|entry| ((entry.kind, entry.id), entry.value)),
+        );
         Ok(())
     }
     pub fn finish(self) -> Contributions {
-        let mut entries = self.entries;
-        entries.sort_by(|a, b| (&a.owner, a.kind, &a.id).cmp(&(&b.owner, b.kind, &b.id)));
+        let entries = self
+            .entries
+            .into_iter()
+            .map(|((kind, id), value)| Entry {
+                owner: self.owner.clone(),
+                kind,
+                id,
+                value,
+            })
+            .collect();
         Contributions { entries }
     }
 }
@@ -513,7 +515,6 @@ mod tests {
             }
             assert!(destination.merge(bundle).is_err());
             assert!(destination.entries.is_empty());
-            assert!(destination.names.is_empty());
             destination.add(Patch("fresh")).unwrap();
             destination.add(Patch("later")).unwrap();
         }

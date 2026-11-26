@@ -1,5 +1,7 @@
 //! Opt-in fixed-lane correlation using ordinary compiled processes and queues.
-use crate::runtime::{Readiness, ReadinessPolicy, ReadinessSnapshot};
+use crate::runtime::{
+    PolicyDeclaration, Readiness, ReadinessPolicy, ReadinessSnapshot, SelectionRule,
+};
 use crate::{
     ComponentDef, Interface, NetworkBuilder, NetworkError, PortDef, Process, ProcessContext,
     ProcessEmission, ProcessFactory, Step,
@@ -164,19 +166,41 @@ struct LanePolicy {
     lane: Option<usize>,
 }
 impl ReadinessPolicy for LanePolicy {
-    fn closure_ports(&self, lane: usize) -> Vec<String> {
-        match &self.policy {
-            Readiness::Optional { required, optional } if required.is_empty() => {
-                optional.iter().map(|name| lane_name(lane, name)).collect()
-            }
-            Readiness::Custom(policy) => policy
-                .closure_ports(lane)
-                .iter()
-                .map(|name| lane_name(lane, name))
-                .collect(),
-            _ => vec![],
+    fn declaration(&self) -> PolicyDeclaration {
+        let rule = self
+            .lane
+            .and_then(|lane| match self.policy.declaration().rule.as_ref()? {
+                SelectionRule::All => Some(SelectionRule::Optional {
+                    required: self
+                        .names
+                        .iter()
+                        .map(|name| lane_name(lane, name))
+                        .collect(),
+                    optional: vec![],
+                }),
+                SelectionRule::Optional { required, optional } => Some(SelectionRule::Optional {
+                    required: required.iter().map(|name| lane_name(lane, name)).collect(),
+                    optional: optional.iter().map(|name| lane_name(lane, name)).collect(),
+                }),
+                _ => None,
+            });
+        PolicyDeclaration {
+            rule,
+            correlated: false,
         }
     }
+
+    fn closure_ports(&self, lane: usize) -> Vec<String> {
+        let ports = match &self.policy.declaration().rule {
+            Some(SelectionRule::Optional { required, optional }) if required.is_empty() => {
+                optional.clone()
+            }
+            None => self.policy.closure_ports(lane),
+            _ => vec![],
+        };
+        ports.iter().map(|name| lane_name(lane, name)).collect()
+    }
+
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
         let Some(lane) = self.lane.or(snapshot.correlation_lane) else {
             return vec![];
@@ -196,38 +220,11 @@ impl ReadinessPolicy for LanePolicy {
                     })
             })
             .collect();
-        let available: Vec<_> = heads
-            .iter()
-            .filter(|h| h.available)
-            .map(|h| h.port.clone())
-            .collect();
-        let selected = match &self.policy {
-            Readiness::Any => available.into_iter().take(1).collect(),
-            Readiness::All | Readiness::CorrelatedAll if available.len() == self.names.len() => {
-                available
-            }
-            Readiness::AtLeast(n) if available.len() >= n.get() => {
-                available.into_iter().take(n.get()).collect()
-            }
-            Readiness::Optional { required, optional }
-                if required
-                    .iter()
-                    .all(|n| heads.iter().any(|h| &h.port == n && h.available))
-                    && optional.iter().all(|n| {
-                        heads
-                            .iter()
-                            .any(|h| &h.port == n && (h.available || h.closed))
-                    }) =>
-            {
-                required.iter().chain(optional).cloned().collect()
-            }
-            Readiness::Custom(policy) => policy.select(&ReadinessSnapshot {
-                request: snapshot.request,
-                correlation_lane: Some(lane),
-                heads,
-            }),
-            _ => vec![],
-        };
+        let selected = self.policy.select(&ReadinessSnapshot {
+            request: snapshot.request,
+            correlation_lane: Some(lane),
+            heads,
+        });
         selected.iter().map(|name| lane_name(lane, name)).collect()
     }
 }
@@ -244,7 +241,7 @@ impl ProcessFactory for JoinFactory {
         })
     }
     fn readiness(&self) -> Readiness {
-        Readiness::Custom(Arc::new(self.policy.clone()))
+        Readiness::from_policy(self.policy.clone())
     }
     fn correlation_lanes(&self) -> Option<NonZeroUsize> {
         Some(self.lanes)
@@ -265,21 +262,11 @@ impl Process for Join {
         context.rename_inputs(|name| lane_name(lane, name));
         result.map(|step| match step {
             Step::WaitInput(name) => Step::WaitInput(lane_name(lane, &name)),
-            Step::WaitInputs(policy) => Step::WaitInputs(match policy {
-                Readiness::All | Readiness::CorrelatedAll => Readiness::Optional {
-                    required: self.names.iter().map(|n| lane_name(lane, n)).collect(),
-                    optional: vec![],
-                },
-                Readiness::Optional { required, optional } => Readiness::Optional {
-                    required: required.iter().map(|n| lane_name(lane, n)).collect(),
-                    optional: optional.iter().map(|n| lane_name(lane, n)).collect(),
-                },
-                policy => Readiness::Custom(Arc::new(LanePolicy {
-                    names: self.names.clone(),
-                    policy,
-                    lane: Some(lane),
-                })),
-            }),
+            Step::WaitInputs(policy) => Step::WaitInputs(Readiness::from_policy(LanePolicy {
+                names: self.names.clone(),
+                policy,
+                lane: Some(lane),
+            })),
             step => step,
         })
     }

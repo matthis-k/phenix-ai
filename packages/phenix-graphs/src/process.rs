@@ -217,15 +217,10 @@ pub(crate) struct LeasedFactory {
 }
 impl ProcessFactory for LeasedFactory {
     fn readiness(&self) -> crate::runtime::Readiness {
-        match self.inner.readiness() {
-            crate::runtime::Readiness::Custom(inner) => {
-                crate::runtime::Readiness::Custom(Arc::new(LeasedReadiness {
-                    inner,
-                    _lease: self.lease.clone(),
-                }))
-            }
-            policy => policy,
-        }
+        crate::runtime::Readiness::from_policy(LeasedReadiness {
+            inner: self.inner.readiness(),
+            _lease: self.lease.clone(),
+        })
     }
     fn correlation_lanes(&self) -> Option<std::num::NonZeroUsize> {
         self.inner.correlation_lanes()
@@ -238,18 +233,21 @@ impl ProcessFactory for LeasedFactory {
     }
 }
 struct LeasedReadiness {
-    inner: Arc<dyn crate::runtime::ReadinessPolicy>,
+    inner: crate::runtime::Readiness,
     _lease: Arc<dyn Send + Sync>,
 }
 impl crate::runtime::ReadinessPolicy for LeasedReadiness {
+    fn declaration(&self) -> crate::runtime::PolicyDeclaration {
+        self.inner.declaration().clone()
+    }
     fn select(&self, snapshot: &crate::runtime::ReadinessSnapshot) -> Vec<String> {
-        self.inner.select(snapshot)
+        crate::runtime::ReadinessPolicy::select(&self.inner, snapshot)
     }
     fn closure_ports(&self, lane: usize) -> Vec<String> {
-        self.inner.closure_ports(lane)
+        crate::runtime::ReadinessPolicy::closure_ports(&self.inner, lane)
     }
     fn notification_driven(&self) -> bool {
-        self.inner.notification_driven()
+        crate::runtime::ReadinessPolicy::notification_driven(&self.inner)
     }
 }
 struct LeasedProcess {

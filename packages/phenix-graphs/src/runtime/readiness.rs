@@ -46,44 +46,112 @@ impl ReadinessError {
     }
 }
 
-#[derive(Clone, Default)]
-pub enum Readiness {
-    #[default]
+/// Declarative input requirements. These rules define selection, exhaustion
+/// and passive inspection together. Arbitrary selectors use an opaque policy
+/// instead; either form is available to all callers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelectionRule {
     Any,
     All,
-    /// Opt-in request-scoped join. Selects the earliest packet of one request
-    /// from each bounded input queue, even behind another request's head.
-    /// Preserves order within each request, not global cross-request FIFO.
-    /// An exact WaitInput continuation owned by this policy may also skip
-    /// foreign heads for its next authenticated request packet. It does not
-    /// change head-only staged waits under other readiness policies.
-    /// Unscoped packets remain strictly head-only.
-    CorrelatedAll,
     AtLeast(NonZeroUsize),
-    /// Omit optional inputs only at actual EOS or scheduler-proven request-local
-    /// upstream closure. Sealing a request alone is not closure evidence.
     Optional {
         required: Vec<String>,
         optional: Vec<String>,
     },
-    /// Pure head-only selection. Processes stage subsequent reservations using
-    /// WaitInput; a policy cannot skip packets or own a second payload buffer.
-    Custom(Arc<dyn ReadinessPolicy>),
 }
+
+/// Immutable policy facts used without invoking application code.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PolicyDeclaration {
+    /// A rule determines selection from the supplied input heads. None means
+    /// the policy's opaque selector determines selection.
+    pub rule: Option<SelectionRule>,
+    /// Permit checked request-local selection behind foreign FIFO heads.
+    /// Unscoped packets remain head-only.
+    pub correlated: bool,
+}
+
+#[derive(Clone)]
+enum PolicyRef {
+    Static(&'static dyn ReadinessPolicy),
+    Shared(Arc<dyn ReadinessPolicy>),
+}
+
+/// An ordinary policy handle. Ownership is independent of behavior.
+#[derive(Clone)]
+pub struct Readiness {
+    implementation: Option<PolicyRef>,
+    declaration: PolicyDeclaration,
+}
+
+impl Readiness {
+    pub const ANY: Self = Self::declared(SelectionRule::Any, false);
+    pub const ALL: Self = Self::declared(SelectionRule::All, false);
+    pub const CORRELATED_ALL: Self = Self::declared(SelectionRule::All, true);
+
+    /// Construct a declarative policy without allocation or application code.
+    /// The same rule drives execution, validation, closure and inspection.
+    pub const fn declared(rule: SelectionRule, correlated: bool) -> Self {
+        Self {
+            implementation: None,
+            declaration: PolicyDeclaration {
+                rule: Some(rule),
+                correlated,
+            },
+        }
+    }
+
+    /// Capture a policy's immutable declaration once, at construction.
+    pub fn new(policy: Arc<dyn ReadinessPolicy>) -> Self {
+        let declaration = policy.declaration();
+        Self {
+            implementation: Some(PolicyRef::Shared(policy)),
+            declaration,
+        }
+    }
+
+    pub fn from_policy(policy: impl ReadinessPolicy + 'static) -> Self {
+        Self::new(Arc::new(policy))
+    }
+
+    pub fn from_static(policy: &'static dyn ReadinessPolicy) -> Self {
+        Self {
+            implementation: Some(PolicyRef::Static(policy)),
+            declaration: policy.declaration(),
+        }
+    }
+
+    pub fn at_least(n: NonZeroUsize) -> Self {
+        Self::declared(SelectionRule::AtLeast(n), false)
+    }
+
+    pub fn optional(required: Vec<String>, optional: Vec<String>) -> Self {
+        Self::declared(SelectionRule::Optional { required, optional }, false)
+    }
+
+    pub fn declaration(&self) -> &PolicyDeclaration {
+        &self.declaration
+    }
+
+    fn implementation(&self) -> Option<&dyn ReadinessPolicy> {
+        Some(match self.implementation.as_ref()? {
+            PolicyRef::Static(policy) => *policy,
+            PolicyRef::Shared(policy) => policy.as_ref(),
+        })
+    }
+}
+
+impl Default for Readiness {
+    fn default() -> Self {
+        Self::ANY
+    }
+}
+
 impl std::fmt::Debug for Readiness {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Any => f.write_str("Any"),
-            Self::All => f.write_str("All"),
-            Self::CorrelatedAll => f.write_str("CorrelatedAll"),
-            Self::AtLeast(n) => f.debug_tuple("AtLeast").field(n).finish(),
-            Self::Optional { required, optional } => f
-                .debug_struct("Optional")
-                .field("required", required)
-                .field("optional", optional)
-                .finish(),
-            Self::Custom(_) => f.write_str("Custom(..)"),
-        }
+        f.debug_struct("Readiness")
+            .field("declaration", &self.declaration)
+            .finish_non_exhaustive()
     }
 }
 #[derive(Clone, Debug)]
@@ -99,12 +167,19 @@ pub struct ReadinessSnapshot {
     pub heads: Vec<InputHead>,
 }
 pub trait ReadinessPolicy: Send + Sync {
+    /// Immutable declaration, captured when constructing the policy handle.
+    /// If a rule is declared, the runtime evaluates that rule instead of
+    /// calling the selector. Opaque policies need not describe their algorithm.
+    fn declaration(&self) -> PolicyDeclaration {
+        PolicyDeclaration::default()
+    }
+
     /// Request-local closure obligations in this process's input namespace. Called
     /// once before a request scope is admitted; a panic rejects that admission.
     fn closure_ports(&self, _lane: usize) -> Vec<String> {
         vec![]
     }
-    /// Return distinct port names whose heads should be atomically reserved.
+    /// Select input ports for an opaque policy (one without a declared rule).
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
 
@@ -130,14 +205,14 @@ pub(super) fn validate_policy_ports<'a>(
     policy: &Readiness,
 ) -> Result<(), ReadinessError> {
     let names: BTreeSet<&str> = ports.collect();
-    match policy {
-        Readiness::AtLeast(n) if n.get() > names.len() => {
+    match policy.declaration().rule.as_ref() {
+        Some(SelectionRule::AtLeast(n)) if n.get() > names.len() => {
             return Err(ReadinessError::Threshold {
                 required: n.get(),
                 ports: names.len(),
             });
         }
-        Readiness::Optional { required, optional } => {
+        Some(SelectionRule::Optional { required, optional }) => {
             let mut seen = BTreeSet::new();
             for name in required.iter().chain(optional) {
                 if !names.contains(name.as_str()) || !seen.insert(name) {
@@ -151,6 +226,153 @@ pub(super) fn validate_policy_ports<'a>(
         _ => {}
     }
     Ok(())
+}
+
+impl Readiness {
+    pub(super) fn correlated(&self) -> bool {
+        self.declaration.correlated
+    }
+
+    pub(super) fn opaque(&self) -> bool {
+        self.declaration.rule.is_none()
+    }
+
+    pub(super) fn watches_scoped_closure(&self) -> bool {
+        matches!(self.declaration.rule, Some(SelectionRule::Optional { .. }))
+    }
+
+    pub(super) fn has_zero_packet_closure(&self) -> bool {
+        !self.declared_closure_ports().is_empty()
+    }
+
+    pub(super) fn declared_closure_ports(&self) -> &[String] {
+        match &self.declaration.rule {
+            Some(SelectionRule::Optional { required, optional }) if required.is_empty() => optional,
+            _ => &[],
+        }
+    }
+
+    /// Pure staged exhaustion assessment, independent of queues or scheduler.
+    fn staged_error(&self, snapshot: &ReadinessSnapshot) -> Option<ReadinessError> {
+        let missing = |name: &String| {
+            snapshot
+                .heads
+                .iter()
+                .find(|h| &h.port == name)
+                .is_some_and(|h| !h.available && h.closed)
+        };
+        match self.declaration.rule.as_ref() {
+            Some(SelectionRule::Optional { required, .. }) => required
+                .iter()
+                .find(|name| missing(name))
+                .map(|name| ReadinessError::RequiredClosed { port: name.clone() }),
+            Some(SelectionRule::All) => snapshot
+                .heads
+                .iter()
+                .find(|h| !h.available && h.closed)
+                .map(|h| ReadinessError::RequiredClosed {
+                    port: h.port.clone(),
+                }),
+            Some(SelectionRule::Any) if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
+                Some(ReadinessError::AnyExhausted)
+            }
+            Some(SelectionRule::AtLeast(n))
+                if snapshot
+                    .heads
+                    .iter()
+                    .filter(|h| h.available || !h.closed)
+                    .count()
+                    < n.get() =>
+            {
+                Some(ReadinessError::ThresholdExhausted { required: n.get() })
+            }
+            _ => None,
+        }
+    }
+
+    /// Both execution and passive inspection evaluate the same rule.
+    fn passive_selection(&self, snapshot: &ReadinessSnapshot) -> Option<Vec<String>> {
+        Some(match self.declaration.rule.as_ref()? {
+            SelectionRule::Any => snapshot
+                .heads
+                .iter()
+                .filter(|head| head.available)
+                .take(1)
+                .map(|head| head.port.clone())
+                .collect(),
+            SelectionRule::All => {
+                if snapshot.heads.iter().all(|head| head.available) {
+                    snapshot
+                        .heads
+                        .iter()
+                        .map(|head| head.port.clone())
+                        .collect()
+                } else {
+                    vec![]
+                }
+            }
+            SelectionRule::AtLeast(n) => {
+                let selected: Vec<_> = snapshot
+                    .heads
+                    .iter()
+                    .filter(|head| head.available)
+                    .take(n.get())
+                    .map(|head| head.port.clone())
+                    .collect();
+                if selected.len() == n.get() {
+                    selected
+                } else {
+                    vec![]
+                }
+            }
+            SelectionRule::Optional { required, optional } => {
+                select_optional(required, optional, snapshot)
+            }
+        })
+    }
+}
+
+fn select_optional(
+    required: &[String],
+    optional: &[String],
+    snapshot: &ReadinessSnapshot,
+) -> Vec<String> {
+    let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
+    if required
+        .iter()
+        .all(|name| found(name).is_some_and(|head| head.available))
+        && optional
+            .iter()
+            .all(|name| found(name).is_some_and(|head| head.available || head.closed))
+    {
+        required.iter().chain(optional).cloned().collect()
+    } else {
+        vec![]
+    }
+}
+
+impl ReadinessPolicy for Readiness {
+    fn declaration(&self) -> PolicyDeclaration {
+        self.declaration.clone()
+    }
+
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        self.passive_selection(snapshot).unwrap_or_else(|| {
+            self.implementation()
+                .expect("opaque readiness has an implementation")
+                .select(snapshot)
+        })
+    }
+
+    fn closure_ports(&self, lane: usize) -> Vec<String> {
+        self.implementation()
+            .map_or_else(Vec::new, |policy| policy.closure_ports(lane))
+    }
+
+    fn notification_driven(&self) -> bool {
+        self.implementation()
+            .is_some_and(|policy| policy.notification_driven())
+    }
 }
 
 impl NetworkSession {
@@ -217,10 +439,7 @@ impl NetworkSession {
             // Without this, a crossed peer head can indefinitely strand an
             // already-owned WaitInput even when its own next packet is queued.
             // All other policies retain strict head-only staged reservations.
-            let correlated = matches!(
-                p.waiting_policy.as_ref().unwrap_or(&p.policy),
-                Readiness::CorrelatedAll
-            );
+            let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
             let queue = self.packet_for(index, port, p.request, correlated);
             let closed = self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
@@ -254,7 +473,7 @@ impl NetworkSession {
     ) -> Vec<Option<RequestId>> {
         let p = &self.processes[index];
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        let correlated = matches!(policy, Readiness::CorrelatedAll);
+        let correlated = policy.correlated();
         let mut candidates = vec![];
         for port in order {
             let input = &p.inputs[*port];
@@ -311,10 +530,7 @@ impl NetworkSession {
         request: Option<RequestId>,
     ) -> ReadinessSnapshot {
         let p = &self.processes[index];
-        let correlated = matches!(
-            p.waiting_policy.as_ref().unwrap_or(&p.policy),
-            Readiness::CorrelatedAll
-        );
+        let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         ReadinessSnapshot {
             request,
             correlation_lane: None,
@@ -334,88 +550,28 @@ impl NetworkSession {
         snapshot: &ReadinessSnapshot,
     ) -> Option<Failure> {
         let p = &self.processes[index];
-        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        if p.handoff.state() == HandoffState::WaitingInput {
-            let missing = |name: &String| {
-                snapshot
-                    .heads
-                    .iter()
-                    .find(|h| &h.port == name)
-                    .is_some_and(|h| !h.available && h.closed)
-            };
-            let impossible = match policy {
-                Readiness::Optional { required, .. } => required
-                    .iter()
-                    .find(|name| missing(name))
-                    .map(|name| ReadinessError::RequiredClosed { port: name.clone() }.failure()),
-                Readiness::All | Readiness::CorrelatedAll => snapshot
-                    .heads
-                    .iter()
-                    .find(|h| !h.available && h.closed)
-                    .map(|h| {
-                        ReadinessError::RequiredClosed {
-                            port: h.port.clone(),
-                        }
-                        .failure()
-                    }),
-                Readiness::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
-                    Some(ReadinessError::AnyExhausted.failure())
-                }
-                Readiness::AtLeast(n)
-                    if snapshot
-                        .heads
-                        .iter()
-                        .filter(|h| h.available || !h.closed)
-                        .count()
-                        < n.get() =>
-                {
-                    Some(ReadinessError::ThresholdExhausted { required: n.get() }.failure())
-                }
-                _ => None,
-            };
-            return impossible;
+        if p.handoff.state() != HandoffState::WaitingInput {
+            return None;
         }
-        None
+        p.waiting_policy
+            .as_ref()
+            .unwrap_or(&p.policy)
+            .staged_error(snapshot)
+            .map(ReadinessError::failure)
     }
-    /// None is opaque application readiness, never an invitation to call it.
-    pub(super) fn builtin_selection_names(
+
+    pub(super) fn declared_selection_names(
         &self,
         index: usize,
         snapshot: &ReadinessSnapshot,
     ) -> Option<Vec<String>> {
         let p = &self.processes[index];
-        let count = p.inputs.len();
-        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        let available: Vec<_> = snapshot
-            .heads
-            .iter()
-            .filter(|h| h.available)
-            .map(|h| h.port.clone())
-            .collect();
-        Some(match policy {
-            Readiness::Any => available.into_iter().take(1).collect(),
-            Readiness::All | Readiness::CorrelatedAll if available.len() == count => available,
-            Readiness::AtLeast(n) if available.len() >= n.get() => {
-                available.into_iter().take(n.get()).collect()
-            }
-            Readiness::Optional { required, optional } => {
-                let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
-                if required
-                    .iter()
-                    .all(|n| found(n).is_some_and(|h| h.available))
-                    && optional
-                        .iter()
-                        .all(|n| found(n).is_some_and(|h| h.available || h.closed))
-                {
-                    required.iter().chain(optional).cloned().collect()
-                } else {
-                    vec![]
-                }
-            }
-            Readiness::Custom(_) => return None,
-            _ => vec![],
-        })
+        p.waiting_policy
+            .as_ref()
+            .unwrap_or(&p.policy)
+            .passive_selection(snapshot)
     }
+
     pub(super) fn selected_ports(
         &self,
         index: usize,
@@ -424,10 +580,7 @@ impl NetworkSession {
     ) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
         let request = snapshot.request;
-        let correlated = matches!(
-            p.waiting_policy.as_ref().unwrap_or(&p.policy),
-            Readiness::CorrelatedAll
-        );
+        let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         let mut ports = vec![];
         for name in names {
             let port = p
@@ -479,24 +632,15 @@ impl NetworkSession {
                 return Err(error);
             }
             let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-            let names = match self.builtin_selection_names(index, &snapshot) {
-                Some(names) => names,
-                None => {
-                    let Readiness::Custom(policy) = policy else {
-                        unreachable!()
-                    };
-                    snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        policy.select(&snapshot)
-                    }))
+            snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
+            let names =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| policy.select(&snapshot)))
                     .map_err(|payload| {
                         crate::process::callback_panicked(CallbackPhase::Readiness, payload)
-                    })?
-                }
-            };
+                    })?;
             if names.is_empty() {
                 if p.handoff.state() == HandoffState::WaitingInput
-                    && matches!(policy, Readiness::Custom(_))
+                    && policy.opaque()
                     && snapshot.heads.iter().all(|h| h.available || h.closed)
                 {
                     return Err(ReadinessError::CustomExhausted.failure());
@@ -528,13 +672,11 @@ impl NetworkSession {
         let request = selected.request;
         self.processes[index].request = request;
         if self.request_queue_policy == RequestQueuePolicy::BoundedLanes
-            || matches!(
-                self.processes[index]
-                    .waiting_policy
-                    .as_ref()
-                    .unwrap_or(&self.processes[index].policy),
-                Readiness::CorrelatedAll
-            )
+            || self.processes[index]
+                .waiting_policy
+                .as_ref()
+                .unwrap_or(&self.processes[index].policy)
+                .correlated()
         {
             self.request_cursors
                 .insert(index, request.map_or(0, |id| self.requests[&id].lane + 1));

@@ -129,14 +129,11 @@ fn stable(session: &NetworkSession, request: Option<RequestId>, now: Instant) {
 #[test]
 fn builtin_assessments_match_next_actual_reservation_and_count_distinct_ports() {
     let policies = [
-        Readiness::Any,
-        Readiness::All,
-        Readiness::CorrelatedAll,
-        Readiness::AtLeast(n(2)),
-        Readiness::Optional {
-            required: vec!["a".into()],
-            optional: vec!["b".into()],
-        },
+        Readiness::ANY,
+        Readiness::ALL,
+        Readiness::CORRELATED_ALL,
+        Readiness::at_least(n(2)),
+        Readiness::optional(vec!["a".into()], vec!["b".into()]),
     ];
     for queues in [
         RequestQueuePolicy::SharedFifo,
@@ -153,7 +150,7 @@ fn builtin_assessments_match_next_actual_reservation_and_count_distinct_ports() 
                 session.inject_request(id, "b", Value::of(0_i64)).unwrap();
                 let (index, held) = session.next_job().unwrap();
                 // Any reserved only a; consume its remaining seed before the probe.
-                if matches!(policy, Readiness::Any) {
+                if matches!(policy.declaration().rule, Some(SelectionRule::Any)) {
                     session.complete(index, held.run()).unwrap();
                     let (index, job) = session.next_job().unwrap();
                     session.complete(index, job.run()).unwrap();
@@ -170,7 +167,9 @@ fn builtin_assessments_match_next_actual_reservation_and_count_distinct_ports() 
                     let available =
                         matches!(explanation.readiness, ReadyAssessment::Available { .. });
                     assert_eq!(available, second_port, "{policy:?}: {explanation:?}");
-                    if matches!(policy, Readiness::AtLeast(_)) && !second_port {
+                    if matches!(policy.declaration().rule, Some(SelectionRule::AtLeast(_)))
+                        && !second_port
+                    {
                         assert!(matches!(&candidate(&explanation, Some(id)).assessment,
                             ReadyAssessment::Blocked { reasons } if reasons.contains(&ReadinessBlock::Threshold { available_ports: 1, required_ports: 2 })));
                     }
@@ -260,6 +259,38 @@ impl ReadinessPolicy for Opaque {
 }
 
 #[test]
+fn passive_inspection_retains_opaque_correlation_declaration() {
+    struct CorrelatedOpaque(Arc<AtomicUsize>);
+    impl ReadinessPolicy for CorrelatedOpaque {
+        fn declaration(&self) -> PolicyDeclaration {
+            PolicyDeclaration {
+                rule: None,
+                correlated: true,
+            }
+        }
+
+        fn select(&self, _: &ReadinessSnapshot) -> Vec<String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            vec![]
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = Readiness::from_policy(CorrelatedOpaque(calls.clone()));
+    let expected = policy.declaration().clone();
+    let mut session = pair(vec![], Inputs::default())
+        .start_with_options(options(policy, RequestQueuePolicy::SharedFifo));
+    // Supply an actual scheduler candidate before assessing opaque selection.
+    let id = session.begin_request(None).unwrap();
+    session.inject_request(id, "a", Value::of(1_i64)).unwrap();
+    let before = calls.load(Ordering::SeqCst);
+    let explanation = session.explain_process(0, Instant::now()).unwrap();
+    assert_eq!(explanation.policy, expected);
+    assert_eq!(explanation.readiness, ReadyAssessment::UnknownCustom);
+    assert_eq!(calls.load(Ordering::SeqCst), before);
+}
+
+#[test]
 fn custom_is_opaque_and_repeated_format_drop_queries_do_not_call_or_consume_notifications() {
     for notified in [false, true] {
         for queues in [
@@ -273,7 +304,7 @@ fn custom_is_opaque_and_repeated_format_drop_queries_do_not_call_or_consume_noti
                 notified,
             });
             let mut session = pair(vec![], Inputs::default())
-                .start_with_options(options(Readiness::Custom(policy.clone()), queues));
+                .start_with_options(options(Readiness::new(policy.clone()), queues));
             let id = session.begin_request(None).unwrap();
             session.inject_request(id, "a", Value::of(1_i64)).unwrap();
             session.inject_request(id, "b", Value::of(2_i64)).unwrap();
@@ -314,9 +345,9 @@ fn fifo_foreign_heads_correlated_offsets_and_mixed_unscoped_evidence() {
     ] {
         for correlated in [false, true] {
             let policy = if correlated {
-                Readiness::CorrelatedAll
+                Readiness::CORRELATED_ALL
             } else {
-                Readiness::All
+                Readiness::ALL
             };
             let mut session = pair(vec![Action::Wake], Inputs::default())
                 .start_with_options(options(policy, queues));
@@ -394,11 +425,11 @@ fn wait_input_and_groups_link_owner_and_keep_closure_proof_separate_from_freshne
     ] {
         for action in [
             Action::Wait("b"),
-            Action::Group(Readiness::All),
-            Action::Group(Readiness::AtLeast(n(2))),
+            Action::Group(Readiness::ALL),
+            Action::Group(Readiness::at_least(n(2))),
         ] {
             let mut session = pair(vec![action.clone()], Inputs::default())
-                .start_with_options(options(Readiness::Any, queues));
+                .start_with_options(options(Readiness::ANY, queues));
             let id = session.begin_request(None).unwrap();
             session.inject_request(id, "a", Value::of(1_i64)).unwrap();
             session.run_until_idle(1);
@@ -565,7 +596,7 @@ fn exact_outstanding_tickets_direct_deferred_unsupervised_and_future_clock_are_p
     for deferred in [false, true] {
         for timeout in [None, Some(Duration::from_secs(60))] {
             let dispatcher = Arc::new(Deferred::default());
-            let mut opts = options(Readiness::Any, RequestQueuePolicy::SharedFifo);
+            let mut opts = options(Readiness::ANY, RequestQueuePolicy::SharedFifo);
             opts.deferred_timeout = timeout;
             opts.dispatcher = dispatcher.clone();
             let mut s = pair(vec![], Inputs::default()).start_with_options(opts);
@@ -605,7 +636,7 @@ fn retained_capture_targets_cross_request_backpressure_and_empty_selection_captu
             vec![action.clone(), Action::Complete, action],
             Inputs::default(),
         )
-        .start_with_options(options(Readiness::Any, RequestQueuePolicy::SharedFifo));
+        .start_with_options(options(Readiness::ANY, RequestQueuePolicy::SharedFifo));
         let a = s.begin_request(Some("out")).unwrap();
         let b = s.begin_request(Some("out")).unwrap();
         s.inject_request(a, "a", Value::of(1_i64)).unwrap();
@@ -726,7 +757,7 @@ fn request_status_counts_authentication_release_reuse_and_materialized_terminal_
 fn startup_failure_reports_actual_handoff_and_cause_not_a_fabricated_activation() {
     let mut opts = SessionOptions::default();
     opts.readiness
-        .insert("not-a-process".into(), Readiness::Any);
+        .insert("not-a-process".into(), Readiness::ANY);
     let s = pair(vec![], Inputs::default()).start_with_options(opts);
     let e = s.explain_process(0, Instant::now()).unwrap();
     assert_eq!(e.session.terminal, Some(SessionState::Failed));
@@ -858,7 +889,7 @@ fn cycle_closure_obligation_uses_cached_custom_names_and_is_not_mistaken_for_rea
         notified: true,
     });
     let mut s = compiled.start_with_options(SessionOptions {
-        readiness: [("middle".into(), Readiness::Custom(custom.clone()))].into(),
+        readiness: [("middle".into(), Readiness::new(custom.clone()))].into(),
         ..Default::default()
     });
     let id = s.begin_request(None).unwrap();
@@ -885,10 +916,7 @@ fn cycle_closure_obligation_uses_cached_custom_names_and_is_not_mistaken_for_rea
 fn required_optional_port_waits_for_proven_absence_not_just_sealing_and_packet_witness_is_indexed()
 {
     let mut s = pair(vec![Action::Wake], Inputs::default()).start_with_options(options(
-        Readiness::Optional {
-            required: vec!["a".into()],
-            optional: vec!["b".into()],
-        },
+        Readiness::optional(vec!["a".into()], vec!["b".into()]),
         RequestQueuePolicy::SharedFifo,
     ));
     let id = s.begin_request(None).unwrap();
@@ -972,7 +1000,7 @@ fn publication_reports_all_selected_internal_and_capture_targets_and_closed_beat
         .unwrap();
     let mut s = compiled.start_with_options(SessionOptions {
         capture_capacity: n(1),
-        readiness: [("consumer".into(), Readiness::Custom(gate.clone()))].into(),
+        readiness: [("consumer".into(), Readiness::new(gate.clone()))].into(),
         ..Default::default()
     });
     s.inject("a", Value::of(1_i64)).unwrap();
@@ -1017,7 +1045,7 @@ fn publication_reports_all_selected_internal_and_capture_targets_and_closed_beat
 
 #[test]
 fn terminal_retained_capture_head_can_have_released_id_without_lane_authority() {
-    let mut opts = options(Readiness::Any, RequestQueuePolicy::SharedFifo);
+    let mut opts = options(Readiness::ANY, RequestQueuePolicy::SharedFifo);
     opts.capture_capacity = n(2);
     let mut s = pair(
         vec![
@@ -1116,7 +1144,7 @@ fn invalid_capture_is_an_inner_status_error_and_observed_is_not_queued_count() {
 #[test]
 fn stranded_eos_failure_is_not_reported_as_merely_waiting_for_inputs() {
     let mut s = pair(vec![Action::Complete], Inputs::default())
-        .start_with_options(options(Readiness::All, RequestQueuePolicy::SharedFifo));
+        .start_with_options(options(Readiness::ALL, RequestQueuePolicy::SharedFifo));
     s.inject("a", Value::of(1_i64)).unwrap();
     for name in ["a", "a2", "b"] {
         s.close_input(name).unwrap();
@@ -1203,7 +1231,7 @@ impl phenix_graph::process::ProcessFactory for CallbackFactory {
     }
     fn readiness(&self) -> Readiness {
         self.0.call();
-        Readiness::Custom(self.1.clone())
+        Readiness::new(self.1.clone())
     }
     fn correlation_lanes(&self) -> Option<NonZeroUsize> {
         self.0.call();
@@ -1354,14 +1382,7 @@ fn all_optional_cycle_observation_is_not_replayed_and_invalidated_ticket_invento
         .compile()
         .unwrap()
         .start_with_options(SessionOptions {
-            readiness: [(
-                "p".into(),
-                Readiness::Optional {
-                    required: vec![],
-                    optional: vec!["a".into()],
-                },
-            )]
-            .into(),
+            readiness: [("p".into(), Readiness::optional(vec![], vec!["a".into()]))].into(),
             request_failure_policy: RequestFailurePolicy::RestartAffectedProcess,
             ..Default::default()
         });
@@ -1412,7 +1433,7 @@ fn custom_without_native_candidates_has_known_eos_fallback_without_evaluating_po
         notified: true,
     });
     let mut s = pair(vec![], Inputs::default()).start_with_options(options(
-        Readiness::Custom(custom.clone()),
+        Readiness::new(custom.clone()),
         RequestQueuePolicy::SharedFifo,
     ));
     s.close_input("b").unwrap();

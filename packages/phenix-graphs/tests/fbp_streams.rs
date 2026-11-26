@@ -8,7 +8,8 @@ use phenix_graph::{
         Step,
     },
     runtime::{
-        NetworkSession, Readiness, ReadinessPolicy, ReadinessSnapshot, SessionOptions, SessionState,
+        NetworkSession, PolicyDeclaration, Readiness, ReadinessPolicy, ReadinessSnapshot,
+        SelectionRule, SessionOptions, SessionState,
     },
 };
 use std::{
@@ -76,6 +77,58 @@ fn options() -> SessionOptions {
     }
 }
 
+#[test]
+fn standard_and_external_selectors_execute_the_same_input_contract() {
+    struct ExternalAny;
+    impl ReadinessPolicy for ExternalAny {
+        fn declaration(&self) -> PolicyDeclaration {
+            PolicyDeclaration {
+                rule: Some(SelectionRule::Any),
+                correlated: false,
+            }
+        }
+
+        fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+            snapshot
+                .heads
+                .iter()
+                .filter(|head| head.available)
+                .take(1)
+                .map(|head| head.port.clone())
+                .collect()
+        }
+    }
+
+    static EXTERNAL: ExternalAny = ExternalAny;
+    for policy in [
+        Readiness::ANY,
+        Readiness::from_static(&EXTERNAL),
+        Readiness::from_policy(ExternalAny),
+    ] {
+        assert_eq!(policy.declaration(), Readiness::ANY.declaration());
+        let effects = Arc::new(AtomicUsize::new(0));
+        let mut config = options();
+        config.readiness.insert("counter".into(), policy);
+        let mut session = counter(effects.clone()).start_with_options(config);
+        for (value, expected) in [(2_i64, 2_i64), (3, 5)] {
+            session.inject("input", Value::of(value)).unwrap();
+            session.run_until_idle(64);
+            assert!(session.failure().is_none());
+            assert_eq!(
+                session
+                    .take_output("output")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .get::<i64>()
+                    .unwrap(),
+                expected
+            );
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), 2);
+    }
+}
+
 struct ReadinessCalls(Arc<AtomicUsize>, Arc<AtomicBool>);
 impl ReadinessPolicy for ReadinessCalls {
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
@@ -101,7 +154,7 @@ fn session_state_is_read_only_and_does_not_execute_custom_readiness() {
     let mut config = options();
     config.readiness.insert(
         "counter".into(),
-        Readiness::Custom(Arc::new(ReadinessCalls(calls.clone(), allowed.clone()))),
+        Readiness::new(Arc::new(ReadinessCalls(calls.clone(), allowed.clone()))),
     );
     let mut session = compiled.start_with_options(config);
     let before_query = calls.load(Ordering::SeqCst);
@@ -389,7 +442,7 @@ fn split_join_multiple_outputs_and_zero_output_sink() {
     b.expose_input("input", split.wire_input::<i64>("in").unwrap(), one())
         .unwrap();
     let mut opts = options();
-    opts.readiness.insert("join".into(), Readiness::All);
+    opts.readiness.insert("join".into(), Readiness::ALL);
     let mut s = b
         .build()
         .unwrap()
@@ -517,7 +570,7 @@ impl Process for Waiter {
             }
         }
         Ok(if self.wait_inputs {
-            Step::WaitInputs(Readiness::Any)
+            Step::WaitInputs(Readiness::ANY)
         } else {
             Step::WaitInput("b".into())
         })
@@ -615,7 +668,7 @@ fn input_waits_follow_waiter_ownership_and_live_lane_registration() {
         config.request_queue_policy = policy;
         config.readiness.insert(
             "wait".into(),
-            Readiness::Custom(Arc::new(ReadinessCalls(
+            Readiness::new(Arc::new(ReadinessCalls(
                 calls.clone(),
                 Arc::new(AtomicBool::new(true)),
             ))),
@@ -852,7 +905,7 @@ fn at_least_policy_requires_distinct_ports_and_reserves_exactly_n() {
     let mut options = options();
     options.readiness.insert(
         "n".into(),
-        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::at_least(NonZeroUsize::new(2).unwrap()),
     );
     let mut s = b
         .build()
@@ -1189,14 +1242,14 @@ fn correlated_join_with(policy: Readiness) -> phenix_graph::runtime::NetworkSess
         .start_with_options(options)
 }
 fn correlated_join() -> phenix_graph::runtime::NetworkSession {
-    correlated_join_with(Readiness::All)
+    correlated_join_with(Readiness::ALL)
 }
 
 #[test]
 fn correlated_all_crossed_heads_settle_in_one_bounded_shared_session() {
     use phenix_graph::runtime::RequestStatus;
 
-    let mut session = correlated_join_with(Readiness::CorrelatedAll);
+    let mut session = correlated_join_with(Readiness::CORRELATED_ALL);
     let a = session.begin_request(Some("out")).unwrap();
     let b = session.begin_request(Some("out")).unwrap();
     for (request, port, value) in [(a, "a", 1_i64), (b, "b", 20), (b, "a", 10), (a, "b", 2)] {
@@ -1234,7 +1287,7 @@ fn correlated_all_crossed_heads_settle_in_one_bounded_shared_session() {
 fn correlated_all_cancelled_request_releases_only_its_own_packets() {
     use phenix_graph::runtime::RequestStatus;
 
-    let mut session = correlated_join_with(Readiness::CorrelatedAll);
+    let mut session = correlated_join_with(Readiness::CORRELATED_ALL);
     let a = session.begin_request(Some("out")).unwrap();
     let b = session.begin_request(Some("out")).unwrap();
     session.inject_request(a, "a", Value::of(1_i64)).unwrap();
@@ -1943,7 +1996,7 @@ impl Process for Staged {
             0 => {
                 cx.take("start").unwrap();
                 self.phase = 1;
-                Ok(Step::WaitInputs(Readiness::AtLeast(
+                Ok(Step::WaitInputs(Readiness::at_least(
                     NonZeroUsize::new(2).unwrap(),
                 )))
             }
@@ -1997,7 +2050,7 @@ fn custom_initial_policy_and_staged_reservation_keep_request_activation() {
     }
     let mut opts = options();
     opts.readiness
-        .insert("stage".into(), Readiness::Custom(Arc::new(StartOnly)));
+        .insert("stage".into(), Readiness::new(Arc::new(StartOnly)));
     let mut s = b
         .build()
         .unwrap()
@@ -2071,7 +2124,7 @@ fn custom_readiness_rejects_unavailable_open_port_from_same_snapshot() {
     let mut opts = options();
     opts.readiness.insert(
         "stage".into(),
-        Readiness::Custom(Arc::new(AlwaysSelectMissing)),
+        Readiness::new(Arc::new(AlwaysSelectMissing)),
     );
     let mut session = builder
         .build()
@@ -2134,10 +2187,7 @@ fn optional_input_is_omitted_only_at_real_eos_not_open_idle() {
     let mut opts = options();
     opts.readiness.insert(
         "optional".into(),
-        Readiness::Optional {
-            required: vec!["required".into()],
-            optional: vec!["optional".into()],
-        },
+        Readiness::optional(vec!["required".into()], vec!["optional".into()]),
     );
     let mut s = b
         .build()
@@ -2206,7 +2256,7 @@ fn closure_join(finish: bool) -> phenix_graph::runtime::NetworkSession {
     b.expose_output("out", p.wire_output::<i64>("out").unwrap())
         .unwrap();
     let mut opts = options();
-    opts.readiness.insert("join".into(), Readiness::All);
+    opts.readiness.insert("join".into(), Readiness::ALL);
     b.build()
         .unwrap()
         .compile()
@@ -2337,10 +2387,7 @@ fn optional_excluded_input_does_not_replay_eos_only_activations() {
     let mut opts = options();
     opts.readiness.insert(
         "optional".into(),
-        Readiness::Optional {
-            required: vec![],
-            optional: vec!["opt".into()],
-        },
+        Readiness::optional(vec![], vec!["opt".into()]),
     );
     let mut s = b
         .build()
@@ -2533,7 +2580,7 @@ fn scoped_optional_uses_real_upstream_work_and_retires_absence_between_requests(
     let closure_calls = Arc::new(AtomicUsize::new(0));
     opts.readiness.insert(
         "z_join".into(),
-        Readiness::Custom(Arc::new(ScopedOptionalPolicy(closure_calls.clone()))),
+        Readiness::new(Arc::new(ScopedOptionalPolicy(closure_calls.clone()))),
     );
     let mut s = b
         .build()
@@ -2640,7 +2687,7 @@ fn bounded_correlation_advances_an_independent_request_past_an_incomplete_lane()
                 seen: factory_seen.clone(),
                 emitted: false,
             }),
-            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            Readiness::new(Arc::new(CorrelatedOptionalReadiness)),
             CorrelationBounds {
                 max_live: NonZeroUsize::new(2).unwrap(),
                 distinct_scope_skew: one(),
@@ -2798,7 +2845,7 @@ fn bounded_request_lanes_demultiplex_crossed_join_arrivals_and_reuse_credits() {
     session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
     session_options
         .readiness
-        .insert("join".into(), Readiness::All);
+        .insert("join".into(), Readiness::ALL);
     let mut session = compiled.start_with_options(session_options);
 
     let waiting = session.begin_request(Some("out")).unwrap();
@@ -2937,7 +2984,7 @@ fn bounded_request_lanes_isolate_repeated_input_backlog_from_later_ready_request
     session_options.request_queue_policy = RequestQueuePolicy::BoundedLanes;
     session_options
         .readiness
-        .insert("join".into(), Readiness::All);
+        .insert("join".into(), Readiness::ALL);
     let mut session = builder
         .build()
         .unwrap()
@@ -3280,7 +3327,7 @@ fn bounded_correlation_preserves_fifo_when_repeated_scope_packets_exceed_lane_cr
                 seen: factory_seen.clone(),
                 emitted: false,
             }),
-            Readiness::Custom(Arc::new(CorrelatedOptionalReadiness)),
+            Readiness::new(Arc::new(CorrelatedOptionalReadiness)),
             CorrelationBounds {
                 max_live: NonZeroUsize::new(2).unwrap(),
                 distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
@@ -3348,7 +3395,7 @@ fn bounded_correlation_rejects_skew_beyond_declared_ingress_credit() {
     let result = bounded_correlation(
         interface,
         Arc::new(|| Omit),
-        Readiness::All,
+        Readiness::ALL,
         CorrelationBounds {
             max_live: NonZeroUsize::new(2).unwrap(),
             distinct_scope_skew: NonZeroUsize::new(2).unwrap(),
@@ -3375,15 +3422,9 @@ fn bounded_correlation_rejects_skew_beyond_declared_ingress_credit() {
 fn bounded_correlation_validates_builtin_readiness_before_wrapping_it() {
     let interface = Arc::new(Interface::new([PortDef::local::<i64>("in")], []).unwrap());
     for policy in [
-        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
-        Readiness::Optional {
-            required: vec!["missing".into()],
-            optional: vec![],
-        },
-        Readiness::Optional {
-            required: vec![],
-            optional: vec![],
-        },
+        Readiness::at_least(NonZeroUsize::new(2).unwrap()),
+        Readiness::optional(vec!["missing".into()], vec![]),
+        Readiness::optional(vec![], vec![]),
     ] {
         let result = bounded_correlation(
             interface.clone(),
@@ -3437,7 +3478,7 @@ fn panicking_request_closure_policy_rejects_admission_without_partial_scope() {
     let mut options = options();
     options
         .readiness
-        .insert("node".into(), Readiness::Custom(Arc::new(PanickingClosure)));
+        .insert("node".into(), Readiness::new(Arc::new(PanickingClosure)));
     let mut session = builder
         .build()
         .unwrap()
@@ -3475,7 +3516,7 @@ fn invalid_request_closure_ports_are_rejected_before_scope_admission() {
     let mut options = options();
     options
         .readiness
-        .insert("node".into(), Readiness::Custom(Arc::new(UnknownClosure)));
+        .insert("node".into(), Readiness::new(Arc::new(UnknownClosure)));
     let mut session = builder
         .build()
         .unwrap()
@@ -3559,13 +3600,8 @@ fn all_optional_closure_obligations_settle_in_upstream_order_without_new_packets
     .unwrap();
     let mut opts = options();
     for name in ["m_first", "a_last"] {
-        opts.readiness.insert(
-            name.into(),
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["opt".into()],
-            },
-        );
+        opts.readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut s = b
         .build()
@@ -3665,7 +3701,7 @@ fn scoped_staged_closure_preserves_activation_and_does_not_leak_history() {
     .unwrap();
     let mut opts = options();
     opts.readiness
-        .insert("stage".into(), Readiness::Custom(Arc::new(StartOnly)));
+        .insert("stage".into(), Readiness::new(Arc::new(StartOnly)));
     let mut s = b
         .build()
         .unwrap()
@@ -3742,13 +3778,8 @@ fn optional_scope_cannot_settle_behind_another_requests_handed_job() {
     .unwrap();
     let mut opts = options();
     for name in ["consumer", "unrelated"] {
-        opts.readiness.insert(
-            name.into(),
-            Readiness::Optional {
-                required: vec![],
-                optional: vec!["opt".into()],
-            },
-        );
+        opts.readiness
+            .insert(name.into(), Readiness::optional(vec![], vec!["opt".into()]));
     }
     let mut s = b
         .build()
@@ -3831,10 +3862,7 @@ fn all_optional_data_does_not_replay_as_a_missing_branch_after_settlement() {
     let mut opts = options();
     opts.readiness.insert(
         "sink".into(),
-        Readiness::Optional {
-            required: vec![],
-            optional: vec!["opt".into()],
-        },
+        Readiness::optional(vec![], vec!["opt".into()]),
     );
     let mut s = b
         .build()
@@ -5208,7 +5236,10 @@ impl Process for RequiredStage {
                 .get::<i64>()?,
             22
         );
-        if matches!(self.policy, Readiness::Optional { .. }) {
+        if matches!(
+            self.policy.declaration().rule,
+            Some(SelectionRule::Optional { .. })
+        ) {
             assert!(cx.is_closed("c"));
             assert_eq!(cx.is_request_closed("c"), self.scoped);
             assert_eq!(cx.is_eos("c"), !self.scoped);
@@ -5285,10 +5316,7 @@ fn required_stage_session(
         .start_with_options(opts)
 }
 fn required_b_optional_c() -> Readiness {
-    Readiness::Optional {
-        required: vec!["b".into()],
-        optional: vec!["c".into()],
-    }
+    Readiness::optional(vec!["b".into()], vec!["c".into()])
 }
 
 #[test]
@@ -5296,7 +5324,7 @@ fn staged_optional_and_custom_groups_wait_for_live_required_producer_not_optiona
     use phenix_graph::runtime::RequestStatus;
     for policy in [
         required_b_optional_c(),
-        Readiness::Custom(Arc::new(SelectRequiredB)),
+        Readiness::new(Arc::new(SelectRequiredB)),
     ] {
         let resumed = Arc::new(AtomicUsize::new(0));
         let mut session = required_stage_session(policy, true, true, resumed.clone());
@@ -5331,9 +5359,9 @@ fn staged_missing_required_groups_fail_request_without_successful_continuation()
     use phenix_graph::runtime::RequestStatus;
     for policy in [
         required_b_optional_c(),
-        Readiness::Custom(Arc::new(SelectRequiredB)),
-        Readiness::All,
-        Readiness::AtLeast(NonZeroUsize::new(2).unwrap()),
+        Readiness::new(Arc::new(SelectRequiredB)),
+        Readiness::ALL,
+        Readiness::at_least(NonZeroUsize::new(2).unwrap()),
     ] {
         let resumed = Arc::new(AtomicUsize::new(0));
         let mut session = required_stage_session(policy, false, true, resumed.clone());
@@ -5447,7 +5475,7 @@ fn idle_input_prefilter_preserves_eos_and_custom_policy_rechecks() {
     let mut options = SessionOptions::default();
     options.readiness.insert(
         "idle".into(),
-        Readiness::Custom(Arc::new(CountCalls(calls.clone(), enabled.clone()))),
+        Readiness::new(Arc::new(CountCalls(calls.clone(), enabled.clone()))),
     );
     let mut custom = compiled.start_with_options(options);
     custom.inject_local("input", 17_i64).unwrap();
