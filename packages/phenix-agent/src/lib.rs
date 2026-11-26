@@ -9,7 +9,7 @@ use phenix_graph::{
     ProcessContext, ProcessEmission, ProcessFactory, Step, Value,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
     network::{ConnectionDef, PortPath},
-    runtime::Readiness,
+    runtime::{PolicyDeclaration, Readiness, ReadinessPolicy, ReadinessSnapshot},
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
@@ -235,7 +235,42 @@ impl ProcessFactory for ToolFeedbackFactory {
     }
 
     fn readiness(&self) -> Readiness {
-        Readiness::CORRELATED_ALL
+        Readiness::from_policy(ToolFeedbackReadiness)
+    }
+}
+
+/// Dispatch publishes the expectation and routed invocation atomically, so a
+/// result without an expectation is unsolicited, not an incomplete valid join.
+/// Leave expectations queued until a result arrives.
+struct ToolFeedbackReadiness;
+
+impl ReadinessPolicy for ToolFeedbackReadiness {
+    fn declaration(&self) -> PolicyDeclaration {
+        PolicyDeclaration {
+            rule: None,
+            correlated: true,
+        }
+    }
+
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        let available = |name: &str| {
+            snapshot
+                .heads
+                .iter()
+                .any(|head| head.port == name && head.available)
+        };
+        if !available("input") {
+            return vec![];
+        }
+        if available("expected") {
+            vec!["expected".into(), "input".into()]
+        } else {
+            vec!["input".into()]
+        }
+    }
+
+    fn notification_driven(&self) -> bool {
+        true
     }
 }
 
@@ -273,7 +308,10 @@ impl Process for ToolFeedback {
             } else {
                 Step::Complete
             }),
-            _ => Err(GraphFailure::application_message("unpaired tool feedback")),
+            (None, Some(_)) => Err(GraphFailure::application_message(
+                "unsolicited tool feedback",
+            )),
+            (Some(_), None) => Err(GraphFailure::application_message("unpaired tool feedback")),
         }
     }
 }
