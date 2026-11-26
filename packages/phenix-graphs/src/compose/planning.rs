@@ -653,6 +653,36 @@ fn overlapping_write<'a>(
     right: &BTreeSet<Footprint>,
     budget: &mut PlanningBudget<'_>,
 ) -> Result<Option<&'a Footprint>, ComposeError> {
+    // Only Component footprints participate in prefix/endpoint overlaps.
+    // They sort first in Footprint's derived order. Without them the sorted
+    // sets can be intersected directly, preserving the first left-side match.
+    if left.is_empty() || right.is_empty() {
+        return Ok(None);
+    }
+    budget.charge(2)?;
+    if !matches!(left.first(), Some(Footprint::Component(_)))
+        && !matches!(right.first(), Some(Footprint::Component(_)))
+    {
+        let mut right = right.iter().peekable();
+        for write in left {
+            while let Some(&other) = right.peek() {
+                budget.footprint(write)?;
+                budget.footprint(other)?;
+                budget.footprint(write)?;
+                match write.cmp(other) {
+                    std::cmp::Ordering::Less => break,
+                    std::cmp::Ordering::Equal => return Ok(Some(write)),
+                    std::cmp::Ordering::Greater => {
+                        right.next();
+                    }
+                }
+            }
+            if right.peek().is_none() {
+                break;
+            }
+        }
+        return Ok(None);
+    }
     for write in left {
         for other in right {
             // Reserve operands and a possible diagnostic clone before deciding.
@@ -1454,5 +1484,35 @@ mod conflict_index_tests {
                 assert_eq!(result, Err(ComposeError::PlanningBudgetExceeded { limit }));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod exact_overlap_tests {
+    use super::*;
+
+    #[test]
+    fn disjoint_exact_footprints_fit_a_linear_work_budget() {
+        let left = (0..256)
+            .map(|i| Footprint::InputExport(format!("p{:04}", i * 2)))
+            .collect();
+        let mut right: BTreeSet<_> = (0..256)
+            .map(|i| Footprint::InputExport(format!("p{:04}", i * 2 + 1)))
+            .collect();
+        let mut used = 0;
+        let mut budget =
+            PlanningBudget::new(super::super::PlanningLimits { max_units: 20_000 }, &mut used)
+                .unwrap();
+        assert_eq!(overlapping_write(&left, &right, &mut budget), Ok(None));
+        right.insert(Footprint::InputExport("p0256".into()));
+        right.insert(Footprint::InputExport("p0002".into()));
+        let mut used = 0;
+        let mut budget =
+            PlanningBudget::new(super::super::PlanningLimits { max_units: 20_000 }, &mut used)
+                .unwrap();
+        assert_eq!(
+            overlapping_write(&left, &right, &mut budget),
+            Ok(Some(&Footprint::InputExport("p0002".into())))
+        );
     }
 }
