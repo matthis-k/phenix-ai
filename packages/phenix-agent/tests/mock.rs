@@ -149,14 +149,18 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
 }
 
 #[test]
-fn configured_environments_route_each_call_without_privileged_providers() {
-    use phenix_agent::{AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, loop_grants};
+fn independent_environment_extension_rewires_the_basic_loop() {
+    use phenix_agent::{
+        AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
+        environment::{EnvironmentRoutes, environment_grants},
+    };
     use phenix_graph::compose::Footprint;
     use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
     use phenix_plugin::PluginCatalog;
 
     const REMOTE: &str = "remote-provider";
     const REMOTE_PATH: &str = "remote-tool";
+    const ENVIRONMENT: &str = "environment-extension";
     let mut catalog = PluginCatalog::new();
     let contracts = catalog
         .register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))
@@ -165,14 +169,16 @@ fn configured_environments_route_each_call_without_privileged_providers() {
     let model_key = catalog.register(mock::MODEL_PLUGIN, Ok).unwrap();
     let local_key = catalog.register(mock::TOOL_PLUGIN, Ok).unwrap();
     let remote_key = catalog.register(REMOTE, Ok).unwrap();
+    let environment_key = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
+        host.plugins().prepare_load(&loop_key, AgentLoop).unwrap(),
         host.plugins()
             .prepare_load(
-                &loop_key,
-                AgentLoop {
-                    environments: ["local".into(), "remote".into()].into(),
+                &environment_key,
+                EnvironmentRoutes {
+                    environments: ["remote".into()].into(),
                 },
             )
             .unwrap(),
@@ -204,7 +210,7 @@ fn configured_environments_route_each_call_without_privileged_providers() {
     ];
     let mut options = mock::options();
     options.imports.allow.as_mut().unwrap().insert((
-        Key::new(LOOP_PLUGIN, "env-remote"),
+        Key::new(ENVIRONMENT, "env-remote"),
         Key::new(REMOTE, "tool"),
     ));
     options.composition.insert(
@@ -215,18 +221,11 @@ fn configured_environments_route_each_call_without_privileged_providers() {
         },
     );
     options.composition.insert(
-        Key::new(LOOP_PLUGIN, "main"),
+        Key::new(ENVIRONMENT, "main"),
         CompositionPolicy {
-            grants: loop_grants(
-                mock::MODEL_PATH,
-                &[
-                    ("local".into(), mock::TOOL_PATH.into()),
-                    ("remote".into(), REMOTE_PATH.into()),
-                ]
-                .into(),
-            )
-            .into_iter()
-            .collect(),
+            grants: environment_grants(&[("remote".into(), REMOTE_PATH.into())].into())
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
     );
