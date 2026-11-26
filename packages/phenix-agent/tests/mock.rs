@@ -532,3 +532,87 @@ fn tool_contract_rejects_providers_that_emit_model_prompts() {
     let forged_prompt = ComponentDef::map(|call: ToolCall| ModelInput::Prompt(call.prompt));
     assert!(forged_prompt.claim(&tool_contract()).is_err());
 }
+
+#[test]
+fn mismatched_tool_feedback_is_rejected_before_model_continuation() {
+    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolOutcome, ToolResult, tool_contract};
+    use phenix_graph::{
+        ComponentDef,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::Arc;
+
+    struct WrongCallTool;
+    impl PluginInstance for WrongCallTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let definition = ComponentDef::map(|mut call: ToolCall| {
+                call.environment = "forged".into();
+                ToolResult {
+                    call,
+                    outcome: ToolOutcome::Succeeded {
+                        output: "untrusted".into(),
+                    },
+                }
+            })
+            .claim(&tool_contract())
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let host =
+        mock::host_with_options(MockModel::default(), WrongCallTool, mock::options()).unwrap();
+    let generation = host.active().unwrap();
+    let ingress = generation
+        .compiled()
+        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
+        .unwrap();
+    let capture = generation
+        .compiled()
+        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))
+        .unwrap();
+    generation
+        .with_session(|session| {
+            let request = session.begin_bound_request(None).unwrap();
+            session
+                .inject_bound_request(request, &ingress, "real".to_owned())
+                .unwrap();
+            session.close_request(request).unwrap();
+            let mut events = Vec::new();
+            for _ in 0..64 {
+                session.run_until_idle(1);
+                if session.failure().is_some() {
+                    assert_eq!(
+                        events,
+                        [AgentEvent::ToolRequested(ToolCall {
+                            prompt: "real".into(),
+                            environment: "local".into(),
+                        })]
+                    );
+                    return;
+                }
+                while let Some(packet) = session
+                    .take_bound_request_output(request, &capture)
+                    .unwrap()
+                {
+                    events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
+                }
+            }
+            panic!("mismatched feedback did not fail");
+        })
+        .unwrap();
+}

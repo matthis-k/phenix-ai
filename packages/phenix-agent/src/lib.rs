@@ -6,9 +6,10 @@
 
 use phenix_graph::{
     ComponentDef, Contract, Failure as GraphFailure, Interface, NetworkError, PortDef, Process,
-    ProcessContext, ProcessEmission, Step, Value,
+    ProcessContext, ProcessEmission, ProcessFactory, Step, Value,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
     network::{ConnectionDef, PortPath},
+    runtime::Readiness,
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
@@ -184,6 +185,60 @@ impl Process for ToolRouter {
     }
 }
 
+/// Match feedback against the original call within the request before it reaches
+/// the model. This checks the call data, not effect evidence or unique call IDs.
+/// The current sequential loop expects feedback in call order.
+struct ToolFeedbackFactory;
+
+impl ProcessFactory for ToolFeedbackFactory {
+    fn spawn(&self) -> Box<dyn Process> {
+        Box::new(ToolFeedback { emitted: false })
+    }
+
+    fn readiness(&self) -> Readiness {
+        Readiness::CORRELATED_ALL
+    }
+}
+
+struct ToolFeedback {
+    emitted: bool,
+}
+
+impl Process for ToolFeedback {
+    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+        if self.emitted {
+            self.emitted = false;
+            return Ok(Step::Complete);
+        }
+        match (context.take("expected"), context.take("input")) {
+            (Some(expected), Some(result)) => {
+                let expected = expected.borrow::<ToolCall>().ok_or_else(|| {
+                    GraphFailure::application_message("feedback expected a tool call")
+                })?;
+                let result = result.borrow::<ToolResult>().ok_or_else(|| {
+                    GraphFailure::application_message("feedback expected a tool result")
+                })?;
+                if expected != &result.call {
+                    return Err(GraphFailure::application_message(
+                        "tool feedback does not match dispatched call",
+                    ));
+                }
+                self.emitted = true;
+                Ok(Step::Emit(ProcessEmission::new(
+                    "output",
+                    Value::local(ModelInput::ToolResult(result.clone())),
+                )))
+            }
+            (None, None) => Ok(if context.is_eos("expected") && context.is_eos("input") {
+                Step::Finished
+            } else {
+                Step::Complete
+            }),
+            _ => Err(GraphFailure::application_message("unpaired tool feedback")),
+        }
+    }
+}
+
 impl PluginInstance for AgentLoop {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let environments = self.environments.clone();
@@ -228,8 +283,22 @@ impl PluginInstance for AgentLoop {
                     )?,
                     Edit::Add {
                         path: TOOL_FEEDBACK.into(),
-                        definition: Arc::new(ComponentDef::map(ModelInput::ToolResult)),
+                        definition: Arc::new(ComponentDef::primitive(
+                            Arc::new(Interface::new(
+                                [
+                                    PortDef::local::<ToolCall>("expected"),
+                                    PortDef::local::<ToolResult>("input"),
+                                ],
+                                [PortDef::local::<ModelInput>("output")],
+                            )?),
+                            Arc::new(ToolFeedbackFactory),
+                        )),
                     },
+                    context.connect_bound_output(
+                        &model_tool,
+                        port(TOOL_FEEDBACK, "expected"),
+                        capacity(),
+                    )?,
                     Edit::Connect(ConnectionDef {
                         from: port(TOOL_ROUTER, UNAVAILABLE),
                         to: port(TOOL_FEEDBACK, "input"),
@@ -293,6 +362,10 @@ pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<
             port(TOOL_ROUTER, "input"),
         )),
         Footprint::Component(TOOL_FEEDBACK.into()),
+        Footprint::Connection(ConnectionKey::new(
+            port(model, "tool"),
+            port(TOOL_FEEDBACK, "expected"),
+        )),
         Footprint::Connection(ConnectionKey::new(
             port(TOOL_ROUTER, UNAVAILABLE),
             port(TOOL_FEEDBACK, "input"),
