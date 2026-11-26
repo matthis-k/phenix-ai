@@ -98,7 +98,8 @@ impl<T: Clone + Send + Sync + 'static> QuerySpec<T> {
     }
 
     pub fn bind_kernel<'a>(&self, kernel: &'a Kernel) -> Result<QueryHandle<'a, T>, Error> {
-        self.bind_preparation(&kernel.binding())?.bind_kernel(kernel)
+        self.bind_preparation(&kernel.binding())?
+            .bind_kernel(kernel)
     }
     /// Resolve immutable authority during preparation, without admission or reads.
     /// The result can only execute with this exact compiled generation's Kernel.
