@@ -294,8 +294,8 @@ pub struct Candidate {
     generation: Arc<Generation>,
 }
 
-/// Preparation-only inspection capability. It exposes exports and deployment
-/// identities, but no kernel, session admission, or producer access.
+/// Read-only binding capability for a compiled kernel. It exposes exports and
+/// deployment identities, but no kernel, session admission, or producer access.
 /// Exports are arbitrary application values; their external effects are not
 /// sandboxed or rolled back by the host.
 ///
@@ -313,6 +313,13 @@ pub struct Candidate {
 /// ```
 pub struct Binding<'a> {
     kernel: &'a Kernel,
+}
+
+impl Kernel {
+    /// The same restricted binding view used during host preparation.
+    pub fn binding(&self) -> Binding<'_> {
+        Binding { kernel: self }
+    }
 }
 
 impl Binding<'_> {
@@ -422,23 +429,21 @@ impl KernelHost {
             .map_err(LifecycleError::Plugins)?;
         let mut kernel = Kernel::build_with_options(name, snapshots, options)
             .map_err(|error| LifecycleError::Build(Box::new(error)))?;
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            bind(&Binding { kernel: &kernel })
-        }))
-        .unwrap_or_else(|payload| {
-            Err(kernel
-                .lease_failure(phenix_graph::process::callback_panicked(
-                    phenix_graph::CallbackPhase::GenerationBind,
-                    payload,
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| bind(&kernel.binding())))
+            .unwrap_or_else(|payload| {
+                Err(kernel
+                    .lease_failure(phenix_graph::process::callback_panicked(
+                        phenix_graph::CallbackPhase::GenerationBind,
+                        payload,
+                    ))
+                    .into())
+            })
+            .map_err(|cause| {
+                LifecycleError::Binding(phenix_plugin::lease_callback_error(
+                    cause,
+                    kernel.code_lease.clone(),
                 ))
-                .into())
-        })
-        .map_err(|cause| {
-            LifecycleError::Binding(phenix_plugin::lease_callback_error(
-                cause,
-                kernel.code_lease.clone(),
-            ))
-        })?;
+            })?;
         kernel.start().map_err(LifecycleError::Start)?;
         if let Some(wake) = &self.wake {
             if wake.is_shutdown() {
