@@ -472,6 +472,11 @@ impl NetworkSession {
         order: &[usize],
     ) -> Vec<Option<RequestId>> {
         let p = &self.processes[index];
+        // A staged continuation already owns a request. Scanning every input
+        // queue and every sealed scope cannot change that candidate.
+        if p.handoff.state() == HandoffState::WaitingInput {
+            return vec![p.request];
+        }
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
         let correlated = policy.correlated();
         let mut candidates = vec![];
@@ -492,16 +497,12 @@ impl NetworkSession {
                 }
             }
         }
-        if p.handoff.state() == HandoffState::WaitingInput {
-            candidates = vec![p.request];
-        } else {
-            for (request, scope) in &self.requests {
-                if scope.sealed
-                    && self.closure_obligation(index, *request)
-                    && !candidates.contains(&Some(*request))
-                {
-                    candidates.push(Some(*request));
-                }
+        for (request, scope) in &self.requests {
+            if scope.sealed
+                && self.closure_obligation(index, *request)
+                && !candidates.contains(&Some(*request))
+            {
+                candidates.push(Some(*request));
             }
         }
         // CorrelatedAll opts in to cross-request head skipping, so an always
@@ -529,6 +530,16 @@ impl NetworkSession {
         order: &[usize],
         request: Option<RequestId>,
     ) -> ReadinessSnapshot {
+        self.snapshot_with_closure(index, order, request, true)
+    }
+
+    fn snapshot_with_closure(
+        &self,
+        index: usize,
+        order: &[usize],
+        request: Option<RequestId>,
+        include_closure: bool,
+    ) -> ReadinessSnapshot {
         let p = &self.processes[index];
         let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         ReadinessSnapshot {
@@ -539,7 +550,7 @@ impl NetworkSession {
                 .map(|port| InputHead {
                     port: p.inputs[*port].name.clone(),
                     available: self.packet_for(index, *port, request, correlated).is_some(),
-                    closed: self.input_closed_for(index, *port, request),
+                    closed: include_closure && self.input_closed_for(index, *port, request),
                 })
                 .collect(),
         }
@@ -626,12 +637,25 @@ impl NetworkSession {
             return self.exact_wait_selection(index);
         }
         let order = self.selection_order(index);
+        let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        // Idle Any/All/AtLeast select only available packets. Scoped closure
+        // proofs cannot affect that decision; global EOS is handled below.
+        // Keep complete snapshots for staged waits, Optional, opaque policies
+        // and passive diagnostics, where closure is observable.
+        let include_closure = p.handoff.state() == HandoffState::WaitingInput
+            || !matches!(
+                policy.declaration().rule.as_ref(),
+                Some(SelectionRule::Any | SelectionRule::All | SelectionRule::AtLeast(_))
+            );
         for request in self.selection_candidates(index, &order) {
-            let mut snapshot = self.selection_snapshot(index, &order, request);
+            let mut snapshot = if include_closure {
+                self.selection_snapshot(index, &order, request)
+            } else {
+                self.snapshot_with_closure(index, &order, request, false)
+            };
             if let Some(error) = self.staged_selection_error(index, &snapshot) {
                 return Err(error);
             }
-            let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
             snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
             let names =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| policy.select(&snapshot)))
@@ -727,4 +751,42 @@ pub(crate) fn validate_policy<'a>(
     input_names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), ReadinessError> {
     validate_policy_ports(input_names.into_iter(), policy)
+}
+
+#[cfg(test)]
+mod packet_only_selection_tests {
+    use super::*;
+
+    #[test]
+    fn data_only_rules_ignore_closure_for_every_three_port_snapshot() {
+        let policies = [
+            Readiness::ANY,
+            Readiness::ALL,
+            Readiness::CORRELATED_ALL,
+            Readiness::at_least(NonZeroUsize::new(2).unwrap()),
+        ];
+        for policy in policies {
+            for flags in 0..64 {
+                let full = ReadinessSnapshot {
+                    request: None,
+                    correlation_lane: None,
+                    heads: (0..3)
+                        .map(|i| InputHead {
+                            port: format!("p{i}"),
+                            available: flags & (1 << i) != 0,
+                            closed: flags & (1 << (i + 3)) != 0,
+                        })
+                        .collect(),
+                };
+                let mut packet_only = full.clone();
+                for head in &mut packet_only.heads {
+                    head.closed = false;
+                }
+                assert_eq!(
+                    policy.passive_selection(&full),
+                    policy.passive_selection(&packet_only)
+                );
+            }
+        }
+    }
 }
