@@ -148,8 +148,11 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
     }
 }
 
-#[test]
-fn independent_environment_extension_rewires_the_basic_loop() {
+fn environment_host(
+    model: MockModel,
+    remote: impl phenix_plugin::PluginInstance + 'static,
+    mut options: phenix_kernel::BuildOptions,
+) -> phenix_kernel::host::KernelHost {
     use phenix_agent::{
         AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
         environment::{EnvironmentRoutes, environment_grants},
@@ -159,7 +162,6 @@ fn independent_environment_extension_rewires_the_basic_loop() {
     use phenix_plugin::PluginCatalog;
 
     const REMOTE: &str = "remote-provider";
-    const REMOTE_PATH: &str = "remote-tool";
     const ENVIRONMENT: &str = "environment-extension";
     let mut catalog = PluginCatalog::new();
     let contracts = catalog
@@ -182,33 +184,12 @@ fn independent_environment_extension_rewires_the_basic_loop() {
                 },
             )
             .unwrap(),
-        host.plugins()
-            .prepare_load(
-                &model_key,
-                MockModel {
-                    environment_by_prompt: [
-                        ("remote".into(), "remote".into()),
-                        ("missing".into(), "unconfigured".into()),
-                    ]
-                    .into(),
-                    ..MockModel::default()
-                },
-            )
-            .unwrap(),
+        host.plugins().prepare_load(&model_key, model).unwrap(),
         host.plugins()
             .prepare_load(&local_key, MockTool::default())
             .unwrap(),
-        host.plugins()
-            .prepare_load(
-                &remote_key,
-                MockTool {
-                    path: REMOTE_PATH.into(),
-                    prefix: "remote".into(),
-                },
-            )
-            .unwrap(),
+        host.plugins().prepare_load(&remote_key, remote).unwrap(),
     ];
-    let mut options = mock::options();
     options.imports.allow.as_mut().unwrap().insert((
         Key::new(ENVIRONMENT, "env-remote"),
         Key::new(REMOTE, "tool"),
@@ -216,14 +197,14 @@ fn independent_environment_extension_rewires_the_basic_loop() {
     options.composition.insert(
         Key::new(REMOTE, "main"),
         CompositionPolicy {
-            grants: [Footprint::Component(REMOTE_PATH.into())].into(),
+            grants: [Footprint::Component(TEST_REMOTE_PATH.into())].into(),
             ..Default::default()
         },
     );
     options.composition.insert(
         Key::new(ENVIRONMENT, "main"),
         CompositionPolicy {
-            grants: environment_grants(&[("remote".into(), REMOTE_PATH.into())].into())
+            grants: environment_grants(&[("remote".into(), TEST_REMOTE_PATH.into())].into())
                 .into_iter()
                 .collect(),
             ..Default::default()
@@ -233,6 +214,28 @@ fn independent_environment_extension_rewires_the_basic_loop() {
         .prepare(stages, options, "advanced", |_| Ok(()))
         .unwrap();
     host.publish(candidate).unwrap();
+    host
+}
+
+const TEST_REMOTE_PATH: &str = "remote-tool";
+
+#[test]
+fn independent_environment_extension_rewires_the_basic_loop() {
+    let host = environment_host(
+        MockModel {
+            environment_by_prompt: [
+                ("remote".into(), "remote".into()),
+                ("missing".into(), "unconfigured".into()),
+            ]
+            .into(),
+            ..MockModel::default()
+        },
+        MockTool {
+            path: TEST_REMOTE_PATH.into(),
+            prefix: "remote".into(),
+        },
+        mock::options(),
+    );
     let generation = host.active().unwrap();
     for (prompt, environment, response) in [
         ("local", "local", "lookup(local)"),
@@ -257,6 +260,165 @@ fn independent_environment_extension_rewires_the_basic_loop() {
             ]
         );
     }
+}
+
+#[test]
+fn suspended_remote_request_does_not_block_independent_local_request() {
+    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, tool_contract};
+    use phenix_graph::{
+        ComponentDef, Failure as GraphFailure, Process, ProcessContext, Step,
+        compose::{Edit, NetworkPatch},
+        runtime::RequestQueuePolicy,
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::{num::NonZeroUsize, sync::Arc};
+
+    struct Suspended;
+    impl Process for Suspended {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+            if let Some(value) = context.take("input") {
+                assert!(value.borrow::<ToolInvocation>().is_some());
+                Ok(Step::WaitWake)
+            } else if context.is_eos("input") {
+                Ok(Step::Finished)
+            } else {
+                Ok(Step::Complete)
+            }
+        }
+    }
+
+    struct Remote;
+    impl PluginInstance for Remote {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let contract = tool_contract();
+            let definition =
+                ComponentDef::primitive(contract.required().clone(), Arc::new(|| Suspended))
+                    .claim(&contract)
+                    .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: TEST_REMOTE_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                TEST_REMOTE_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let mut options = mock::options();
+    options.execution.max_requests = NonZeroUsize::new(2).unwrap();
+    options.execution.request_queue_policy = RequestQueuePolicy::BoundedLanes;
+    let host = environment_host(
+        MockModel {
+            environment_by_prompt: [("slow".into(), "remote".into())].into(),
+            ..MockModel::default()
+        },
+        Remote,
+        options,
+    );
+    let generation = host.active().unwrap();
+    let ingress = generation
+        .compiled()
+        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
+        .unwrap();
+    let capture = generation
+        .compiled()
+        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))
+        .unwrap();
+    generation
+        .with_session(|session| {
+            let slow = session.begin_bound_request(None).unwrap();
+            session
+                .inject_bound_request(slow, &ingress, "slow".to_owned())
+                .unwrap();
+            session.close_request(slow).unwrap();
+            let mut slow_events = Vec::new();
+            for _ in 0..64 {
+                session.run_until_idle(1);
+                assert!(session.failure().is_none());
+                while let Some(packet) = session.take_bound_request_output(slow, &capture).unwrap()
+                {
+                    slow_events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
+                }
+                if session.request_work(slow).unwrap().waiting_wake == 1 {
+                    break;
+                }
+            }
+            assert_eq!(session.request_work(slow).unwrap().waiting_wake, 1);
+            assert_eq!(
+                slow_events,
+                [AgentEvent::ToolRequested(ToolCall {
+                    prompt: "slow".into(),
+                    environment: "remote".into(),
+                })]
+            );
+
+            let fast = session.begin_bound_request(None).unwrap();
+            session
+                .inject_bound_request(fast, &ingress, "fast".to_owned())
+                .unwrap();
+            session.close_request(fast).unwrap();
+            let mut fast_events = Vec::new();
+            for _ in 0..128 {
+                session.run_until_idle(1);
+                assert!(session.failure().is_none());
+                assert!(session.request_failure(fast).unwrap().is_none());
+                while let Some(packet) = session.take_bound_request_output(fast, &capture).unwrap()
+                {
+                    session
+                        .validate_bound_capture(fast, &capture, &packet)
+                        .unwrap();
+                    fast_events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
+                }
+                if matches!(
+                    session.request_status(fast),
+                    Ok(RequestStatus::Settled { .. })
+                ) {
+                    break;
+                }
+            }
+            assert_eq!(
+                fast_events,
+                [
+                    AgentEvent::ToolRequested(ToolCall {
+                        prompt: "fast".into(),
+                        environment: "local".into(),
+                    }),
+                    AgentEvent::Delta("mock: ".into()),
+                    AgentEvent::Delta("lookup(fast)".into()),
+                    AgentEvent::Completed,
+                ]
+            );
+            assert!(matches!(
+                session.request_status(fast),
+                Ok(RequestStatus::Settled { .. })
+            ));
+            assert_eq!(
+                session.request_status(slow).unwrap(),
+                RequestStatus::Pending
+            );
+            assert_eq!(session.request_work(slow).unwrap().waiting_wake, 1);
+            session.release_request(fast).unwrap();
+            session.cancel_request(slow).unwrap();
+            assert_eq!(
+                session.request_status(slow).unwrap(),
+                RequestStatus::Cancelled
+            );
+            session.release_request(slow).unwrap();
+            assert!(session.failure().is_none());
+        })
+        .unwrap();
+    assert_eq!(
+        turn(&generation, "after").last(),
+        Some(&AgentEvent::Completed)
+    );
 }
 
 #[test]
