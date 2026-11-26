@@ -1,4 +1,4 @@
-use super::{DerivedRuntime, Error, QuerySpec};
+use super::DerivedRuntime;
 use phenix_kernel::{
     BuildOptions,
     host::{Binding, Candidate, Generation, KernelHost, LifecycleError},
@@ -32,8 +32,8 @@ impl DerivedHost {
         self.host.plugins()
     }
 
-    pub fn active(&self) -> Option<DerivedGeneration> {
-        self.host.active().map(DerivedGeneration)
+    pub fn active(&self) -> Option<Arc<Generation>> {
+        self.host.active()
     }
 
     /// Validate query specs and exports before any producer starts. Binding has
@@ -50,31 +50,7 @@ impl DerivedHost {
         self.host.prepare(stages, options, name, bind)
     }
 
-    pub fn publish(&mut self, candidate: Candidate) -> Result<DerivedGeneration, LifecycleError> {
-        self.host.publish(candidate).map(DerivedGeneration)
-    }
-}
-
-/// A published, guarded generation. Cloning pins this exact deployment, even
-/// after replacement. Ordinary generation APIs remain available through Deref;
-/// explicit native session access retains the same execution guard.
-#[derive(Clone)]
-pub struct DerivedGeneration(Arc<Generation>);
-
-impl std::ops::Deref for DerivedGeneration {
-    type Target = Generation;
-    fn deref(&self) -> &Generation {
-        &self.0
-    }
-}
-
-impl DerivedGeneration {
-    /// Validate against this exact published network and admit one native demand
-    /// request. Nested calls from guarded process execution return NestedQuery.
-    pub fn query<T: Clone + Send + Sync + 'static>(
-        &self,
-        spec: &QuerySpec<T>,
-    ) -> Result<phenix_graph::Leased<T>, Error> {
-        self.with_kernel(|kernel| spec.bind_kernel(kernel)?.query())
+    pub fn publish(&mut self, candidate: Candidate) -> Result<Arc<Generation>, LifecycleError> {
+        self.host.publish(candidate)
     }
 }

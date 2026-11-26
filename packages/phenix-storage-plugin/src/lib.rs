@@ -422,6 +422,17 @@ impl BackendFeatures {
             Capability::Sql => self.sql,
         }
     }
+
+    // The same demand predicate applies to declared and observed capabilities.
+    fn supports_request(self, request: &ResourceRequest) -> bool {
+        let kind = match request.spec.kind {
+            ResourceKind::TypedKv(_) => Capability::TypedKv,
+            ResourceKind::Sql => Capability::Sql,
+        };
+        self.supports(kind)
+            && request.required.iter().all(|cap| self.supports(*cap))
+            && (!request.operations.contains(&Operation::Subscribe) || self.invalidation)
+    }
 }
 
 pub enum BackendPlacement {
@@ -863,14 +874,12 @@ impl PreparedStorage {
             return Err(Error::MissingPlacement);
         }
         let mut mounts = BTreeMap::new();
-        let mut features = BTreeMap::new();
         for (name, placement) in policy.mounts {
             // Reuse canonical mount validation without allocating a registry.
             Address::parse(&format!("store://{name}/validation"))?;
             let backend = placement.prepare()?;
-            let caps = backend.capabilities().ok_or(Error::UnsupportedCapability)?;
-            mounts.insert(name.clone(), backend);
-            features.insert(name, caps);
+            backend.capabilities().ok_or(Error::UnsupportedCapability)?;
+            mounts.insert(name, backend);
         }
         validate_sqlite_paths(mounts.values().filter_map(PreparedBackend::sqlite_path))?;
         let mut targets = BTreeMap::new();
@@ -893,7 +902,11 @@ impl PreparedStorage {
                 return Err(Error::PhysicalAlias);
             }
             users.entry(mount.to_owned()).or_default().push(sql);
-            let caps = features.get(mount).ok_or(Error::MissingPlacement)?;
+            let caps = mounts
+                .get(mount)
+                .ok_or(Error::MissingPlacement)?
+                .capabilities()
+                .ok_or(Error::UnsupportedCapability)?;
             if (sql && !caps.sql) || (!sql && !caps.typed_kv) {
                 return Err(Error::UnsupportedCapability);
             }
@@ -906,9 +919,7 @@ impl PreparedStorage {
                 if !request.operations.is_subset(&binding.allowed) {
                     return Err(Error::Denied);
                 }
-                if request.required.iter().any(|cap| !caps.supports(*cap))
-                    || (request.operations.contains(&Operation::Subscribe) && !caps.invalidation)
-                {
+                if !caps.supports_request(request) {
                     return Err(Error::UnsupportedCapability);
                 }
             }
@@ -1068,11 +1079,7 @@ impl PreparedStorage {
                     if target_mount != name {
                         continue;
                     }
-                    let supported = match request.spec.kind {
-                        ResourceKind::TypedKv(_) => typed_kv,
-                        ResourceKind::Sql => sql,
-                    };
-                    if !supported || request.required.iter().any(|cap| !actual.supports(*cap)) {
+                    if !actual.supports_request(request) {
                         return Err(Error::UnsupportedCapability);
                     }
                 }

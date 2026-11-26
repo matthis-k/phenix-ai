@@ -7,7 +7,10 @@ use phenix_graph::{
     },
     runtime::RequestQueuePolicy,
 };
-use phenix_kernel::{CandidateArtifacts, Key, host::LifecycleError};
+use phenix_kernel::{
+    CandidateArtifacts, Key,
+    host::{Generation, LifecycleError},
+};
 use phenix_plugin::PluginCatalog;
 use phenix_storage_graph::derived::*;
 use std::sync::{
@@ -88,7 +91,7 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     let old = host.publish(candidate).unwrap();
     let old_spec = old_spec.unwrap();
-    assert_eq!(*old.query(&old_spec).unwrap(), 8);
+    assert_eq!(*old_spec.query_generation(&old).unwrap(), 8);
     let failed = host.prepare(
         vec![
             host.plugins()
@@ -127,15 +130,15 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
         .unwrap();
     let new = host.publish(candidate).unwrap();
     let new_spec = new_spec.unwrap();
-    assert_eq!(*new.query(&new_spec).unwrap(), 30);
-    assert!(new.query(&old_spec).is_err());
-    assert!(old.query(&new_spec).is_err());
+    assert_eq!(*new_spec.query_generation(&new).unwrap(), 30);
+    assert!(old_spec.query_generation(&new).is_err());
+    assert!(new_spec.query_generation(&old).is_err());
     assert!(old.drain(10).unwrap().is_empty());
-    assert_eq!(*old.query(&old_spec).unwrap(), 8);
+    assert_eq!(*old_spec.query_generation(&old).unwrap(), 8);
     first.put(&first.b, 7);
-    assert_eq!(*old.query(&old_spec).unwrap(), 10);
+    assert_eq!(*old_spec.query_generation(&old).unwrap(), 10);
     drop(host);
-    assert_eq!(*new.query(&new_spec).unwrap(), 30);
+    assert_eq!(*new_spec.query_generation(&new).unwrap(), 30);
 }
 
 struct Offload;
@@ -219,15 +222,15 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
                 .unwrap()
                 .clone()
         });
-        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(*spec.query_generation(&generation).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(entered.load(Ordering::SeqCst) >= 6);
-        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(*spec.query_generation(&generation).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         generation.drain(1).unwrap();
         generation.run_steps(128).unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
-        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(*spec.query_generation(&generation).unwrap(), 8);
         assert_eq!(calls.load(Ordering::SeqCst), 4);
         assert_eq!(
             *target
@@ -387,20 +390,20 @@ fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
                 .unwrap()
                 .clone()
         });
-        let error = generation.query(&spec).unwrap_err();
+        let error = spec.query_generation(&generation).unwrap_err();
         assert!(
             support::failures(&error)
                 .iter()
                 .any(|failure| failure.kind() == phenix_graph::FailureKind::Panic)
         );
         assert_eq!(effects.load(Ordering::SeqCst), 1);
-        let value = generation.query(&spec).unwrap();
+        let value = spec.query_generation(&generation).unwrap();
         assert_eq!(*value, 8);
         assert_eq!(effects.load(Ordering::SeqCst), 2);
         generation.drain(1).unwrap();
         generation.run_steps(128).unwrap();
         assert_eq!(effects.load(Ordering::SeqCst), 3);
-        assert_eq!(*generation.query(&spec).unwrap(), 8);
+        assert_eq!(*spec.query_generation(&generation).unwrap(), 8);
         assert_eq!(effects.load(Ordering::SeqCst), 4);
         drop(host);
         drop(generation);
@@ -420,7 +423,7 @@ fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
 // This fixture has exactly one observer producer, synchronous worker completion,
 // no deadlines or explicit injectors, and a single session owner. A full sweep,
 // bounded execution retry, and capture draining are all needed before waiting.
-fn observation_values(generation: &DerivedGeneration) -> Vec<i64> {
+fn observation_values(generation: &Generation) -> Vec<i64> {
     let outputs: Vec<_> = generation.compiled().outputs().keys().cloned().collect();
     let mut values = Vec::new();
     for _ in 0..128 {
@@ -535,7 +538,7 @@ fn wake_observer_captures_updates_and_reload_switches_sources_without_candidate_
             .unwrap()
             .clone()
     });
-    assert_eq!(*old.query(&old_spec).unwrap(), 107);
+    assert_eq!(*old_spec.query_generation(&old).unwrap(), 107);
     let before = wake.version();
     second.put(&second.b, 21);
     assert_ne!(wake.version(), before);
