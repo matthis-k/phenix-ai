@@ -91,7 +91,9 @@ fn same_loop_supports_direct_answer_without_tool_feedback() {
 
 #[test]
 fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
-    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract};
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract,
+    };
     use phenix_graph::{
         ComponentDef,
         compose::{Edit, NetworkPatch},
