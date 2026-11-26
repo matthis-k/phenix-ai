@@ -95,7 +95,7 @@ fn independently_authored_loop_does_not_require_basic_preset() {
         CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-    use std::{num::NonZeroUsize, sync::Arc};
+    use std::num::NonZeroUsize;
 
     const ALTERNATE: &str = "alternate-loop";
     struct DirectLoop;
