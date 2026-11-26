@@ -6,8 +6,8 @@
 
 use phenix_graph::{
     ComponentDef, Contract, Interface, NetworkError, PortDef,
-    compose::{ConnectionKey, Footprint, NetworkPatch},
-    network::PortPath,
+    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    network::{ConnectionDef, PortPath},
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
@@ -52,6 +52,7 @@ pub const MODEL_CONTRACT: &str = "model";
 pub const TOOL_CONTRACT: &str = "tool";
 pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
+const PROMPT_ADAPTER: &str = "agent-prompt";
 
 fn capacity() -> NonZeroUsize {
     NonZeroUsize::new(1).unwrap()
@@ -139,7 +140,20 @@ impl PluginInstance for BasicLoop {
                             port(model.path(), model_input.name()),
                             capacity(),
                         )?,
-                        context.expose_bound_input(PROMPT, &[model_input], capacity())?,
+                        Edit::Add {
+                            path: PROMPT_ADAPTER.into(),
+                            definition: Arc::new(ComponentDef::map(ModelInput::Prompt)),
+                        },
+                        Edit::Connect(ConnectionDef {
+                            from: port(PROMPT_ADAPTER, "output"),
+                            to: port(model.path(), model_input.name()),
+                            capacity: capacity(),
+                        }),
+                        Edit::ExposeInput {
+                            name: PROMPT.into(),
+                            targets: vec![port(PROMPT_ADAPTER, "input")],
+                            capacity: capacity(),
+                        },
                         context.expose_bound_output(EVENTS, &events)?,
                     ])),
                     ..Default::default()
@@ -150,11 +164,16 @@ impl PluginInstance for BasicLoop {
 }
 
 /// Exact host policy for the preset's wiring, independent of plugin payloads.
-pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 4] {
+pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 6] {
     [
         Footprint::Connection(ConnectionKey::new(port(model, "tool"), port(tool, "input"))),
         Footprint::Connection(ConnectionKey::new(
             port(tool, "output"),
+            port(model, "input"),
+        )),
+        Footprint::Component(PROMPT_ADAPTER.into()),
+        Footprint::Connection(ConnectionKey::new(
+            port(PROMPT_ADAPTER, "output"),
             port(model, "input"),
         )),
         Footprint::InputExport(PROMPT.into()),
