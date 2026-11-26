@@ -195,10 +195,8 @@ impl Readiness {
                 .heads
                 .iter()
                 .find(|h| !h.available && h.closed)
-                .map(|h| {
-                    ReadinessError::RequiredClosed {
-                        port: h.port.clone(),
-                    }
+                .map(|h| ReadinessError::RequiredClosed {
+                    port: h.port.clone(),
                 }),
             Self::Any if snapshot.heads.iter().all(|h| !h.available && h.closed) => {
                 Some(ReadinessError::AnyExhausted)
@@ -227,9 +225,7 @@ impl Readiness {
             .collect();
         Some(match self {
             Self::Any => available.into_iter().take(1).collect(),
-            Self::All | Self::CorrelatedAll if available.len() == snapshot.heads.len() => {
-                available
-            }
+            Self::All | Self::CorrelatedAll if available.len() == snapshot.heads.len() => available,
             Self::AtLeast(n) if available.len() >= n.get() => {
                 available.into_iter().take(n.get()).collect()
             }
