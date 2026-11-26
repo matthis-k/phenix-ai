@@ -623,11 +623,16 @@ fn assert_invalid_tool_feedback(replay: bool) {
             let mut events = Vec::new();
             for _ in 0..64 {
                 session.run_until_idle(1);
-                if let Some(failure) = session.failure() {
+                if let Some(failure) = session.request_failure(request).unwrap() {
                     assert_eq!(
                         failure.summary(),
                         "tool feedback does not match dispatched invocation"
                     );
+                    assert_eq!(
+                        session.request_status(request).unwrap(),
+                        RequestStatus::Failed
+                    );
+                    assert!(session.failure().is_none());
                     assert_eq!(
                         events,
                         [AgentEvent::ToolRequested(ToolCall {
@@ -635,6 +640,7 @@ fn assert_invalid_tool_feedback(replay: bool) {
                             environment: "local".into(),
                         })]
                     );
+                    session.release_request(request).unwrap();
                     return;
                 }
                 while let Some(packet) = session
@@ -703,10 +709,13 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
                 });
             };
             let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
+            let duplicate = invocation.call().prompt == "real";
             let result = invocation.complete(ToolOutcome::Succeeded {
                 output: "once".into(),
             });
-            self.duplicate = Some(result.clone());
+            if duplicate {
+                self.duplicate = Some(result.clone());
+            }
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "output",
@@ -762,8 +771,14 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
             session.close_request(request).unwrap();
             for _ in 0..64 {
                 session.run_until_idle(1);
-                if let Some(failure) = session.failure() {
+                if let Some(failure) = session.request_failure(request).unwrap() {
                     assert_eq!(failure.summary(), "unsolicited tool feedback");
+                    assert_eq!(
+                        session.request_status(request).unwrap(),
+                        RequestStatus::Failed
+                    );
+                    assert!(session.failure().is_none());
+                    session.release_request(request).unwrap();
                     return;
                 }
                 while session
@@ -775,4 +790,161 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
             panic!("duplicate completion was not rejected");
         })
         .unwrap();
+    assert_eq!(
+        turn(&generation, "next"),
+        [
+            AgentEvent::ToolRequested(ToolCall {
+                prompt: "next".into(),
+                environment: "local".into(),
+            }),
+            AgentEvent::Delta("mock: ".into()),
+            AgentEvent::Delta("once".into()),
+            AgentEvent::Completed,
+        ]
+    );
+}
+
+#[test]
+fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract,
+    };
+    use phenix_graph::{
+        ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct SometimesIncomplete {
+        emitted: bool,
+    }
+
+    impl Process for SometimesIncomplete {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("input") else {
+                return Ok(if context.is_eos("input") {
+                    Step::Finished
+                } else {
+                    Step::Complete
+                });
+            };
+            let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
+            match invocation.call().prompt.as_str() {
+                "suspend" => Ok(Step::WaitWake),
+                "missing" => Ok(Step::Complete),
+                _ => {
+                    self.emitted = true;
+                    Ok(Step::Emit(ProcessEmission::new(
+                        "output",
+                        Value::local(invocation.complete(ToolOutcome::Succeeded {
+                            output: "recovered".into(),
+                        })),
+                    )))
+                }
+            }
+        }
+    }
+
+    struct IncompleteTool;
+
+    impl PluginInstance for IncompleteTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let contract = tool_contract();
+            let definition = ComponentDef::primitive(
+                contract.required().clone(),
+                Arc::new(SometimesIncomplete::default),
+            )
+            .claim(&contract)
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let host =
+        mock::host_with_options(MockModel::default(), IncompleteTool, mock::options()).unwrap();
+    let generation = host.active().unwrap();
+    let ingress = generation
+        .compiled()
+        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
+        .unwrap();
+    let capture = generation
+        .compiled()
+        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))
+        .unwrap();
+    for prompt in ["suspend", "missing"] {
+        generation
+            .with_session(|session| {
+                let request = session.begin_bound_request(None).unwrap();
+                session
+                    .inject_bound_request(request, &ingress, prompt.to_owned())
+                    .unwrap();
+                session.close_request(request).unwrap();
+                let mut events = Vec::new();
+                for _ in 0..64 {
+                    session.run_until_idle(1);
+                    assert!(session.failure().is_none());
+                    while let Some(packet) = session
+                        .take_bound_request_output(request, &capture)
+                        .unwrap()
+                    {
+                        events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
+                    }
+                }
+                assert_eq!(
+                    events,
+                    [AgentEvent::ToolRequested(ToolCall {
+                        prompt: prompt.into(),
+                        environment: "local".into(),
+                    })]
+                );
+                assert_eq!(
+                    session.request_status(request).unwrap(),
+                    RequestStatus::Pending
+                );
+                let work = session.request_work(request).unwrap();
+                assert!(work.queued > 0);
+                assert_eq!(work.waiting_wake, usize::from(prompt == "suspend"));
+                assert!(session.cancel_request(request).unwrap().is_empty());
+                assert_eq!(
+                    session.request_status(request).unwrap(),
+                    RequestStatus::Cancelled
+                );
+                assert!(session.request_disposal(request).unwrap().queued_packets > 0);
+                assert!(session.failure().is_none());
+                session.release_request(request).unwrap();
+                assert_eq!(session.run_until_idle(4).steps, 0);
+            })
+            .unwrap();
+        assert_eq!(
+            turn(&generation, "healthy"),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: "healthy".into(),
+                    environment: "local".into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("recovered".into()),
+                AgentEvent::Completed,
+            ]
+        );
+    }
 }
