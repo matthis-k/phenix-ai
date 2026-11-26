@@ -217,35 +217,102 @@ impl Readiness {
 
     /// Passive selection for declarative policies; opaque callbacks are never evaluated here.
     fn passive_selection(&self, snapshot: &ReadinessSnapshot) -> Option<Vec<String>> {
-        let available: Vec<_> = snapshot
+        (!self.opaque()).then(|| self.select(snapshot))
+    }
+}
+
+// The standard selectors implement the same selection contract as externally
+// authored policies. The remaining enum is the declaration/ownership carrier.
+struct Any;
+impl ReadinessPolicy for Any {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        snapshot
             .heads
             .iter()
-            .filter(|h| h.available)
-            .map(|h| h.port.clone())
+            .filter(|head| head.available)
+            .take(1)
+            .map(|head| head.port.clone())
+            .collect()
+    }
+}
+
+struct All;
+impl ReadinessPolicy for All {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        if snapshot.heads.iter().all(|head| head.available) {
+            snapshot.heads.iter().map(|head| head.port.clone()).collect()
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct AtLeast(NonZeroUsize);
+impl ReadinessPolicy for AtLeast {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        let selected: Vec<_> = snapshot
+            .heads
+            .iter()
+            .filter(|head| head.available)
+            .take(self.0.get())
+            .map(|head| head.port.clone())
             .collect();
-        Some(match self {
-            Self::Any => available.into_iter().take(1).collect(),
-            Self::All | Self::CorrelatedAll if available.len() == snapshot.heads.len() => available,
-            Self::AtLeast(n) if available.len() >= n.get() => {
-                available.into_iter().take(n.get()).collect()
-            }
+        if selected.len() == self.0.get() {
+            selected
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct Optional<'a> {
+    required: &'a [String],
+    optional: &'a [String],
+}
+impl ReadinessPolicy for Optional<'_> {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
+        if self
+            .required
+            .iter()
+            .all(|name| found(name).is_some_and(|head| head.available))
+            && self
+                .optional
+                .iter()
+                .all(|name| found(name).is_some_and(|head| head.available || head.closed))
+        {
+            self.required.iter().chain(self.optional).cloned().collect()
+        } else {
+            vec![]
+        }
+    }
+}
+
+impl ReadinessPolicy for Readiness {
+    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
+        match self {
+            Self::Any => Any.select(snapshot),
+            Self::All | Self::CorrelatedAll => All.select(snapshot),
+            Self::AtLeast(n) => AtLeast(*n).select(snapshot),
             Self::Optional { required, optional } => {
-                let found = |name: &String| snapshot.heads.iter().find(|h| &h.port == name);
-                if required
-                    .iter()
-                    .all(|n| found(n).is_some_and(|h| h.available))
-                    && optional
-                        .iter()
-                        .all(|n| found(n).is_some_and(|h| h.available || h.closed))
-                {
-                    required.iter().chain(optional).cloned().collect()
-                } else {
-                    vec![]
-                }
+                Optional { required, optional }.select(snapshot)
             }
-            Self::Custom(_) => return None,
-            _ => vec![],
-        })
+            Self::Custom(policy) => policy.select(snapshot),
+        }
+    }
+
+    fn closure_ports(&self, lane: usize) -> Vec<String> {
+        match self {
+            Self::Custom(policy) => policy.closure_ports(lane),
+            _ => self.declared_closure_ports().to_vec(),
+        }
+    }
+
+    fn notification_driven(&self) -> bool {
+        match self {
+            Self::Custom(policy) => policy.notification_driven(),
+            _ => true,
+        }
     }
 }
 
@@ -506,21 +573,13 @@ impl NetworkSession {
                 return Err(error);
             }
             let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-            let names = match self.builtin_selection_names(index, &snapshot) {
-                Some(names) => names,
-                None => {
-                    let Readiness::Custom(policy) = policy else {
-                        unreachable!()
-                    };
-                    snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        policy.select(&snapshot)
-                    }))
-                    .map_err(|payload| {
-                        crate::process::callback_panicked(CallbackPhase::Readiness, payload)
-                    })?
-                }
-            };
+            snapshot.correlation_lane = request.map(|id| self.requests[&id].lane);
+            let names = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                policy.select(&snapshot)
+            }))
+            .map_err(|payload| {
+                crate::process::callback_panicked(CallbackPhase::Readiness, payload)
+            })?;
             if names.is_empty() {
                 if p.handoff.state() == HandoffState::WaitingInput
                     && policy.opaque()
