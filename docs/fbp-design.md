@@ -18,6 +18,11 @@ Read the [glossary](../GLOSSARY.md) for domain terms. The sections below specify
 
 Graph, Plugin, Storage, and Schema work without Kernel. Graph has no dependency on Storage or Kernel. Bridges depend on the libraries they connect. The agent application owns product policy. Graph accepts opaque capabilities; the resource library enforces their authority.
 
+## Open domains
+
+- Represent intentionally open domains with a common type or behavioral contract. Supply frequently used values as named constants, constructors, or concrete implementations. Do not model them as privileged enum variants alongside a custom extension variant. Adding an implementation within the contract must not require changing its consumer.
+- Use enums for intentionally closed alternatives, structural forms, protocol outcomes, and state machines. Internal specialization may optimize the same contract when semantic equivalence is verified and measurements justify it. Extensibility never grants authority or permits bypassing runtime invariants.
+
 ## Network semantics
 
 - Primitives and composites expose the same interface. The compiler flattens composites. One runtime executes the resulting processes.
