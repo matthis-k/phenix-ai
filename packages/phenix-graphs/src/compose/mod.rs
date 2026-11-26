@@ -599,19 +599,20 @@ fn compose(
             budget.text(id)?;
             budget.charge(1)?;
         }
-        let before: BTreeSet<&str> = previous
+        // Both manifests are already filtered to selected registrations and
+        // ordered by ID. Compare their writing IDs directly; no temporary sets
+        // or per-ID lookup in the active set is needed.
+        let before = previous
             .footprints
             .iter()
             .filter(|(_, writes)| !writes.is_empty())
-            .map(|(id, _)| id.as_str())
-            .collect();
-        let after: BTreeSet<&str> = plan
-            .active
+            .map(|(id, _)| id);
+        let after = plan
+            .footprints
             .iter()
-            .filter(|id| !plan.footprints[*id].is_empty())
-            .map(String::as_str)
-            .collect();
-        if before == after {
+            .filter(|(_, writes)| !writes.is_empty())
+            .map(|(id, _)| id);
+        if before.eq(after) {
             return Ok(Composition {
                 network: previous.network.clone(),
                 compiled: previous.compiled.with_fresh_generation(),
