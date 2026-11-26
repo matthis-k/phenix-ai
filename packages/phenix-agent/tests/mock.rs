@@ -195,30 +195,31 @@ fn independent_observer_attaches_without_basic_preset_or_tool() {
             let definition = ComponentDef::sink(move |event: &AgentEvent| {
                 received.lock().unwrap().push(event.clone());
             });
-            Contribution::new(
-                "main",
-                NetworkPatch::new([Edit::Add {
-                    path: OBSERVER.into(),
-                    definition: Arc::new(definition),
-                }]),
-            )
-            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
-            .prepare(|context| {
-                let model = context.bind_import("model")?;
-                let events = model.output::<AgentEvent>("events")?;
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new([context.connect_bound_output(
-                        &events,
-                        PortPath {
-                            process: OBSERVER.into(),
-                            port: "input".into(),
-                        },
-                        NonZeroUsize::new(1).unwrap(),
-                    )?])),
-                    ..Default::default()
+            let definition = Arc::new(definition);
+            Contribution::new("main", NetworkPatch::new([]))
+                .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+                .prepare(move |context| {
+                    let model = context.bind_import("model")?;
+                    let events = model.output::<AgentEvent>("events")?;
+                    Ok(CandidateArtifacts {
+                        patch: Some(NetworkPatch::new([
+                            Edit::Add {
+                                path: OBSERVER.into(),
+                                definition: definition.clone(),
+                            },
+                            context.connect_bound_output(
+                                &events,
+                                PortPath {
+                                    process: OBSERVER.into(),
+                                    port: "input".into(),
+                                },
+                                NonZeroUsize::new(1).unwrap(),
+                            )?,
+                        ])),
+                        ..Default::default()
+                    })
                 })
-            })
-            .register(registrar)
+                .register(registrar)
         }
     }
 
