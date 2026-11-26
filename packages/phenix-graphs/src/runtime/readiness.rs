@@ -441,7 +441,9 @@ impl NetworkSession {
             // All other policies retain strict head-only staged reservations.
             let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
             let queue = self.packet_for(index, port, p.request, correlated);
-            let closed = self.input_closed_for(index, port, p.request);
+            // A present packet resolves this reservation regardless of closure.
+            // Only an absent packet needs the upstream absence proof.
+            let closed = queue.is_none() && self.input_closed_for(index, port, p.request);
             if queue.is_none() && closed && !self.closure_fresh(index, port, p.request) {
                 return Err(ReadinessError::RepeatedClosure {
                     port: waiting.clone(),
@@ -497,12 +499,18 @@ impl NetworkSession {
                 }
             }
         }
-        for (request, scope) in &self.requests {
-            if scope.sealed
-                && self.closure_obligation(index, *request)
-                && !candidates.contains(&Some(*request))
-            {
-                candidates.push(Some(*request));
+        // Only base policies declaring zero-packet closure obligations can
+        // admit work from a sealed scope without a packet. Opaque policies may
+        // declare such obligations per lane at admission, so retain their scan.
+        // Data-only rules and Optional with a required input cannot use it.
+        if p.policy.opaque() || p.policy.has_zero_packet_closure() {
+            for (request, scope) in &self.requests {
+                if scope.sealed
+                    && self.closure_obligation(index, *request)
+                    && !candidates.contains(&Some(*request))
+                {
+                    candidates.push(Some(*request));
+                }
             }
         }
         // CorrelatedAll opts in to cross-request head skipping, so an always
