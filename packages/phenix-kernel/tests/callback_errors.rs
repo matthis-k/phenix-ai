@@ -153,8 +153,7 @@ fn callback_boundaries_preserve_exact_source_and_contribution_phase() {
     let mut kernel = Kernel::build_with_options(
         "poll",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     assert!(matches!(
@@ -187,8 +186,7 @@ fn host_binding_preserves_source_without_publishing_or_starting() {
     let error = host
         .prepare(
             vec![],
-            BuildOptions::default(),
-            Arc::new(LocalProcessDispatcher),
+            BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "binding",
             |_| Err(Box::new(Cause(identity.clone()))),
         )
@@ -211,8 +209,7 @@ fn panicking_plugin_prepare_and_activate_return_errors_and_preserve_active_gener
     let initial = host
         .prepare(
             vec![host.plugins().prepare_load(&key, Phase::Poll).unwrap()],
-            BuildOptions::default(),
-            Arc::new(LocalProcessDispatcher),
+            BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "initial",
             |_| Ok(()),
         )
@@ -227,8 +224,7 @@ fn panicking_plugin_prepare_and_activate_return_errors_and_preserve_active_gener
         let error = host
             .prepare(
                 vec![candidate],
-                BuildOptions::default(),
-                Arc::new(LocalProcessDispatcher),
+                BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "panic",
                 |_| Ok(()),
             )
@@ -269,8 +265,7 @@ fn wake_registration_panic_returns_typed_driver_error_and_retains_the_producer()
     let mut kernel = Kernel::build_with_options(
         "wake-panic",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -299,8 +294,7 @@ fn panicking_host_binding_returns_typed_error_without_replacing_active_generatio
     let initial = host
         .prepare(
             vec![],
-            BuildOptions::default(),
-            Arc::new(LocalProcessDispatcher),
+            BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "initial",
             |_| Ok(()),
         )
@@ -330,8 +324,7 @@ fn panicking_host_binding_returns_typed_error_without_replacing_active_generatio
     let after = host
         .prepare(
             vec![],
-            BuildOptions::default(),
-            Arc::new(LocalProcessDispatcher),
+            BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "after",
             |_| Ok(()),
         )

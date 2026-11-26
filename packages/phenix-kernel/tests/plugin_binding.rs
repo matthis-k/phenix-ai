@@ -66,8 +66,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
         let kernel = Kernel::build_with_options(
             "host",
             [snapshot.clone()],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         let compiled = kernel.compiled().clone();
@@ -120,9 +119,7 @@ fn kernel_offer_binds_only_to_its_plugin_revision_and_exact_producer() {
             Kernel::build_with_options(
                 "host",
                 [sibling],
-                Arc::new(LocalProcessDispatcher),
-                options
-            )
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
             .err()
             .unwrap()
             .to_string()

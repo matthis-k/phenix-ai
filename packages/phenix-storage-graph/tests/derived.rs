@@ -175,8 +175,7 @@ fn one_atomic_batch_per_query_no_build_or_binding_reads_and_denial_recovers() {
     let candidate = host
         .prepare(
             vec![],
-            options(&plugin),
-            Arc::new(LocalProcessDispatcher),
+            options(&plugin).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "valid binding",
             |binding| {
                 spec.validate_binding(binding)?;

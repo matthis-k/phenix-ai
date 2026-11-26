@@ -221,8 +221,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let candidate = host
         .prepare(
             stages,
-            options(None),
-            Arc::new(LocalProcessDispatcher),
+            options(None).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "nested",
             |_| Ok(()),
         )
@@ -249,8 +248,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
     let candidate = host
         .prepare(
             vec![stage],
-            options(Some(LEAF_PATH)),
-            Arc::new(LocalProcessDispatcher),
+            options(Some(LEAF_PATH)).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "extended",
             |binding| {
                 let imported = binding
@@ -375,8 +373,7 @@ fn three_plugins_replace_a_nested_leaf_atomically_and_retain_old_generations() {
         let error = host
             .prepare(
                 stages,
-                options(grant),
-                Arc::new(LocalProcessDispatcher),
+                options(grant).with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 case,
                 |_| Ok(()),
             )

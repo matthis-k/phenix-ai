@@ -97,8 +97,7 @@ fn failure(case: Case) -> ResolutionError {
     Kernel::build_with_options(
         "diagnostics",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .err()
     .unwrap()

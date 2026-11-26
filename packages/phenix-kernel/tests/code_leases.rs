@@ -169,8 +169,7 @@ fn moved_prepare_activation_and_poll_causes_pin_code_and_application_until_cause
         let result = Kernel::build_with_options(
             "errors",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         );
         let cause = match phase {
             Phase::Prepare => {
@@ -241,8 +240,7 @@ fn moved_host_binding_cause_pins_the_unpublished_candidate() {
         options.execution.lease = Some(Arc::new(application));
         host.prepare(
             vec![stage],
-            options,
-            Arc::new(LocalProcessDispatcher),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "binding",
             |_| {
                 Err(Box::new(Cause {
@@ -351,8 +349,7 @@ fn detached_compiled_getters_exports_factories_processes_and_sessions_pin_both_l
         let kernel = Kernel::build_with_options(
             "declarations",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         let compiled = if exported {
@@ -428,8 +425,7 @@ fn detached_compiled_network_does_not_pin_defeated_snapshot_revisions() {
     let kernel = Kernel::build_with_options(
         "defeated-lease",
         [winner, loser],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     let detached = kernel.compiled().clone();
@@ -464,8 +460,7 @@ fn lease_failure_pins_independently_escaping_nested_cleanup_without_changing_sou
         let kernel = Kernel::build_with_options(
             "cleanup",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         )
         .unwrap();
         let make_failure = || {

@@ -99,8 +99,7 @@ fn build(case: Case) -> Result<Kernel, ResolutionError> {
     Kernel::build_with_options(
         "host",
         [snapshot],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
 }
 #[test]
@@ -191,9 +190,7 @@ fn foreign_plugin_cannot_launder_a_claim_onto_the_selected_provider_unit() {
         Kernel::build_with_options(
             "host",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options
-        )
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
         .err()
         .unwrap()
         .to_string()

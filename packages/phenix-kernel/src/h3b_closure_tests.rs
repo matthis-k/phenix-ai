@@ -146,8 +146,7 @@ fn queued_direct_drains_and_external_retirement_dispose_one_busy_or_full_event()
             let candidate = publish.then(|| {
                 host.prepare(
                     vec![],
-                    BuildOptions::default(),
-                    Arc::new(LocalProcessDispatcher),
+                    BuildOptions::default().with_dispatcher(Arc::new(LocalProcessDispatcher)),
                     "successor",
                     |_| Ok(()),
                 )

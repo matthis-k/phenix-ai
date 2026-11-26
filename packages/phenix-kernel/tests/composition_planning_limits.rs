@@ -33,8 +33,7 @@ fn attempt(
         Kernel::build_with_options(
             "planning-limit",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         ),
         counts,
     )
@@ -141,8 +140,7 @@ fn failed_host_prepare_preserves_epoch_inventory_and_published_generation_then_r
     let candidate = host
         .prepare(
             vec![stage],
-            cases::options(4, true, false),
-            Arc::new(LocalProcessDispatcher),
+            cases::options(4, true, false).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "initial",
             |_| Ok(()),
         )
@@ -156,8 +154,7 @@ fn failed_host_prepare_preserves_epoch_inventory_and_published_generation_then_r
     assert!(matches!(
         host.prepare(
             vec![stage],
-            options,
-            Arc::new(LocalProcessDispatcher),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "limited",
             |_| panic!("binding must not run")
         ),
@@ -170,8 +167,7 @@ fn failed_host_prepare_preserves_epoch_inventory_and_published_generation_then_r
     let candidate = host
         .prepare(
             vec![stage],
-            cases::options(4, true, false),
-            Arc::new(LocalProcessDispatcher),
+            cases::options(4, true, false).with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "retry",
             |_| Ok(()),
         )
@@ -236,9 +232,7 @@ fn later_valid_batch_cannot_repair_a_rejected_kernel_prefix() {
         Kernel::build_with_options(
             "prefix",
             [snapshot],
-            Arc::new(LocalProcessDispatcher),
-            options
-        ),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher))),
         Err(ResolutionError::Compilation { .. })
     ));
     assert_eq!(called.load(Ordering::SeqCst), 1);
@@ -274,8 +268,7 @@ fn recovery_attempt(limit: usize) -> (Result<Kernel, ResolutionError>, Arc<recov
         Kernel::build_with_options(
             "phase-limit",
             snapshots,
-            Arc::new(LocalProcessDispatcher),
-            options,
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         ),
         trace,
     )

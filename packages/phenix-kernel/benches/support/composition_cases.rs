@@ -205,7 +205,7 @@ pub fn build(n: usize, previews: bool, dense: bool, configure: fn(&mut BuildOpti
     let mut options = options(n, previews, dense);
     configure(&mut options);
     let mut kernel =
-        Kernel::build_with_options("q3", snapshots, Arc::new(LocalProcessDispatcher), options)
+        Kernel::build_with_options("q3", snapshots, options.with_dispatcher(Arc::new(LocalProcessDispatcher)))
             .unwrap();
     assert_eq!(counts.activated.load(Ordering::SeqCst), 0);
     kernel.start().unwrap();
@@ -272,8 +272,7 @@ pub fn rebuild(n: usize, previews: bool, configure: fn(&mut BuildOptions)) {
         let candidate = host
             .prepare(
                 vec![stage],
-                options,
-                Arc::new(LocalProcessDispatcher),
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "q3-rebuild",
                 |_| Ok(()),
             )

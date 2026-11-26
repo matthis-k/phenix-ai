@@ -73,8 +73,7 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
             phenix_kernel::BuildOptions {
                 composition: config.composition.clone(),
                 ..Default::default()
-            },
-            Arc::new(LocalProcessDispatcher),
+            }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "old",
             |binding| {
                 assert_eq!(starts.load(Ordering::SeqCst), 0);
@@ -98,8 +97,7 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
         phenix_kernel::BuildOptions {
             composition: config.composition.clone(),
             ..Default::default()
-        },
-        Arc::new(LocalProcessDispatcher),
+        }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "failed",
         |_| Err("binding rejected".into()),
     );
@@ -114,8 +112,7 @@ fn host_binding_precedes_activation_failed_candidate_is_atomic_and_old_generatio
                     .prepare_reload(&kind, reader(&second, starts.clone(), None))
                     .unwrap(),
             ],
-            config,
-            Arc::new(LocalProcessDispatcher),
+            config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "new",
             |binding| {
                 let spec = binding.export::<QuerySpec<i64>>(&key).unwrap();
@@ -203,8 +200,7 @@ fn host_guard_runs_on_actual_local_and_offloaded_workers_and_preserves_applicati
         let candidate = host
             .prepare(
                 vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-                options,
-                dispatcher,
+                options.with_dispatcher(dispatcher),
                 "guarded",
                 |binding| {
                     binding
@@ -263,8 +259,7 @@ fn host_passes_request_capacity_to_the_native_session() {
     let candidate = host
         .prepare(
             vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-            options,
-            Arc::new(LocalProcessDispatcher),
+            options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "bounded",
             |_| Ok(()),
         )
@@ -322,8 +317,7 @@ fn prepare_rejects_redirected_terminal_and_missing_source_captures_before_activa
         let host = DerivedHost::new(catalog.instance());
         let result = host.prepare(
             vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-            config,
-            Arc::new(LocalProcessDispatcher),
+            config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "invalid-capture",
             |binding| {
                 let spec = binding
@@ -380,8 +374,7 @@ fn host_queries_restart_only_the_failed_request_and_keep_committed_effects() {
         let candidate = host
             .prepare(
                 vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-                config,
-                Arc::new(LocalProcessDispatcher),
+                config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "recoverable",
                 |_| Ok(()),
             )
@@ -483,8 +476,7 @@ fn wake_observer_captures_updates_and_reload_switches_sources_without_candidate_
             phenix_kernel::BuildOptions {
                 composition: config.composition.clone(),
                 ..Default::default()
-            },
-            Arc::new(LocalProcessDispatcher),
+            }.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "old-observer",
             |_| Ok(()),
         )
@@ -516,8 +508,7 @@ fn wake_observer_captures_updates_and_reload_switches_sources_without_candidate_
                     )
                     .unwrap(),
             ],
-            config,
-            Arc::new(LocalProcessDispatcher),
+            config.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "new-observer",
             |_| Ok(()),
         )
@@ -610,8 +601,7 @@ fn wake_host_keeps_mandatory_guard_before_ordered_application_guards_on_actual_w
         let candidate = host
             .prepare(
                 vec![host.plugins().prepare_load(&kind, plugin).unwrap()],
-                config,
-                dispatcher,
+                config.with_dispatcher(dispatcher),
                 "wake-guarded",
                 |_| Ok(()),
             )

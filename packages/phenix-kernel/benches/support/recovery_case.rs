@@ -399,8 +399,7 @@ pub fn run(groups: usize, previews: bool, configure: fn(&mut BuildOptions)) {
     let mut kernel = Kernel::build_with_options(
         "recovery",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     let prepared: Vec<_> = (0..groups)

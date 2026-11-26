@@ -329,7 +329,7 @@ impl Kernel {
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
         dispatcher: Arc<dyn ProcessDispatcher>,
     ) -> Result<Self, ResolutionError> {
-        Self::build_with_options(name, snapshots, dispatcher, BuildOptions::default())
+        Self::build_with_options(name, snapshots, BuildOptions::default().with_dispatcher(dispatcher))
     }
 
     /// Discover compatible offers, apply trusted eligibility and selections,
@@ -338,7 +338,6 @@ impl Kernel {
     pub fn build_with_options(
         _name: impl Into<String>,
         snapshots: impl IntoIterator<Item = PluginSnapshot>,
-        dispatcher: Arc<dyn ProcessDispatcher>,
         mut options: BuildOptions,
     ) -> Result<Self, ResolutionError> {
         let mut planning_used = 0;
@@ -569,7 +568,6 @@ impl Kernel {
         // The session propagates this lease into dispatched jobs and queued packets.
         // Do not let a caller-provided lease displace the plugin revision leases.
         options.execution.lease = Some(code_lease.clone());
-        options.execution.dispatcher = dispatcher;
         let session_identity = next_kernel_session_id();
         options.execution.execution_guards.insert(
             0,

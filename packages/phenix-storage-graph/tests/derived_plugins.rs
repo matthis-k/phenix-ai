@@ -163,24 +163,20 @@ fn reader_snapshots_rebuild_and_failed_candidate_does_not_poison_exports() {
         DerivedRuntime::build_with_options(
             "failed",
             snapshots.clone(),
-            Arc::new(LocalProcessDispatcher),
-            build_options()
-        )
+            build_options().with_dispatcher(Arc::new(LocalProcessDispatcher)))
         .is_err()
     );
     fail.store(false, Ordering::SeqCst);
     let mut a = DerivedRuntime::build_with_options(
         "a",
         snapshots.clone(),
-        Arc::new(LocalProcessDispatcher),
-        build_options(),
+        build_options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     let mut b = DerivedRuntime::build_with_options(
         "b",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        build_options(),
+        build_options().with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     let key = Key::new("derive", "derive");
@@ -308,16 +304,14 @@ fn starting_a_after_b_uses_as_exact_observation() {
     let mut a = DerivedRuntime::build_with_options(
         "a",
         snapshots.clone(),
-        Arc::new(LocalProcessDispatcher),
-        first_options,
+        first_options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     *selected.lock().unwrap() = second.readers[0].clone();
     let mut b = DerivedRuntime::build_with_options(
         "b",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     b.start().unwrap();

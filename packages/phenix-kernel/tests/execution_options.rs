@@ -74,8 +74,7 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
     let mut kernel = Kernel::build_with_options(
         "bounded",
         [snapshot.clone()],
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
     .unwrap();
     kernel.start().unwrap();
@@ -112,8 +111,7 @@ fn large_valid_dag_uses_bounded_steps_through_kernel_and_host() {
     let candidate = host
         .prepare(
             vec![],
-            host_options,
-            Arc::new(LocalProcessDispatcher),
+            host_options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             "configured",
             |_| Ok(()),
         )

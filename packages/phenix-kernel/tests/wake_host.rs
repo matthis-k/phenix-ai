@@ -230,8 +230,7 @@ fn prepare(host: &KernelHost, stages: Vec<StagedPlugin>) -> Result<Candidate, Li
     );
     host.prepare(
         stages,
-        options,
-        Arc::new(LocalProcessDispatcher),
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "wake-host",
         |_| Ok(()),
     )
@@ -701,8 +700,7 @@ fn idle_reactor_reloads_on_publication_then_processes_source_wake_and_idle_shutd
             );
             host.prepare(
                 stages,
-                options,
-                Arc::new(LocalProcessDispatcher),
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
                 "reactor-capture",
                 |_| Ok(()),
             )

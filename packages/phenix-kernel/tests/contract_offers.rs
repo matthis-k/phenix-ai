@@ -97,8 +97,7 @@ fn node_and_module_offers_require_final_claimed_units_and_valid_host_selection()
             let result = Kernel::build_with_options(
                 "host",
                 [snapshot],
-                Arc::new(LocalProcessDispatcher),
-                options,
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             );
             if let Some(failure) = failure {
                 let error = result.err().unwrap();
@@ -208,8 +207,7 @@ fn offers_cannot_launder_foreign_nodes_modules_or_replacement_generations() {
             let error = Kernel::build_with_options(
                 "host",
                 snapshots,
-                Arc::new(LocalProcessDispatcher),
-                options,
+                options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
             )
             .err()
             .unwrap();

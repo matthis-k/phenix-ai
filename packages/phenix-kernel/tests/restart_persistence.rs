@@ -293,8 +293,7 @@ fn prepare(
     );
     host.prepare(
         vec![stage],
-        options,
-        Arc::new(LocalProcessDispatcher),
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
         "c6",
         bind,
     )

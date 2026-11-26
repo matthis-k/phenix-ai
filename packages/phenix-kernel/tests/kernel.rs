@@ -115,7 +115,7 @@ fn build(
     (snapshots, options): (Vec<phenix_plugin::PluginSnapshot>, BuildOptions),
     dispatcher: Arc<dyn ProcessDispatcher>,
 ) -> Result<Kernel, phenix_kernel::ResolutionError> {
-    Kernel::build_with_options(name, snapshots, dispatcher, options)
+    Kernel::build_with_options(name, snapshots, options.with_dispatcher(dispatcher))
 }
 fn snapshots(
     a: Vec<Key>,
@@ -453,8 +453,7 @@ fn driver_kernel(
     Kernel::build_with_options(
         "driver",
         snapshots,
-        Arc::new(LocalProcessDispatcher),
-        options,
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher)),
     )
 }
 #[test]
@@ -551,7 +550,7 @@ fn open_ingress_driver_kernel(
         ],
     );
     snapshots.push(support::snapshot("driver-open-input", OpenIngress));
-    Kernel::build_with_options(name, snapshots, Arc::new(LocalProcessDispatcher), options).unwrap()
+    Kernel::build_with_options(name, snapshots, options.with_dispatcher(Arc::new(LocalProcessDispatcher))).unwrap()
 }
 
 #[test]

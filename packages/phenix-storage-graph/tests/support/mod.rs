@@ -129,7 +129,7 @@ pub fn configured(
     let kind = catalog.register("domain", |p: Plugin| Ok(p)).unwrap();
     let mut plugins = catalog.instance();
     plugins.load(&kind, plugin).unwrap();
-    DerivedRuntime::build_with_options("derived", plugins.snapshots(), dispatcher, options).unwrap()
+    DerivedRuntime::build_with_options("derived", plugins.snapshots(), options.with_dispatcher(dispatcher)).unwrap()
 }
 pub fn local(plugin: Plugin) -> DerivedRuntime {
     build(plugin, Arc::new(LocalProcessDispatcher))
