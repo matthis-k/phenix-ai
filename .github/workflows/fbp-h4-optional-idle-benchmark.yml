@@ -36,6 +36,8 @@ jobs:
           mkdir -p artifacts
           cp candidate/packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs \
             baseline/packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs
+          # Only translate constructor syntax for the pinned historical runtime.
+          sed -i 's/Readiness::optional(vec!\[\], vec!\["input".into()\])/Readiness::Optional { required: vec![], optional: vec!["input".into()] }/g' baseline/packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs
           sha256sum candidate/packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs \
             baseline/packages/phenix-graphs/examples/fbp_optional_idle_benchmark.rs \
             > artifacts/source-hashes.txt
@@ -54,7 +56,7 @@ jobs:
           } > artifacts/environment.txt
           cat artifacts/source-hashes.txt
           cat artifacts/environment.txt
-      - name: Build same release example against both runtime commits
+      - name: Build equivalent release example against both runtime commits
         shell: bash
         run: |
           set -euo pipefail
