@@ -46,9 +46,9 @@ impl ReadinessError {
     }
 }
 
-/// Declarative input requirements. This is a closed description language,
-/// not a list of executable policies. Any implementation may declare a rule
-/// whose selection and exhaustion semantics it satisfies.
+/// Declarative input requirements. These rules define selection, exhaustion
+/// and passive inspection together. Arbitrary selectors use an opaque policy
+/// instead; either form is available to all callers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectionRule {
     Any,
@@ -63,8 +63,8 @@ pub enum SelectionRule {
 /// Immutable policy facts used without invoking application code.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyDeclaration {
-    /// A rule promises selection depends only on the supplied input heads
-    /// and is equivalent to the declared rule. None means opaque selection.
+    /// A rule determines selection from the supplied input heads. None means
+    /// the policy's opaque selector determines selection.
     pub rule: Option<SelectionRule>,
     /// Permit checked request-local selection behind foreign FIFO heads.
     /// Unscoped packets remain head-only.
@@ -80,21 +80,32 @@ enum PolicyRef {
 /// An ordinary policy handle. Ownership is independent of behavior.
 #[derive(Clone)]
 pub struct Readiness {
-    implementation: PolicyRef,
+    implementation: Option<PolicyRef>,
     declaration: PolicyDeclaration,
 }
 
 impl Readiness {
-    pub const ANY: Self = Self::declared_static(&Any, Any::DECLARATION);
-    pub const ALL: Self = Self::declared_static(&All, All::DECLARATION);
-    pub const CORRELATED_ALL: Self =
-        Self::declared_static(&CorrelatedAll, CorrelatedAll::DECLARATION);
+    pub const ANY: Self = Self::declared(SelectionRule::Any, false);
+    pub const ALL: Self = Self::declared(SelectionRule::All, false);
+    pub const CORRELATED_ALL: Self = Self::declared(SelectionRule::All, true);
+
+    /// Construct a declarative policy without allocation or application code.
+    /// The same rule drives execution, validation, closure and inspection.
+    pub const fn declared(rule: SelectionRule, correlated: bool) -> Self {
+        Self {
+            implementation: None,
+            declaration: PolicyDeclaration {
+                rule: Some(rule),
+                correlated,
+            },
+        }
+    }
 
     /// Capture a policy's immutable declaration once, at construction.
     pub fn new(policy: Arc<dyn ReadinessPolicy>) -> Self {
         let declaration = policy.declaration();
         Self {
-            implementation: PolicyRef::Shared(policy),
+            implementation: Some(PolicyRef::Shared(policy)),
             declaration,
         }
     }
@@ -104,38 +115,29 @@ impl Readiness {
     }
 
     pub fn from_static(policy: &'static dyn ReadinessPolicy) -> Self {
-        Self::declared_static(policy, policy.declaration())
-    }
-
-    /// Construct a static policy with its exact declaration, without allocation.
-    /// The declaration must describe the implementation's actual semantics.
-    pub const fn declared_static(
-        policy: &'static dyn ReadinessPolicy,
-        declaration: PolicyDeclaration,
-    ) -> Self {
         Self {
-            implementation: PolicyRef::Static(policy),
-            declaration,
+            implementation: Some(PolicyRef::Static(policy)),
+            declaration: policy.declaration(),
         }
     }
 
     pub fn at_least(n: NonZeroUsize) -> Self {
-        Self::from_policy(AtLeast(n))
+        Self::declared(SelectionRule::AtLeast(n), false)
     }
 
     pub fn optional(required: Vec<String>, optional: Vec<String>) -> Self {
-        Self::from_policy(Optional { required, optional })
+        Self::declared(SelectionRule::Optional { required, optional }, false)
     }
 
     pub fn declaration(&self) -> &PolicyDeclaration {
         &self.declaration
     }
 
-    fn implementation(&self) -> &dyn ReadinessPolicy {
-        match &self.implementation {
+    fn implementation(&self) -> Option<&dyn ReadinessPolicy> {
+        Some(match self.implementation.as_ref()? {
             PolicyRef::Static(policy) => *policy,
             PolicyRef::Shared(policy) => policy.as_ref(),
-        }
+        })
     }
 }
 
@@ -166,7 +168,8 @@ pub struct ReadinessSnapshot {
 }
 pub trait ReadinessPolicy: Send + Sync {
     /// Immutable declaration, captured when constructing the policy handle.
-    /// Opaque implementations need not describe their selection algorithm.
+    /// If a rule is declared, the runtime evaluates that rule instead of
+    /// calling the selector. Opaque policies need not describe their algorithm.
     fn declaration(&self) -> PolicyDeclaration {
         PolicyDeclaration::default()
     }
@@ -176,7 +179,7 @@ pub trait ReadinessPolicy: Send + Sync {
     fn closure_ports(&self, _lane: usize) -> Vec<String> {
         vec![]
     }
-    /// Return distinct port names whose heads should be atomically reserved.
+    /// Select input ports for an opaque policy (one without a declared rule).
     /// Every selected port must have a matching head or proven closure.
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String>;
 
@@ -287,126 +290,45 @@ impl Readiness {
         }
     }
 
-    /// Passive selection evaluates only immutable declarative facts.
+    /// Both execution and passive inspection evaluate the same rule.
     fn passive_selection(&self, snapshot: &ReadinessSnapshot) -> Option<Vec<String>> {
         Some(match self.declaration.rule.as_ref()? {
-            SelectionRule::Any => Any.select(snapshot),
-            SelectionRule::All => All.select(snapshot),
-            SelectionRule::AtLeast(n) => AtLeast(*n).select(snapshot),
+            SelectionRule::Any => snapshot
+                .heads
+                .iter()
+                .filter(|head| head.available)
+                .take(1)
+                .map(|head| head.port.clone())
+                .collect(),
+            SelectionRule::All => {
+                if snapshot.heads.iter().all(|head| head.available) {
+                    snapshot
+                        .heads
+                        .iter()
+                        .map(|head| head.port.clone())
+                        .collect()
+                } else {
+                    vec![]
+                }
+            }
+            SelectionRule::AtLeast(n) => {
+                let selected: Vec<_> = snapshot
+                    .heads
+                    .iter()
+                    .filter(|head| head.available)
+                    .take(n.get())
+                    .map(|head| head.port.clone())
+                    .collect();
+                if selected.len() == n.get() {
+                    selected
+                } else {
+                    vec![]
+                }
+            }
             SelectionRule::Optional { required, optional } => {
                 select_optional(required, optional, snapshot)
             }
         })
-    }
-}
-
-pub struct Any;
-impl Any {
-    const DECLARATION: PolicyDeclaration = PolicyDeclaration {
-        rule: Some(SelectionRule::Any),
-        correlated: false,
-    };
-}
-impl ReadinessPolicy for Any {
-    fn declaration(&self) -> PolicyDeclaration {
-        Self::DECLARATION
-    }
-
-    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        snapshot
-            .heads
-            .iter()
-            .filter(|head| head.available)
-            .take(1)
-            .map(|head| head.port.clone())
-            .collect()
-    }
-}
-
-pub struct All;
-impl All {
-    const DECLARATION: PolicyDeclaration = PolicyDeclaration {
-        rule: Some(SelectionRule::All),
-        correlated: false,
-    };
-}
-impl ReadinessPolicy for All {
-    fn declaration(&self) -> PolicyDeclaration {
-        Self::DECLARATION
-    }
-
-    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        if snapshot.heads.iter().all(|head| head.available) {
-            snapshot
-                .heads
-                .iter()
-                .map(|head| head.port.clone())
-                .collect()
-        } else {
-            vec![]
-        }
-    }
-}
-
-pub struct CorrelatedAll;
-impl CorrelatedAll {
-    const DECLARATION: PolicyDeclaration = PolicyDeclaration {
-        rule: Some(SelectionRule::All),
-        correlated: true,
-    };
-}
-impl ReadinessPolicy for CorrelatedAll {
-    fn declaration(&self) -> PolicyDeclaration {
-        Self::DECLARATION
-    }
-
-    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        All.select(snapshot)
-    }
-}
-
-pub struct AtLeast(pub NonZeroUsize);
-impl ReadinessPolicy for AtLeast {
-    fn declaration(&self) -> PolicyDeclaration {
-        PolicyDeclaration {
-            rule: Some(SelectionRule::AtLeast(self.0)),
-            correlated: false,
-        }
-    }
-
-    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        let selected: Vec<_> = snapshot
-            .heads
-            .iter()
-            .filter(|head| head.available)
-            .take(self.0.get())
-            .map(|head| head.port.clone())
-            .collect();
-        if selected.len() == self.0.get() {
-            selected
-        } else {
-            vec![]
-        }
-    }
-}
-
-pub struct Optional {
-    pub required: Vec<String>,
-    pub optional: Vec<String>,
-}
-impl ReadinessPolicy for Optional {
-    fn declaration(&self) -> PolicyDeclaration {
-        PolicyDeclaration {
-            rule: Some(SelectionRule::Optional {
-                required: self.required.clone(),
-                optional: self.optional.clone(),
-            }),
-            correlated: false,
-        }
-    }
-
-    fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        select_optional(&self.required, &self.optional, snapshot)
     }
 }
 
@@ -435,15 +357,21 @@ impl ReadinessPolicy for Readiness {
     }
 
     fn select(&self, snapshot: &ReadinessSnapshot) -> Vec<String> {
-        self.implementation().select(snapshot)
+        self.passive_selection(snapshot).unwrap_or_else(|| {
+            self.implementation()
+                .expect("opaque readiness has an implementation")
+                .select(snapshot)
+        })
     }
 
     fn closure_ports(&self, lane: usize) -> Vec<String> {
-        self.implementation().closure_ports(lane)
+        self.implementation()
+            .map_or_else(Vec::new, |policy| policy.closure_ports(lane))
     }
 
     fn notification_driven(&self) -> bool {
-        self.implementation().notification_driven()
+        self.implementation()
+            .is_some_and(|policy| policy.notification_driven())
     }
 }
 
