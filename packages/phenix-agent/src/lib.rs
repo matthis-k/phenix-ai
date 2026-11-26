@@ -142,7 +142,10 @@ impl PluginInstance for BasicLoop {
 pub fn loop_grants(model: &str, tool: &str) -> [Footprint; 4] {
     [
         Footprint::Connection(ConnectionKey::new(port(model, "tool"), port(tool, "input"))),
-        Footprint::Connection(ConnectionKey::new(port(tool, "output"), port(model, "input"))),
+        Footprint::Connection(ConnectionKey::new(
+            port(tool, "output"),
+            port(model, "input"),
+        )),
         Footprint::InputExport(PROMPT.into()),
         Footprint::OutputExport(EVENTS.into()),
     ]
