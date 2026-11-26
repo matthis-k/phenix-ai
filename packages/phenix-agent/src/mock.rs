@@ -219,9 +219,7 @@ pub fn options() -> BuildOptions {
     options.composition.insert(
         Key::new(LOOP_PLUGIN, "main"),
         CompositionPolicy {
-            grants: loop_grants(MODEL_PATH, &[("local".into(), TOOL_PATH.into())].into())
-                .into_iter()
-                .collect(),
+            grants: loop_grants(MODEL_PATH, TOOL_PATH).into_iter().collect(),
             ..Default::default()
         },
     );
@@ -247,8 +245,7 @@ pub fn host_with_options(
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
-        host.plugins()
-            .prepare_load(&loop_key, AgentLoop::default())?,
+        host.plugins().prepare_load(&loop_key, AgentLoop)?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];

@@ -95,9 +95,7 @@ fn independent_frontend_and_native_ingress_share_one_loop() {
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
-        host.plugins()
-            .prepare_load(&agent, AgentLoop::default())
-            .unwrap(),
+        host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
         host.plugins()
             .prepare_load(&model, MockModel::default())
             .unwrap(),
