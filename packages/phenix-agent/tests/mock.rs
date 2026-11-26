@@ -145,16 +145,24 @@ fn missing_host_graph_grant_prevents_publication() {
 }
 
 #[test]
-fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
+fn independent_observer_attaches_without_basic_preset_or_tool() {
     use phenix_agent::{AgentContracts, CONTRACTS_PLUGIN, MODEL_CONTRACT};
-    use phenix_graph::compose::{Footprint, NetworkPatch};
+    use phenix_graph::{
+        ComponentDef,
+        compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+        network::PortPath,
+    };
     use phenix_kernel::{
         BuildOptions, CandidateArtifacts, CompositionPolicy, Contribution, Key, host::KernelHost,
     };
     use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-    use std::num::NonZeroUsize;
+    use std::{
+        num::NonZeroUsize,
+        sync::{Arc, Mutex},
+    };
 
     const ALTERNATE: &str = "alternate-loop";
+    const OBSERVER: &str = "frontend-observer";
     struct DirectLoop;
     impl PluginInstance for DirectLoop {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
@@ -180,6 +188,40 @@ fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
         }
     }
 
+    struct Observer(Arc<Mutex<Vec<AgentEvent>>>);
+    impl PluginInstance for Observer {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let received = self.0.clone();
+            let definition = ComponentDef::sink(move |event: &AgentEvent| {
+                received.lock().unwrap().push(event.clone());
+            });
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: OBSERVER.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+            .prepare(|context| {
+                let model = context.bind_import("model")?;
+                let events = model.output::<AgentEvent>("events")?;
+                Ok(CandidateArtifacts {
+                    patch: Some(NetworkPatch::new([context.connect_bound_output(
+                        &events,
+                        PortPath {
+                            process: OBSERVER.into(),
+                            port: "input".into(),
+                        },
+                        NonZeroUsize::new(1).unwrap(),
+                    )?])),
+                    ..Default::default()
+                })
+            })
+            .register(registrar)
+        }
+    }
+
     let mut catalog = PluginCatalog::new();
     let contracts = catalog
         .register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))
@@ -188,6 +230,10 @@ fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
     let model_key = catalog
         .register(mock::MODEL_PLUGIN, |model: MockModel| Ok(model))
         .unwrap();
+    let observer_key = catalog
+        .register(OBSERVER, |events| Ok(Observer(events)))
+        .unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
@@ -200,6 +246,9 @@ fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
                     ..MockModel::default()
                 },
             )
+            .unwrap(),
+        host.plugins()
+            .prepare_load(&observer_key, observed.clone())
             .unwrap(),
     ];
     let mut options = BuildOptions::default();
@@ -223,11 +272,37 @@ fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
             ..Default::default()
         },
     );
+    options.composition.insert(
+        Key::new(OBSERVER, "main"),
+        CompositionPolicy {
+            grants: [
+                Footprint::Component(OBSERVER.into()),
+                Footprint::Connection(ConnectionKey::new(
+                    PortPath {
+                        process: mock::MODEL_PATH.into(),
+                        port: "events".into(),
+                    },
+                    PortPath {
+                        process: OBSERVER.into(),
+                        port: "input".into(),
+                    },
+                )),
+            ]
+            .into(),
+            ..Default::default()
+        },
+    );
     options.imports.allow = Some(
-        [(
-            Key::new(ALTERNATE, "model"),
-            Key::new(mock::MODEL_PLUGIN, "model"),
-        )]
+        [
+            (
+                Key::new(ALTERNATE, "model"),
+                Key::new(mock::MODEL_PLUGIN, "model"),
+            ),
+            (
+                Key::new(OBSERVER, "model"),
+                Key::new(mock::MODEL_PLUGIN, "model"),
+            ),
+        ]
         .into(),
     );
     options
@@ -238,12 +313,17 @@ fn independently_authored_loop_does_not_require_basic_preset_or_tool() {
         .prepare(stages, options, "alternate", |_| Ok(()))
         .unwrap();
     host.publish(candidate).unwrap();
-    assert_eq!(
-        turn(&host.active().unwrap(), "hello"),
-        [
-            AgentEvent::Delta("mock: ".into()),
-            AgentEvent::Delta("hello".into()),
-            AgentEvent::Completed,
-        ]
-    );
+    let generation = host.active().unwrap();
+    for prompt in ["first", "second"] {
+        let events = turn(&generation, prompt);
+        assert_eq!(
+            events,
+            [
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta(prompt.into()),
+                AgentEvent::Completed,
+            ]
+        );
+        assert_eq!(std::mem::take(&mut *observed.lock().unwrap()), events);
+    }
 }
