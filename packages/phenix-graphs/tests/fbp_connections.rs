@@ -33,7 +33,13 @@ fn default_and_explicit_static_identity_have_the_same_value_semantics() {
             TypeIdentity::Local(TypeId::of::<i64>()),
         )
     };
-    static EXTERNAL_IDENTITY: IdentityEdgeAdapter = IdentityEdgeAdapter;
+    struct ExternalIdentity;
+    impl EdgeAdapter for ExternalIdentity {
+        fn prepare(&self, value: &Value) -> Result<Value, phenix_graph::Failure> {
+            Ok(value.clone())
+        }
+    }
+    static EXTERNAL_IDENTITY: ExternalIdentity = ExternalIdentity;
     let mut set = ConnectionSet::new(vec![local(), local(), queue(1), queue(1)]);
     let targets = [
         FanoutTarget::identity(0),

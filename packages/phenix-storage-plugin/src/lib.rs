@@ -83,11 +83,18 @@ impl BackendProvider {
 
     pub fn sqlite(path: std::path::PathBuf) -> Self {
         let open_path = path.clone();
-        let mut provider =
-            Self::new(move || Ok(Box::new(phenix_storage::SqliteBackend::open(&open_path)?)))
-                .with_features(BackendFeatures::SQLITE);
-        provider.sqlite_path = Some(path);
-        provider
+        Self::new(move || Ok(Box::new(phenix_storage::SqliteBackend::open(&open_path)?)))
+            .with_features(BackendFeatures::SQLITE)
+            .with_sqlite_path(path)
+    }
+
+    /// Declare that this provider opens the given host-managed SQLite file.
+    /// The host applies the same path, alias and persisted-schema checks as
+    /// for the standard SQLite provider. The declaration grants no authority;
+    /// trusted provider code must honor it.
+    pub fn with_sqlite_path(mut self, path: std::path::PathBuf) -> Self {
+        self.sqlite_path = Some(path);
+        self
     }
 }
 
