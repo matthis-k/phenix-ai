@@ -576,10 +576,20 @@ impl TempRoot {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(text)?
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("phenix-derived-{}-{nonce}", std::process::id()));
-        std::fs::create_dir(&path).map_err(text)?;
-        Ok(Self(path))
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        for _ in 0..128 {
+            let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "phenix-derived-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(text(error)),
+            }
+        }
+        Err("temporary directory allocation exhausted".into())
     }
     pub fn path(&self) -> &Path {
         &self.0
