@@ -42,11 +42,52 @@ pub struct ToolCall {
     pub environment: String,
 }
 
-/// Tool feedback contains only a call and its outcome, never a user prompt.
+/// One local invocation, distinct even when two calls have identical arguments.
+/// Cloning preserves identity; constructing another invocation never does.
+/// This is not a durable identifier or proof that an external effect occurred.
+#[derive(Clone, Debug)]
+pub struct ToolInvocation(Arc<ToolCall>);
+
+impl ToolInvocation {
+    pub fn new(call: ToolCall) -> Self {
+        Self(Arc::new(call))
+    }
+
+    pub fn call(&self) -> &ToolCall {
+        &self.0
+    }
+
+    pub fn complete(self, outcome: ToolOutcome) -> ToolResult {
+        ToolResult {
+            invocation: self,
+            outcome,
+        }
+    }
+}
+
+impl PartialEq for ToolInvocation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ToolInvocation {}
+
+/// Tool feedback binds an outcome to the dispatched invocation, not a user prompt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolResult {
-    pub call: ToolCall,
-    pub outcome: ToolOutcome,
+    invocation: ToolInvocation,
+    outcome: ToolOutcome,
+}
+
+impl ToolResult {
+    pub fn invocation(&self) -> &ToolInvocation {
+        &self.invocation
+    }
+
+    pub fn outcome(&self) -> &ToolOutcome {
+        &self.outcome
+    }
 }
 
 /// Ordered model events on the public capture. Completion is explicit.
@@ -64,6 +105,7 @@ pub const TOOL_CONTRACT: &str = "tool";
 pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
+const TOOL_INVOCATION: &str = "agent-tool-invocation";
 const TOOL_ROUTER: &str = "agent-tool-router";
 const TOOL_FEEDBACK: &str = "agent-tool-feedback";
 const UNAVAILABLE: &str = "unavailable";
@@ -105,7 +147,7 @@ pub fn tool_contract() -> Contract {
         "agent/tool@1",
         Arc::new(
             Interface::new(
-                [PortDef::local::<ToolCall>("input")],
+                [PortDef::local::<ToolInvocation>("input")],
                 [PortDef::local::<ToolResult>("output")],
             )
             .unwrap(),
@@ -162,22 +204,20 @@ impl Process for ToolRouter {
                 Step::Complete
             });
         };
-        let call = value
-            .borrow::<ToolCall>()
-            .ok_or_else(|| GraphFailure::application_message("router expected a tool call"))?
+        let invocation = value
+            .borrow::<ToolInvocation>()
+            .ok_or_else(|| GraphFailure::application_message("router expected a tool invocation"))?
             .clone();
-        let (output, value) = if self.environments.contains(&call.environment) {
-            (environment_port(&call.environment), Value::local(call))
+        let environment = &invocation.call().environment;
+        let (output, value) = if self.environments.contains(environment) {
+            (environment_port(environment), Value::local(invocation))
         } else {
             (
                 UNAVAILABLE.into(),
-                Value::local(ToolResult {
-                    call,
-                    outcome: ToolOutcome::Failed {
-                        output: String::new(),
-                        reason: "environment unavailable".into(),
-                    },
-                }),
+                Value::local(invocation.complete(ToolOutcome::Failed {
+                    output: String::new(),
+                    reason: "environment unavailable".into(),
+                })),
             )
         };
         self.emitted = true;
@@ -185,9 +225,8 @@ impl Process for ToolRouter {
     }
 }
 
-/// Match feedback against the original call within the request before it reaches
-/// the model. This checks the call data, not effect evidence or unique call IDs.
-/// The current sequential loop expects feedback in call order.
+/// Match feedback against the exact invocation within the request before it
+/// reaches the model. The sequential loop expects feedback in dispatch order.
 struct ToolFeedbackFactory;
 
 impl ProcessFactory for ToolFeedbackFactory {
@@ -212,15 +251,15 @@ impl Process for ToolFeedback {
         }
         match (context.take("expected"), context.take("input")) {
             (Some(expected), Some(result)) => {
-                let expected = expected.borrow::<ToolCall>().ok_or_else(|| {
-                    GraphFailure::application_message("feedback expected a tool call")
+                let expected = expected.borrow::<ToolInvocation>().ok_or_else(|| {
+                    GraphFailure::application_message("feedback expected a tool invocation")
                 })?;
                 let result = result.borrow::<ToolResult>().ok_or_else(|| {
                     GraphFailure::application_message("feedback expected a tool result")
                 })?;
-                if expected != &result.call {
+                if expected != result.invocation() {
                     return Err(GraphFailure::application_message(
-                        "tool feedback does not match dispatched call",
+                        "tool feedback does not match dispatched invocation",
                     ));
                 }
                 self.emitted = true;
@@ -257,10 +296,10 @@ impl PluginInstance for AgentLoop {
                 let model_tool = model.output::<ToolCall>("tool")?;
                 let events = model.output::<AgentEvent>("events")?;
                 let interface = Interface::new(
-                    [PortDef::local::<ToolCall>("input")],
+                    [PortDef::local::<ToolInvocation>("input")],
                     environments
                         .iter()
-                        .map(|name| PortDef::local::<ToolCall>(environment_port(name)))
+                        .map(|name| PortDef::local::<ToolInvocation>(environment_port(name)))
                         .chain([PortDef::local::<ToolResult>(UNAVAILABLE)]),
                 )?;
                 let routes = environments.clone();
@@ -273,20 +312,29 @@ impl PluginInstance for AgentLoop {
                 );
                 let mut edits = vec![
                     Edit::Add {
-                        path: TOOL_ROUTER.into(),
-                        definition: Arc::new(router),
+                        path: TOOL_INVOCATION.into(),
+                        definition: Arc::new(ComponentDef::map(ToolInvocation::new)),
                     },
                     context.connect_bound_output(
                         &model_tool,
-                        port(TOOL_ROUTER, "input"),
+                        port(TOOL_INVOCATION, "input"),
                         capacity(),
                     )?,
+                    Edit::Add {
+                        path: TOOL_ROUTER.into(),
+                        definition: Arc::new(router),
+                    },
+                    Edit::Connect(ConnectionDef {
+                        from: port(TOOL_INVOCATION, "output"),
+                        to: port(TOOL_ROUTER, "input"),
+                        capacity: capacity(),
+                    }),
                     Edit::Add {
                         path: TOOL_FEEDBACK.into(),
                         definition: Arc::new(ComponentDef::primitive(
                             Arc::new(Interface::new(
                                 [
-                                    PortDef::local::<ToolCall>("expected"),
+                                    PortDef::local::<ToolInvocation>("expected"),
                                     PortDef::local::<ToolResult>("input"),
                                 ],
                                 [PortDef::local::<ModelInput>("output")],
@@ -294,11 +342,11 @@ impl PluginInstance for AgentLoop {
                             Arc::new(ToolFeedbackFactory),
                         )),
                     },
-                    context.connect_bound_output(
-                        &model_tool,
-                        port(TOOL_FEEDBACK, "expected"),
-                        capacity(),
-                    )?,
+                    Edit::Connect(ConnectionDef {
+                        from: port(TOOL_INVOCATION, "output"),
+                        to: port(TOOL_FEEDBACK, "expected"),
+                        capacity: capacity(),
+                    }),
                     Edit::Connect(ConnectionDef {
                         from: port(TOOL_ROUTER, UNAVAILABLE),
                         to: port(TOOL_FEEDBACK, "input"),
@@ -329,7 +377,7 @@ impl PluginInstance for AgentLoop {
                 for environment in &environments {
                     let output = environment_port(environment);
                     let tool = context.bind_import(&output)?;
-                    let tool_input = tool.input::<ToolCall>("input")?;
+                    let tool_input = tool.input::<ToolInvocation>("input")?;
                     let result = tool.output::<ToolResult>("output")?;
                     edits.push(Edit::Connect(ConnectionDef {
                         from: port(TOOL_ROUTER, &output),
@@ -356,14 +404,19 @@ impl PluginInstance for AgentLoop {
 /// Exact host grants for the configured graph; names are not authority by themselves.
 pub fn loop_grants(model: &str, environments: &BTreeMap<String, String>) -> Vec<Footprint> {
     let mut grants = vec![
-        Footprint::Component(TOOL_ROUTER.into()),
+        Footprint::Component(TOOL_INVOCATION.into()),
         Footprint::Connection(ConnectionKey::new(
             port(model, "tool"),
+            port(TOOL_INVOCATION, "input"),
+        )),
+        Footprint::Component(TOOL_ROUTER.into()),
+        Footprint::Connection(ConnectionKey::new(
+            port(TOOL_INVOCATION, "output"),
             port(TOOL_ROUTER, "input"),
         )),
         Footprint::Component(TOOL_FEEDBACK.into()),
         Footprint::Connection(ConnectionKey::new(
-            port(model, "tool"),
+            port(TOOL_INVOCATION, "output"),
             port(TOOL_FEEDBACK, "expected"),
         )),
         Footprint::Connection(ConnectionKey::new(
