@@ -6,7 +6,7 @@
 
 use phenix_graph::{
     ComponentDef, Contract, Interface, NetworkError, PortDef,
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    compose::{ConnectionKey, Footprint, NetworkPatch},
     network::PortPath,
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
