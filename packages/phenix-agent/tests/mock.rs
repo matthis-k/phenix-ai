@@ -263,6 +263,50 @@ fn independent_environment_extension_rewires_the_basic_loop() {
 }
 
 #[test]
+fn one_turn_can_chain_tools_across_environments() {
+    let remote = ToolCall {
+        prompt: "second".into(),
+        environment: "remote".into(),
+    };
+    let local = ToolCall {
+        prompt: "third".into(),
+        environment: "local".into(),
+    };
+    let host = environment_host(
+        MockModel {
+            follow_up_by_prompt: [
+                ("first".into(), remote.clone()),
+                ("second".into(), local.clone()),
+            ]
+            .into(),
+            ..MockModel::default()
+        },
+        MockTool {
+            path: TEST_REMOTE_PATH.into(),
+            prefix: "remote".into(),
+        },
+        mock::options(),
+    );
+    let generation = host.active().unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            turn(&generation, "first"),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: "first".into(),
+                    environment: "local".into(),
+                }),
+                AgentEvent::ToolRequested(remote.clone()),
+                AgentEvent::ToolRequested(local.clone()),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("lookup(third)".into()),
+                AgentEvent::Completed,
+            ]
+        );
+    }
+}
+
+#[test]
 fn suspended_remote_request_does_not_block_independent_local_request() {
     use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, tool_contract};
     use phenix_graph::{
