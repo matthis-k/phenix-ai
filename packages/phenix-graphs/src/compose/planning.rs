@@ -659,10 +659,10 @@ fn overlapping_write<'a>(
     if left.is_empty() || right.is_empty() {
         return Ok(None);
     }
-    budget.charge(2)?;
     if !matches!(left.first(), Some(Footprint::Component(_)))
         && !matches!(right.first(), Some(Footprint::Component(_)))
     {
+        budget.charge(2)?;
         let mut right = right.iter().peekable();
         for write in left {
             while let Some(&other) = right.peek() {
@@ -1500,16 +1500,20 @@ mod exact_overlap_tests {
             .map(|i| Footprint::InputExport(format!("p{:04}", i * 2 + 1)))
             .collect();
         let mut used = 0;
-        let mut budget =
-            PlanningBudget::new(super::super::PlanningLimits { max_units: 20_000 }, &mut used)
-                .unwrap();
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits { max_units: 20_000 },
+            &mut used,
+        )
+        .unwrap();
         assert_eq!(overlapping_write(&left, &right, &mut budget), Ok(None));
         right.insert(Footprint::InputExport("p0256".into()));
         right.insert(Footprint::InputExport("p0002".into()));
         let mut used = 0;
-        let mut budget =
-            PlanningBudget::new(super::super::PlanningLimits { max_units: 20_000 }, &mut used)
-                .unwrap();
+        let mut budget = PlanningBudget::new(
+            super::super::PlanningLimits { max_units: 20_000 },
+            &mut used,
+        )
+        .unwrap();
         assert_eq!(
             overlapping_write(&left, &right, &mut budget),
             Ok(Some(&Footprint::InputExport("p0002".into())))
