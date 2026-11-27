@@ -32,6 +32,9 @@ pub struct MockModel {
     pub use_tool: bool,
     pub environment: String,
     pub environment_by_prompt: BTreeMap<String, String>,
+    /// Deterministic continuation after a successful tool result. Keys are
+    /// the completed call's prompt; the value is the next model tool call.
+    pub follow_up_by_prompt: BTreeMap<String, ToolCall>,
 }
 
 impl Default for MockModel {
@@ -41,6 +44,7 @@ impl Default for MockModel {
             use_tool: true,
             environment: "local".into(),
             environment_by_prompt: BTreeMap::new(),
+            follow_up_by_prompt: BTreeMap::new(),
         }
     }
 }
@@ -82,16 +86,18 @@ impl Process for ModelProcess {
                         .unwrap_or(&self.config.environment)
                         .clone(),
                 };
-                self.pending.push_back(ProcessEmission::new(
-                    "events",
-                    Value::local(AgentEvent::ToolRequested(call.clone())),
-                ));
-                self.pending
-                    .push_back(ProcessEmission::new("tool", Value::local(call)));
+                self.call_tool(call);
             }
             ModelInput::Prompt(prompt) => self.answer(prompt),
             ModelInput::ToolResult(result) => match result.outcome() {
-                ToolOutcome::Succeeded { output } => self.answer(output),
+                ToolOutcome::Succeeded { output } => {
+                    let prompt = &result.invocation().call().prompt;
+                    if let Some(next) = self.config.follow_up_by_prompt.get(prompt).cloned() {
+                        self.call_tool(next);
+                    } else {
+                        self.answer(output);
+                    }
+                }
                 ToolOutcome::Failed { output, reason } => {
                     self.answer(&format!("tool failed: {reason}: {output}"));
                 }
@@ -104,6 +110,15 @@ impl Process for ModelProcess {
 }
 
 impl ModelProcess {
+    fn call_tool(&mut self, call: ToolCall) {
+        self.pending.push_back(ProcessEmission::new(
+            "events",
+            Value::local(AgentEvent::ToolRequested(call.clone())),
+        ));
+        self.pending
+            .push_back(ProcessEmission::new("tool", Value::local(call)));
+    }
+
     fn answer(&mut self, text: &str) {
         for event in [
             AgentEvent::Delta(format!("{}: ", self.config.label)),
