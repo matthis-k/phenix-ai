@@ -199,6 +199,29 @@ pub(super) struct Reservation {
     pub(super) request: Option<RequestId>,
 }
 
+/// Preserve first discovery order without quadratic duplicate searches in
+/// wide request sets. Small scans need no second allocation.
+#[derive(Default)]
+struct RequestCandidates {
+    ordered: Vec<Option<RequestId>>,
+    membership: Option<BTreeSet<Option<RequestId>>>,
+}
+
+impl RequestCandidates {
+    fn insert(&mut self, request: Option<RequestId>) {
+        if let Some(membership) = &mut self.membership {
+            if membership.insert(request) {
+                self.ordered.push(request);
+            }
+        } else if !self.ordered.contains(&request) {
+            self.ordered.push(request);
+            if self.ordered.len() > 16 {
+                self.membership = Some(self.ordered.iter().copied().collect());
+            }
+        }
+    }
+}
+
 /// Validate only declarations. Never inspect application code or spawn a factory.
 pub(super) fn validate_policy_ports<'a>(
     ports: impl Iterator<Item = &'a str>,
@@ -481,7 +504,7 @@ impl NetworkSession {
         }
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
         let correlated = policy.correlated();
-        let mut candidates = vec![];
+        let mut candidates = RequestCandidates::default();
         for port in order {
             let input = &p.inputs[*port];
             for offset in 0..input.queues.len() {
@@ -493,8 +516,8 @@ impl NetworkSession {
                     let request = packet.metadata().and_then(|m| m.request());
                     // A global (unscoped) packet is never dequeued out of FIFO
                     // order, even under this explicit request correlation policy.
-                    if (position == 0 || request.is_some()) && !candidates.contains(&request) {
-                        candidates.push(request);
+                    if position == 0 || request.is_some() {
+                        candidates.insert(request);
                     }
                 }
             }
@@ -505,14 +528,12 @@ impl NetworkSession {
         // Data-only rules and Optional with a required input cannot use it.
         if p.policy.opaque() || p.policy.has_zero_packet_closure() {
             for (request, scope) in &self.requests {
-                if scope.sealed
-                    && self.closure_obligation(index, *request)
-                    && !candidates.contains(&Some(*request))
-                {
-                    candidates.push(Some(*request));
+                if scope.sealed && self.closure_obligation(index, *request) {
+                    candidates.insert(Some(*request));
                 }
             }
         }
+        let mut candidates = candidates.ordered;
         // CorrelatedAll opts in to cross-request head skipping, so an always
         // ready older request must not permanently win on input queue order.
         // Reuse the existing bounded active-lane cursor rather than adding a
@@ -763,6 +784,38 @@ pub(crate) fn validate_policy<'a>(
     input_names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), ReadinessError> {
     validate_policy_ports(input_names.into_iter(), policy)
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    #[test]
+    fn candidate_membership_preserves_first_discovery_across_promotion() {
+        let request = |sequence| {
+            Some(RequestId {
+                session: 1,
+                generation: 2,
+                sequence,
+            })
+        };
+        let mut candidates = RequestCandidates::default();
+        let mut reference = vec![];
+        for candidate in [None, request(99), None]
+            .into_iter()
+            .chain((0..15).rev().map(request))
+            .chain([request(99), None])
+            .chain((0..128).map(request))
+            .chain((0..128).rev().map(request))
+        {
+            if !reference.contains(&candidate) {
+                reference.push(candidate);
+            }
+            candidates.insert(candidate);
+            assert_eq!(candidates.ordered, reference);
+            assert_eq!(candidates.membership.is_some(), reference.len() > 16);
+        }
+    }
 }
 
 #[cfg(test)]
