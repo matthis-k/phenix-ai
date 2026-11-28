@@ -208,7 +208,11 @@ fn environment_host(
         Key::new(ENVIRONMENT, "main"),
         CompositionPolicy {
             grants: environment_grants(
-                &[("remote".into(), [("lookup".into(), TEST_REMOTE_PATH.into())].into())].into(),
+                &[(
+                    "remote".into(),
+                    [("lookup".into(), TEST_REMOTE_PATH.into())].into(),
+                )]
+                .into(),
             )
             .into_iter()
             .collect(),

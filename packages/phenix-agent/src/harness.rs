@@ -177,15 +177,17 @@ pub fn compose<M: PluginInstance + 'static>(
             .or_default()
             .grants
             .extend(environment_grants(&placements));
-        stages.push(host.plugins().prepare_load(
-            &routes_key,
-            EnvironmentRoutes {
-                environments: placements
-                    .into_iter()
-                    .map(|(environment, tools)| (environment, tools.into_keys().collect()))
-                    .collect(),
-            },
-        )?);
+        stages.push(
+            host.plugins().prepare_load(
+                &routes_key,
+                EnvironmentRoutes {
+                    environments: placements
+                        .into_iter()
+                        .map(|(environment, tools)| (environment, tools.into_keys().collect()))
+                        .collect(),
+                },
+            )?,
+        );
     }
     let candidate = host.prepare(stages, options, "agent-harness", |_| Ok(()))?;
     host.publish(candidate)?;

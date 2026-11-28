@@ -341,7 +341,10 @@ fn compose_mock(
             .as_mut()
             .expect("mock import policy")
             .insert((
-                Key::new(ROUTES_PLUGIN, environment_tool_import(&environment, "lookup")),
+                Key::new(
+                    ROUTES_PLUGIN,
+                    environment_tool_import(&environment, "lookup"),
+                ),
                 Key::new(&owner, "tool"),
             ));
         options.composition.insert(
@@ -365,7 +368,8 @@ fn compose_mock(
     let mut host = KernelHost::new(catalog.instance());
     let mut stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
-        host.plugins().prepare_load(&loop_key, AgentLoop::new(["lookup"]))?,
+        host.plugins()
+            .prepare_load(&loop_key, AgentLoop::new(["lookup"]))?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
@@ -380,15 +384,17 @@ fn compose_mock(
                 ..Default::default()
             },
         );
-        stages.push(host.plugins().prepare_load(
-            &key,
-            EnvironmentRoutes {
-                environments: placements
-                    .into_iter()
-                    .map(|(environment, tools)| (environment, tools.into_keys().collect()))
-                    .collect(),
-            },
-        )?);
+        stages.push(
+            host.plugins().prepare_load(
+                &key,
+                EnvironmentRoutes {
+                    environments: placements
+                        .into_iter()
+                        .map(|(environment, tools)| (environment, tools.into_keys().collect()))
+                        .collect(),
+                },
+            )?,
+        );
     }
     let candidate = host.prepare(stages, options, "mock-agent", |_| Ok(()))?;
     host.publish(candidate)?;

@@ -362,12 +362,17 @@ pub(crate) fn bind_tools(
 pub(crate) fn named_router(
     names: BTreeSet<String>,
 ) -> Result<ComponentDef, phenix_graph::InterfaceError> {
-    invocation_router(names, |call| &call.name, tool_port, |invocation| {
-        invocation.complete(ToolOutcome::Failed {
-            output: String::new().into(),
-            reason: "tool unavailable".into(),
-        })
-    })
+    invocation_router(
+        names,
+        |call| &call.name,
+        tool_port,
+        |invocation| {
+            invocation.complete(ToolOutcome::Failed {
+                output: String::new().into(),
+                reason: "tool unavailable".into(),
+            })
+        },
+    )
 }
 
 /// Common routing declaration for local and additional environments.

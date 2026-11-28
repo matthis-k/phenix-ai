@@ -29,13 +29,15 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
         };
         Environment::new().with_resources(read_text(), resources)
     };
-    let local = environment("Cargo.toml")
-        .with_tool(Tool::new("uppercase", |text: String| Ok(text.to_uppercase())));
+    let local = environment("Cargo.toml").with_tool(Tool::new("uppercase", |text: String| {
+        Ok(text.to_uppercase())
+    }));
     let additional = if advanced {
         BTreeMap::from([(
             "reference".into(),
-            environment("src/local.rs")
-                .with_tool(Tool::new("lowercase", |text: String| Ok(text.to_lowercase()))),
+            environment("src/local.rs").with_tool(Tool::new("lowercase", |text: String| {
+                Ok(text.to_lowercase())
+            })),
         )])
     } else {
         BTreeMap::new()
@@ -99,18 +101,20 @@ fn same_real_tool_runs_with_distinct_host_grants_in_p1_and_p2() {
     for host in [&p1, &p2] {
         assert!(turn(host, "source").contains(&AgentEvent::Delta(local.into())));
         assert!(turn(host, "upper").contains(&AgentEvent::Delta("UPPER".into())));
-        assert!(turn(host, "unknown").contains(&AgentEvent::Delta(
-            "tool failed: tool unavailable: ".into()
-        )));
+        assert!(
+            turn(host, "unknown")
+                .contains(&AgentEvent::Delta("tool failed: tool unavailable: ".into()))
+        );
         assert!(turn(host, "missing").contains(&AgentEvent::Delta(
             "tool failed: file alias not granted: ".into()
         )));
     }
     assert!(turn(&p2, "reference").contains(&AgentEvent::Delta(reference.into())));
     assert!(turn(&p2, "lower").contains(&AgentEvent::Delta("abc".into())));
-    assert!(turn(&p2, "cross-env").contains(&AgentEvent::Delta(
-        "tool failed: tool unavailable: ".into()
-    )));
+    assert!(
+        turn(&p2, "cross-env")
+            .contains(&AgentEvent::Delta("tool failed: tool unavailable: ".into()))
+    );
     assert!(turn(&p1, "reference").contains(&AgentEvent::Delta(
         "tool failed: environment unavailable: ".into()
     )));
@@ -144,9 +148,10 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
         BTreeMap::new(),
     )
     .unwrap();
-    assert!(turn(&host, "anything").contains(&AgentEvent::Delta(
-        "tool failed: tool unavailable: ".into()
-    )));
+    assert!(
+        turn(&host, "anything")
+            .contains(&AgentEvent::Delta("tool failed: tool unavailable: ".into()))
+    );
 
     let duplicate = Environment::new()
         .with_tool(Tool::new("echo", Ok::<String, String>))

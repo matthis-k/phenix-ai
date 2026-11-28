@@ -119,7 +119,9 @@ fn compose(advanced: bool) -> KernelHost {
         .composition
         .entry(Key::new(LOOP_PLUGIN, "main"))
         .or_default()
-        .grants = loop_grants(mock::MODEL_PATH, &placements).into_iter().collect();
+        .grants = loop_grants(mock::MODEL_PATH, &placements)
+        .into_iter()
+        .collect();
     for tool in providers.values() {
         let (producer, footprint) = tool.required_component();
         options
@@ -206,7 +208,11 @@ fn compose(advanced: bool) -> KernelHost {
             Key::new(ENVIRONMENT, "main"),
             CompositionPolicy {
                 grants: environment_grants(
-                    &[("remote".into(), [("lookup".into(), "remote-tool".into())].into())].into(),
+                    &[(
+                        "remote".into(),
+                        [("lookup".into(), "remote-tool".into())].into(),
+                    )]
+                    .into(),
                 )
                 .into_iter()
                 .collect(),

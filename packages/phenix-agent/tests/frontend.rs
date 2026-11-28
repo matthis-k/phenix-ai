@@ -235,7 +235,11 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
             Key::new(ENVIRONMENT, "main"),
             CompositionPolicy {
                 grants: environment_grants(
-                    &[("remote".into(), [("lookup".into(), REMOTE_PATH.into())].into())].into(),
+                    &[(
+                        "remote".into(),
+                        [("lookup".into(), REMOTE_PATH.into())].into(),
+                    )]
+                    .into(),
                 )
                 .into_iter()
                 .collect(),
