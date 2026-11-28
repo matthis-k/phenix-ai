@@ -1,0 +1,109 @@
+//! Conceptual ACP adapter: typed in-process messages, not ACP wire types.
+//! The host admits a prompt into a request scope and correlates its captures.
+//! Transport, protocol session IDs, cancellation messages and negotiation are
+//! deliberately absent. No model or environment knows this adapter exists.
+
+use crate::{AgentEvent, CONTRACTS_PLUGIN, MODEL_CONTRACT, PROMPT_CONTRACT, capacity, port};
+use phenix_graph::{
+    ComponentDef,
+    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    network::ConnectionDef,
+};
+use phenix_kernel::{CandidateArtifacts, Contribution, Key};
+use phenix_plugin::{Failure, PluginInstance, Registrar};
+use std::sync::Arc;
+
+pub const PLUGIN: &str = "mock-acp";
+pub const INPUT: &str = "acp-prompt";
+pub const OUTPUT: &str = "acp-message";
+const DECODE: &str = "acp-decode";
+const ENCODE: &str = "acp-encode";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptRequest {
+    pub text: String,
+}
+
+/// A simplified protocol event or terminal response, not a graph event wrapper.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Message {
+    AgentMessageChunk(String),
+    ToolCall { title: String, environment: String },
+    EndTurn,
+}
+
+fn translate(event: AgentEvent) -> Message {
+    match event {
+        AgentEvent::Delta(text) => Message::AgentMessageChunk(text),
+        AgentEvent::ToolRequested(call) => Message::ToolCall {
+            title: call.prompt,
+            environment: call.environment,
+        },
+        AgentEvent::Completed => Message::EndTurn,
+    }
+}
+
+pub struct MockAcp;
+
+impl PluginInstance for MockAcp {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        Contribution::new("main", NetworkPatch::new([]))
+            .import("prompt", Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT))
+            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
+            .prepare(|context| {
+                let prompt = context.bind_import("prompt")?;
+                let input = prompt.input::<String>("input")?;
+                let model = context.bind_import("model")?;
+                let events = model.output::<AgentEvent>("events")?;
+                Ok(CandidateArtifacts {
+                    patch: Some(NetworkPatch::new([
+                        Edit::Add {
+                            path: DECODE.into(),
+                            definition: Arc::new(ComponentDef::map(|request: PromptRequest| {
+                                request.text
+                            })),
+                        },
+                        Edit::Add {
+                            path: ENCODE.into(),
+                            definition: Arc::new(ComponentDef::map(translate)),
+                        },
+                        Edit::Connect(ConnectionDef {
+                            from: port(DECODE, "output"),
+                            to: port(prompt.path(), input.name()),
+                            capacity: capacity(),
+                        }),
+                        context.connect_bound_output(&events, port(ENCODE, "input"), capacity())?,
+                        Edit::ExposeInput {
+                            name: INPUT.into(),
+                            targets: vec![port(DECODE, "input")],
+                            capacity: capacity(),
+                        },
+                        Edit::ExposeOutput {
+                            name: OUTPUT.into(),
+                            from: port(ENCODE, "output"),
+                        },
+                    ])),
+                    ..Default::default()
+                })
+            })
+            .register(registrar)
+    }
+}
+
+/// Explicit host approval for these selected provider placements.
+pub fn grants(prompt: &str, model: &str) -> Vec<Footprint> {
+    vec![
+        Footprint::Component(DECODE.into()),
+        Footprint::Component(ENCODE.into()),
+        Footprint::Connection(ConnectionKey::new(
+            port(DECODE, "output"),
+            port(prompt, "input"),
+        )),
+        Footprint::Connection(ConnectionKey::new(
+            port(model, "events"),
+            port(ENCODE, "input"),
+        )),
+        Footprint::InputExport(INPUT.into()),
+        Footprint::OutputExport(OUTPUT.into()),
+    ]
+}

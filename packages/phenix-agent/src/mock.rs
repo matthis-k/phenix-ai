@@ -21,6 +21,8 @@ use std::{
     sync::Arc,
 };
 
+pub mod acp;
+
 pub const MODEL_PLUGIN: &str = "mock-model";
 pub const TOOL_PLUGIN: &str = "mock-tool";
 pub const MODEL_PATH: &str = "model";
