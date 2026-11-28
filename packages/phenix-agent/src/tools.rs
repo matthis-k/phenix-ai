@@ -196,6 +196,10 @@ impl Tool {
         &self.descriptor.name
     }
 
+    pub fn descriptor(&self) -> &ToolDescriptor {
+        &self.descriptor
+    }
+
     pub fn path(&self) -> &str {
         &self.placement
     }

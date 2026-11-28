@@ -7,6 +7,7 @@ use phenix_agent::{
     harness::{self, Environment},
     local::{FILES, READ_TEXT, ReadableFiles, read_text},
     mock::{MODEL_PATH, MockModel},
+    tools::Tool,
 };
 use phenix_graph::{ResourceGrant, ValidatedResourceSet};
 use phenix_kernel::host::KernelHost;
@@ -15,7 +16,7 @@ use std::{collections::BTreeMap, fs::File, path::PathBuf};
 fn fixture(advanced: bool, denied: bool) -> KernelHost {
     // Use checked-in source files, opened by the host, not by the tool.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let environment = |path: &str, placement: &str| {
+    let environment = |path: &str| {
         let file = File::open(root.join(path)).unwrap();
         let resources = if denied {
             ValidatedResourceSet::default()
@@ -26,30 +27,58 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
             )])
             .unwrap()
         };
-        Environment {
-            tool: read_text().placement(placement),
-            resources,
-        }
+        Environment::new().with_resources(read_text(), resources)
     };
-    let local = environment("Cargo.toml", "local-read");
+    let local = environment("Cargo.toml").with_tool(Tool::new(
+        "uppercase",
+        |text: String| Ok(text.to_uppercase()),
+    ));
     let additional = if advanced {
         BTreeMap::from([(
             "reference".into(),
-            environment("src/local.rs", "reference-read"),
+            environment("src/local.rs").with_tool(Tool::new(
+                "lowercase",
+                |text: String| Ok(text.to_lowercase()),
+            )),
         )])
     } else {
         BTreeMap::new()
     };
-    let model = MockModel {
-        tool_by_prompt: [
-            ("source".into(), READ_TEXT.into()),
-            ("reference".into(), READ_TEXT.into()),
-            ("missing".into(), READ_TEXT.into()),
-        ]
-        .into(),
-        arguments_by_prompt: [("reference".into(), "source".into())].into(),
-        environment_by_prompt: [("reference".into(), "reference".into())].into(),
-        ..Default::default()
+    let model = |catalog: &harness::ToolCatalog| {
+        assert_eq!(catalog["local"].len(), 2);
+        assert!(catalog["local"].contains_key(READ_TEXT));
+        assert!(catalog["local"].contains_key("uppercase"));
+        assert_eq!(catalog.contains_key("reference"), advanced);
+        if advanced {
+            assert!(catalog["reference"].contains_key("lowercase"));
+            assert!(catalog["reference"].contains_key(READ_TEXT));
+            assert!(!catalog["reference"].contains_key("uppercase"));
+        }
+        MockModel {
+            tool_by_prompt: [
+                ("source".into(), READ_TEXT.into()),
+                ("reference".into(), READ_TEXT.into()),
+                ("missing".into(), READ_TEXT.into()),
+                ("upper".into(), "uppercase".into()),
+                ("lower".into(), "lowercase".into()),
+                ("cross-env".into(), "uppercase".into()),
+                ("unknown".into(), "unknown".into()),
+            ]
+            .into(),
+            arguments_by_prompt: [
+                ("reference".into(), "source".into()),
+                ("lower".into(), "ABC".into()),
+            ]
+            .into(),
+            environment_by_prompt: [
+                ("reference".into(), "reference".into()),
+                ("lower".into(), "reference".into()),
+                ("cross-env".into(), "reference".into()),
+            ]
+            .into(),
+            available_tools: catalog["local"].clone(),
+            ..Default::default()
+        }
     };
     harness::compose(model, MODEL_PATH, local, additional).unwrap()
 }
@@ -73,11 +102,19 @@ fn same_real_tool_runs_with_distinct_host_grants_in_p1_and_p2() {
     let reference = include_str!("../src/local.rs");
     for host in [&p1, &p2] {
         assert!(turn(host, "source").contains(&AgentEvent::Delta(local.into())));
+        assert!(turn(host, "upper").contains(&AgentEvent::Delta("UPPER".into())));
+        assert!(turn(host, "unknown").contains(&AgentEvent::Delta(
+            "tool failed: tool unavailable: ".into()
+        )));
         assert!(turn(host, "missing").contains(&AgentEvent::Delta(
             "tool failed: file alias not granted: ".into()
         )));
     }
     assert!(turn(&p2, "reference").contains(&AgentEvent::Delta(reference.into())));
+    assert!(turn(&p2, "lower").contains(&AgentEvent::Delta("abc".into())));
+    assert!(turn(&p2, "cross-env").contains(&AgentEvent::Delta(
+        "tool failed: tool unavailable: ".into()
+    )));
     assert!(turn(&p1, "reference").contains(&AgentEvent::Delta(
         "tool failed: environment unavailable: ".into()
     )));
