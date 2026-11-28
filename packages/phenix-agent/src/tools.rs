@@ -180,6 +180,7 @@ pub struct LocalTools {
 pub struct SelectedTool {
     pub offer: Key,
     pub path: String,
+    pub descriptor: Option<ToolDescriptor>,
 }
 
 impl SelectedTool {
@@ -198,12 +199,16 @@ impl SelectedTool {
                     continue;
                 }
                 let name = offer.offer.id.clone();
+                let descriptor = snapshot
+                    .get::<ToolDescriptor>(&name)
+                    .map(|value| (*value).clone());
                 if tools
                     .insert(
                         name.clone(),
                         Self {
                             offer: offer.offer,
                             path: offer.path,
+                            descriptor,
                         },
                     )
                     .is_some()
@@ -380,6 +385,10 @@ mod tests {
         let tools = SelectedTool::discover([a]).unwrap();
         assert_eq!(tools["echo"].offer, Key::new("a", "echo"));
         assert_eq!(tools["echo"].path, "echo");
+        assert_eq!(
+            tools["echo"].descriptor.as_ref().unwrap().arguments,
+            String::schema()
+        );
         let mut options = BuildOptions::default();
         let denied = (Key::new("routes", "tool-echo"), Key::new("a", "echo"));
         options.imports.deny.insert(denied.clone());
@@ -400,8 +409,8 @@ mod tests {
             },
             ComponentDef::map(|text: String| text),
         )
-            .register(&mut registrar)
-            .unwrap_err();
+        .register(&mut registrar)
+        .unwrap_err();
         assert_eq!(error.code, Code::SchemaRejected);
         assert_eq!(registrar.finish().keys().count(), 0);
     }

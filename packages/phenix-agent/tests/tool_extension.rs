@@ -12,6 +12,15 @@ use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 
 const EXTRA: &str = "uppercase";
+const STRUCTURED: &str = "repeat-text";
+
+#[derive(phenix_graph::ContractValue)]
+#[contract(schema = "agent.test.repeat")]
+struct RepeatArgs {
+    text: String,
+    count: i64,
+}
+
 const LOCAL_ROUTES: &str = "local-tool-selection";
 const REMOTE: &str = "remote-provider";
 const ENVIRONMENT: &str = "environment-extension";
@@ -28,6 +37,15 @@ impl PluginInstance for Uppercase {
                 Ok(text.to_uppercase())
             }
         })
+        .register(registrar)?;
+        Tool::new(STRUCTURED, |args: RepeatArgs| {
+            let count = usize::try_from(args.count).map_err(|_| "negative count".to_owned())?;
+            if count > 8 {
+                return Err("count too large".into());
+            }
+            Ok(args.text.repeat(count))
+        })
+        .description("Repeat text up to eight times")
         .register(registrar)
     }
 }
@@ -55,9 +73,19 @@ fn compose(advanced: bool) -> KernelHost {
                 MockModel {
                     tool_by_prompt: [
                         ("hello".into(), "uppercase".into()),
+                        ("repeat".into(), STRUCTURED.into()),
+                        ("wrong-type".into(), STRUCTURED.into()),
                         ("denied".into(), "uppercase".into()),
                         ("unknown".into(), "unavailable".into()),
                     ]
+                    .into(),
+                    arguments_by_prompt: [(
+                        "repeat".into(),
+                        phenix_agent::ToolValue::new(&RepeatArgs {
+                            text: "ab".into(),
+                            count: 3,
+                        }),
+                    )]
                     .into(),
                     environment_by_prompt: [("remote".into(), "remote".into())].into(),
                     follow_up_by_prompt: [(
@@ -90,6 +118,10 @@ fn compose(advanced: bool) -> KernelHost {
     // The original fixture advertises "tool"; the host selects its alias.
     let base = providers.remove("tool").unwrap();
     providers.insert("lookup".into(), base);
+    assert_eq!(
+        providers[STRUCTURED].descriptor.as_ref().unwrap().description,
+        "Repeat text up to eight times"
+    );
     let selection = LocalTools::configure(&mut options, LOCAL_ROUTES, "lookup", providers).unwrap();
     stages.push(
         host.plugins()
@@ -100,6 +132,13 @@ fn compose(advanced: bool) -> KernelHost {
         Key::new(EXTRA, EXTRA),
         CompositionPolicy {
             grants: [Footprint::Component(EXTRA.into())].into(),
+            ..Default::default()
+        },
+    );
+    options.composition.insert(
+        Key::new(EXTRA, STRUCTURED),
+        CompositionPolicy {
+            grants: [Footprint::Component(STRUCTURED.into())].into(),
             ..Default::default()
         },
     );
@@ -222,6 +261,37 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
         ];
         assert_eq!(turn(&p1, prompt), expected);
         assert_eq!(turn(&p2, prompt), expected);
+    }
+    for host in [&p1, &p2] {
+        assert_eq!(
+            turn(host, "repeat"),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    name: STRUCTURED.into(),
+                    arguments: phenix_agent::ToolValue::new(&RepeatArgs {
+                        text: "ab".into(),
+                        count: 3,
+                    }),
+                    environment: "local".into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("ababab".into()),
+                AgentEvent::Completed,
+            ]
+        );
+        assert_eq!(
+            turn(host, "wrong-type"),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    name: STRUCTURED.into(),
+                    arguments: "wrong-type".into(),
+                    environment: "local".into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("tool failed: tool value schema mismatch: ".into()),
+                AgentEvent::Completed,
+            ]
+        );
     }
     // The additional P2 route is genuinely exercised before returning to
     // the unchanged P1 local tool; P1 still rejects that remote environment.

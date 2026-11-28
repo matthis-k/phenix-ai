@@ -551,11 +551,17 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
             };
             let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
             self.calls += 1;
-            let output = format!("lookup({})#{}", invocation.call().arguments.as_text().unwrap(), self.calls);
+            let output = format!(
+                "lookup({})#{}",
+                invocation.call().arguments.as_text().unwrap(),
+                self.calls
+            );
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "output",
-                Value::local(invocation.complete(ToolOutcome::Succeeded { output: output.into() })),
+                Value::local(invocation.complete(ToolOutcome::Succeeded {
+                    output: output.into(),
+                })),
             )))
         }
     }

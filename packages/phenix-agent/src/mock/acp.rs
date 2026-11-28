@@ -3,10 +3,13 @@
 //! Transport, protocol session IDs, cancellation messages and negotiation are
 //! deliberately absent. No model or environment knows this adapter exists.
 
-use crate::{AgentEvent, CONTRACTS_PLUGIN, MODEL_CONTRACT, PROMPT_CONTRACT, capacity, port};
+use crate::{
+    AgentEvent, CONTRACTS_PLUGIN, MODEL_CONTRACT, PROMPT_CONTRACT, capacity, model_contract,
+    prompt_contract,
+};
 use phenix_graph::{
-    ComponentDef, InputKey, OutputKey,
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    InputKey, NetworkError, OutputKey,
+    compose::{Footprint, NetworkPatch, PatchBuilder, PatchComponent},
 };
 use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
@@ -49,39 +52,33 @@ impl PluginInstance for MockAcp {
             .import("prompt", Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT))
             .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
             .prepare_patch(|context| {
-                let input = context.import_input("prompt", InputKey::<String>::new("input"))?;
-                let events =
-                    context.import_output("model", OutputKey::<AgentEvent>::new("events"))?;
-                Ok(NetworkPatch::new([
-                    Edit::add(
-                        DECODE,
-                        ComponentDef::map(|request: PromptRequest| request.text),
-                    ),
-                    Edit::add(ENCODE, ComponentDef::map(translate)),
-                    context.connect_bound_input((DECODE, "output"), &input, capacity())?,
-                    context.connect_bound_output(&events, (ENCODE, "input"), capacity())?,
-                    Edit::expose_input(INPUT, [(DECODE, "input")], capacity()),
-                    Edit::expose_output(OUTPUT, (ENCODE, "output")),
-                ]))
+                let prompt = context.bind_import("prompt")?;
+                let model = context.bind_import("model")?;
+                Ok(adapter_patch(prompt.path(), model.path())?)
             })
             .register(registrar)
     }
 }
 
-/// Explicit host approval for these selected provider placements.
+fn adapter_patch(prompt: &str, model: &str) -> Result<NetworkPatch, NetworkError> {
+    let mut patch = PatchBuilder::new(capacity());
+    let prompt = PatchComponent::at(prompt, prompt_contract().required().clone());
+    let model = PatchComponent::at(model, model_contract().required().clone());
+    let decode = patch.map(DECODE, |request: PromptRequest| request.text);
+    let encode = patch.map(ENCODE, translate);
+    patch.connect(&decode.output, &prompt.input(InputKey::new("input"))?)?;
+    patch.connect(&model.output(OutputKey::new("events"))?, &encode.input)?;
+    patch.expose_input(INPUT, &decode.input);
+    patch.expose_output(OUTPUT, &encode.output);
+    Ok(patch.finish())
+}
+
+/// The trusted host computes required writes for its chosen placements.
+/// It never accepts plugin-supplied grants.
 pub fn grants(prompt: &str, model: &str) -> Vec<Footprint> {
-    vec![
-        Footprint::Component(DECODE.into()),
-        Footprint::Component(ENCODE.into()),
-        Footprint::Connection(ConnectionKey::new(
-            port(DECODE, "output"),
-            port(prompt, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(model, "events"),
-            port(ENCODE, "input"),
-        )),
-        Footprint::InputExport(INPUT.into()),
-        Footprint::OutputExport(OUTPUT.into()),
-    ]
+    adapter_patch(prompt, model)
+        .expect("canonical ACP adapter")
+        .footprints()
+        .into_iter()
+        .collect()
 }
