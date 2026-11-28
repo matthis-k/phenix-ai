@@ -4,6 +4,8 @@ on:
     paths:
       - "packages/phenix-graphs/examples/fbp_agent_allocation_benchmark.rs"
       - "packages/phenix-graphs/examples/fbp_agent_mixed_benchmark.rs"
+      - "packages/phenix-graphs/examples/fbp_agent_live_memory_benchmark.rs"
+      - "packages/phenix-graphs/benches/support/allocation.rs"
       - "packages/phenix-graphs/src/runtime/**"
       - ".github/workflows/fbp-h6-agent-allocation-benchmark.yml"
   workflow_dispatch:
@@ -128,6 +130,37 @@ jobs:
                                   key, actual, baseline[key],
                               )
           print("All 6 allocation traces satisfy phase totals and notified-mode regression budgets.")
+          PY
+      - name: Whole-fixture live memory and overlapping request samples
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum packages/phenix-graphs/examples/fbp_agent_live_memory_benchmark.rs \
+            packages/phenix-graphs/benches/support/allocation.rs >> artifacts/source-hashes.txt
+          nix develop --command cargo run --locked --release -q \
+            -p phenix-graph --example fbp_agent_live_memory_benchmark \
+            > artifacts/live-memory.txt
+          cat artifacts/live-memory.txt
+          python3 - <<'PY'
+          from collections import defaultdict
+          from pathlib import Path
+          cases = defaultdict(list)
+          for line in Path("artifacts/live-memory.txt").read_text().splitlines():
+              name, fields = line.split(": ", 1)
+              row = {key: int(value) for key, value in
+                     (field.split("=") for field in fields.split())}
+              assert row["peak_live_requested_bytes"] > 0, (name, row)
+              assert row["residual_requested_bytes"] == 0, (name, row)
+              cases[name].append(row)
+          expected = {f"agent_{mode}_{scope}_{idle}"
+                      for mode in ("polled", "notified")
+                      for scope in ("single", "overlap4")
+                      for idle in (0, 16, 64, 128)}
+          assert set(cases) == expected, cases.keys()
+          for name, rows in sorted(cases.items()):
+              assert [row["sample"] for row in rows] == list(range(7)), name
+              peaks = [row["peak_live_requested_bytes"] for row in rows]
+              print(f"{name}: peak_requested_bytes={max(peaks)} residual=0")
           PY
       - name: Upload raw counts, environment and source provenance
         if: always()
