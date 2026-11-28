@@ -82,6 +82,70 @@ pub enum Edit {
     },
 }
 impl Edit {
+    /// Constructors lower directly to the existing symbolic edit variants.
+    /// They neither validate a candidate nor imply any write authority.
+    pub fn add(path: impl Into<String>, definition: impl Into<Arc<ComponentDef>>) -> Self {
+        Self::Add {
+            path: path.into(),
+            definition: definition.into(),
+        }
+    }
+
+    pub fn replace(path: impl Into<String>, definition: impl Into<Arc<ComponentDef>>) -> Self {
+        Self::Replace {
+            path: path.into(),
+            definition: definition.into(),
+        }
+    }
+
+    pub fn connect(
+        from: impl Into<PortPath>,
+        to: impl Into<PortPath>,
+        capacity: NonZeroUsize,
+    ) -> Self {
+        Self::Connect(ConnectionDef {
+            from: from.into(),
+            to: to.into(),
+            capacity,
+        })
+    }
+
+    pub fn disconnect(from: impl Into<PortPath>, to: impl Into<PortPath>) -> Self {
+        Self::Disconnect(ConnectionKey::new(from.into(), to.into()))
+    }
+
+    pub fn expose_input(
+        name: impl Into<String>,
+        targets: impl IntoIterator<Item = impl Into<PortPath>>,
+        capacity: NonZeroUsize,
+    ) -> Self {
+        Self::ExposeInput {
+            name: name.into(),
+            targets: targets.into_iter().map(Into::into).collect(),
+            capacity,
+        }
+    }
+
+    pub fn expose_output(name: impl Into<String>, from: impl Into<PortPath>) -> Self {
+        Self::ExposeOutput {
+            name: name.into(),
+            from: from.into(),
+        }
+    }
+
+    pub fn splice(
+        from: impl Into<PortPath>,
+        to: impl Into<PortPath>,
+        input: impl Into<PortPath>,
+        output: impl Into<PortPath>,
+    ) -> Self {
+        Self::Splice {
+            anchor: ConnectionKey::new(from.into(), to.into()),
+            input: input.into(),
+            output: output.into(),
+        }
+    }
+
     /// Import checked declaration boundaries as symbolic authoring data, not
     /// physical projections or authority over the resulting compilation.
     pub fn connect_bound<T>(

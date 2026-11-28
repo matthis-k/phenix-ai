@@ -7,15 +7,65 @@ use crate::{
     ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
 };
 use phenix_graph::{
+    ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
-    network::ConnectionDef,
 };
-use phenix_kernel::{CandidateArtifacts, Contribution, Key};
-use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use phenix_kernel::{BuildOptions, Contribution, Key};
+use phenix_plugin::{Code, Failure, PluginInstance, Registrar};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// A named synchronous tool using the current mock text argument contract.
+/// Registration derives the component, claim, offer and invocation correlation.
+/// A domain error is returned as tool feedback rather than a scheduler failure.
+/// Complex tools can register their own component under the same contract.
+pub struct Tool {
+    name: String,
+    definition: ComponentDef,
+}
+
+impl Tool {
+    pub fn new(
+        name: impl Into<String>,
+        execute: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            definition: ComponentDef::map(move |invocation: ToolInvocation| {
+                let outcome = match execute(&invocation.call().prompt) {
+                    Ok(output) => ToolOutcome::Succeeded { output },
+                    Err(reason) => ToolOutcome::Failed {
+                        output: String::new(),
+                        reason,
+                    },
+                };
+                invocation.complete(outcome)
+            }),
+        }
+    }
+
+    /// Advanced tools can supply an ordinary graph component instead.
+    /// The same checked offer and host authorization apply.
+    pub fn from_component(name: impl Into<String>, definition: ComponentDef) -> Self {
+        Self {
+            name: name.into(),
+            definition,
+        }
+    }
+
+    /// Use the tool's name as its contribution, placement and offer identity.
+    /// Selecting and granting this contribution is a separate host decision.
+    pub fn register(self, registrar: &mut Registrar) -> Result<(), Failure> {
+        Contribution::offered_component(
+            &self.name,
+            &self.name,
+            &self.name,
+            Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            &crate::tool_contract(),
+            self.definition,
+        )?
+        .register(registrar)
+    }
+}
 
 const ROUTER: &str = "agent-local-tool-router";
 
@@ -31,6 +81,55 @@ pub struct LocalTools {
     pub additional: BTreeSet<String>,
 }
 
+/// A host-selected provider, not a claim of write authority by the tool.
+pub struct SelectedTool {
+    pub offer: Key,
+    pub path: String,
+}
+
+impl LocalTools {
+    /// Derive dispatch imports and exact routing grants from one trusted
+    /// selection. Existing deny rules still win. Provider component grants
+    /// remain separate; this only authorizes the local routing contribution.
+    pub fn configure(
+        options: &mut BuildOptions,
+        owner: &str,
+        base: &str,
+        providers: BTreeMap<String, SelectedTool>,
+    ) -> Result<Self, Failure> {
+        let Some(base_tool) = providers.get(base) else {
+            return Err(Failure::new(Code::DescriptorInvalid, "missing base tool"));
+        };
+        let placements = providers
+            .iter()
+            .map(|(name, provider)| (name.clone(), provider.path.clone()))
+            .collect();
+        let grants = local_tool_grants(&base_tool.path, &placements);
+        let additional = providers
+            .keys()
+            .filter(|name| name.as_str() != base)
+            .cloned()
+            .collect();
+        for (name, provider) in providers {
+            let import = Key::new(owner, tool_port(&name));
+            if let Some(allow) = &mut options.imports.allow {
+                allow.insert((import.clone(), provider.offer.clone()));
+            }
+            options.imports.selections.insert(import, provider.offer);
+        }
+        options
+            .composition
+            .entry(Key::new(owner, "main"))
+            .or_default()
+            .grants
+            .extend(grants);
+        Ok(Self {
+            base: base.into(),
+            additional,
+        })
+    }
+}
+
 impl PluginInstance for LocalTools {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let base = self.base.clone();
@@ -43,7 +142,7 @@ impl PluginInstance for LocalTools {
                 contribution.import(tool_port(name), Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT));
         }
         contribution
-            .prepare(move |context| {
+            .prepare_patch(move |context| {
                 let base_tool = context.bind_import(&tool_port(&base))?;
                 let base_path = base_tool.path();
                 let base_input = base_tool.input::<ToolInvocation>("input")?;
@@ -59,24 +158,10 @@ impl PluginInstance for LocalTools {
                     },
                 )?;
                 let mut edits = vec![
-                    Edit::Add {
-                        path: ROUTER.into(),
-                        definition: Arc::new(router),
-                    },
-                    Edit::Disconnect(ConnectionKey::new(
-                        port(TOOL_ROUTER, "env-local"),
-                        port(base_path, base_input.name()),
-                    )),
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_ROUTER, "env-local"),
-                        to: port(ROUTER, "input"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, UNAVAILABLE),
-                        to: port(TOOL_FEEDBACK, "input"),
-                        capacity: capacity(),
-                    }),
+                    Edit::add(ROUTER, router),
+                    Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, base_input.name())),
+                    Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
+                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
                 ];
                 let mut feedback = BTreeSet::from([base_path.to_owned()]);
                 for name in &names {
@@ -84,11 +169,11 @@ impl PluginInstance for LocalTools {
                     let tool = context.bind_import(&output)?;
                     let input = tool.input::<ToolInvocation>("input")?;
                     let result = tool.output::<ToolResult>("output")?;
-                    edits.push(Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, &output),
-                        to: port(tool.path(), input.name()),
-                        capacity: capacity(),
-                    }));
+                    edits.push(context.connect_bound_input(
+                        (ROUTER, output.as_str()),
+                        &input,
+                        capacity(),
+                    )?);
                     if feedback.insert(tool.path().to_owned()) {
                         edits.push(context.connect_bound_output(
                             &result,
@@ -97,10 +182,7 @@ impl PluginInstance for LocalTools {
                         )?);
                     }
                 }
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new(edits)),
-                    ..Default::default()
-                })
+                Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
@@ -137,4 +219,36 @@ pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> V
         }
     }
     grants
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_component_is_rejected_before_any_registration() {
+        let mut registrar = Registrar::new("tool-author").unwrap();
+        let error = Tool::from_component("bad", ComponentDef::map(|text: String| text))
+            .register(&mut registrar)
+            .unwrap_err();
+        assert_eq!(error.code, Code::SchemaRejected);
+        assert_eq!(registrar.finish().keys().count(), 0);
+    }
+
+    #[test]
+    fn duplicate_tool_registration_is_atomic() {
+        let mut registrar = Registrar::new("tool-author").unwrap();
+        Tool::new("first", |text| Ok(text.into()))
+            .register(&mut registrar)
+            .unwrap();
+        assert!(
+            Tool::new("first", |text| Ok(text.into()))
+                .register(&mut registrar)
+                .is_err()
+        );
+        Tool::new("second", |text| Ok(text.into()))
+            .register(&mut registrar)
+            .unwrap();
+        assert_eq!(registrar.finish().keys().count(), 4);
+    }
 }

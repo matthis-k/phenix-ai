@@ -5,16 +5,10 @@ use super::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_INVOCATION, TOOL_ROUTER,
     ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, port, tool_router,
 };
-use phenix_graph::{
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
-    network::ConnectionDef,
-};
-use phenix_kernel::{CandidateArtifacts, Contribution, Key};
+use phenix_graph::compose::{ConnectionKey, Edit, Footprint, NetworkPatch};
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 const ROUTER: &str = "agent-environment-router";
 
@@ -37,30 +31,16 @@ impl PluginInstance for EnvironmentRoutes {
             );
         }
         contribution
-            .prepare(move |context| {
+            .prepare_patch(move |context| {
                 let router = tool_router(
                     environments.clone(),
                     std::convert::identity::<ToolInvocation>,
                 )?;
                 let mut edits = vec![
-                    Edit::Add {
-                        path: ROUTER.into(),
-                        definition: Arc::new(router),
-                    },
-                    Edit::Disconnect(ConnectionKey::new(
-                        port(TOOL_INVOCATION, "output"),
-                        port(TOOL_ROUTER, "input"),
-                    )),
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_INVOCATION, "output"),
-                        to: port(ROUTER, "input"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, UNAVAILABLE),
-                        to: port(TOOL_ROUTER, "input"),
-                        capacity: capacity(),
-                    }),
+                    Edit::add(ROUTER, router),
+                    Edit::disconnect((TOOL_INVOCATION, "output"), (TOOL_ROUTER, "input")),
+                    Edit::connect((TOOL_INVOCATION, "output"), (ROUTER, "input"), capacity()),
+                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_ROUTER, "input"), capacity()),
                 ];
                 let mut feedback = BTreeSet::new();
                 for environment in &environments {
@@ -68,11 +48,11 @@ impl PluginInstance for EnvironmentRoutes {
                     let tool = context.bind_import(&output)?;
                     let input = tool.input::<ToolInvocation>("input")?;
                     let result = tool.output::<ToolResult>("output")?;
-                    edits.push(Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, &output),
-                        to: port(tool.path(), input.name()),
-                        capacity: capacity(),
-                    }));
+                    edits.push(context.connect_bound_input(
+                        (ROUTER, output.as_str()),
+                        &input,
+                        capacity(),
+                    )?);
                     if feedback.insert(tool.path().to_owned()) {
                         edits.push(context.connect_bound_output(
                             &result,
@@ -81,10 +61,7 @@ impl PluginInstance for EnvironmentRoutes {
                         )?);
                     }
                 }
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new(edits)),
-                    ..Default::default()
-                })
+                Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
