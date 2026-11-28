@@ -10,8 +10,8 @@ use phenix_graph::{
     ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
 };
-use phenix_kernel::{BuildOptions, Contribution, Key};
-use phenix_plugin::{Code, Failure, PluginInstance, Registrar};
+use phenix_kernel::{BuildOptions, Contribution, Key, component_offers};
+use phenix_plugin::{Code, Failure, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A named synchronous tool using the current mock text argument contract.
@@ -85,6 +85,43 @@ pub struct LocalTools {
 pub struct SelectedTool {
     pub offer: Key,
     pub path: String,
+}
+
+impl SelectedTool {
+    /// Discover named tools from snapshots chosen by the host. The offer's
+    /// identity supplies its name; the declaration supplies its placement.
+    /// Duplicate names must be resolved by the host, never by discovery order.
+    /// This operation supplies metadata only, not authorization.
+    pub fn discover(
+        snapshots: impl IntoIterator<Item = PluginSnapshot>,
+    ) -> Result<BTreeMap<String, Self>, Failure> {
+        let contract = Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT);
+        let mut tools = BTreeMap::new();
+        for snapshot in snapshots {
+            for offer in component_offers(&snapshot) {
+                if offer.contract != contract {
+                    continue;
+                }
+                let name = offer.offer.id.clone();
+                if tools
+                    .insert(
+                        name.clone(),
+                        Self {
+                            offer: offer.offer,
+                            path: offer.path,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Failure::new(
+                        Code::DescriptorInvalid,
+                        format!("ambiguous tool name: {name}"),
+                    ));
+                }
+            }
+        }
+        Ok(tools)
+    }
 }
 
 impl LocalTools {
@@ -224,6 +261,37 @@ pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ExampleTool;
+
+    impl PluginInstance for ExampleTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            Tool::new("echo", |text| Ok(text.into())).register(registrar)
+        }
+    }
+
+    #[test]
+    fn discovery_reports_ambiguity_and_does_not_grant_provider_writes() {
+        let mut catalog = phenix_plugin::PluginCatalog::new();
+        let a = catalog.register("a", |_: ()| Ok(ExampleTool)).unwrap();
+        let b = catalog.register("b", |_: ()| Ok(ExampleTool)).unwrap();
+        let plugins = catalog.instance();
+        let first = plugins.prepare_load(&a, ()).unwrap();
+        let second = plugins.prepare_load(&b, ()).unwrap();
+        let a = first.candidate().unwrap();
+        let b = second.candidate().unwrap();
+        assert!(SelectedTool::discover([a.clone(), b]).is_err());
+
+        let tools = SelectedTool::discover([a]).unwrap();
+        assert_eq!(tools["echo"].offer, Key::new("a", "echo"));
+        assert_eq!(tools["echo"].path, "echo");
+        let mut options = BuildOptions::default();
+        let denied = (Key::new("routes", "tool-echo"), Key::new("a", "echo"));
+        options.imports.deny.insert(denied.clone());
+        LocalTools::configure(&mut options, "routes", "echo", tools).unwrap();
+        assert!(options.imports.deny.contains(&denied));
+        assert!(!options.composition.contains_key(&Key::new("a", "echo")));
+    }
 
     #[test]
     fn invalid_component_is_rejected_before_any_registration() {

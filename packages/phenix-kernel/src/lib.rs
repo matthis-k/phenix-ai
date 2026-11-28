@@ -510,15 +510,13 @@ impl CandidateContext<'_> {
     pub fn connect_bound_output<T>(
         &self,
         from: &phenix_graph::BoundOutput<T>,
-        to: phenix_graph::network::PortPath,
+        to: impl Into<phenix_graph::network::PortPath>,
         capacity: std::num::NonZeroUsize,
     ) -> Result<phenix_graph::compose::Edit, NetworkError> {
-        Ok(phenix_graph::compose::Edit::Connect(
-            phenix_graph::network::ConnectionDef {
-                from: from.symbolic_path(self.compiled)?.clone(),
-                to,
-                capacity,
-            },
+        Ok(phenix_graph::compose::Edit::connect(
+            from.symbolic_path(self.compiled)?.clone(),
+            to,
+            capacity,
         ))
     }
 
@@ -535,6 +533,23 @@ impl CandidateContext<'_> {
             to.symbolic_path(self.compiled)?.clone(),
             capacity,
         ))
+    }
+
+    /// Bind a typed port directly through a declared import.
+    pub fn import_input<T: 'static>(
+        &self,
+        id: &str,
+        key: phenix_graph::InputKey<T>,
+    ) -> Result<phenix_graph::BoundInput<T>, CallbackError> {
+        Ok(self.bind_import(id)?.input_key(key)?)
+    }
+
+    pub fn import_output<T: 'static>(
+        &self,
+        id: &str,
+        key: phenix_graph::OutputKey<T>,
+    ) -> Result<phenix_graph::BoundOutput<T>, CallbackError> {
+        Ok(self.bind_import(id)?.output_key(key)?)
     }
 
     /// Look up only this contribution's declared imports. The result owns its
@@ -770,6 +785,33 @@ impl phenix_plugin::Contribution for NetworkOffer {
     fn id(&self) -> &str {
         &self.id
     }
+}
+
+/// Read-only offer metadata from a selected plugin revision. This is neither
+/// a checked compiled binding nor a grant. Candidate construction still
+/// validates every offer, its contract and exact producer origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfferedComponent {
+    pub offer: Key,
+    pub producer: Key,
+    pub path: String,
+    pub contract: Key,
+}
+
+/// Inspect the declared offers of one staged or published plugin snapshot.
+/// The host decides which snapshots and contracts are eligible for selection.
+pub fn component_offers(snapshot: &PluginSnapshot) -> Vec<OfferedComponent> {
+    snapshot
+        .keys()
+        .filter(|(_, kind, _)| *kind == "network.offer")
+        .filter_map(|(_, _, id)| snapshot.get::<NetworkOffer>(id))
+        .map(|offer| OfferedComponent {
+            offer: Key::new(snapshot.name(), &offer.id),
+            producer: offer.producer.clone(),
+            path: offer.unit.clone(),
+            contract: offer.contract.clone(),
+        })
+        .collect()
 }
 
 /// A local declarative import. Only the trusted host can select its provider.
