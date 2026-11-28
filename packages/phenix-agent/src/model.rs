@@ -161,7 +161,8 @@ impl<B: ModelBackend> Process for ModelProcess<B> {
                 .borrow::<ModelInput>()
                 .ok_or_else(|| GraphFailure::application_message("model expected typed input"))?
                 .clone();
-            self.state = State::Streaming(self.backend.respond(input, &self.profile, &self.context)?);
+            self.state =
+                State::Streaming(self.backend.respond(input, &self.profile, &self.context)?);
         }
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Idle => unreachable!("initialized above"),

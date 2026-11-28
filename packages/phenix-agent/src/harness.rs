@@ -309,8 +309,19 @@ pub fn compose<M: PluginInstance + 'static>(
             )?,
         );
     }
+    // The model was constructed using these selections. An extension can
+    // declare additional imports but cannot silently replace that view.
+    let selected_imports = options.imports.selections.clone();
     for policy in extension_policies {
         policy(&mut options, &model_offer)?;
+    }
+    for (import, offer) in selected_imports {
+        if options.imports.selections.get(&import) != Some(&offer) {
+            return Err(std::io::Error::other(
+                "extension changed a model-visible selection after context assembly",
+            )
+            .into());
+        }
     }
     let candidate = host.prepare(stages, options, "agent-harness", |_| Ok(()))?;
     host.publish(candidate)?;
