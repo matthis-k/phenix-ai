@@ -30,7 +30,7 @@ pub fn provider(context: impl Into<ContextSource>) -> Model {
 }
 
 /// Separate exercise of the structured call and feedback path.
-pub fn tool_roundtrip(context: ModelContext, environment: impl Into<String>) -> Model {
+pub fn tool_roundtrip(context: impl Into<ContextSource>, environment: impl Into<String>) -> Model {
     build(context.into(), Some(environment.into()))
 }
 

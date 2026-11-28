@@ -2,7 +2,7 @@
 
 use phenix_agent::{
     AgentEvent,
-    conversation::{Conversation, TurnCodec, TurnRecord},
+    conversation::{self, Conversation, TurnCodec, TurnRecord},
     harness::{self, Composition, Environment},
     model::{context::ModelContext, fake::provider},
 };
@@ -38,7 +38,7 @@ fn reopen_storage_and_observe_previous_turn_in_actual_model_context() {
     let first = TurnRecord {
         prompt: "previous question".into(),
         assistant: "previous answer".into(),
-        used_tools: false,
+        tools: Vec::new(),
     };
     {
         let history = provision(&path);
@@ -53,7 +53,10 @@ fn reopen_storage_and_observe_previous_turn_in_actual_model_context() {
             |context| provider(history.context(context.clone())),
             Environment::new(),
             BTreeMap::new(),
-            Composition::default(),
+            Composition {
+                extensions: vec![conversation::extension()],
+                ..Default::default()
+            },
         )
         .unwrap();
         let generation = host.active().unwrap();
@@ -118,10 +121,68 @@ fn read_only_grant_does_not_allow_appending_history() {
     let record = TurnRecord {
         prompt: "question".into(),
         assistant: "answer".into(),
-        used_tools: false,
+        tools: Vec::new(),
     };
     assert!(matches!(
         history.append(0, &record),
         Err(phenix_storage::Error::Denied)
     ));
+}
+
+#[test]
+fn persist_structured_arguments_and_outcome_through_correlated_feedback() {
+    use phenix_agent::{
+        model::fake::{FakeArguments, tool_roundtrip},
+        tools::Tool,
+    };
+
+    let registry = Registry::new();
+    registry.mount_memory("conversation").unwrap();
+    let address = Address::parse("store://conversation/turns").unwrap();
+    registry.register(&address, TurnCodec.schema()).unwrap();
+    let session = registry.session([Grant::new(
+        Scope::Dataset(address.clone()),
+        [Operation::Read, Operation::Write],
+    )]);
+    let history = Conversation::new(session, address, 8, 128 * 1024);
+    for advanced in [false, true] {
+        let environment = if advanced { "reference" } else { "local" };
+        let tools = || {
+            Environment::new().with_tool(Tool::new("repeat", |args: FakeArguments| {
+                Ok(args.text.repeat(args.count as usize))
+            }))
+        };
+        let additional = if advanced {
+            BTreeMap::from([("reference".into(), tools())])
+        } else {
+            BTreeMap::new()
+        };
+        let host = harness::compose(
+            |context| tool_roundtrip(history.context(context.clone()), environment),
+            tools(),
+            additional,
+            Composition {
+                extensions: vec![conversation::extension()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let generation = host.active().unwrap();
+        history
+            .run_turn(&generation, "ab".into(), 256, |_| {})
+            .unwrap();
+        let records = history.load().unwrap();
+        let record = records.last().unwrap();
+        assert_eq!(record.assistant, "fake: abab");
+        assert_eq!(record.tools.len(), 1);
+        let exchange = &record.tools[0];
+        assert_eq!(exchange.position, 6);
+        assert_eq!(exchange.call.name, "repeat");
+        assert_eq!(exchange.call.environment, environment);
+        let args = exchange.call.arguments.decode::<FakeArguments>().unwrap();
+        assert_eq!(args.text, "ab");
+        assert_eq!(args.count, 2);
+        assert_eq!(exchange.output.decode::<String>().unwrap(), "abab");
+        assert_eq!(exchange.failure, None);
+    }
 }
