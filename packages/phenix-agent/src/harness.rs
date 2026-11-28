@@ -133,11 +133,7 @@ pub fn compose<M: PluginInstance + 'static>(
     let mut extension_stages = Vec::new();
     for extension in composition.extensions {
         let key = catalog.register(&extension.owner, Ok)?;
-        extension_stages.push((
-            key,
-            ExtensionInstance(extension.instance),
-            extension.policy,
-        ));
+        extension_stages.push((key, ExtensionInstance(extension.instance), extension.policy));
     }
     let mut options = BuildOptions::default();
     options.execution.max_requests = NonZeroUsize::new(1).unwrap();
@@ -245,10 +241,7 @@ pub fn compose<M: PluginInstance + 'static>(
             .find(|snapshot| snapshot.name() == key.owner)
             .and_then(|snapshot| snapshot.get::<Skill>(&key.id))
             .ok_or_else(|| {
-                std::io::Error::other(format!(
-                    "selected skill missing: {}/{}",
-                    key.owner, key.id
-                ))
+                std::io::Error::other(format!("selected skill missing: {}/{}", key.owner, key.id))
             })?;
         context.skills.insert(key, (*skill).clone());
     }

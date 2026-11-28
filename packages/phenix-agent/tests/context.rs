@@ -137,9 +137,8 @@ fn empty_context_is_visible_without_requiring_a_scripted_tool() {
 #[test]
 fn independently_contributed_tools_and_skills_in_both_profiles() {
     for advanced in [false, true] {
-        let local = Environment::new().with_tool(
-            Tool::new("echo", Ok::<String, String>).description("Echo text"),
-        );
+        let local = Environment::new()
+            .with_tool(Tool::new("echo", Ok::<String, String>).description("Echo text"));
         let search = Environment::new().with_plugin(
             "search-plugin",
             SearchTools,
@@ -178,7 +177,9 @@ fn independently_contributed_tools_and_skills_in_both_profiles() {
             ),
         ]);
         let (local, additional) = if advanced {
-            expected.tools.insert("reference".into(), search_descriptors);
+            expected
+                .tools
+                .insert("reference".into(), search_descriptors);
             expected.tools.insert("empty".into(), BTreeMap::new());
             (
                 local,
