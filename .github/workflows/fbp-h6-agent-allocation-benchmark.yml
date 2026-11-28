@@ -74,7 +74,7 @@ jobs:
               grep -E ',(local_total|remote_total),' "artifacts/$mode-$repetition.csv"
             done
           done
-      - name: Check per-stage accounting integrity
+      - name: Check accounting integrity and notified-mode allocation budgets
         shell: bash
         run: |
           set -euo pipefail
@@ -101,7 +101,33 @@ jobs:
                               for phase in ("admission", "first_drain", "tool_resume", "release")
                           )
                           assert actual == int(total[key]), (path, idle, route, key)
-          print("All 6 allocation traces satisfy local/remote phase totals.")
+              # Provisional regression ceilings, not production latency or
+              # memory SLOs. Baseline: b2aeb6d6e9eab6a36b8bca39084e63d66975d6a8,
+              # 3 identical repetitions, 100 turns per route. Keep headroom
+              # for legitimate changes but reject idle-inventory scaling.
+              if path.split("/")[-1].startswith("notified-"):
+                  ceilings = {
+                      "local": (500, 48, 33000),
+                      "remote": (470, 48, 31000),
+                  }
+                  for route, limits in ceilings.items():
+                      baseline = by_case[("0", route + "_total")]
+                      for idle in ("0", "16", "64", "128"):
+                          row = by_case[(idle, route + "_total")]
+                          samples = int(row["samples"])
+                          for key, limit in zip(keys, limits):
+                              actual = int(row[key])
+                              assert actual <= limit * samples, (
+                                  "allocation ceiling", path, idle, route, key,
+                                  actual / samples, limit,
+                              )
+                              # Permit up to 5% growth relative to the zero-idle
+                              # case from the same run, independent of CPU speed.
+                              assert actual * 100 <= int(baseline[key]) * 105, (
+                                  "idle inventory regression", path, idle, route,
+                                  key, actual, baseline[key],
+                              )
+          print("All 6 allocation traces satisfy phase totals and notified-mode regression budgets.")
           PY
       - name: Upload raw counts, environment and source provenance
         if: always()
