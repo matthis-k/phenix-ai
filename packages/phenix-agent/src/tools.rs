@@ -223,7 +223,10 @@ impl SelectedTool {
             .iter()
             .map(|(name, tool)| {
                 let mut descriptor = tool.descriptor.clone().ok_or_else(|| {
-                    Failure::new(Code::MissingBinding, format!("tool {name} has no descriptor"))
+                    Failure::new(
+                        Code::MissingBinding,
+                        format!("tool {name} has no descriptor"),
+                    )
                 })?;
                 descriptor.name = name.clone();
                 Ok((name.clone(), descriptor))

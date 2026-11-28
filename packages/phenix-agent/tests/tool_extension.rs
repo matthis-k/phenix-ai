@@ -48,10 +48,14 @@ impl PluginInstance for Uppercase {
         })
         .description("Repeat text up to eight times")
         .register(registrar)?;
-        Tool::stateful(COUNTER, || 0_u64, |count, text: String| {
-            *count += 1;
-            Ok(format!("{text}#{count}"))
-        })
+        Tool::stateful(
+            COUNTER,
+            || 0_u64,
+            |count, text: String| {
+                *count += 1;
+                Ok(format!("{text}#{count}"))
+            },
+        )
         .register(registrar)
     }
 }
@@ -101,7 +105,9 @@ fn compose(advanced: bool) -> KernelHost {
     );
     // Explicitly approve the component writes of the selected fixture tools.
     // The base provider is registered through the exact same Tool API.
-    options.composition.remove(&Key::new(mock::TOOL_PLUGIN, "main"));
+    options
+        .composition
+        .remove(&Key::new(mock::TOOL_PLUGIN, "main"));
     let allowed = options.imports.allow.as_mut().unwrap();
     allowed.remove(&(
         Key::new(LOOP_PLUGIN, "env-local"),
