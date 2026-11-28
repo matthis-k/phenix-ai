@@ -262,6 +262,37 @@ pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> V
 mod tests {
     use super::*;
 
+    struct ExampleTool;
+
+    impl PluginInstance for ExampleTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            Tool::new("echo", |text| Ok(text.into())).register(registrar)
+        }
+    }
+
+    #[test]
+    fn discovery_reports_ambiguity_and_does_not_grant_provider_writes() {
+        let mut catalog = phenix_plugin::PluginCatalog::new();
+        let a = catalog.register("a", |_: ()| Ok(ExampleTool)).unwrap();
+        let b = catalog.register("b", |_: ()| Ok(ExampleTool)).unwrap();
+        let plugins = catalog.instance();
+        let first = plugins.prepare_load(&a, ()).unwrap();
+        let second = plugins.prepare_load(&b, ()).unwrap();
+        let a = first.candidate().unwrap();
+        let b = second.candidate().unwrap();
+        assert!(SelectedTool::discover([a.clone(), b]).is_err());
+
+        let tools = SelectedTool::discover([a]).unwrap();
+        assert_eq!(tools["echo"].offer, Key::new("a", "echo"));
+        assert_eq!(tools["echo"].path, "echo");
+        let mut options = BuildOptions::default();
+        let denied = (Key::new("routes", "tool-echo"), Key::new("a", "echo"));
+        options.imports.deny.insert(denied.clone());
+        LocalTools::configure(&mut options, "routes", "echo", tools).unwrap();
+        assert!(options.imports.deny.contains(&denied));
+        assert!(!options.composition.contains_key(&Key::new("a", "echo")));
+    }
+
     #[test]
     fn invalid_component_is_rejected_before_any_registration() {
         let mut registrar = Registrar::new("tool-author").unwrap();
