@@ -208,8 +208,8 @@ fn compose(advanced: bool) -> KernelHost {
                 grants: environment_grants(
                     &[("remote".into(), [("lookup".into(), "remote-tool".into())].into())].into(),
                 )
-                    .into_iter()
-                    .collect(),
+                .into_iter()
+                .collect(),
                 ..Default::default()
             },
         );

@@ -210,8 +210,8 @@ fn environment_host(
             grants: environment_grants(
                 &[("remote".into(), [("lookup".into(), TEST_REMOTE_PATH.into())].into())].into(),
             )
-                .into_iter()
-                .collect(),
+            .into_iter()
+            .collect(),
             ..Default::default()
         },
     );

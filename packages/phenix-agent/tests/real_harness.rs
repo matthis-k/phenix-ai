@@ -29,17 +29,13 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
         };
         Environment::new().with_resources(read_text(), resources)
     };
-    let local = environment("Cargo.toml").with_tool(Tool::new(
-        "uppercase",
-        |text: String| Ok(text.to_uppercase()),
-    ));
+    let local = environment("Cargo.toml")
+        .with_tool(Tool::new("uppercase", |text: String| Ok(text.to_uppercase())));
     let additional = if advanced {
         BTreeMap::from([(
             "reference".into(),
-            environment("src/local.rs").with_tool(Tool::new(
-                "lowercase",
-                |text: String| Ok(text.to_lowercase()),
-            )),
+            environment("src/local.rs")
+                .with_tool(Tool::new("lowercase", |text: String| Ok(text.to_lowercase()))),
         )])
     } else {
         BTreeMap::new()
@@ -133,4 +129,33 @@ fn missing_capability_is_a_domain_failure_and_budget_cleanup_allows_reuse() {
     assert!(
         turn(&host, "source").contains(&AgentEvent::Delta(include_str!("../Cargo.toml").into()))
     );
+}
+
+/// No default tool is needed to build an environment or loop.
+#[test]
+fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
+    let host = harness::compose(
+        |catalog| {
+            assert!(catalog["local"].is_empty());
+            MockModel::default()
+        },
+        MODEL_PATH,
+        Environment::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(turn(&host, "anything").contains(&AgentEvent::Delta(
+        "tool failed: tool unavailable: ".into()
+    )));
+
+    let duplicate = Environment::new()
+        .with_tool(Tool::new("echo", Ok::<String, String>))
+        .with_tool(Tool::new("echo", Ok::<String, String>));
+    let result = harness::compose(
+        |_| MockModel::default(),
+        MODEL_PATH,
+        duplicate,
+        BTreeMap::new(),
+    );
+    assert!(result.is_err());
 }

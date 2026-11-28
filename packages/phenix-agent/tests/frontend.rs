@@ -237,8 +237,8 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
                 grants: environment_grants(
                     &[("remote".into(), [("lookup".into(), REMOTE_PATH.into())].into())].into(),
                 )
-                    .into_iter()
-                    .collect(),
+                .into_iter()
+                .collect(),
                 ..Default::default()
             },
         );
