@@ -71,6 +71,65 @@ jobs:
               cat "artifacts/$mode-$repetition.resources"
             done
           done
+      - name: Check representative latency, throughput and RSS budgets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import math
+          from pathlib import Path
+          from statistics import median
+
+          # Fixture-specific regression ceilings, calibrated against three
+          # CPU-pinned repetitions on #1427 (7feb6c31f5fd42be8567541a8f6be27d0931466b).
+          # Times are ns per turn; overlap4 samples are batch time / 4,
+          # not individual request latency. Use medians across repetitions
+          # to tolerate occasional shared-runner scheduling noise.
+          budgets = {
+              "notified": (50000, 35000),
+              "notified-overlap4": (100000, 70000),
+              "polled": (400000, 300000),
+              "polled-overlap4": (600000, 450000),
+          }
+          for mode in ("polled", "notified"):
+              cases = {}
+              rss = []
+              for repetition in range(1, 4):
+                  with Path(f"artifacts/{mode}-{repetition}.csv").open() as f:
+                      rows = list(csv.DictReader(f))
+                  assert len(rows) == 8, (mode, repetition, len(rows))
+                  seen = set()
+                  for row in rows:
+                      key = (row["mode"], int(row["idle_nodes"]))
+                      assert key not in seen, key
+                      seen.add(key)
+                      assert key[0] in (mode, mode + "-overlap4"), key
+                      assert key[1] in (0, 16, 64, 128), key
+                      overlap = key[0].endswith("-overlap4")
+                      assert int(row["iterations"]) == (80 if overlap else 400)
+                      assert int(row["persisted"]) == (368 if overlap else 412)
+                      mean, p50, p95 = (float(row[k]) for k in
+                                        ("mean_ns_per_turn", "p50_ns", "p95_ns"))
+                      assert all(math.isfinite(v) and v > 0 for v in (mean, p50, p95))
+                      assert p50 <= p95, row
+                      cases.setdefault(key, []).append((mean, p95))
+                  resources = dict(field.split("=") for field in
+                                   Path(f"artifacts/{mode}-{repetition}.resources").read_text().split())
+                  rss.append(int(resources["maxrss_kb"]))
+              assert len(cases) == 8
+              for (case, idle), rows in sorted(cases.items()):
+                  assert len(rows) == 3
+                  p95_limit, mean_limit = budgets[case]
+                  mean = median(row[0] for row in rows)
+                  p95 = median(row[1] for row in rows)
+                  assert p95 <= p95_limit, (case, idle, p95, p95_limit)
+                  assert mean <= mean_limit, (case, idle, mean, mean_limit)
+                  print(f"{case} idle={idle}: p95_ns={p95:.0f} "
+                        f"mean_ns={mean:.0f} turns_per_s={1e9 / mean:.0f}")
+              assert 0 < min(rss) and median(rss) <= 16384, (mode, rss)
+              print(f"{mode}: median_maxrss_kb={median(rss)}")
+          PY
       - name: Preserve source, exact heads, timings and RSS evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
