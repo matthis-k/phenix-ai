@@ -194,6 +194,70 @@ fn compare(s: &NetworkSession, request: RequestId) {
 }
 
 #[test]
+fn correlated_candidate_and_packet_selection_match_full_scans() {
+    for policy in [
+        RequestQueuePolicy::SharedFifo,
+        RequestQueuePolicy::BoundedLanes,
+    ] {
+        let mut s = network(1, &[]).start_with_options(SessionOptions {
+            max_requests: NonZeroUsize::new(3).unwrap(),
+            request_queue_policy: policy,
+            ..Default::default()
+        });
+        let first = s.begin_request(None).unwrap();
+        let second = s.begin_request(None).unwrap();
+        s.processes[0].policy = Readiness::CORRELATED_ALL;
+        let canonical = s.ingress["in0"][0];
+        if policy == RequestQueuePolicy::BoundedLanes {
+            put(&mut s, canonical, None);
+            put(&mut s, canonical, None);
+            for request in [first, second] {
+                let lane = s.requests[&request].lane;
+                let queue = s.request_lanes[&lane].inputs["in0"][0];
+                put(&mut s, queue, Some(request));
+                put(&mut s, queue, Some(request));
+            }
+        } else {
+            put(&mut s, canonical, Some(first));
+            put(&mut s, canonical, Some(second));
+        }
+        let order = s.selection_order(0);
+        for cursor in 0..=3 {
+            s.request_cursors.insert(0, cursor);
+            let mut expected = vec![Some(first), Some(second)];
+            if policy == RequestQueuePolicy::BoundedLanes {
+                expected.push(None);
+            }
+            let next = expected.partition_point(|request| {
+                request.map_or(s.max_requests, |id| s.requests[&id].lane) < cursor
+            });
+            let count = expected.len();
+            expected.rotate_left(next % count);
+            assert_eq!(s.selection_candidates(0, &order), expected);
+        }
+        let port = s.processes[0]
+            .inputs
+            .iter()
+            .position(|input| input.name == "a")
+            .unwrap();
+        for request in [Some(first), Some(second), None] {
+            let input = &s.processes[0].inputs[port];
+            let reference = input.queues.iter().find_map(|&queue| {
+                s.transport.queues()[queue]
+                    .packets()
+                    .enumerate()
+                    .find(|(position, packet)| {
+                        (*position == 0 || request.is_some())
+                            && packet.metadata().and_then(|m| m.request()) == request
+                    })
+                    .map(|(position, _)| (queue, position))
+            });
+            assert_eq!(s.packet_for(0, port, request, true), reference);
+        }
+    }
+}
+
+#[test]
 fn exhaustive_small_topologies_match_original_and_own_lane_oracles() {
     let possible = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)];
     for topology in 0..64 {
