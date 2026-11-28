@@ -70,8 +70,7 @@ fn compiled_dag_has_no_static_feedback_warning() {
 #[test]
 fn first_packet_progress_distinguishes_seeded_and_unseeded_feedback() {
     use phenix_graph::{
-        Interface, PortDef, Process, ProcessFactory,
-        network::StructuralPacketProgress as Progress,
+        Interface, PortDef, Process, ProcessFactory, network::StructuralPacketProgress as Progress,
         runtime::Readiness,
     };
     use std::collections::BTreeMap;
@@ -152,8 +151,7 @@ fn first_packet_progress_distinguishes_seeded_and_unseeded_feedback() {
 fn first_packet_progress_counts_distinct_input_ports_not_producers() {
     use phenix_graph::{
         Interface, PortDef, Process, ProcessContext, Step,
-        network::StructuralPacketProgress as Progress,
-        runtime::Readiness,
+        network::StructuralPacketProgress as Progress, runtime::Readiness,
     };
     use std::collections::BTreeMap;
 
@@ -168,15 +166,16 @@ fn first_packet_progress_counts_distinct_input_ports_not_producers() {
     let join = builder
         .node(
             "join",
-            Arc::new(
-                Interface::new(["a", "b"].map(PortDef::local::<i64>), []).unwrap(),
-            ),
+            Arc::new(Interface::new(["a", "b"].map(PortDef::local::<i64>), []).unwrap()),
             Arc::new(|| Sink),
         )
         .unwrap();
     for name in ["first", "second"] {
         let source = builder
-            .add(name, Arc::new(ComponentDef::source(|| std::iter::once(1_i64))))
+            .add(
+                name,
+                Arc::new(ComponentDef::source(|| std::iter::once(1_i64))),
+            )
             .unwrap();
         builder.start(&source).unwrap();
         builder
