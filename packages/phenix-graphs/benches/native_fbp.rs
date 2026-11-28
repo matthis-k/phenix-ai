@@ -549,7 +549,11 @@ fn q2_recomposition(leaves: usize) {
         for compiled in [incremental.clone(), canonical] {
             let mut session = compiled.start();
             session.inject("in", Value::local(1_i64)).unwrap();
-            session.run_until_idle(16);
+            // Unconnected nested processes can each consume EOS before the
+            // worker gets its turn. Allow their finite cleanup in validation.
+            let report = session.run_until_idle(leaves * 4 + 32);
+            assert!(!report.budget_exhausted);
+            assert!(session.failure().is_none());
             assert_eq!(
                 session
                     .take_output("out")
