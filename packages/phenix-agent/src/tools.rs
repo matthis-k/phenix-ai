@@ -1,16 +1,16 @@
-//! Optional named-tool selection inside the original local execution route.
-//! Environment selection is orthogonal: it may wrap this route, but does
-//! not need to know the names, implementations or grants of local tools.
+//! Typed tool registration and shared named dispatch for each environment.
 
 use crate::{
-    CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_ROUTER, ToolInvocation,
+    CONTRACTS_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, ToolInvocation,
     ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router,
 };
 use phenix_graph::{
     ComponentDef, ContractValue, Schema,
     compose::{Edit, Footprint, NetworkPatch},
 };
-use phenix_kernel::{BuildOptions, Contribution, Key, component_offers};
+use phenix_kernel::{
+    BuildOptions, CallbackError, CandidateContext, Contribution, Key, component_offers,
+};
 use phenix_plugin::{Code, Failure, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -224,18 +224,8 @@ impl PluginInstance for Tool {
     }
 }
 
-const ROUTER: &str = "agent-local-tool-router";
-
-fn tool_port(name: &str) -> String {
+pub fn tool_port(name: &str) -> String {
     format!("tool-{name}")
-}
-
-/// Select independently offered tools by name. Keep the original local
-/// provider as one named tool and retain its feedback connection.
-/// Each additional implementation fulfills the same tool contract.
-pub struct LocalTools {
-    pub base: String,
-    pub additional: BTreeSet<String>,
 }
 
 /// A host-selected provider, not a claim of write authority by the tool.
@@ -318,104 +308,79 @@ impl SelectedTool {
     }
 }
 
-impl LocalTools {
-    /// Derive dispatch imports and exact routing grants from one trusted
-    /// selection. Existing deny rules still win. Provider component grants
-    /// remain separate; this only authorizes the local routing contribution.
-    pub fn configure(
-        options: &mut BuildOptions,
-        owner: &str,
-        base: &str,
-        providers: BTreeMap<String, SelectedTool>,
-    ) -> Result<Self, Failure> {
-        let Some(base_tool) = providers.get(base) else {
-            return Err(Failure::new(Code::DescriptorInvalid, "missing base tool"));
-        };
-        let placements = providers
-            .iter()
-            .map(|(name, provider)| (name.clone(), provider.path.clone()))
-            .collect();
-        let grants = local_tool_grants(&base_tool.path, &placements);
-        let additional = providers
-            .keys()
-            .filter(|name| name.as_str() != base)
-            .cloned()
-            .collect();
-        for (name, provider) in providers {
-            let import = Key::new(owner, tool_port(&name));
-            if let Some(allow) = &mut options.imports.allow {
-                allow.insert((import.clone(), provider.offer.clone()));
-            }
-            options.imports.selections.insert(import, provider.offer);
+/// Derive import selections from a host-selected set. This does not grant
+/// provider writes or resources and never removes deny rules.
+pub fn select_tools(
+    options: &mut BuildOptions,
+    owner: &str,
+    providers: &BTreeMap<String, SelectedTool>,
+    import_id: impl Fn(&str) -> String,
+) {
+    for (name, provider) in providers {
+        let import = Key::new(owner, import_id(name));
+        if let Some(allow) = &mut options.imports.allow {
+            allow.insert((import.clone(), provider.offer.clone()));
         }
         options
-            .composition
-            .entry(Key::new(owner, "main"))
-            .or_default()
-            .grants
-            .extend(grants);
-        Ok(Self {
-            base: base.into(),
-            additional,
+            .imports
+            .selections
+            .insert(import, provider.offer.clone());
+    }
+}
+
+pub(crate) fn declare_tools(
+    mut contribution: Contribution,
+    names: &BTreeSet<String>,
+    import_id: impl Fn(&str) -> String,
+) -> Contribution {
+    for name in names {
+        contribution =
+            contribution.import(import_id(name), Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT));
+    }
+    contribution
+}
+
+pub(crate) fn bind_tools(
+    context: &CandidateContext<'_>,
+    names: &BTreeSet<String>,
+    import_id: impl Fn(&str) -> String,
+) -> Result<BTreeMap<String, String>, CallbackError> {
+    let mut placements = BTreeMap::new();
+    for name in names {
+        let tool = context.bind_import(&import_id(name))?;
+        tool.input::<ToolInvocation>("input")?;
+        tool.output::<ToolResult>("output")?;
+        placements.insert(name.clone(), tool.path().to_owned());
+    }
+    Ok(placements)
+}
+
+pub(crate) fn named_router(
+    names: BTreeSet<String>,
+) -> Result<ComponentDef, phenix_graph::InterfaceError> {
+    invocation_router(names, |call| &call.name, tool_port, |invocation| {
+        invocation.complete(ToolOutcome::Failed {
+            output: String::new().into(),
+            reason: "tool unavailable".into(),
         })
-    }
+    })
 }
 
-impl PluginInstance for LocalTools {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let base = self.base.clone();
-        let mut names = self.additional.clone();
-        names.insert(base.clone());
-        let mut contribution =
-            Contribution::new("main", NetworkPatch::new([])).after([Key::new(LOOP_PLUGIN, "main")]);
-        for name in &names {
-            contribution =
-                contribution.import(tool_port(name), Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT));
-        }
-        contribution
-            .prepare_patch(move |context| {
-                let base_tool = context.bind_import(&tool_port(&base))?;
-                let base_path = base_tool.path();
-                let router = invocation_router(
-                    names.clone(),
-                    |call| &call.name,
-                    tool_port,
-                    |invocation| {
-                        invocation.complete(ToolOutcome::Failed {
-                            output: String::new().into(),
-                            reason: "tool unavailable".into(),
-                        })
-                    },
-                )?;
-                let mut placements = BTreeMap::new();
-                for name in &names {
-                    let tool = context.bind_import(&tool_port(name))?;
-                    tool.input::<ToolInvocation>("input")?;
-                    tool.output::<ToolResult>("output")?;
-                    placements.insert(name.clone(), tool.path().to_owned());
-                }
-                let mut edits = vec![Edit::add(ROUTER, router)];
-                edits.extend(local_edges(base_path, &placements));
-                Ok(NetworkPatch::new(edits))
-            })
-            .register(registrar)
-    }
-}
-
-fn local_edges(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Edit> {
-    let mut edits = vec![
-        Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, "input")),
-        Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
-        Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
-    ];
-    let mut feedback = BTreeSet::from([base_path]);
+/// Common routing declaration for local and additional environments.
+pub(crate) fn named_edges(router: &str, tools: &BTreeMap<String, String>) -> Vec<Edit> {
+    let mut edits = vec![Edit::connect(
+        (router, UNAVAILABLE),
+        (TOOL_FEEDBACK, "input"),
+        capacity(),
+    )];
+    let mut feedback = BTreeSet::new();
     for (name, path) in tools {
         edits.push(Edit::connect(
-            (ROUTER, tool_port(name)),
+            (router, tool_port(name)),
             (path, "input"),
             capacity(),
         ));
-        if feedback.insert(path.as_str()) {
+        if feedback.insert(path) {
             edits.push(Edit::connect(
                 (path, "output"),
                 (TOOL_FEEDBACK, "input"),
@@ -426,11 +391,9 @@ fn local_edges(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Edit> {
     edits
 }
 
-/// Exact host grants for a selected base provider and named tool placements.
-/// These do not grant any authority to the tools themselves.
-pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Footprint> {
-    let mut grants = vec![Footprint::Component(ROUTER.into())];
-    grants.extend(NetworkPatch::new(local_edges(base_path, tools)).footprints());
+pub(crate) fn named_grants(router: &str, tools: &BTreeMap<String, String>) -> Vec<Footprint> {
+    let mut grants = vec![Footprint::Component(router.into())];
+    grants.extend(NetworkPatch::new(named_edges(router, tools)).footprints());
     grants
 }
 
@@ -468,7 +431,7 @@ mod tests {
         let mut options = BuildOptions::default();
         let denied = (Key::new("routes", "tool-echo"), Key::new("a", "echo"));
         options.imports.deny.insert(denied.clone());
-        LocalTools::configure(&mut options, "routes", "echo", tools).unwrap();
+        select_tools(&mut options, "routes", &tools, tool_port);
         assert!(options.imports.deny.contains(&denied));
         assert!(!options.composition.contains_key(&Key::new("a", "echo")));
     }
