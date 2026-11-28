@@ -28,6 +28,22 @@ impl ComponentDef {
         U: Send + Sync + 'static,
         F: Fn(T) -> U + Send + Sync + 'static,
     {
+        Self::map_state(|| (), move |_, input| handler(input))
+    }
+
+    /// Transform with mutable process-private state, initialized at each spawn.
+    /// Requests in the same process share state; restart or a new session
+    /// constructs fresh state. This is not a durable or transactional store.
+    pub fn map_state<T, U, S, F>(
+        initialize: impl Fn() -> S + Send + Sync + 'static,
+        handler: F,
+    ) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+        U: Send + Sync + 'static,
+        S: Send + 'static,
+        F: Fn(&mut S, T) -> U + Send + Sync + 'static,
+    {
         let handler = Arc::new(handler);
         Self::primitive(
             Arc::new(
@@ -39,6 +55,7 @@ impl ComponentDef {
             ),
             Arc::new(move || {
                 let handler = handler.clone();
+                let mut state = initialize();
                 let mut emitted = false;
                 Adapter(move |cx: &mut ProcessContext| {
                     if emitted {
@@ -63,7 +80,7 @@ impl ComponentDef {
                                 .failure()
                             })?
                             .clone();
-                        Ok(Value::local(handler(input)))
+                        Ok(Value::local(handler(&mut state, input)))
                     });
                     let output = value.finish_owned(output)?;
                     emitted = true;
