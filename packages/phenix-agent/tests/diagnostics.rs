@@ -86,6 +86,23 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
     assert_eq!(profiles, vec![&*expected, &*expected]);
     assert!(events.contains(&AgentEvent::Delta("secret-test-payload".repeat(2))));
     assert_eq!(events.last(), Some(&AgentEvent::Completed));
+    let reports: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ProviderStatus(report) => Some(report),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports.len(), 2);
+    for (i, report) in reports.iter().enumerate() {
+        assert_eq!(report.provider, expected.provider);
+        assert_eq!(report.model, expected.model);
+        assert_eq!(report.status.usage.as_ref().unwrap().input_tokens, Some(10));
+        assert_eq!(report.status.windows[0].remaining, Some(59 - i as u64));
+        assert_eq!(report.status.windows[0].resets_at, Some(1_800_000_060));
+        assert_eq!(report.status.windows[1].remaining, None);
+        assert_eq!(report.status.windows[1].resets_at, Some(1_800_604_800));
+    }
 
     let trace = records.lock().unwrap().clone();
     if logging {
@@ -114,6 +131,9 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
             succeeded: true,
             result_schema: String::schema().name,
         }));
+        for report in reports {
+            assert!(trace.contains(&TraceRecord::ProviderStatus(report.clone())));
+        }
         assert!(trace.contains(&TraceRecord::Completed));
         assert!(!format!("{trace:?}").contains("secret-test-payload"));
     } else {

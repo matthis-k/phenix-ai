@@ -5,7 +5,7 @@ use crate::{
     interface::{Interface, InterfaceError, PortDef},
     process::{Process, ProcessContext, ProcessEmission, Step},
 };
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 struct Adapter<F>(F);
 impl<F> Process for Adapter<F>
@@ -140,6 +140,78 @@ impl ComponentDef {
         )
     }
 
+    /// Route a local value to exactly one named output, or transform it into
+    /// a separately typed fallback. Keys and port names are ordinary data.
+    /// The finite route table is validated once, before any process runs.
+    /// All publication, failure and lease handling use the normal runtime.
+    pub fn route<T, U>(
+        routes: BTreeMap<String, String>,
+        fallback_port: impl Into<String>,
+        select: impl Fn(&T) -> &str + Send + Sync + 'static,
+        fallback: impl Fn(T) -> U + Send + Sync + 'static,
+    ) -> Result<Self, InterfaceError>
+    where
+        T: Clone + Send + Sync + 'static,
+        U: Send + Sync + 'static,
+    {
+        let fallback_port = fallback_port.into();
+        let interface = Interface::new(
+            [PortDef::local::<T>("input")],
+            routes
+                .values()
+                .map(|port| PortDef::local::<T>(port))
+                .chain([PortDef::local::<U>(&fallback_port)]),
+        )?;
+        let routes = Arc::new(routes);
+        let select = Arc::new(select);
+        let fallback = Arc::new(fallback);
+        Ok(Self::primitive(
+            Arc::new(interface),
+            Arc::new(move || {
+                let routes = routes.clone();
+                let select = select.clone();
+                let fallback = fallback.clone();
+                let fallback_port = fallback_port.clone();
+                let mut emitted = false;
+                Adapter(move |cx: &mut ProcessContext| {
+                    if emitted {
+                        emitted = false;
+                        return Ok(Step::Complete);
+                    }
+                    let Some(value) = cx.take("input") else {
+                        return Ok(if cx.is_eos("input") {
+                            Step::Finished
+                        } else {
+                            Step::Complete
+                        });
+                    };
+                    let mut port = fallback_port.clone();
+                    let output = value.map_callback(|| {
+                        let input = value
+                            .borrow::<T>()
+                            .ok_or_else(|| {
+                                ValueError::LocalType {
+                                    expected: std::any::type_name::<T>(),
+                                    actual: value.identity(),
+                                }
+                                .failure()
+                            })?
+                            .clone();
+                        Ok(if let Some(selected) = routes.get(select(&input)) {
+                            port.clone_from(selected);
+                            Value::local(input)
+                        } else {
+                            Value::local(fallback(input))
+                        })
+                    });
+                    let output = value.finish_owned(output)?;
+                    emitted = true;
+                    Ok(Step::Emit(ProcessEmission::new(port, output)))
+                })
+            }),
+        ))
+    }
+
     /// Explicit semantic conversion between two *wire* schemas. The input and
     /// output keep their own complete versioned identities; an incompatible
     /// direct connection is never made compatible by a matching Rust layout,
@@ -256,5 +328,36 @@ impl ComponentDef {
                 })
             }),
         )
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn named_routes_are_validated_before_execution() {
+        let invalid = ComponentDef::route(
+            [("a".into(), "otherwise".into())].into(),
+            "otherwise",
+            |text: &String| text.as_str(),
+            |text: String| text.len(),
+        );
+        assert!(invalid.is_err());
+        let definition = ComponentDef::route(
+            [("a".into(), "selected".into())].into(),
+            "otherwise",
+            |text: &String| text.as_str(),
+            |text: String| text.len(),
+        )
+        .unwrap();
+        assert_eq!(
+            definition.interface().output("selected").unwrap(),
+            &PortDef::local::<String>("selected")
+        );
+        assert_eq!(
+            definition.interface().output("otherwise").unwrap(),
+            &PortDef::local::<usize>("otherwise")
+        );
     }
 }

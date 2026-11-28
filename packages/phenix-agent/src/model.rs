@@ -11,6 +11,10 @@ use std::{collections::BTreeSet, sync::Arc};
 
 pub mod command;
 pub mod fake;
+pub mod selection;
+pub mod status;
+
+use status::{ProviderReport, ProviderStatus};
 
 /// Advertised metadata, not authorization. Capability names are open;
 /// independent providers may add capabilities without changing Graph.
@@ -56,6 +60,7 @@ impl phenix_plugin::Contribution for ModelProfile {
 pub enum ModelOutput {
     /// Report the profile supplied to this response, not a provider assertion.
     Info,
+    Status(ProviderStatus),
     Delta(String),
     Tool(ToolCall),
     Complete,
@@ -161,6 +166,14 @@ impl<B: ModelBackend> Process for ModelProcess<B> {
                     ModelOutput::Info => {
                         self.state = State::Streaming(stream);
                         Ok(event(AgentEvent::ModelInfo(self.profile.clone())))
+                    }
+                    ModelOutput::Status(status) => {
+                        self.state = State::Streaming(stream);
+                        Ok(event(AgentEvent::ProviderStatus(ProviderReport {
+                            provider: self.profile.provider.clone(),
+                            model: self.profile.model.clone(),
+                            status,
+                        })))
                     }
                     ModelOutput::Delta(delta) => {
                         self.state = State::Streaming(stream);

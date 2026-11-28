@@ -75,6 +75,9 @@ Start with executable mocks. Exercise real contribution selection, nested extens
 
 Keep provider selection, credentials, and durable application state outside Graph.
 
+- Implement provider and protocol adapters using maintained upstream Rust clients and SDKs where practical. Keep dependencies in the adapter/application layer; do not create a competing implementation of a standard or expose one client's protocol types as the common agent contract.
+- Discover provider/model capabilities through ordinary contributions and resolve explicit host selection without implicit provider priority. Publish provider-reported usage and independent quota/reset observations through common application types; missing values remain unknown. Accounting is not authorization or an automatic retry policy.
+
 ## Performance and progress requirements
 
 These requirements retain the scope of the original acceptance findings. Track implementation status in issues and PRs, not here.
