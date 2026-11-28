@@ -4,66 +4,168 @@
 
 use crate::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_ROUTER, ToolInvocation,
-    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
+    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router,
 };
 use phenix_graph::{
-    ComponentDef,
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    ComponentDef, ContractValue, Schema,
+    compose::{Edit, Footprint, NetworkPatch},
 };
 use phenix_kernel::{BuildOptions, Contribution, Key, component_offers};
 use phenix_plugin::{Code, Failure, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A named synchronous tool using the current mock text argument contract.
-/// Registration derives the component, claim, offer and invocation correlation.
-/// A domain error is returned as tool feedback rather than a scheduler failure.
-/// Complex tools can register their own component under the same contract.
+/// A tool's structured argument or result. The codec and complete schema are
+/// shared with Graph and Storage; this is not a model-provider JSON format.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolValue {
+    schema: Schema,
+    bytes: Vec<u8>,
+}
+
+impl ToolValue {
+    pub fn new<T: ContractValue>(value: &T) -> Self {
+        Self {
+            schema: T::schema(),
+            bytes: value.encode(),
+        }
+    }
+
+    pub fn schema(&self) -> &Schema {
+        &self.schema
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn decode<T: ContractValue>(&self) -> Result<T, phenix_graph::Failure> {
+        if self.schema != T::schema() {
+            return Err(phenix_graph::Failure::application_message(
+                "tool value schema mismatch",
+            ));
+        }
+        T::decode(&self.bytes)
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        if self.schema == String::schema() {
+            std::str::from_utf8(&self.bytes).ok()
+        } else {
+            None
+        }
+    }
+}
+
+impl From<String> for ToolValue {
+    fn from(value: String) -> Self {
+        Self::new(&value)
+    }
+}
+
+impl From<&str> for ToolValue {
+    fn from(value: &str) -> Self {
+        value.to_owned().into()
+    }
+}
+
+/// Model-facing semantic metadata, independent of graph placement. The schema
+/// describes the native wire contract, not yet a provider's JSON Schema.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: String,
+    pub arguments: Schema,
+    pub result: Schema,
+}
+
+impl phenix_plugin::Contribution for ToolDescriptor {
+    const KIND: &'static str = "agent.tool";
+    fn id(&self) -> &str {
+        &self.name
+    }
+}
+
+/// A named tool with a derived argument/result contract and ordinary component
+/// registration. Complex tools use the same descriptor and offer mechanism.
+#[derive(Clone)]
 pub struct Tool {
-    name: String,
+    descriptor: ToolDescriptor,
+    placement: String,
     definition: ComponentDef,
 }
 
 impl Tool {
-    pub fn new(
+    pub fn new<A: ContractValue, R: ContractValue>(
         name: impl Into<String>,
-        execute: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+        execute: impl Fn(A) -> Result<R, String> + Send + Sync + 'static,
     ) -> Self {
-        Self {
-            name: name.into(),
-            definition: ComponentDef::map(move |invocation: ToolInvocation| {
-                let outcome = match execute(&invocation.call().prompt) {
-                    Ok(output) => ToolOutcome::Succeeded { output },
-                    Err(reason) => ToolOutcome::Failed {
-                        output: String::new(),
-                        reason,
-                    },
-                };
-                invocation.complete(outcome)
-            }),
-        }
+        let name = name.into();
+        let descriptor = ToolDescriptor {
+            name: name.clone(),
+            description: String::new(),
+            arguments: A::schema(),
+            result: R::schema(),
+        };
+        let definition = ComponentDef::map(move |invocation: ToolInvocation| {
+            let result = invocation
+                .call()
+                .arguments
+                .decode::<A>()
+                .map_err(|error| error.summary().to_owned())
+                .and_then(&execute);
+            let outcome = match result {
+                Ok(output) => ToolOutcome::Succeeded {
+                    output: ToolValue::new(&output),
+                },
+                Err(reason) => ToolOutcome::Failed {
+                    output: String::new().into(),
+                    reason,
+                },
+            };
+            invocation.complete(outcome)
+        });
+        Self::from_component(descriptor, definition)
     }
 
-    /// Advanced tools can supply an ordinary graph component instead.
-    /// The same checked offer and host authorization apply.
-    pub fn from_component(name: impl Into<String>, definition: ComponentDef) -> Self {
+    pub fn from_component(descriptor: ToolDescriptor, definition: ComponentDef) -> Self {
         Self {
-            name: name.into(),
+            placement: descriptor.name.clone(),
+            descriptor,
             definition,
         }
     }
 
-    /// Use the tool's name as its contribution, placement and offer identity.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.descriptor.description = description.into();
+        self
+    }
+
+    pub fn placement(mut self, placement: impl Into<String>) -> Self {
+        self.placement = placement.into();
+        self
+    }
+
+    /// The descriptor, claim and offer enter the same atomic plugin bundle.
     /// Selecting and granting this contribution is a separate host decision.
     pub fn register(self, registrar: &mut Registrar) -> Result<(), Failure> {
+        let mut bundle = Registrar::new(registrar.owner())?;
         Contribution::offered_component(
-            &self.name,
-            &self.name,
-            &self.name,
+            &self.descriptor.name,
+            &self.placement,
+            &self.descriptor.name,
             Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
             &crate::tool_contract(),
             self.definition,
         )?
-        .register(registrar)
+        .register(&mut bundle)?;
+        bundle.add(self.descriptor)?;
+        registrar.merge(bundle.finish())
+    }
+}
+
+impl PluginInstance for Tool {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        self.clone().register(registrar)
     }
 }
 
@@ -85,6 +187,7 @@ pub struct LocalTools {
 pub struct SelectedTool {
     pub offer: Key,
     pub path: String,
+    pub descriptor: Option<ToolDescriptor>,
 }
 
 impl SelectedTool {
@@ -103,12 +206,16 @@ impl SelectedTool {
                     continue;
                 }
                 let name = offer.offer.id.clone();
+                let descriptor = snapshot
+                    .get::<ToolDescriptor>(&name)
+                    .map(|value| (*value).clone());
                 if tools
                     .insert(
                         name.clone(),
                         Self {
                             offer: offer.offer,
                             path: offer.path,
+                            descriptor,
                         },
                     )
                     .is_some()
@@ -182,79 +289,61 @@ impl PluginInstance for LocalTools {
             .prepare_patch(move |context| {
                 let base_tool = context.bind_import(&tool_port(&base))?;
                 let base_path = base_tool.path();
-                let base_input = base_tool.input::<ToolInvocation>("input")?;
                 let router = invocation_router(
                     names.clone(),
                     |call| &call.name,
                     tool_port,
                     |invocation| {
                         invocation.complete(ToolOutcome::Failed {
-                            output: String::new(),
+                            output: String::new().into(),
                             reason: "tool unavailable".into(),
                         })
                     },
                 )?;
-                let mut edits = vec![
-                    Edit::add(ROUTER, router),
-                    Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, base_input.name())),
-                    Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
-                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
-                ];
-                let mut feedback = BTreeSet::from([base_path.to_owned()]);
+                let mut placements = BTreeMap::new();
                 for name in &names {
-                    let output = tool_port(name);
-                    let tool = context.bind_import(&output)?;
-                    let input = tool.input::<ToolInvocation>("input")?;
-                    let result = tool.output::<ToolResult>("output")?;
-                    edits.push(context.connect_bound_input(
-                        (ROUTER, output.as_str()),
-                        &input,
-                        capacity(),
-                    )?);
-                    if feedback.insert(tool.path().to_owned()) {
-                        edits.push(context.connect_bound_output(
-                            &result,
-                            port(TOOL_FEEDBACK, "input"),
-                            capacity(),
-                        )?);
-                    }
+                    let tool = context.bind_import(&tool_port(name))?;
+                    tool.input::<ToolInvocation>("input")?;
+                    tool.output::<ToolResult>("output")?;
+                    placements.insert(name.clone(), tool.path().to_owned());
                 }
+                let mut edits = vec![Edit::add(ROUTER, router)];
+                edits.extend(local_edges(base_path, &placements));
                 Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
 }
 
+fn local_edges(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Edit> {
+    let mut edits = vec![
+        Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, "input")),
+        Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
+        Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
+    ];
+    let mut feedback = BTreeSet::from([base_path]);
+    for (name, path) in tools {
+        edits.push(Edit::connect(
+            (ROUTER, tool_port(name)),
+            (path, "input"),
+            capacity(),
+        ));
+        if feedback.insert(path.as_str()) {
+            edits.push(Edit::connect(
+                (path, "output"),
+                (TOOL_FEEDBACK, "input"),
+                capacity(),
+            ));
+        }
+    }
+    edits
+}
+
 /// Exact host grants for a selected base provider and named tool placements.
 /// These do not grant any authority to the tools themselves.
 pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Footprint> {
-    let mut grants = vec![
-        Footprint::Component(ROUTER.into()),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_ROUTER, "env-local"),
-            port(base_path, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_ROUTER, "env-local"),
-            port(ROUTER, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, UNAVAILABLE),
-            port(TOOL_FEEDBACK, "input"),
-        )),
-    ];
-    for (name, path) in tools {
-        grants.push(Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, &tool_port(name)),
-            port(path, "input"),
-        )));
-        if path != base_path {
-            grants.push(Footprint::Connection(ConnectionKey::new(
-                port(path, "output"),
-                port(TOOL_FEEDBACK, "input"),
-            )));
-        }
-    }
+    let mut grants = vec![Footprint::Component(ROUTER.into())];
+    grants.extend(NetworkPatch::new(local_edges(base_path, tools)).footprints());
     grants
 }
 
@@ -266,7 +355,7 @@ mod tests {
 
     impl PluginInstance for ExampleTool {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            Tool::new("echo", |text| Ok(text.into())).register(registrar)
+            Tool::new("echo", Ok::<String, String>).register(registrar)
         }
     }
 
@@ -285,6 +374,10 @@ mod tests {
         let tools = SelectedTool::discover([a]).unwrap();
         assert_eq!(tools["echo"].offer, Key::new("a", "echo"));
         assert_eq!(tools["echo"].path, "echo");
+        assert_eq!(
+            tools["echo"].descriptor.as_ref().unwrap().arguments,
+            String::schema()
+        );
         let mut options = BuildOptions::default();
         let denied = (Key::new("routes", "tool-echo"), Key::new("a", "echo"));
         options.imports.deny.insert(denied.clone());
@@ -296,27 +389,43 @@ mod tests {
     #[test]
     fn invalid_component_is_rejected_before_any_registration() {
         let mut registrar = Registrar::new("tool-author").unwrap();
-        let error = Tool::from_component("bad", ComponentDef::map(|text: String| text))
-            .register(&mut registrar)
-            .unwrap_err();
+        let error = Tool::from_component(
+            ToolDescriptor {
+                name: "bad".into(),
+                description: String::new(),
+                arguments: String::schema(),
+                result: String::schema(),
+            },
+            ComponentDef::map(|text: String| text),
+        )
+        .register(&mut registrar)
+        .unwrap_err();
         assert_eq!(error.code, Code::SchemaRejected);
         assert_eq!(registrar.finish().keys().count(), 0);
     }
 
     #[test]
+    fn typed_results_round_trip_and_reject_other_schemas() {
+        let value = ToolValue::new(&42_i64);
+        assert_eq!(value.decode::<i64>().unwrap(), 42);
+        assert!(value.decode::<String>().is_err());
+        assert!(value.as_text().is_none());
+    }
+
+    #[test]
     fn duplicate_tool_registration_is_atomic() {
         let mut registrar = Registrar::new("tool-author").unwrap();
-        Tool::new("first", |text| Ok(text.into()))
+        Tool::new("first", Ok::<String, String>)
             .register(&mut registrar)
             .unwrap();
         assert!(
-            Tool::new("first", |text| Ok(text.into()))
+            Tool::new("first", Ok::<String, String>)
                 .register(&mut registrar)
                 .is_err()
         );
-        Tool::new("second", |text| Ok(text.into()))
+        Tool::new("second", Ok::<String, String>)
             .register(&mut registrar)
             .unwrap();
-        assert_eq!(registrar.finish().keys().count(), 4);
+        assert_eq!(registrar.finish().keys().count(), 6);
     }
 }

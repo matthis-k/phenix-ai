@@ -53,7 +53,7 @@ impl Process for EffectProcess {
             });
         };
         let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
-        let prompt = invocation.call().prompt.as_str();
+        let prompt = invocation.call().arguments.as_text().unwrap();
         let outcome = if prompt == "no-effect" {
             ToolOutcome::Succeeded {
                 output: "no write".into(),
@@ -72,7 +72,7 @@ impl Process for EffectProcess {
             }
         } else {
             ToolOutcome::Failed {
-                output: String::new(),
+                output: String::new().into(),
                 reason: "effect not granted".into(),
             }
         };
@@ -195,8 +195,11 @@ fn result_outcome_and_authoritative_effect_evidence_are_independent() {
         let state = state.lock().unwrap();
         assert_eq!(state.value, 4);
         assert_eq!(state.evidence.len(), state.value);
-        assert_eq!(state.evidence[0].call().prompt, "fail");
-        assert_eq!(state.evidence[1].call().prompt, "suspend");
+        assert_eq!(state.evidence[0].call().arguments.as_text(), Some("fail"));
+        assert_eq!(
+            state.evidence[1].call().arguments.as_text(),
+            Some("suspend")
+        );
         assert_eq!(state.evidence[2].call(), state.evidence[3].call());
         assert_ne!(state.evidence[2], state.evidence[3]);
     }

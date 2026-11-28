@@ -85,12 +85,14 @@ use crate::network::{CompiledNetwork, NetworkDef, NetworkError, normalize_requir
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+mod author;
 mod budget;
 mod edit;
 mod planning;
 mod replay;
 mod selection;
 
+pub use author::{PatchBuilder, PatchComponent, PatchInput, PatchMap, PatchOutput};
 use budget::PlanningBudget;
 pub use edit::{ConnectionKey, Edit, Footprint, NetworkPatch};
 

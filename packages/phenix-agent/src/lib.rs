@@ -18,6 +18,7 @@ use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc};
 pub mod environment;
 pub mod mock;
 pub mod tools;
+pub use tools::ToolValue;
 
 /// A turn starts with a prompt and can continue with tool feedback.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,14 +31,14 @@ pub enum ModelInput {
 /// Failed executions may still carry output; a reason is mandatory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolOutcome {
-    Succeeded { output: String },
-    Failed { output: String, reason: String },
+    Succeeded { output: ToolValue },
+    Failed { output: ToolValue, reason: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolCall {
     pub name: String,
-    pub prompt: String,
+    pub arguments: ToolValue,
     pub environment: String,
 }
 
@@ -380,7 +381,7 @@ impl PluginInstance for AgentLoop {
                 let events = model.output::<AgentEvent>("events")?;
                 let router = tool_router(["local".into()].into(), |invocation| {
                     invocation.complete(ToolOutcome::Failed {
-                        output: String::new(),
+                        output: String::new().into(),
                         reason: "environment unavailable".into(),
                     })
                 })?;

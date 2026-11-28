@@ -35,6 +35,7 @@ pub struct MockModel {
     pub environment: String,
     pub environment_by_prompt: BTreeMap<String, String>,
     pub tool_by_prompt: BTreeMap<String, String>,
+    pub arguments_by_prompt: BTreeMap<String, crate::ToolValue>,
     /// Deterministic continuation after a successful tool result. Keys are
     /// the completed call's prompt; the value is the next model tool call.
     pub follow_up_by_prompt: BTreeMap<String, ToolCall>,
@@ -48,6 +49,7 @@ impl Default for MockModel {
             environment: "local".into(),
             environment_by_prompt: BTreeMap::new(),
             tool_by_prompt: BTreeMap::new(),
+            arguments_by_prompt: BTreeMap::new(),
             follow_up_by_prompt: BTreeMap::new(),
         }
     }
@@ -88,7 +90,12 @@ impl Process for ModelProcess {
                         .get(prompt)
                         .cloned()
                         .unwrap_or_else(|| "lookup".into()),
-                    prompt: prompt.clone(),
+                    arguments: self
+                        .config
+                        .arguments_by_prompt
+                        .get(prompt)
+                        .cloned()
+                        .unwrap_or_else(|| prompt.clone().into()),
                     environment: self
                         .config
                         .environment_by_prompt
@@ -101,15 +108,24 @@ impl Process for ModelProcess {
             ModelInput::Prompt(prompt) => self.answer(prompt),
             ModelInput::ToolResult(result) => match result.outcome() {
                 ToolOutcome::Succeeded { output } => {
-                    let prompt = &result.invocation().call().prompt;
-                    if let Some(next) = self.config.follow_up_by_prompt.get(prompt).cloned() {
+                    let next = result
+                        .invocation()
+                        .call()
+                        .arguments
+                        .as_text()
+                        .and_then(|text| self.config.follow_up_by_prompt.get(text))
+                        .cloned();
+                    if let Some(next) = next {
                         self.call_tool(next);
                     } else {
-                        self.answer(output);
+                        self.answer(output.as_text().unwrap_or("structured tool result"));
                     }
                 }
                 ToolOutcome::Failed { output, reason } => {
-                    self.answer(&format!("tool failed: {reason}: {output}"));
+                    self.answer(&format!(
+                        "tool failed: {reason}: {}",
+                        output.as_text().unwrap_or("structured tool result")
+                    ));
                 }
             },
         }
@@ -190,8 +206,16 @@ impl PluginInstance for MockTool {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
         let prefix = self.prefix.clone();
         let definition = ComponentDef::map(move |invocation: ToolInvocation| {
-            let output = format!("{prefix}({})", invocation.call().prompt);
-            invocation.complete(ToolOutcome::Succeeded { output })
+            let outcome = match invocation.call().arguments.as_text() {
+                Some(text) => ToolOutcome::Succeeded {
+                    output: format!("{prefix}({text})").into(),
+                },
+                None => ToolOutcome::Failed {
+                    output: String::new().into(),
+                    reason: "expected text arguments".into(),
+                },
+            };
+            invocation.complete(outcome)
         })
         .claim(&tool_contract())
         .expect("mock tool uses the canonical interface");
