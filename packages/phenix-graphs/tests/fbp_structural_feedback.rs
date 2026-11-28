@@ -196,3 +196,123 @@ fn first_packet_progress_counts_distinct_input_ports_not_producers() {
     assert_eq!(result["second"], Progress::Reachable);
     assert_eq!(result["join"], Progress::Blocked);
 }
+
+#[test]
+fn structural_packet_progress_matches_exhaustive_activation_orders() {
+    use phenix_graph::{
+        Interface, PortDef, Process, ProcessContext, Step,
+        network::StructuralPacketProgress as Progress, runtime::Readiness,
+    };
+    use std::collections::BTreeMap;
+
+    struct Idle;
+    impl Process for Idle {
+        fn step(&mut self, _: &mut ProcessContext) -> Result<Step, phenix_graph::Failure> {
+            unreachable!("structural analysis is passive")
+        }
+    }
+
+    // Each edge supplies the target's feedback port; external ingress
+    // supplies its distinct seed port. Enumerate legal first activations
+    // independently of the production worklist and fixed-point algorithm.
+    fn outcomes(edges: usize, seeds: usize, policies: [usize; 2], unknown: bool) -> usize {
+        fn explore(
+            active: usize,
+            edges: usize,
+            seeds: usize,
+            policies: [usize; 2],
+            unknown: bool,
+        ) -> usize {
+            let mut result = active;
+            for (node, policy) in policies.into_iter().enumerate() {
+                if active & (1 << node) != 0 {
+                    continue;
+                }
+                let feedback = (0..2).any(|source| {
+                    active & (1 << source) != 0 && edges & (1 << (source * 2 + node)) != 0
+                });
+                let count = usize::from(seeds & (1 << node) != 0) + usize::from(feedback);
+                if (policy == 0 && unknown) || (policy != 0 && count >= policy) {
+                    result |= explore(active | (1 << node), edges, seeds, policies, unknown);
+                }
+            }
+            result
+        }
+        explore(0, edges, seeds, policies, unknown)
+    }
+
+    let names = ["a", "b"];
+    let interface = Arc::new(
+        Interface::new(
+            ["seed", "feedback"].map(PortDef::local::<i64>),
+            [PortDef::local::<i64>("out")],
+        )
+        .unwrap(),
+    );
+    for edges in 0..16 {
+        for seeds in 0..4 {
+            let mut builder = NetworkBuilder::new();
+            let nodes = names.map(|name| {
+                builder
+                    .node(name, interface.clone(), Arc::new(|| Idle))
+                    .unwrap()
+            });
+            for (target, node) in nodes.iter().enumerate() {
+                if seeds & (1 << target) != 0 {
+                    builder
+                        .expose_input(
+                            names[target],
+                            node.input::<i64>("seed").unwrap(),
+                            capacity(),
+                        )
+                        .unwrap();
+                }
+                for (source, producer) in nodes.iter().enumerate() {
+                    if edges & (1 << (source * 2 + target)) != 0 {
+                        builder
+                            .connect(
+                                producer.output::<i64>("out").unwrap(),
+                                node.input::<i64>("feedback").unwrap(),
+                                capacity(),
+                            )
+                            .unwrap();
+                    }
+                }
+            }
+            let compiled = builder.build().unwrap().compile().unwrap();
+            for a in 0..3 {
+                for b in 0..3 {
+                    let policies = [a, b];
+                    let declarations: BTreeMap<_, _> = names
+                        .into_iter()
+                        .zip(policies)
+                        .filter_map(|(name, policy)| {
+                            let readiness = match policy {
+                                1 => Readiness::ANY,
+                                2 => Readiness::ALL,
+                                _ => return None,
+                            };
+                            Some((name.to_owned(), readiness))
+                        })
+                        .collect();
+                    let actual = compiled.structural_packet_progress(&declarations);
+                    let lower = outcomes(edges, seeds, policies, false);
+                    let upper = outcomes(edges, seeds, policies, true);
+                    for (node, name) in names.into_iter().enumerate() {
+                        let expected = if lower & (1 << node) != 0 {
+                            Progress::Reachable
+                        } else if upper & (1 << node) != 0 {
+                            Progress::Unknown
+                        } else {
+                            Progress::Blocked
+                        };
+                        assert_eq!(
+                            actual[name], expected,
+                            "edges={edges:04b}, seeds={seeds:02b}, policies={policies:?}, node={name}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
