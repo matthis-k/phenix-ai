@@ -223,3 +223,35 @@ pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> V
     }
     grants
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_component_is_rejected_before_any_registration() {
+        let mut registrar = Registrar::new("tool-author").unwrap();
+        let error = Tool::from_component("bad", ComponentDef::map(|text: String| text))
+            .register(&mut registrar)
+            .unwrap_err();
+        assert_eq!(error.code, Code::SchemaRejected);
+        assert_eq!(registrar.finish().keys().count(), 0);
+    }
+
+    #[test]
+    fn duplicate_tool_registration_is_atomic() {
+        let mut registrar = Registrar::new("tool-author").unwrap();
+        Tool::new("first", |text| Ok(text.into()))
+            .register(&mut registrar)
+            .unwrap();
+        assert!(
+            Tool::new("first", |text| Ok(text.into()))
+                .register(&mut registrar)
+                .is_err()
+        );
+        Tool::new("second", |text| Ok(text.into()))
+            .register(&mut registrar)
+            .unwrap();
+        assert_eq!(registrar.finish().keys().count(), 4);
+    }
+}
