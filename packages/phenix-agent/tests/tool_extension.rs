@@ -119,7 +119,11 @@ fn compose(advanced: bool) -> KernelHost {
     let base = providers.remove("tool").unwrap();
     providers.insert("lookup".into(), base);
     assert_eq!(
-        providers[STRUCTURED].descriptor.as_ref().unwrap().description,
+        providers[STRUCTURED]
+            .descriptor
+            .as_ref()
+            .unwrap()
+            .description,
         "Repeat text up to eight times"
     );
     let selection = LocalTools::configure(&mut options, LOCAL_ROUTES, "lookup", providers).unwrap();

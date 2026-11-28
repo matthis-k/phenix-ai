@@ -335,7 +335,9 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
                 let prompt = invocation.call().arguments.as_text().unwrap();
                 calls.lock().unwrap().push(prompt.to_owned());
                 let output = format!("lookup({prompt})");
-                invocation.complete(ToolOutcome::Succeeded { output: output.into() })
+                invocation.complete(ToolOutcome::Succeeded {
+                    output: output.into(),
+                })
             })
             .claim(&tool_contract())
             .unwrap();

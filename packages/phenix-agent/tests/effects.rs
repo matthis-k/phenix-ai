@@ -196,7 +196,10 @@ fn result_outcome_and_authoritative_effect_evidence_are_independent() {
         assert_eq!(state.value, 4);
         assert_eq!(state.evidence.len(), state.value);
         assert_eq!(state.evidence[0].call().arguments.as_text(), Some("fail"));
-        assert_eq!(state.evidence[1].call().arguments.as_text(), Some("suspend"));
+        assert_eq!(
+            state.evidence[1].call().arguments.as_text(),
+            Some("suspend")
+        );
         assert_eq!(state.evidence[2].call(), state.evidence[3].call());
         assert_ne!(state.evidence[2], state.evidence[3]);
     }

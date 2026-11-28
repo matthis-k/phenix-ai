@@ -92,8 +92,8 @@ mod planning;
 mod replay;
 mod selection;
 
-use budget::PlanningBudget;
 pub use author::{PatchBuilder, PatchComponent, PatchInput, PatchMap, PatchOutput};
+use budget::PlanningBudget;
 pub use edit::{ConnectionKey, Edit, Footprint, NetworkPatch};
 
 /// Finite logical composition planning allowance, independent of selection.

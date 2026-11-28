@@ -592,7 +592,11 @@ pub struct ImportSpec {
 
 impl ImportSpec {
     pub const fn new(id: &'static str, owner: &'static str, contract: &'static str) -> Self {
-        Self { id, owner, contract }
+        Self {
+            id,
+            owner,
+            contract,
+        }
     }
 
     pub fn declare(&self, contribution: Contribution) -> Contribution {
