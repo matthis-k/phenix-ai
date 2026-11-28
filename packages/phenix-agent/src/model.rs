@@ -15,7 +15,7 @@ pub mod fake;
 pub mod selection;
 pub mod status;
 
-use context::ModelContext;
+use context::{ContextSource, ModelContext};
 use status::{ProviderReport, ProviderStatus};
 
 /// Advertised metadata, not authorization. Capability names are open;
@@ -94,17 +94,18 @@ impl Model {
     pub fn new<B: ModelBackend>(
         path: impl Into<String>,
         profile: ModelProfile,
-        context: ModelContext,
+        context: impl Into<ContextSource>,
         factory: impl Fn() -> B + Send + Sync + 'static,
     ) -> Self {
         let runtime_profile = profile.clone();
-        let context = Arc::new(context);
+        let context = context.into();
         let definition = ComponentDef::primitive(
             model_contract().required().clone(),
             Arc::new(move || ModelProcess {
                 backend: factory(),
                 profile: runtime_profile.clone(),
-                context: context.clone(),
+                context_source: context.clone(),
+                context: None,
                 state: State::Idle,
             }),
         );
@@ -143,7 +144,8 @@ enum State {
 struct ModelProcess<B> {
     backend: B,
     profile: ModelProfile,
-    context: Arc<ModelContext>,
+    context_source: ContextSource,
+    context: Option<ModelContext>,
     state: State,
 }
 
@@ -161,8 +163,13 @@ impl<B: ModelBackend> Process for ModelProcess<B> {
                 .borrow::<ModelInput>()
                 .ok_or_else(|| GraphFailure::application_message("model expected typed input"))?
                 .clone();
-            self.state =
-                State::Streaming(self.backend.respond(input, &self.profile, &self.context)?);
+            if matches!(&input, ModelInput::Prompt(_)) {
+                self.context = Some(self.context_source.load()?);
+            }
+            let snapshot = self.context.as_ref().ok_or_else(|| {
+                GraphFailure::application_message("tool feedback without model context")
+            })?;
+            self.state = State::Streaming(self.backend.respond(input, &self.profile, snapshot)?);
         }
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Idle => unreachable!("initialized above"),
@@ -192,6 +199,7 @@ impl<B: ModelBackend> Process for ModelProcess<B> {
                         Ok(event(AgentEvent::ToolRequested(call)))
                     }
                     ModelOutput::Complete => {
+                        self.context = None;
                         self.state = State::Done;
                         Ok(event(AgentEvent::Completed))
                     }

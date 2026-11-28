@@ -4,7 +4,7 @@
 
 use super::{
     Model, ModelBackend, ModelOutput, ModelProfile, ModelStream,
-    context::ModelContext,
+    context::{ContextSource, ModelContext},
     status::{ProviderStatus, QuotaWindow, Usage},
 };
 use crate::{ModelInput, ToolCall, ToolOutcome, ToolValue};
@@ -25,16 +25,16 @@ struct FakeBackend {
 }
 
 /// Dump the full provider-visible context without assuming any tools or skills.
-pub fn provider(context: ModelContext) -> Model {
-    build(context, None)
+pub fn provider(context: impl Into<ContextSource>) -> Model {
+    build(context.into(), None)
 }
 
 /// Separate exercise of the structured call and feedback path.
 pub fn tool_roundtrip(context: ModelContext, environment: impl Into<String>) -> Model {
-    build(context, Some(environment.into()))
+    build(context.into(), Some(environment.into()))
 }
 
-fn build(context: ModelContext, environment: Option<String>) -> Model {
+fn build(context: ContextSource, environment: Option<String>) -> Model {
     let profile = ModelProfile::new("fake-provider", "fake-capability-model")
         .capability("text")
         .capability("streaming")
