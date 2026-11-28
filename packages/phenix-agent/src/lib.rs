@@ -20,6 +20,7 @@ use std::{
 };
 use tools::{bind_tools, declare_tools, named_edges, named_grants, named_router, tool_port};
 
+pub mod diagnostics;
 pub mod environment;
 pub mod frontend;
 pub mod harness;
@@ -102,6 +103,7 @@ impl ToolResult {
 /// Ordered model events on the public capture. Completion is explicit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
+    ModelInfo(model::ModelProfile),
     ToolRequested(ToolCall),
     Delta(String),
     Completed,
@@ -112,6 +114,7 @@ pub const LOOP_PLUGIN: &str = "agent-loop";
 pub const MODEL_CONTRACT: &str = "model";
 pub const TOOL_CONTRACT: &str = "tool";
 pub const PROMPT_CONTRACT: &str = "prompt";
+pub const FEEDBACK_CONTRACT: &str = "feedback";
 pub const PROMPT: &str = "prompt";
 pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
@@ -182,6 +185,24 @@ pub fn prompt_contract() -> Contract {
     .unwrap()
 }
 
+/// Correlated feedback is an ordinary observable application seam.
+pub fn feedback_contract() -> Contract {
+    Contract::new(
+        "agent/feedback@1",
+        Arc::new(
+            Interface::new(
+                [
+                    PortDef::local::<ToolInvocation>("expected"),
+                    PortDef::local::<ToolResult>("input"),
+                ],
+                [PortDef::local::<ModelInput>("output")],
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap()
+}
+
 /// Shared application contracts are available independently of any loop preset.
 pub struct AgentContracts;
 
@@ -194,6 +215,10 @@ impl PluginInstance for AgentContracts {
         registrar.add(ContractDefinition {
             id: TOOL_CONTRACT.into(),
             contract: tool_contract(),
+        })?;
+        registrar.add(ContractDefinition {
+            id: FEEDBACK_CONTRACT.into(),
+            contract: feedback_contract(),
         })?;
         registrar.add(ContractDefinition {
             id: PROMPT_CONTRACT.into(),
@@ -398,6 +423,11 @@ impl PluginInstance for AgentLoop {
             PROMPT_ADAPTER,
             Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT),
         )
+        .offer(
+            "feedback",
+            TOOL_FEEDBACK,
+            Key::new(CONTRACTS_PLUGIN, FEEDBACK_CONTRACT),
+        )
         .prepare(move |context| {
             let model = context.bind_import("model")?;
             let model_input = model.input::<ModelInput>("input")?;
@@ -431,16 +461,13 @@ impl PluginInstance for AgentLoop {
                 }),
                 Edit::Add {
                     path: TOOL_FEEDBACK.into(),
-                    definition: Arc::new(ComponentDef::primitive(
-                        Arc::new(Interface::new(
-                            [
-                                PortDef::local::<ToolInvocation>("expected"),
-                                PortDef::local::<ToolResult>("input"),
-                            ],
-                            [PortDef::local::<ModelInput>("output")],
-                        )?),
-                        Arc::new(ToolFeedbackFactory),
-                    )),
+                    definition: Arc::new(
+                        ComponentDef::primitive(
+                            feedback_contract().required().clone(),
+                            Arc::new(ToolFeedbackFactory),
+                        )
+                        .claim(&feedback_contract())?,
+                    ),
                 },
                 Edit::Connect(ConnectionDef {
                     from: port(TOOL_INVOCATION, "output"),

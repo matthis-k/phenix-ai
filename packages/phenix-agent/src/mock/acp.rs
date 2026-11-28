@@ -8,7 +8,7 @@ use crate::{
     prompt_contract,
 };
 use phenix_graph::{
-    InputKey, NetworkError, OutputKey,
+    ComponentDef, InputKey, NetworkError, OutputKey,
     compose::{Footprint, NetworkPatch, PatchBuilder, PatchComponent},
 };
 use phenix_kernel::{Contribution, ImportSpec};
@@ -35,15 +35,16 @@ pub enum Message {
     EndTurn,
 }
 
-fn translate(event: AgentEvent) -> Message {
-    match event {
+fn translate(event: AgentEvent) -> Option<Message> {
+    Some(match event {
+        AgentEvent::ModelInfo(_) => return None,
         AgentEvent::Delta(text) => Message::AgentMessageChunk(text),
         AgentEvent::ToolRequested(call) => Message::ToolCall {
             title: call.arguments.as_text().unwrap_or(&call.name).to_owned(),
             environment: call.environment,
         },
         AgentEvent::Completed => Message::EndTurn,
-    }
+    })
 }
 
 pub struct MockAcp;
@@ -66,11 +67,14 @@ fn adapter_patch(prompt: &str, model: &str) -> Result<NetworkPatch, NetworkError
     let prompt = PatchComponent::at(prompt, prompt_contract().required().clone());
     let model = PatchComponent::at(model, model_contract().required().clone());
     let decode = patch.map(DECODE, |request: PromptRequest| request.text);
-    let encode = patch.map(ENCODE, translate);
+    let encode = patch.add(ENCODE, ComponentDef::filter_map(translate));
     patch.connect(&decode.output, &prompt.input(InputKey::new("input"))?)?;
-    patch.connect(&model.output(OutputKey::new("events"))?, &encode.input)?;
+    patch.connect(
+        &model.output(OutputKey::new("events"))?,
+        &encode.input(InputKey::new("input"))?,
+    )?;
     patch.expose_input(INPUT, &decode.input);
-    patch.expose_output(OUTPUT, &encode.output);
+    patch.expose_output(OUTPUT, &encode.output(OutputKey::<Message>::new("output"))?);
     Ok(patch.finish())
 }
 

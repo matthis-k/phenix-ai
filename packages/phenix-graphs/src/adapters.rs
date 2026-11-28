@@ -59,6 +59,31 @@ impl ComponentDef {
         S: Send + 'static,
         F: Fn(&mut S, &ProcessContext, T) -> U + Send + Sync + 'static,
     {
+        Self::filter_map_context_state(initialize, move |state, context, input| {
+            Some(handler(state, context, input))
+        })
+    }
+
+    /// Transform or intentionally suppress an input in the ordinary map path.
+    pub fn filter_map<T, U, F>(handler: F) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+        U: Send + Sync + 'static,
+        F: Fn(T) -> Option<U> + Send + Sync + 'static,
+    {
+        Self::filter_map_context_state(|| (), move |_, _, input| handler(input))
+    }
+
+    fn filter_map_context_state<T, U, S, F>(
+        initialize: impl Fn() -> S + Send + Sync + 'static,
+        handler: F,
+    ) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+        U: Send + Sync + 'static,
+        S: Send + 'static,
+        F: Fn(&mut S, &ProcessContext, T) -> Option<U> + Send + Sync + 'static,
+    {
         let handler = Arc::new(handler);
         Self::primitive(
             Arc::new(
@@ -95,9 +120,18 @@ impl ComponentDef {
                                 .failure()
                             })?
                             .clone();
-                        Ok(Value::local(handler(&mut state, cx, input)))
+                        Ok(handler(&mut state, cx, input).map(Value::local))
                     });
-                    let output = value.finish_owned(output)?;
+                    // Preserve the input lease until the outcome has been
+                    // converted to an owned Value, even when suppressed.
+                    let output = match output {
+                        Ok(Some(output)) => value.finish_owned(Ok(output))?,
+                        Ok(None) => {
+                            value.finish_owned(Ok(Value::local(())))?;
+                            return Ok(Step::Complete);
+                        }
+                        Err(error) => return value.finish_owned(Err(error)).map(|_| Step::Complete),
+                    };
                     emitted = true;
                     Ok(Step::Emit(ProcessEmission::new("output", output)))
                 })
