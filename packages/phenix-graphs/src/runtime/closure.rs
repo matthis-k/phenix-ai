@@ -132,13 +132,17 @@ impl NetworkSession {
 
     pub(super) fn note_request_root(&mut self, request: RequestId, root: usize) {
         let scope = self.requests.get_mut(&request).expect("admitted request");
+        // Reachability grows monotonically within a live scope. A repeated
+        // ingress root needs no new traversal or temporary stack.
+        if !scope.reachable.insert(root) {
+            return;
+        }
         let mut stack = vec![root];
         while let Some(index) = stack.pop() {
-            if !scope.reachable.insert(index) {
-                continue;
-            }
-            for child in &self.downstream[index] {
-                stack.push(*child);
+            for &child in &self.downstream[index] {
+                if scope.reachable.insert(child) {
+                    stack.push(child);
+                }
             }
         }
     }
@@ -147,16 +151,25 @@ impl NetworkSession {
     /// settlement callback. An all-optional downstream consumer still owes its
     /// scoped closure notification even when occupied by another request.
     pub(super) fn closure_obligation(&self, index: usize, request: RequestId) -> bool {
-        let scope = &self.requests[&request];
         let p = &self.processes[index];
-        if scope.terminal.is_some() || p.done || !scope.reachable.contains(&index) {
+        // Most processes cannot owe zero-packet closure. Avoid request and
+        // reachability lookups for those declarations during upstream walks.
+        if p.done || !(p.policy.opaque() || p.policy.has_zero_packet_closure()) {
             return false;
         }
-        let names = scope
-            .closure_ports
-            .get(&index)
-            .map(Vec::as_slice)
-            .unwrap_or_else(|| p.policy.declared_closure_ports());
+        let scope = &self.requests[&request];
+        let names = if p.policy.opaque() {
+            scope
+                .closure_ports
+                .get(&index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        } else {
+            p.policy.declared_closure_ports()
+        };
+        if names.is_empty() || scope.terminal.is_some() || !scope.reachable.contains(&index) {
+            return false;
+        }
         names.iter().any(|name| {
             let port = p
                 .inputs
