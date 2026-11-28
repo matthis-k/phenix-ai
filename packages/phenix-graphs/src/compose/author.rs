@@ -1,5 +1,13 @@
 //! Typed symbolic patch authoring. These declarations are not compiled handles
 //! or grants. The canonical composer checks the completed topology and authority.
+//!
+//! ```compile_fail
+//! use phenix_graph::compose::PatchBuilder;
+//! let mut patch = PatchBuilder::new(std::num::NonZeroUsize::new(1).unwrap());
+//! let a = patch.map("a", |n: i64| n);
+//! let b = patch.map("b", |s: String| s);
+//! patch.connect(&a.output, &b.input).unwrap();
+//! ```
 
 use super::{Edit, NetworkPatch};
 use crate::{ComponentDef, InputKey, Interface, NetworkError, OutputKey, PortPath, TypeIdentity};
@@ -118,7 +126,9 @@ impl PatchBuilder {
         let component = self.add(path, ComponentDef::map(handler));
         PatchMap {
             input: component.input(InputKey::new("input")).expect("map input"),
-            output: component.output(OutputKey::new("output")).expect("map output"),
+            output: component
+                .output(OutputKey::new("output"))
+                .expect("map output"),
         }
     }
 
@@ -145,6 +155,37 @@ impl PatchBuilder {
         }
         self.edits
             .push(Edit::connect(from.path.clone(), to.path.clone(), capacity));
+        Ok(())
+    }
+
+    /// Insert a type-preserving component using the ordinary splice edit.
+    /// Context-dependent predecessor footprints still need host approval.
+    pub fn splice<T>(
+        &mut self,
+        from: &PatchOutput<T>,
+        to: &PatchInput<T>,
+        input: &PatchInput<T>,
+        output: &PatchOutput<T>,
+    ) -> Result<(), NetworkError> {
+        for (path, expected, actual) in [
+            (&to.path, &to.value, &from.value),
+            (&input.path, &input.value, &from.value),
+            (&to.path, &to.value, &output.value),
+        ] {
+            if expected != actual {
+                return Err(NetworkError::WrongType {
+                    path: path.clone(),
+                    expected: expected.clone(),
+                    actual: actual.clone(),
+                });
+            }
+        }
+        self.edits.push(Edit::splice(
+            from.path.clone(),
+            to.path.clone(),
+            input.path.clone(),
+            output.path.clone(),
+        ));
         Ok(())
     }
 

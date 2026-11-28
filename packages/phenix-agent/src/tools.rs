@@ -4,11 +4,11 @@
 
 use crate::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_ROUTER, ToolInvocation,
-    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
+    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router,
 };
 use phenix_graph::{
     ComponentDef, ContractValue, Schema,
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
+    compose::{Edit, Footprint, NetworkPatch},
 };
 use phenix_kernel::{BuildOptions, Contribution, Key, component_offers};
 use phenix_plugin::{Code, Failure, PluginInstance, PluginSnapshot, Registrar};
@@ -87,6 +87,7 @@ impl phenix_plugin::Contribution for ToolDescriptor {
 
 /// A named tool with a derived argument/result contract and ordinary component
 /// registration. Complex tools use the same descriptor and offer mechanism.
+#[derive(Clone)]
 pub struct Tool {
     descriptor: ToolDescriptor,
     placement: String,
@@ -159,6 +160,12 @@ impl Tool {
         .register(&mut bundle)?;
         bundle.add(self.descriptor)?;
         registrar.merge(bundle.finish())
+    }
+}
+
+impl PluginInstance for Tool {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        self.clone().register(registrar)
     }
 }
 
@@ -282,7 +289,6 @@ impl PluginInstance for LocalTools {
             .prepare_patch(move |context| {
                 let base_tool = context.bind_import(&tool_port(&base))?;
                 let base_path = base_tool.path();
-                let base_input = base_tool.input::<ToolInvocation>("input")?;
                 let router = invocation_router(
                     names.clone(),
                     |call| &call.name,
@@ -294,67 +300,50 @@ impl PluginInstance for LocalTools {
                         })
                     },
                 )?;
-                let mut edits = vec![
-                    Edit::add(ROUTER, router),
-                    Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, base_input.name())),
-                    Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
-                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
-                ];
-                let mut feedback = BTreeSet::from([base_path.to_owned()]);
+                let mut placements = BTreeMap::new();
                 for name in &names {
-                    let output = tool_port(name);
-                    let tool = context.bind_import(&output)?;
-                    let input = tool.input::<ToolInvocation>("input")?;
-                    let result = tool.output::<ToolResult>("output")?;
-                    edits.push(context.connect_bound_input(
-                        (ROUTER, output.as_str()),
-                        &input,
-                        capacity(),
-                    )?);
-                    if feedback.insert(tool.path().to_owned()) {
-                        edits.push(context.connect_bound_output(
-                            &result,
-                            port(TOOL_FEEDBACK, "input"),
-                            capacity(),
-                        )?);
-                    }
+                    let tool = context.bind_import(&tool_port(name))?;
+                    tool.input::<ToolInvocation>("input")?;
+                    tool.output::<ToolResult>("output")?;
+                    placements.insert(name.clone(), tool.path().to_owned());
                 }
+                let mut edits = vec![Edit::add(ROUTER, router)];
+                edits.extend(local_edges(base_path, &placements));
                 Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
 }
 
+fn local_edges(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Edit> {
+    let mut edits = vec![
+        Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, "input")),
+        Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
+        Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
+    ];
+    let mut feedback = BTreeSet::from([base_path]);
+    for (name, path) in tools {
+        edits.push(Edit::connect(
+            (ROUTER, tool_port(name)),
+            (path, "input"),
+            capacity(),
+        ));
+        if feedback.insert(path.as_str()) {
+            edits.push(Edit::connect(
+                (path, "output"),
+                (TOOL_FEEDBACK, "input"),
+                capacity(),
+            ));
+        }
+    }
+    edits
+}
+
 /// Exact host grants for a selected base provider and named tool placements.
 /// These do not grant any authority to the tools themselves.
 pub fn local_tool_grants(base_path: &str, tools: &BTreeMap<String, String>) -> Vec<Footprint> {
-    let mut grants = vec![
-        Footprint::Component(ROUTER.into()),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_ROUTER, "env-local"),
-            port(base_path, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_ROUTER, "env-local"),
-            port(ROUTER, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, UNAVAILABLE),
-            port(TOOL_FEEDBACK, "input"),
-        )),
-    ];
-    for (name, path) in tools {
-        grants.push(Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, &tool_port(name)),
-            port(path, "input"),
-        )));
-        if path != base_path {
-            grants.push(Footprint::Connection(ConnectionKey::new(
-                port(path, "output"),
-                port(TOOL_FEEDBACK, "input"),
-            )));
-        }
-    }
+    let mut grants = vec![Footprint::Component(ROUTER.into())];
+    grants.extend(NetworkPatch::new(local_edges(base_path, tools)).footprints());
     grants
 }
 
@@ -366,7 +355,7 @@ mod tests {
 
     impl PluginInstance for ExampleTool {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-            Tool::new("echo", |text: String| Ok(text)).register(registrar)
+            Tool::new("echo", Ok::<String, String>).register(registrar)
         }
     }
 
@@ -416,17 +405,25 @@ mod tests {
     }
 
     #[test]
+    fn typed_results_round_trip_and_reject_other_schemas() {
+        let value = ToolValue::new(&42_i64);
+        assert_eq!(value.decode::<i64>().unwrap(), 42);
+        assert!(value.decode::<String>().is_err());
+        assert!(value.as_text().is_none());
+    }
+
+    #[test]
     fn duplicate_tool_registration_is_atomic() {
         let mut registrar = Registrar::new("tool-author").unwrap();
-        Tool::new("first", |text: String| Ok(text))
+        Tool::new("first", Ok::<String, String>)
             .register(&mut registrar)
             .unwrap();
         assert!(
-            Tool::new("first", |text: String| Ok(text))
+            Tool::new("first", Ok::<String, String>)
                 .register(&mut registrar)
                 .is_err()
         );
-        Tool::new("second", |text: String| Ok(text))
+        Tool::new("second", Ok::<String, String>)
             .register(&mut registrar)
             .unwrap();
         assert_eq!(registrar.finish().keys().count(), 6);

@@ -11,7 +11,7 @@ use phenix_graph::{
     InputKey, NetworkError, OutputKey,
     compose::{Footprint, NetworkPatch, PatchBuilder, PatchComponent},
 };
-use phenix_kernel::{Contribution, Key};
+use phenix_kernel::{Contribution, ImportSpec};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 
 pub const PLUGIN: &str = "mock-acp";
@@ -19,6 +19,8 @@ pub const INPUT: &str = "acp-prompt";
 pub const OUTPUT: &str = "acp-message";
 const DECODE: &str = "acp-decode";
 const ENCODE: &str = "acp-encode";
+const PROMPT_IMPORT: ImportSpec = ImportSpec::new("prompt", CONTRACTS_PLUGIN, PROMPT_CONTRACT);
+const MODEL_IMPORT: ImportSpec = ImportSpec::new("model", CONTRACTS_PLUGIN, MODEL_CONTRACT);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptRequest {
@@ -48,15 +50,14 @@ pub struct MockAcp;
 
 impl PluginInstance for MockAcp {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        Contribution::new("main", NetworkPatch::new([]))
-            .import("prompt", Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT))
-            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
-            .prepare_patch(|context| {
-                let prompt = context.bind_import("prompt")?;
-                let model = context.bind_import("model")?;
-                Ok(adapter_patch(prompt.path(), model.path())?)
-            })
-            .register(registrar)
+        Contribution::dynamic("main", |context| {
+            let prompt = PROMPT_IMPORT.bind(context)?;
+            let model = MODEL_IMPORT.bind(context)?;
+            Ok(adapter_patch(prompt.path(), model.path())?)
+        })
+        .require(&PROMPT_IMPORT)
+        .require(&MODEL_IMPORT)
+        .register(registrar)
     }
 }
 

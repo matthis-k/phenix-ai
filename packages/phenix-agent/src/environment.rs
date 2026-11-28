@@ -3,9 +3,9 @@
 
 use super::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_INVOCATION, TOOL_ROUTER,
-    ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, port, tool_router,
+    ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, tool_router,
 };
-use phenix_graph::compose::{ConnectionKey, Edit, Footprint, NetworkPatch};
+use phenix_graph::compose::{Edit, Footprint, NetworkPatch};
 use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,64 +36,50 @@ impl PluginInstance for EnvironmentRoutes {
                     environments.clone(),
                     std::convert::identity::<ToolInvocation>,
                 )?;
-                let mut edits = vec![
-                    Edit::add(ROUTER, router),
-                    Edit::disconnect((TOOL_INVOCATION, "output"), (TOOL_ROUTER, "input")),
-                    Edit::connect((TOOL_INVOCATION, "output"), (ROUTER, "input"), capacity()),
-                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_ROUTER, "input"), capacity()),
-                ];
-                let mut feedback = BTreeSet::new();
+                let mut placements = BTreeMap::new();
                 for environment in &environments {
-                    let output = environment_port(environment);
-                    let tool = context.bind_import(&output)?;
-                    let input = tool.input::<ToolInvocation>("input")?;
-                    let result = tool.output::<ToolResult>("output")?;
-                    edits.push(context.connect_bound_input(
-                        (ROUTER, output.as_str()),
-                        &input,
-                        capacity(),
-                    )?);
-                    if feedback.insert(tool.path().to_owned()) {
-                        edits.push(context.connect_bound_output(
-                            &result,
-                            port(TOOL_FEEDBACK, "input"),
-                            capacity(),
-                        )?);
-                    }
+                    let tool = context.bind_import(&environment_port(environment))?;
+                    tool.input::<ToolInvocation>("input")?;
+                    tool.output::<ToolResult>("output")?;
+                    placements.insert(environment.clone(), tool.path().to_owned());
                 }
+                let mut edits = vec![Edit::add(ROUTER, router)];
+                edits.extend(route_edges(&placements));
                 Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
 }
 
+// Both candidate preparation and trusted host planning use these declarations.
+fn route_edges(environments: &BTreeMap<String, String>) -> Vec<Edit> {
+    let mut edits = vec![
+        Edit::disconnect((TOOL_INVOCATION, "output"), (TOOL_ROUTER, "input")),
+        Edit::connect((TOOL_INVOCATION, "output"), (ROUTER, "input"), capacity()),
+        Edit::connect((ROUTER, UNAVAILABLE), (TOOL_ROUTER, "input"), capacity()),
+    ];
+    let mut feedback = BTreeSet::new();
+    for (environment, path) in environments {
+        edits.push(Edit::connect(
+            (ROUTER, environment_port(environment)),
+            (path, "input"),
+            capacity(),
+        ));
+        if feedback.insert(path) {
+            edits.push(Edit::connect(
+                (path, "output"),
+                (TOOL_FEEDBACK, "input"),
+                capacity(),
+            ));
+        }
+    }
+    edits
+}
+
 /// Exact host-approved edits. Additional providers have distinct placements
 /// from the base tool; a conflicting duplicate feedback edge is rejected.
 pub fn environment_grants(environments: &BTreeMap<String, String>) -> Vec<Footprint> {
-    let mut grants = vec![
-        Footprint::Component(ROUTER.into()),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_INVOCATION, "output"),
-            port(TOOL_ROUTER, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(TOOL_INVOCATION, "output"),
-            port(ROUTER, "input"),
-        )),
-        Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, UNAVAILABLE),
-            port(TOOL_ROUTER, "input"),
-        )),
-    ];
-    for (environment, tool) in environments {
-        grants.push(Footprint::Connection(ConnectionKey::new(
-            port(ROUTER, &environment_port(environment)),
-            port(tool, "input"),
-        )));
-        grants.push(Footprint::Connection(ConnectionKey::new(
-            port(tool, "output"),
-            port(TOOL_FEEDBACK, "input"),
-        )));
-    }
+    let mut grants = vec![Footprint::Component(ROUTER.into())];
+    grants.extend(NetworkPatch::new(route_edges(environments)).footprints());
     grants
 }

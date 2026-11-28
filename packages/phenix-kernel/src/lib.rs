@@ -582,6 +582,31 @@ impl CandidateContext<'_> {
     }
 }
 
+/// A reusable declared import identity. The host still selects and authorizes
+/// its provider. The same descriptor declares the requirement and binds it.
+pub struct ImportSpec {
+    id: &'static str,
+    owner: &'static str,
+    contract: &'static str,
+}
+
+impl ImportSpec {
+    pub const fn new(id: &'static str, owner: &'static str, contract: &'static str) -> Self {
+        Self { id, owner, contract }
+    }
+
+    pub fn declare(&self, contribution: Contribution) -> Contribution {
+        contribution.import(self.id, Key::new(self.owner, self.contract))
+    }
+
+    pub fn bind<'a>(
+        &self,
+        context: &'a CandidateContext<'_>,
+    ) -> Result<BoundComponent<'a>, CallbackError> {
+        context.bind_import(self.id)
+    }
+}
+
 /// Declarative composer authoring. Register the composer and its offers/imports
 /// together; producer and consumer identities are derived from the registrar.
 /// This builder carries no write grants or mutable candidate access.
@@ -633,6 +658,22 @@ impl Contribution {
             offers: Vec::new(),
             imports: Vec::new(),
         }
+    }
+
+    /// Construct a contribution whose patch is prepared from resolved imports.
+    pub fn dynamic(
+        id: impl Into<String>,
+        prepare: impl Fn(&CandidateContext<'_>) -> Result<NetworkPatch, CallbackError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self::new(id, NetworkPatch::new([])).prepare_patch(prepare)
+    }
+
+    /// Declare an import using its reusable descriptor.
+    pub fn require(self, import: &ImportSpec) -> Self {
+        import.declare(self)
     }
 
     /// Register a component and its checked contract offer as one declaration.
