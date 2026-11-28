@@ -630,12 +630,8 @@ impl NetworkSession {
     }
     pub(super) fn selection(&self, index: usize) -> Result<Reservation, Failure> {
         let p = &self.processes[index];
-        // Bootstrap validates the immutable base declaration against the
-        // fixed input interface. Only a dynamically supplied staged policy
-        // needs validation here.
-        if let Some(policy) = &p.waiting_policy {
-            self.validate_policy(index, policy)?;
-        }
+        // Base declarations are validated at bootstrap and staged
+        // declarations when their WaitInputs step is accepted.
         if p.waiting.is_some() {
             return self.exact_wait_selection(index);
         }
