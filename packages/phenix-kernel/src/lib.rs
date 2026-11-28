@@ -522,6 +522,21 @@ impl CandidateContext<'_> {
         ))
     }
 
+    /// Connect a newly authored symbolic output to an authenticated import.
+    /// Replay still checks the source and the exact host write grant.
+    pub fn connect_bound_input<T>(
+        &self,
+        from: impl Into<phenix_graph::network::PortPath>,
+        to: &phenix_graph::BoundInput<T>,
+        capacity: std::num::NonZeroUsize,
+    ) -> Result<phenix_graph::compose::Edit, NetworkError> {
+        Ok(phenix_graph::compose::Edit::connect(
+            from,
+            to.symbolic_path(self.compiled)?.clone(),
+            capacity,
+        ))
+    }
+
     /// Look up only this contribution's declared imports. The result owns its
     /// metadata so callers can retain provider and offer identities.
     pub fn import(&self, id: &str) -> Result<ResolvedImport, CallbackError> {
@@ -603,6 +618,48 @@ impl Contribution {
             offers: Vec::new(),
             imports: Vec::new(),
         }
+    }
+
+    /// Register a component and its checked contract offer as one declaration.
+    /// This creates no grants; ordinary registration and final validation apply.
+    pub fn offered_component(
+        id: impl Into<String>,
+        path: impl Into<String>,
+        offer: impl Into<String>,
+        contract_key: Key,
+        contract: &phenix_graph::Contract,
+        definition: phenix_graph::ComponentDef,
+    ) -> Result<Self, phenix_plugin::Failure> {
+        let path = path.into();
+        let definition = definition.claim(contract).map_err(|error| {
+            phenix_plugin::Failure::with_source(
+                phenix_plugin::Code::SchemaRejected,
+                "component does not satisfy offered contract",
+                Box::new(error),
+            )
+        })?;
+        Ok(Self::new(
+            id,
+            NetworkPatch::new([phenix_graph::compose::Edit::add(&path, definition)]),
+        )
+        .offer(offer, path, contract_key))
+    }
+
+    /// Prepare only a candidate patch, without manually constructing empty
+    /// activation and export slots. The canonical prepare path is unchanged.
+    pub fn prepare_patch(
+        self,
+        prepare: impl Fn(&CandidateContext<'_>) -> Result<NetworkPatch, CallbackError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.prepare(move |context| {
+            Ok(CandidateArtifacts {
+                patch: Some(prepare(context)?),
+                ..Default::default()
+            })
+        })
     }
 
     /// Append explicit composer dependencies.
