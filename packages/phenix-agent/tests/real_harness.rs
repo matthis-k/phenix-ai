@@ -78,7 +78,7 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
             ..Default::default()
         }
     };
-    harness::compose(model, local, additional).unwrap()
+    harness::compose(model, local, additional, Vec::new()).unwrap()
 }
 
 fn turn(host: &KernelHost, prompt: &str) -> Vec<AgentEvent> {
@@ -145,6 +145,7 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
         },
         Environment::new(),
         BTreeMap::new(),
+        Vec::new(),
     )
     .unwrap();
     assert!(
@@ -155,6 +156,11 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
     let duplicate = Environment::new()
         .with_tool(Tool::new("echo", Ok::<String, String>))
         .with_tool(Tool::new("echo", Ok::<String, String>));
-    let result = harness::compose(|_| MockModel::default(), duplicate, BTreeMap::new());
+    let result = harness::compose(
+        |_| MockModel::default(),
+        duplicate,
+        BTreeMap::new(),
+        Vec::new(),
+    );
     assert!(result.is_err());
 }

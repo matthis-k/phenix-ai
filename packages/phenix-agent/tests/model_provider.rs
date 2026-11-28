@@ -5,7 +5,7 @@ use phenix_agent::{
     AgentEvent,
     frontend::run_turn,
     harness::{self, Environment},
-    model::{Model, command::CommandBackend},
+    model::{Model, ModelProfile, command::CommandBackend},
 };
 use std::collections::BTreeMap;
 
@@ -17,9 +17,16 @@ fn fixture(advanced: bool, response_limit: usize) -> phenix_kernel::host::Kernel
         BTreeMap::new()
     };
     harness::compose(
-        |_| Model::new("command-provider", move || backend.clone()),
+        |_| {
+            Model::new(
+                "command-provider",
+                ModelProfile::new("command", "cat").capability("text"),
+                move || backend.clone(),
+            )
+        },
         Environment::new(),
         additional,
+        Vec::new(),
     )
     .unwrap()
 }
