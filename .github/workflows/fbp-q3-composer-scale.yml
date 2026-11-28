@@ -2,7 +2,16 @@ name: "FBP Q3 Composer Scale"
 on:
   pull_request:
     paths:
-      - "packages/phenix-graphs/benches/native_fbp.rs"
+      - "packages/phenix-graphs/benches/**"
+      - "packages/phenix-graphs/src/compose/**"
+      - "packages/phenix-graphs/src/network.rs"
+      - "packages/phenix-graphs/src/network/**"
+      - "packages/phenix-kernel/benches/**"
+      - "packages/phenix-kernel/src/**"
+      - "packages/phenix-plugins/src/**"
+      - "packages/phenix-graphs/Cargo.toml"
+      - "packages/phenix-kernel/Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/fbp-q3-composer-scale.yml"
   workflow_dispatch:
 
@@ -11,6 +20,14 @@ permissions:
 
 jobs:
   composer-scale:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: phenix-graph
+            bench: native_fbp
+          - crate: phenix-kernel
+            bench: composition_planning
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -35,13 +52,13 @@ jobs:
         run: |
           set -euo pipefail
           for repetition in 1 2 3; do
-            nix develop --command cargo bench --locked -q -p phenix-graph --bench native_fbp > "artifacts/native-fbp-${repetition}.txt"
-            cat "artifacts/native-fbp-${repetition}.txt"
+            nix develop --command cargo bench --locked -q -p "${{ matrix.crate }}" --bench "${{ matrix.bench }}" > "artifacts/${{ matrix.bench }}-${repetition}.txt"
+            cat "artifacts/${{ matrix.bench }}-${repetition}.txt"
           done
       - name: Preserve raw samples
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: composer-scale-${{ github.event.pull_request.head.sha || github.sha }}
+          name: composer-scale-${{ matrix.bench }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/
           if-no-files-found: error
