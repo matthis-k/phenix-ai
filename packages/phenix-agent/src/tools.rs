@@ -10,8 +10,8 @@ use phenix_graph::{
     ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
 };
-use phenix_kernel::{Contribution, Key};
-use phenix_plugin::{Failure, PluginInstance, Registrar};
+use phenix_kernel::{BuildOptions, Contribution, Key};
+use phenix_plugin::{Code, Failure, PluginInstance, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A named synchronous tool using the current mock text argument contract.
@@ -79,6 +79,55 @@ fn tool_port(name: &str) -> String {
 pub struct LocalTools {
     pub base: String,
     pub additional: BTreeSet<String>,
+}
+
+/// A host-selected provider, not a claim of write authority by the tool.
+pub struct SelectedTool {
+    pub offer: Key,
+    pub path: String,
+}
+
+impl LocalTools {
+    /// Derive dispatch imports and exact routing grants from one trusted
+    /// selection. Existing deny rules still win. Provider component grants
+    /// remain separate; this only authorizes the local routing contribution.
+    pub fn configure(
+        options: &mut BuildOptions,
+        owner: &str,
+        base: &str,
+        providers: BTreeMap<String, SelectedTool>,
+    ) -> Result<Self, Failure> {
+        let Some(base_tool) = providers.get(base) else {
+            return Err(Failure::new(Code::DescriptorInvalid, "missing base tool"));
+        };
+        let placements = providers
+            .iter()
+            .map(|(name, provider)| (name.clone(), provider.path.clone()))
+            .collect();
+        let grants = local_tool_grants(&base_tool.path, &placements);
+        let additional = providers
+            .keys()
+            .filter(|name| name.as_str() != base)
+            .cloned()
+            .collect();
+        for (name, provider) in providers {
+            let import = Key::new(owner, tool_port(&name));
+            if let Some(allow) = &mut options.imports.allow {
+                allow.insert((import.clone(), provider.offer.clone()));
+            }
+            options.imports.selections.insert(import, provider.offer);
+        }
+        options
+            .composition
+            .entry(Key::new(owner, "main"))
+            .or_default()
+            .grants
+            .extend(grants);
+        Ok(Self {
+            base: base.into(),
+            additional,
+        })
+    }
 }
 
 impl PluginInstance for LocalTools {
