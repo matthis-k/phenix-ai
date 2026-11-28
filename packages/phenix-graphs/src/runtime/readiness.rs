@@ -509,13 +509,12 @@ impl NetworkSession {
         // In bounded lanes every queue has exactly one authenticated request
         // owner (or is canonical/unscoped). Only shared FIFO correlation can
         // discover another request behind a queue head.
-        let scan_depth = if policy.correlated()
-            && self.request_queue_policy == RequestQueuePolicy::SharedFifo
-        {
-            usize::MAX
-        } else {
-            1
-        };
+        let scan_depth =
+            if policy.correlated() && self.request_queue_policy == RequestQueuePolicy::SharedFifo {
+                usize::MAX
+            } else {
+                1
+            };
         let correlated = policy.correlated();
         let mut candidates = RequestCandidates::default();
         for port in order {
