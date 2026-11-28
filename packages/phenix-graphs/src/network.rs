@@ -83,6 +83,21 @@ pub struct PortPath {
     pub port: String,
 }
 
+impl PortPath {
+    pub fn new(process: impl Into<String>, port: impl Into<String>) -> Self {
+        Self {
+            process: process.into(),
+            port: port.into(),
+        }
+    }
+}
+
+impl<P: Into<String>, N: Into<String>> From<(P, N)> for PortPath {
+    fn from((process, port): (P, N)) -> Self {
+        Self::new(process, port)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkError {
     Readiness(crate::runtime::ReadinessError),
