@@ -21,7 +21,7 @@ struct Uppercase;
 
 impl PluginInstance for Uppercase {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        Tool::new(EXTRA, |text| {
+        Tool::new(EXTRA, |text: String| {
             if text == "denied" {
                 Err("denied".into())
             } else {
@@ -64,7 +64,7 @@ fn compose(advanced: bool) -> KernelHost {
                         "remote".into(),
                         ToolCall {
                             name: "uppercase".into(),
-                            prompt: "hello".into(),
+                            arguments: "hello".into(),
                             environment: "local".into(),
                         },
                     )]
@@ -213,7 +213,7 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
         let expected = [
             AgentEvent::ToolRequested(ToolCall {
                 name: name.into(),
-                prompt: prompt.into(),
+                arguments: prompt.into(),
                 environment: "local".into(),
             }),
             AgentEvent::Delta("mock: ".into()),
@@ -230,12 +230,12 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
         [
             AgentEvent::ToolRequested(ToolCall {
                 name: "lookup".into(),
-                prompt: "remote".into(),
+                arguments: "remote".into(),
                 environment: "remote".into(),
             }),
             AgentEvent::ToolRequested(ToolCall {
                 name: "uppercase".into(),
-                prompt: "hello".into(),
+                arguments: "hello".into(),
                 environment: "local".into(),
             }),
             AgentEvent::Delta("mock: ".into()),
@@ -248,7 +248,7 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
         [
             AgentEvent::ToolRequested(ToolCall {
                 name: "lookup".into(),
-                prompt: "remote".into(),
+                arguments: "remote".into(),
                 environment: "remote".into(),
             }),
             AgentEvent::Delta("mock: ".into()),

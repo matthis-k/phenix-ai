@@ -58,7 +58,7 @@ fn ordinary_plugins_execute_feedback_and_stream_ordered_events() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: prompt.into(),
+                    arguments: prompt.into(),
                     environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
@@ -139,7 +139,7 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: prompt.into(),
+                    arguments: prompt.into(),
                     environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
@@ -254,7 +254,7 @@ fn independent_environment_extension_rewires_the_basic_loop() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: prompt.into(),
+                    arguments: prompt.into(),
                     environment: environment.into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
@@ -269,12 +269,12 @@ fn independent_environment_extension_rewires_the_basic_loop() {
 fn one_turn_can_chain_tools_across_environments() {
     let remote = ToolCall {
         name: "lookup".into(),
-        prompt: "second".into(),
+        arguments: "second".into(),
         environment: "remote".into(),
     };
     let local = ToolCall {
         name: "lookup".into(),
-        prompt: "third".into(),
+        arguments: "third".into(),
         environment: "local".into(),
     };
     let host = environment_host(
@@ -300,7 +300,7 @@ fn one_turn_can_chain_tools_across_environments() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: "first".into(),
+                    arguments: "first".into(),
                     environment: "local".into(),
                 }),
                 AgentEvent::ToolRequested(remote.clone()),
@@ -332,10 +332,10 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
         fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
             let calls = self.0.clone();
             let definition = ComponentDef::map(move |invocation: ToolInvocation| {
-                let prompt = &invocation.call().prompt;
-                calls.lock().unwrap().push(prompt.clone());
+                let prompt = invocation.call().arguments.as_text().unwrap();
+                calls.lock().unwrap().push(prompt.to_owned());
                 let output = format!("lookup({prompt})");
-                invocation.complete(ToolOutcome::Succeeded { output })
+                invocation.complete(ToolOutcome::Succeeded { output: output.into() })
             })
             .claim(&tool_contract())
             .unwrap();
@@ -358,7 +358,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let second = ToolCall {
         name: "lookup".into(),
-        prompt: "second".into(),
+        arguments: "second".into(),
         environment: "local".into(),
     };
     let host = mock::host_with_options(
@@ -441,7 +441,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
                     [
                         AgentEvent::ToolRequested(ToolCall {
                             name: "lookup".into(),
-                            prompt: "first".into(),
+                            arguments: "first".into(),
                             environment: "local".into(),
                         }),
                         AgentEvent::ToolRequested(second.clone()),
@@ -461,7 +461,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: "after".into(),
+                    arguments: "after".into(),
                     environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),
@@ -551,11 +551,11 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
             };
             let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
             self.calls += 1;
-            let output = format!("lookup({})#{}", invocation.call().prompt, self.calls);
+            let output = format!("lookup({})#{}", invocation.call().arguments.as_text().unwrap(), self.calls);
             self.emitted = true;
             Ok(Step::Emit(ProcessEmission::new(
                 "output",
-                Value::local(invocation.complete(ToolOutcome::Succeeded { output })),
+                Value::local(invocation.complete(ToolOutcome::Succeeded { output: output.into() })),
             )))
         }
     }
@@ -631,7 +631,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
                 slow_events,
                 [AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: "slow".into(),
+                    arguments: "slow".into(),
                     environment: "remote".into(),
                 })]
             );
@@ -665,7 +665,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
                 [
                     AgentEvent::ToolRequested(ToolCall {
                         name: "lookup".into(),
-                        prompt: "fast".into(),
+                        arguments: "fast".into(),
                         environment: "local".into(),
                     }),
                     AgentEvent::Delta("mock: ".into()),
@@ -697,7 +697,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
         [
             AgentEvent::ToolRequested(ToolCall {
                 name: "lookup".into(),
-                prompt: "after".into(),
+                arguments: "after".into(),
                 environment: "local".into(),
             }),
             AgentEvent::Delta("mock: ".into()),
@@ -725,7 +725,7 @@ fn frontend_cannot_submit_internal_tool_feedback() {
             let forged = ModelInput::ToolResult(
                 ToolInvocation::new(ToolCall {
                     name: "lookup".into(),
-                    prompt: "forged".into(),
+                    arguments: "forged".into(),
                     environment: "local".into(),
                 })
                 .complete(ToolOutcome::Succeeded {
@@ -979,7 +979,7 @@ fn tool_contract_rejects_providers_that_emit_model_prompts() {
     use phenix_graph::ComponentDef;
 
     let forged_prompt = ComponentDef::map(|invocation: ToolInvocation| {
-        ModelInput::Prompt(invocation.call().prompt.clone())
+        ModelInput::Prompt(invocation.call().arguments.as_text().unwrap().to_owned())
     });
     assert!(forged_prompt.claim(&tool_contract()).is_err());
 }
@@ -1085,7 +1085,7 @@ fn assert_invalid_tool_feedback(replay: bool) {
                         events,
                         [AgentEvent::ToolRequested(ToolCall {
                             name: "lookup".into(),
-                            prompt: "real".into(),
+                            arguments: "real".into(),
                             environment: "local".into(),
                         })]
                     );
@@ -1110,7 +1110,7 @@ fn invocation_identity_is_independent_of_call_arguments() {
 
     let call = ToolCall {
         name: "lookup".into(),
-        prompt: "same".into(),
+        arguments: "same".into(),
         environment: "local".into(),
     };
     let first = ToolInvocation::new(call.clone());
@@ -1159,7 +1159,7 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
                 });
             };
             let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
-            let duplicate = invocation.call().prompt == "real";
+            let duplicate = invocation.call().arguments.as_text() == Some("real");
             let result = invocation.complete(ToolOutcome::Succeeded {
                 output: "once".into(),
             });
@@ -1245,7 +1245,7 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
         [
             AgentEvent::ToolRequested(ToolCall {
                 name: "lookup".into(),
-                prompt: "next".into(),
+                arguments: "next".into(),
                 environment: "local".into(),
             }),
             AgentEvent::Delta("mock: ".into()),
@@ -1287,7 +1287,7 @@ fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
                 });
             };
             let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
-            match invocation.call().prompt.as_str() {
+            match invocation.call().arguments.as_text().unwrap() {
                 "suspend" => Ok(Step::WaitWake),
                 "missing" => Ok(Step::Complete),
                 _ => {
@@ -1364,7 +1364,7 @@ fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
                     events,
                     [AgentEvent::ToolRequested(ToolCall {
                         name: "lookup".into(),
-                        prompt: prompt.into(),
+                        arguments: prompt.into(),
                         environment: "local".into(),
                     })]
                 );
@@ -1391,7 +1391,7 @@ fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
             [
                 AgentEvent::ToolRequested(ToolCall {
                     name: "lookup".into(),
-                    prompt: "healthy".into(),
+                    arguments: "healthy".into(),
                     environment: "local".into(),
                 }),
                 AgentEvent::Delta("mock: ".into()),

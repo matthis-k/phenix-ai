@@ -23,7 +23,7 @@ fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
                 "chain".into(),
                 ToolCall {
                     name: "lookup".into(),
-                    prompt: "second".into(),
+                    arguments: "second".into(),
                     environment: if advanced { "remote" } else { "local" }.into(),
                 },
             ),
@@ -31,7 +31,7 @@ fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
                 "second".into(),
                 ToolCall {
                     name: "lookup".into(),
-                    prompt: "third".into(),
+                    arguments: "third".into(),
                     environment: if advanced { "sandbox" } else { "local" }.into(),
                 },
             ),

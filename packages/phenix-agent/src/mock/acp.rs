@@ -34,7 +34,7 @@ fn translate(event: AgentEvent) -> Message {
     match event {
         AgentEvent::Delta(text) => Message::AgentMessageChunk(text),
         AgentEvent::ToolRequested(call) => Message::ToolCall {
-            title: call.prompt,
+            title: call.arguments.as_text().unwrap_or(&call.name).to_owned(),
             environment: call.environment,
         },
         AgentEvent::Completed => Message::EndTurn,
