@@ -51,7 +51,9 @@ impl<'a> Turn<'a> {
             session.close_request(request)?;
             Ok(())
         });
-        let result = result.map_err(CallbackError::from).and_then(|result| result);
+        let result = result
+            .map_err(CallbackError::from)
+            .and_then(|result| result);
         if let Err(error) = result {
             return Err(turn.cleanup_error(error));
         }
@@ -67,67 +69,72 @@ impl<'a> Turn<'a> {
         }
         let request = self.request;
         let capture = &self.capture;
-        let poll = self.generation.with_session(|session| -> Result<_, CallbackError> {
-            if let Some(failure) = session.failure() {
-                return Err(failure.clone().into());
-            }
-            if let Some(failure) = session.request_failure(request)? {
-                return Err(failure.clone().into());
-            }
-            let mut events = Vec::new();
-            while let Some(packet) = session.take_bound_request_output(request, capture)? {
-                session.validate_bound_capture(request, capture, &packet)?;
-                events.push(
-                    packet
-                        .value()
-                        .borrow::<AgentEvent>()
-                        .expect("typed capture")
-                        .clone(),
-                );
-            }
-            if !events.is_empty() {
-                return Ok(TurnPoll::Events(events));
-            }
-            match session.request_status(request)? {
-                RequestStatus::Settled { .. } => {
+        let poll = self
+            .generation
+            .with_session(|session| -> Result<_, CallbackError> {
+                if let Some(failure) = session.failure() {
+                    return Err(failure.clone().into());
+                }
+                if let Some(failure) = session.request_failure(request)? {
+                    return Err(failure.clone().into());
+                }
+                let mut events = Vec::new();
+                while let Some(packet) = session.take_bound_request_output(request, capture)? {
+                    session.validate_bound_capture(request, capture, &packet)?;
+                    events.push(
+                        packet
+                            .value()
+                            .borrow::<AgentEvent>()
+                            .expect("typed capture")
+                            .clone(),
+                    );
+                }
+                if !events.is_empty() {
+                    return Ok(TurnPoll::Events(events));
+                }
+                match session.request_status(request)? {
+                    RequestStatus::Settled { .. } => {
+                        session.release_request(request)?;
+                        return Ok(TurnPoll::Complete);
+                    }
+                    RequestStatus::Cancelled => {
+                        return Err(std::io::Error::other("turn cancelled").into());
+                    }
+                    RequestStatus::Failed => {
+                        return Err(std::io::Error::other("turn failed").into());
+                    }
+                    _ => {}
+                }
+                if let Some((_, job)) = session.next_job() {
+                    return Ok(TurnPoll::Job(job));
+                }
+                // next_job may commit pending publication or supervise a deadline
+                // even if it has no executable step to return.
+                if let Some(failure) = session.request_failure(request)? {
+                    return Err(failure.clone().into());
+                }
+                if matches!(session.request_status(request)?, RequestStatus::Cancelled) {
+                    return Err(std::io::Error::other("turn cancelled").into());
+                }
+                if let Some(packet) = session.take_bound_request_output(request, capture)? {
+                    session.validate_bound_capture(request, capture, &packet)?;
+                    return Ok(TurnPoll::Events(vec![
+                        packet
+                            .value()
+                            .borrow::<AgentEvent>()
+                            .expect("typed capture")
+                            .clone(),
+                    ]));
+                }
+                if matches!(
+                    session.request_status(request)?,
+                    RequestStatus::Settled { .. }
+                ) {
                     session.release_request(request)?;
                     return Ok(TurnPoll::Complete);
                 }
-                RequestStatus::Cancelled => {
-                    return Err(std::io::Error::other("turn cancelled").into());
-                }
-                RequestStatus::Failed => {
-                    return Err(std::io::Error::other("turn failed").into());
-                }
-                _ => {}
-            }
-            if let Some((_, job)) = session.next_job() {
-                return Ok(TurnPoll::Job(job));
-            }
-            // next_job may commit pending publication or supervise a deadline
-            // even if it has no executable step to return.
-            if let Some(failure) = session.request_failure(request)? {
-                return Err(failure.clone().into());
-            }
-            if matches!(session.request_status(request)?, RequestStatus::Cancelled) {
-                return Err(std::io::Error::other("turn cancelled").into());
-            }
-            if let Some(packet) = session.take_bound_request_output(request, capture)? {
-                session.validate_bound_capture(request, capture, &packet)?;
-                return Ok(TurnPoll::Events(vec![
-                    packet
-                        .value()
-                        .borrow::<AgentEvent>()
-                        .expect("typed capture")
-                        .clone(),
-                ]));
-            }
-            if matches!(session.request_status(request)?, RequestStatus::Settled { .. }) {
-                session.release_request(request)?;
-                return Ok(TurnPoll::Complete);
-            }
-            Ok(TurnPoll::Waiting)
-        })??;
+                Ok(TurnPoll::Waiting)
+            })??;
         match &poll {
             TurnPoll::Events(events) => {
                 for event in events {
@@ -173,16 +180,19 @@ impl<'a> Turn<'a> {
         if self.released {
             return Ok(());
         }
-        self.generation.with_session(|session| -> Result<(), CallbackError> {
-            if !matches!(
-                session.request_status(self.request)?,
-                RequestStatus::Cancelled | RequestStatus::Failed | RequestStatus::Settled { .. }
-            ) {
-                session.cancel_request(self.request)?;
-            }
-            session.release_request(self.request)?;
-            Ok(())
-        })??;
+        self.generation
+            .with_session(|session| -> Result<(), CallbackError> {
+                if !matches!(
+                    session.request_status(self.request)?,
+                    RequestStatus::Cancelled
+                        | RequestStatus::Failed
+                        | RequestStatus::Settled { .. }
+                ) {
+                    session.cancel_request(self.request)?;
+                }
+                session.release_request(self.request)?;
+                Ok(())
+            })??;
         self.released = true;
         Ok(())
     }
@@ -190,10 +200,9 @@ impl<'a> Turn<'a> {
     fn cleanup_error(&mut self, error: CallbackError) -> CallbackError {
         match self.cancel() {
             Ok(()) => error,
-            Err(cleanup) => std::io::Error::other(format!(
-                "{error}; request cleanup failed: {cleanup}"
-            ))
-            .into(),
+            Err(cleanup) => {
+                std::io::Error::other(format!("{error}; request cleanup failed: {cleanup}")).into()
+            }
         }
     }
 }
