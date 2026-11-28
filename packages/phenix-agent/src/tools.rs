@@ -188,6 +188,15 @@ impl Tool {
         self
     }
 
+    pub fn name(&self) -> &str {
+        &self.descriptor.name
+    }
+
+    pub fn path(&self) -> &str {
+        &self.placement
+    }
+
+
     /// The descriptor, claim and offer enter the same atomic plugin bundle.
     /// Selecting and granting this contribution is a separate host decision.
     pub fn register(self, registrar: &mut Registrar) -> Result<(), Failure> {

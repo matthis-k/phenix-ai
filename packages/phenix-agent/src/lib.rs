@@ -17,6 +17,7 @@ use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc};
 
 pub mod environment;
 pub mod frontend;
+pub mod harness;
 pub mod local;
 pub mod mock;
 pub mod tools;
