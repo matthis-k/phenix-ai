@@ -58,9 +58,7 @@ pub fn run_turn(
                         return Err(std::io::Error::other(failure.summary()).into());
                     }
                     let mut events = Vec::new();
-                    while let Some(packet) =
-                        session.take_bound_request_output(request, &capture)?
-                    {
+                    while let Some(packet) = session.take_bound_request_output(request, &capture)? {
                         session.validate_bound_capture(request, &capture, &packet)?;
                         events.push(
                             packet

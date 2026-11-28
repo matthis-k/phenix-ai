@@ -125,10 +125,14 @@ impl Tool {
         R: ContractValue,
         C: Send + Sync + 'static,
     {
-        Self::contextual(name, || (), move |_, context, args| {
-            let capability = context.resource::<C>(resource).map_err(|e| e.to_string())?;
-            execute(capability, args)
-        })
+        Self::contextual(
+            name,
+            || (),
+            move |_, context, args| {
+                let capability = context.resource::<C>(resource).map_err(|e| e.to_string())?;
+                execute(capability, args)
+            },
+        )
     }
 
     fn contextual<A: ContractValue, R: ContractValue, S: Send + 'static>(
@@ -195,7 +199,6 @@ impl Tool {
     pub fn path(&self) -> &str {
         &self.placement
     }
-
 
     /// The descriptor, claim and offer enter the same atomic plugin bundle.
     /// Selecting and granting this contribution is a separate host decision.
