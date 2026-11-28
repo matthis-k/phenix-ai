@@ -4,7 +4,7 @@
 use phenix_agent::{
     AgentEvent,
     frontend::run_turn,
-    harness::{self, Environment, Extension},
+    harness::{self, Composition, Environment, Extension},
     model::{
         context::{ModelContext, Skill},
         fake::provider,
@@ -34,7 +34,8 @@ impl PluginInstance for SearchTools {
         Tool::new("count", |args: String| Ok(args.len() as i64))
             .description("Count bytes")
             .placement("search-count")
-            .register(registrar)
+            .register(registrar)?;
+        registrar.add(skill("search", "Search technique", "Use a narrow query."))
     }
 }
 
@@ -71,7 +72,7 @@ fn descriptor<A: ContractValue, R: ContractValue>(name: &str, description: &str)
 fn dump(
     local: Environment,
     additional: BTreeMap<String, Environment>,
-    extensions: Vec<Extension>,
+    composition: Composition,
     expected: ModelContext,
     exercise_plugins: bool,
 ) {
@@ -79,7 +80,7 @@ fn dump(
         |context| provider(context.clone()),
         local,
         additional,
-        extensions,
+        composition,
     )
     .unwrap();
     if exercise_plugins {
@@ -124,7 +125,7 @@ fn empty_context_is_visible_without_requiring_a_scripted_tool() {
     dump(
         Environment::new(),
         BTreeMap::new(),
-        Vec::new(),
+        Composition::default(),
         ModelContext {
             tools: BTreeMap::from([("local".into(), BTreeMap::new())]),
             ..Default::default()
@@ -155,10 +156,16 @@ fn independently_contributed_tools_and_skills_in_both_profiles() {
                     descriptor::<String, String>("echo", "Echo text"),
                 )]),
             )]),
-            skills: BTreeMap::from([(
-                Key::new("skills-plugin", "review"),
-                skill("review", "Review code", "Check invariants before edits."),
-            )]),
+            skills: BTreeMap::from([
+                (
+                    Key::new("skills-plugin", "review"),
+                    skill("review", "Review code", "Check invariants before edits."),
+                ),
+                (
+                    Key::new("search-plugin", "search"),
+                    skill("search", "Search technique", "Use a narrow query."),
+                ),
+            ]),
         };
         let search_descriptors = BTreeMap::from([
             (
@@ -200,8 +207,46 @@ fn independently_contributed_tools_and_skills_in_both_profiles() {
                 BTreeMap::new(),
             )
         };
-        let skills =
-            Extension::new("skills-plugin", Skills, |_, _| Ok(())).with_skill("review");
-        dump(local, additional, vec![skills], expected, true);
+        let composition = Composition {
+            extensions: vec![Extension::new("skills-plugin", Skills, |_, _| Ok(()))],
+            skills: [
+                Key::new("skills-plugin", "review"),
+                Key::new("search-plugin", "search"),
+            ]
+            .into(),
+        };
+        dump(local, additional, composition, expected, true);
     }
+}
+
+#[test]
+fn loading_skills_without_selecting_them_does_not_expose_them() {
+    let composition = Composition {
+        extensions: vec![Extension::new("skills-plugin", Skills, |_, _| Ok(()))],
+        ..Default::default()
+    };
+    dump(
+        Environment::new(),
+        BTreeMap::new(),
+        composition,
+        ModelContext {
+            tools: BTreeMap::from([("local".into(), BTreeMap::new())]),
+            ..Default::default()
+        },
+        false,
+    );
+}
+
+#[test]
+fn missing_skill_selection_rejects_candidate() {
+    let result = harness::compose(
+        |context| provider(context.clone()),
+        Environment::new(),
+        BTreeMap::new(),
+        Composition {
+            skills: [Key::new("missing-plugin", "missing-skill")].into(),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
 }

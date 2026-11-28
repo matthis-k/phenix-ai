@@ -5,7 +5,7 @@ use phenix_agent::{
     AgentEvent,
     diagnostics::{Diagnostics, TraceRecord},
     frontend::run_turn,
-    harness::{self, Environment, Extension},
+    harness::{self, Composition, Environment, Extension},
     model::{
         ModelProfile,
         fake::{FakeArguments, tool_roundtrip},
@@ -55,7 +55,10 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
         |context| tool_roundtrip(context.clone(), environment),
         tools(),
         additional,
-        extension,
+        Composition {
+            extensions: extension,
+            ..Default::default()
+        },
     )
     .unwrap();
     let generation = host.active().unwrap();

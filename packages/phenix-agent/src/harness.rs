@@ -79,7 +79,6 @@ pub struct Extension {
     owner: String,
     instance: Box<dyn PluginInstance>,
     policy: ExtensionPolicy,
-    skills: BTreeSet<String>,
 }
 
 impl Extension {
@@ -92,15 +91,16 @@ impl Extension {
             owner: owner.into(),
             instance: Box::new(instance),
             policy: Box::new(policy),
-            skills: BTreeSet::new(),
         }
     }
+}
 
-    /// Expose only this named skill from the staged plugin to the model.
-    pub fn with_skill(mut self, id: impl Into<String>) -> Self {
-        self.skills.insert(id.into());
-        self
-    }
+/// Host policy independent of how plugins are loaded. A tool plugin, a skill
+/// plugin, or a general extension can contribute selected model-visible skills.
+#[derive(Default)]
+pub struct Composition {
+    pub extensions: Vec<Extension>,
+    pub skills: BTreeSet<Key>,
 }
 
 struct ExtensionInstance(Box<dyn PluginInstance>);
@@ -119,7 +119,7 @@ pub fn compose<M: PluginInstance + 'static>(
     make_model: impl FnOnce(&ModelContext) -> M,
     local: Environment,
     mut additional: BTreeMap<String, Environment>,
-    extensions: Vec<Extension>,
+    composition: Composition,
 ) -> Result<KernelHost, CallbackError> {
     if additional.contains_key("local") {
         return Err(std::io::Error::other("local environment is already selected").into());
@@ -131,13 +131,12 @@ pub fn compose<M: PluginInstance + 'static>(
     let model_key = catalog.register(MODEL, Ok)?;
     let routes_key = catalog.register(ROUTES, Ok)?;
     let mut extension_stages = Vec::new();
-    for extension in extensions {
+    for extension in composition.extensions {
         let key = catalog.register(&extension.owner, Ok)?;
         extension_stages.push((
             key,
             ExtensionInstance(extension.instance),
             extension.policy,
-            extension.skills,
         ));
     }
     let mut options = BuildOptions::default();
@@ -232,24 +231,26 @@ pub fn compose<M: PluginInstance + 'static>(
         );
     }
 
-    // Read only explicitly selected skill contributions from staged revisions.
-    // Stage before constructing the model so it receives the complete context.
+    // Stage all extensions before constructing the model. Skill selection
+    // is independent of the plugin's other roles or contribution types.
     let mut extension_policies = Vec::new();
-    for (key, instance, policy, skills) in extension_stages {
-        let stage = host.plugins().prepare_load(&key, instance)?;
-        let snapshot = stage
-            .candidate()
-            .ok_or_else(|| std::io::Error::other("selected extension has no snapshot"))?;
-        for id in skills {
-            let skill = snapshot
-                .get::<Skill>(&id)
-                .ok_or_else(|| std::io::Error::other(format!("selected skill missing: {id}")))?;
-            context
-                .skills
-                .insert(Key::new(snapshot.name(), id), (*skill).clone());
-        }
-        stages.push(stage);
+    for (key, instance, policy) in extension_stages {
+        stages.push(host.plugins().prepare_load(&key, instance)?);
         extension_policies.push(policy);
+    }
+    let snapshots = host.plugins().candidate_snapshots(&stages)?;
+    for key in composition.skills {
+        let skill = snapshots
+            .iter()
+            .find(|snapshot| snapshot.name() == key.owner)
+            .and_then(|snapshot| snapshot.get::<Skill>(&key.id))
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "selected skill missing: {}/{}",
+                    key.owner, key.id
+                ))
+            })?;
+        context.skills.insert(key, (*skill).clone());
     }
     let model = make_model(&context);
     let model_stage = host.plugins().prepare_load(&model_key, model)?;

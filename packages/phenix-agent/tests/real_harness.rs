@@ -4,7 +4,7 @@
 use phenix_agent::{
     AgentEvent,
     frontend::run_turn,
-    harness::{self, Environment},
+    harness::{self, Composition, Environment},
     local::{FILES, READ_TEXT, ReadableFiles, read_text},
     mock::MockModel,
     model::context::ModelContext,
@@ -80,7 +80,7 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
             ..Default::default()
         }
     };
-    harness::compose(model, local, additional, Vec::new()).unwrap()
+    harness::compose(model, local, additional, Composition::default()).unwrap()
 }
 
 fn turn(host: &KernelHost, prompt: &str) -> Vec<AgentEvent> {
@@ -147,7 +147,7 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
         },
         Environment::new(),
         BTreeMap::new(),
-        Vec::new(),
+        Composition::default(),
     )
     .unwrap();
     assert!(
@@ -162,7 +162,7 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
         |_| MockModel::default(),
         duplicate,
         BTreeMap::new(),
-        Vec::new(),
+        Composition::default(),
     );
     assert!(result.is_err());
 }
