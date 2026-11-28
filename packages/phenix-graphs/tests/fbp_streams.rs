@@ -5395,6 +5395,28 @@ fn invalid_staged_declarations_fail_without_resuming_the_process() {
 }
 
 #[test]
+fn invalid_unscoped_wait_fails_even_when_all_input_writers_remain_open() {
+    let resumed = Arc::new(AtomicUsize::new(0));
+    let mut session = required_stage_session(
+        Readiness::optional(vec!["missing".into()], vec![]),
+        false,
+        false,
+        resumed.clone(),
+    );
+    session.inject("a", Value::of(1_i64)).unwrap();
+    session.run_until_idle(20);
+    assert_eq!(session.state(), SessionState::Failed);
+    assert_eq!(resumed.load(Ordering::SeqCst), 0);
+    assert!(
+        session
+            .failure()
+            .unwrap()
+            .summary()
+            .contains("invalid optional readiness port missing")
+    );
+}
+
+#[test]
 fn staged_missing_required_groups_fail_request_without_successful_continuation() {
     use phenix_graph::runtime::RequestStatus;
     for policy in [
