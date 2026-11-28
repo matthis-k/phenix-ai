@@ -198,7 +198,7 @@
           name = "agent-construction";
           packages = [ "phenix-agent" ];
           command = ''
-            cargo test --locked --offline -p phenix-agent --example mock --test frontend --test tool_extension --test real_harness --test model_provider --test diagnostics --test context --test turn_driver -- --nocapture
+            cargo test --locked --offline -p phenix-agent --example mock --test frontend --test tool_extension --test real_harness --test model_provider --test diagnostics --test context --test turn_driver --test conversation -- --nocapture
           '';
         };
         derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";

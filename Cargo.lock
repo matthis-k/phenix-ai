@@ -129,6 +129,7 @@ dependencies = [
  "phenix-graph",
  "phenix-kernel",
  "phenix-plugin",
+ "phenix-storage",
 ]
 
 [[package]]

@@ -155,6 +155,7 @@ fn independently_contributed_tools_and_skills_in_both_profiles() {
                     descriptor::<String, String>("echo", "Echo text"),
                 )]),
             )]),
+            history: Vec::new(),
             skills: BTreeMap::from([
                 (
                     Key::new("skills-plugin", "review"),

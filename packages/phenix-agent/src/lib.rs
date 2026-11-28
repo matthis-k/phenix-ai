@@ -20,6 +20,7 @@ use std::{
 };
 use tools::{bind_tools, declare_tools, named_edges, named_grants, named_router, tool_port};
 
+pub mod conversation;
 pub mod diagnostics;
 pub mod environment;
 pub mod frontend;
