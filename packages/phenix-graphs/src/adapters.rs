@@ -44,6 +44,21 @@ impl ComponentDef {
         S: Send + 'static,
         F: Fn(&mut S, T) -> U + Send + Sync + 'static,
     {
+        Self::map_context_state(initialize, move |state, _, input| handler(state, input))
+    }
+
+    /// The same map adapter with access to the process's granted resources.
+    /// The callback cannot retain a borrowed capability outside the activation.
+    pub fn map_context_state<T, U, S, F>(
+        initialize: impl Fn() -> S + Send + Sync + 'static,
+        handler: F,
+    ) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+        U: Send + Sync + 'static,
+        S: Send + 'static,
+        F: Fn(&mut S, &ProcessContext, T) -> U + Send + Sync + 'static,
+    {
         let handler = Arc::new(handler);
         Self::primitive(
             Arc::new(
@@ -80,7 +95,7 @@ impl ComponentDef {
                                 .failure()
                             })?
                             .clone();
-                        Ok(Value::local(handler(&mut state, input)))
+                        Ok(Value::local(handler(&mut state, cx, input)))
                     });
                     let output = value.finish_owned(output)?;
                     emitted = true;

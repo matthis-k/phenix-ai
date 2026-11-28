@@ -110,6 +110,39 @@ impl Tool {
         initialize: impl Fn() -> S + Send + Sync + 'static,
         execute: impl Fn(&mut S, A) -> Result<R, String> + Send + Sync + 'static,
     ) -> Self {
+        Self::contextual(name, initialize, move |state, _, args| execute(state, args))
+    }
+
+    /// Borrow a host-granted, typed resource for each call. Missing grants
+    /// become ordinary tool failures, without calling the implementation.
+    pub fn with_resource<A, R, C>(
+        name: impl Into<String>,
+        resource: &'static str,
+        execute: impl Fn(&C, A) -> Result<R, String> + Send + Sync + 'static,
+    ) -> Self
+    where
+        A: ContractValue,
+        R: ContractValue,
+        C: Send + Sync + 'static,
+    {
+        Self::contextual(
+            name,
+            || (),
+            move |_, context, args| {
+                let capability = context.resource::<C>(resource).map_err(|e| e.to_string())?;
+                execute(capability, args)
+            },
+        )
+    }
+
+    fn contextual<A: ContractValue, R: ContractValue, S: Send + 'static>(
+        name: impl Into<String>,
+        initialize: impl Fn() -> S + Send + Sync + 'static,
+        execute: impl Fn(&mut S, &phenix_graph::ProcessContext, A) -> Result<R, String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         let name = name.into();
         let descriptor = ToolDescriptor {
             name: name.clone(),
@@ -117,14 +150,15 @@ impl Tool {
             arguments: A::schema(),
             result: R::schema(),
         };
-        let definition =
-            ComponentDef::map_state(initialize, move |state, invocation: ToolInvocation| {
+        let definition = ComponentDef::map_context_state(
+            initialize,
+            move |state, context, invocation: ToolInvocation| {
                 let result = invocation
                     .call()
                     .arguments
                     .decode::<A>()
                     .map_err(|error| error.summary().to_owned())
-                    .and_then(|args| execute(state, args));
+                    .and_then(|args| execute(state, context, args));
                 let outcome = match result {
                     Ok(output) => ToolOutcome::Succeeded {
                         output: ToolValue::new(&output),
@@ -135,7 +169,8 @@ impl Tool {
                     },
                 };
                 invocation.complete(outcome)
-            });
+            },
+        );
         Self::from_component(descriptor, definition)
     }
 
@@ -155,6 +190,14 @@ impl Tool {
     pub fn placement(mut self, placement: impl Into<String>) -> Self {
         self.placement = placement.into();
         self
+    }
+
+    pub fn name(&self) -> &str {
+        &self.descriptor.name
+    }
+
+    pub fn path(&self) -> &str {
+        &self.placement
     }
 
     /// The descriptor, claim and offer enter the same atomic plugin bundle.

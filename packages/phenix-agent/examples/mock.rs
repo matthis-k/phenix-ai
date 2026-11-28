@@ -2,14 +2,11 @@
 //! cargo run -p phenix-agent --example mock -- first second
 //! cargo run -p phenix-agent --example mock -- --advanced chain remote missing
 use phenix_agent::{
-    AgentEvent, EVENTS, PROMPT, ToolCall,
+    ToolCall,
+    frontend::run_turn,
     mock::{self, MockModel, MockTool},
 };
-use phenix_graph::{InputKey, OutputKey, runtime::RequestStatus};
-use phenix_kernel::{
-    CallbackError,
-    host::{Generation, KernelHost},
-};
+use phenix_kernel::{CallbackError, host::KernelHost};
 
 fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
     let model = MockModel {
@@ -65,73 +62,6 @@ fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
     }
 }
 
-fn turn(
-    generation: &Generation,
-    prompt: String,
-    mut emit: impl FnMut(&AgentEvent),
-) -> Result<(), CallbackError> {
-    let ingress = generation
-        .compiled()
-        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))?;
-    let capture = generation
-        .compiled()
-        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))?;
-    let request = generation.with_session(|session| -> Result<_, CallbackError> {
-        let request = session.begin_bound_request(None)?;
-        session.inject_bound_request(request, &ingress, prompt)?;
-        session.close_request(request)?;
-        Ok(request)
-    })??;
-    let mut completed = false;
-    for _ in 0..256 {
-        let (events, settled) =
-            generation.with_session(|session| -> Result<_, CallbackError> {
-                session.run_until_idle(1);
-                if let Some(failure) = session.failure() {
-                    return Err(std::io::Error::other(failure.summary()).into());
-                }
-                if let Some(failure) = session.request_failure(request)? {
-                    return Err(std::io::Error::other(failure.summary()).into());
-                }
-                let mut events = Vec::new();
-                while let Some(packet) = session.take_bound_request_output(request, &capture)? {
-                    session.validate_bound_capture(request, &capture, &packet)?;
-                    events.push(
-                        packet
-                            .value()
-                            .borrow::<AgentEvent>()
-                            .expect("typed event")
-                            .clone(),
-                    );
-                }
-                let settled = matches!(
-                    session.request_status(request)?,
-                    RequestStatus::Settled { .. }
-                );
-                if settled {
-                    session.release_request(request)?;
-                }
-                Ok((events, settled))
-            })??;
-        // Frontend callbacks execute outside the session lease.
-        for event in events {
-            if completed {
-                return Err(std::io::Error::other("event after completion").into());
-            }
-            completed = event == AgentEvent::Completed;
-            emit(&event);
-        }
-        if settled {
-            return if completed {
-                Ok(())
-            } else {
-                Err(std::io::Error::other("request settled without completion").into())
-            };
-        }
-    }
-    Err(std::io::Error::other("mock turn did not settle").into())
-}
-
 fn main() -> Result<(), CallbackError> {
     let mut args = std::env::args().skip(1).peekable();
     let advanced = args.peek().is_some_and(|arg| arg == "--advanced");
@@ -145,7 +75,7 @@ fn main() -> Result<(), CallbackError> {
     let host = fixture(advanced)?;
     let generation = host.active().expect("published mock generation");
     for prompt in prompts {
-        turn(&generation, prompt, |event| println!("{event:?}"))?;
+        run_turn(&generation, prompt, 256, |event| println!("{event:?}"))?;
     }
     Ok(())
 }
@@ -153,6 +83,7 @@ fn main() -> Result<(), CallbackError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use phenix_agent::AgentEvent;
 
     #[test]
     fn p1_constructs_and_executes_basic_loop() {
@@ -209,7 +140,7 @@ mod tests {
             ("again", &["local"], "lookup(again)"),
         ] {
             let mut events = Vec::new();
-            turn(&generation, prompt.into(), |event| {
+            run_turn(&generation, prompt.into(), 256, |event| {
                 events.push(event.clone())
             })
             .unwrap();
