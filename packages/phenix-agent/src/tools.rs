@@ -56,6 +56,48 @@ impl ToolValue {
     }
 }
 
+// A schema-bearing value is data, not graph or plugin authority. Persist the
+// complete descriptor, not just its name or a hash.
+#[derive(ContractValue)]
+#[contract(schema = "agent.tool-value")]
+struct StoredToolValue {
+    name: String,
+    revision: u32,
+    structure: String,
+    codec: String,
+    bytes: Vec<u8>,
+}
+
+impl ContractValue for ToolValue {
+    fn schema() -> Schema {
+        StoredToolValue::schema()
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        StoredToolValue {
+            name: self.schema.name.clone(),
+            revision: self.schema.revision,
+            structure: self.schema.structure.clone(),
+            codec: self.schema.codec.clone(),
+            bytes: self.bytes.clone(),
+        }
+        .encode()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+        let stored = StoredToolValue::decode(bytes)?;
+        Ok(Self {
+            schema: Schema {
+                name: stored.name,
+                revision: stored.revision,
+                structure: stored.structure,
+                codec: stored.codec,
+            },
+            bytes: stored.bytes,
+        })
+    }
+}
+
 impl From<String> for ToolValue {
     fn from(value: String) -> Self {
         Self::new(&value)

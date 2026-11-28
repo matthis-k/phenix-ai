@@ -74,6 +74,7 @@ fn manual_handoff_and_synchronous_convenience_have_same_events() {
                 turn.complete_job(job.run()).unwrap();
             }
             TurnPoll::Events(events) => manual.extend(events),
+            TurnPoll::Observation { .. } => panic!("no auxiliary capture selected"),
             TurnPoll::Complete => {
                 done = true;
                 break;
