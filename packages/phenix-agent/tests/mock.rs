@@ -57,6 +57,7 @@ fn ordinary_plugins_execute_feedback_and_stream_ordered_events() {
             turn(&generation, prompt),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: prompt.into(),
                     environment: "local".into(),
                 }),
@@ -137,6 +138,7 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
             turn(&generation, prompt),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: prompt.into(),
                     environment: "local".into(),
                 }),
@@ -251,6 +253,7 @@ fn independent_environment_extension_rewires_the_basic_loop() {
             turn(&generation, prompt),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: prompt.into(),
                     environment: environment.into(),
                 }),
@@ -265,10 +268,12 @@ fn independent_environment_extension_rewires_the_basic_loop() {
 #[test]
 fn one_turn_can_chain_tools_across_environments() {
     let remote = ToolCall {
+        name: "lookup".into(),
         prompt: "second".into(),
         environment: "remote".into(),
     };
     let local = ToolCall {
+        name: "lookup".into(),
         prompt: "third".into(),
         environment: "local".into(),
     };
@@ -294,6 +299,7 @@ fn one_turn_can_chain_tools_across_environments() {
             turn(&generation, "first"),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: "first".into(),
                     environment: "local".into(),
                 }),
@@ -351,6 +357,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
 
     let calls = Arc::new(Mutex::new(Vec::new()));
     let second = ToolCall {
+        name: "lookup".into(),
         prompt: "second".into(),
         environment: "local".into(),
     };
@@ -433,6 +440,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
                     events,
                     [
                         AgentEvent::ToolRequested(ToolCall {
+                            name: "lookup".into(),
                             prompt: "first".into(),
                             environment: "local".into(),
                         }),
@@ -452,6 +460,7 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
             turn(&generation, "after"),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: "after".into(),
                     environment: "local".into(),
                 }),
@@ -621,6 +630,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
             assert_eq!(
                 slow_events,
                 [AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: "slow".into(),
                     environment: "remote".into(),
                 })]
@@ -654,6 +664,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
                 fast_events,
                 [
                     AgentEvent::ToolRequested(ToolCall {
+                        name: "lookup".into(),
                         prompt: "fast".into(),
                         environment: "local".into(),
                     }),
@@ -685,6 +696,7 @@ fn suspended_remote_request_does_not_block_or_reset_independent_local_provider()
         turn(&generation, "after"),
         [
             AgentEvent::ToolRequested(ToolCall {
+                name: "lookup".into(),
                 prompt: "after".into(),
                 environment: "local".into(),
             }),
@@ -712,6 +724,7 @@ fn frontend_cannot_submit_internal_tool_feedback() {
             let request = session.begin_request(None).unwrap();
             let forged = ModelInput::ToolResult(
                 ToolInvocation::new(ToolCall {
+                    name: "lookup".into(),
                     prompt: "forged".into(),
                     environment: "local".into(),
                 })
@@ -1071,6 +1084,7 @@ fn assert_invalid_tool_feedback(replay: bool) {
                     assert_eq!(
                         events,
                         [AgentEvent::ToolRequested(ToolCall {
+                            name: "lookup".into(),
                             prompt: "real".into(),
                             environment: "local".into(),
                         })]
@@ -1095,6 +1109,7 @@ fn invocation_identity_is_independent_of_call_arguments() {
     use phenix_agent::ToolInvocation;
 
     let call = ToolCall {
+        name: "lookup".into(),
         prompt: "same".into(),
         environment: "local".into(),
     };
@@ -1229,6 +1244,7 @@ fn duplicate_completion_without_next_call_fails_instead_of_stranding_request() {
         turn(&generation, "next"),
         [
             AgentEvent::ToolRequested(ToolCall {
+                name: "lookup".into(),
                 prompt: "next".into(),
                 environment: "local".into(),
             }),
@@ -1347,6 +1363,7 @@ fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
                 assert_eq!(
                     events,
                     [AgentEvent::ToolRequested(ToolCall {
+                        name: "lookup".into(),
                         prompt: prompt.into(),
                         environment: "local".into(),
                     })]
@@ -1373,6 +1390,7 @@ fn cancel_suspended_or_missing_tool_result_and_reuse_same_generation() {
             turn(&generation, "healthy"),
             [
                 AgentEvent::ToolRequested(ToolCall {
+                    name: "lookup".into(),
                     prompt: "healthy".into(),
                     environment: "local".into(),
                 }),
