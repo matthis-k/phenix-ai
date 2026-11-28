@@ -5355,6 +5355,46 @@ fn staged_optional_and_custom_groups_wait_for_live_required_producer_not_optiona
 }
 
 #[test]
+fn invalid_staged_declarations_fail_without_resuming_the_process() {
+    use phenix_graph::runtime::RequestStatus;
+    for (policy, expected) in [
+        (
+            Readiness::at_least(NonZeroUsize::new(4).unwrap()),
+            "readiness threshold exceeds input port count",
+        ),
+        (
+            Readiness::optional(vec!["missing".into()], vec![]),
+            "invalid optional readiness port missing",
+        ),
+    ] {
+        let resumed = Arc::new(AtomicUsize::new(0));
+        let mut session = required_stage_session(policy, false, true, resumed.clone());
+        assert!(session.failure().is_none());
+        let request = session.begin_request(None).unwrap();
+        session
+            .inject_request(request, "a", Value::of(1_i64))
+            .unwrap();
+        session.close_request(request).unwrap();
+        session.run_until_idle(20);
+        assert_eq!(resumed.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            session.request_status(request).unwrap(),
+            RequestStatus::Failed
+        );
+        assert!(
+            session
+                .request_failure(request)
+                .unwrap()
+                .unwrap()
+                .summary()
+                .contains(expected)
+        );
+        session.release_request(request).unwrap();
+        assert!(session.failure().is_none());
+    }
+}
+
+#[test]
 fn staged_missing_required_groups_fail_request_without_successful_continuation() {
     use phenix_graph::runtime::RequestStatus;
     for policy in [
