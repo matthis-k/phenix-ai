@@ -82,34 +82,35 @@ fn turn(
     })??;
     let mut completed = false;
     for _ in 0..256 {
-        let (events, settled) = generation.with_session(|session| -> Result<_, CallbackError> {
-            session.run_until_idle(1);
-            if let Some(failure) = session.failure() {
-                return Err(std::io::Error::other(failure.summary()).into());
-            }
-            if let Some(failure) = session.request_failure(request)? {
-                return Err(std::io::Error::other(failure.summary()).into());
-            }
-            let mut events = Vec::new();
-            while let Some(packet) = session.take_bound_request_output(request, &capture)? {
-                session.validate_bound_capture(request, &capture, &packet)?;
-                events.push(
-                    packet
-                        .value()
-                        .borrow::<AgentEvent>()
-                        .expect("typed event")
-                        .clone(),
+        let (events, settled) =
+            generation.with_session(|session| -> Result<_, CallbackError> {
+                session.run_until_idle(1);
+                if let Some(failure) = session.failure() {
+                    return Err(std::io::Error::other(failure.summary()).into());
+                }
+                if let Some(failure) = session.request_failure(request)? {
+                    return Err(std::io::Error::other(failure.summary()).into());
+                }
+                let mut events = Vec::new();
+                while let Some(packet) = session.take_bound_request_output(request, &capture)? {
+                    session.validate_bound_capture(request, &capture, &packet)?;
+                    events.push(
+                        packet
+                            .value()
+                            .borrow::<AgentEvent>()
+                            .expect("typed event")
+                            .clone(),
+                    );
+                }
+                let settled = matches!(
+                    session.request_status(request)?,
+                    RequestStatus::Settled { .. }
                 );
-            }
-            let settled = matches!(
-                session.request_status(request)?,
-                RequestStatus::Settled { .. }
-            );
-            if settled {
-                session.release_request(request)?;
-            }
-            Ok((events, settled))
-        })??;
+                if settled {
+                    session.release_request(request)?;
+                }
+                Ok((events, settled))
+            })??;
         // Frontend callbacks execute outside the session lease.
         for event in events {
             if completed {
@@ -152,51 +153,80 @@ mod tests {
     use super::*;
 
     #[test]
-    fn both_mock_profiles_drive_the_same_client_across_turns() {
-        for advanced in [false, true] {
-            let host = fixture(advanced).unwrap();
-            let generation = host.active().unwrap();
-            let chain_environments: &[&str] = if advanced {
-                &["local", "remote", "sandbox"]
-            } else {
-                &["local", "local", "local"]
-            };
-            let chain_output = if advanced {
-                "sandbox(third)"
-            } else {
-                "lookup(third)"
-            };
-            let unavailable = "tool failed: environment unavailable: ";
-            let remote_output = if advanced {
-                "remote(remote)"
-            } else {
-                unavailable
-            };
-            for (prompt, environments, output) in [
-                ("chain", chain_environments, chain_output),
-                ("remote", &["remote"], remote_output),
-                ("missing", &["unconfigured"], unavailable),
-                ("again", &["local"], "lookup(again)"),
-            ] {
-                let mut events = Vec::new();
-                turn(&generation, prompt.into(), |event| events.push(event.clone())).unwrap();
-                let actual: Vec<_> = events
-                    .iter()
-                    .filter_map(|event| match event {
-                        AgentEvent::ToolRequested(call) => Some(call.environment.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(actual, environments);
-                assert_eq!(
-                    &events[events.len() - 3..],
-                    [
-                        AgentEvent::Delta("mock: ".into()),
-                        AgentEvent::Delta(output.into()),
-                        AgentEvent::Completed,
-                    ]
-                );
-            }
+    fn p1_constructs_and_executes_basic_loop() {
+        exercise(false);
+    }
+
+    #[test]
+    fn p2_constructs_and_executes_extended_loop() {
+        exercise(true);
+    }
+
+    fn exercise(advanced: bool) {
+        let host = fixture(advanced).unwrap();
+        let generation = host.active().unwrap();
+        // Inspect the actual compiled composition, not a second fixture.
+        let compiled = generation.compiled();
+        let mut expected = std::collections::BTreeSet::from([
+            "agent-prompt",
+            "agent-tool-invocation",
+            "agent-tool-router",
+            "agent-tool-feedback",
+            "model",
+            "tool",
+        ]);
+        if advanced {
+            expected.extend(["agent-environment-router", "remote-tool", "sandbox-tool"]);
+        }
+        let actual: std::collections::BTreeSet<_> = compiled
+            .processes()
+            .iter()
+            .map(|process| process.path())
+            .collect();
+        assert_eq!(actual, expected);
+        let chain_environments: &[&str] = if advanced {
+            &["local", "remote", "sandbox"]
+        } else {
+            &["local", "local", "local"]
+        };
+        let chain_output = if advanced {
+            "sandbox(third)"
+        } else {
+            "lookup(third)"
+        };
+        let unavailable = "tool failed: environment unavailable: ";
+        let remote_output = if advanced {
+            "remote(remote)"
+        } else {
+            unavailable
+        };
+        for (prompt, environments, output) in [
+            ("chain", chain_environments, chain_output),
+            ("remote", &["remote"], remote_output),
+            ("missing", &["unconfigured"], unavailable),
+            ("again", &["local"], "lookup(again)"),
+        ] {
+            let mut events = Vec::new();
+            turn(&generation, prompt.into(), |event| {
+                events.push(event.clone())
+            })
+            .unwrap();
+            let actual: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    AgentEvent::ToolRequested(call) => Some(call.environment.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(actual, environments);
+            assert_eq!(
+                &events[events.len() - 3..],
+                [
+                    AgentEvent::Delta("mock: ".into()),
+                    AgentEvent::Delta(output.into()),
+                    AgentEvent::Completed,
+                ]
+            );
         }
     }
 }
