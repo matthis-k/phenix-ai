@@ -13,6 +13,7 @@ use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 
 const EXTRA: &str = "uppercase";
 const STRUCTURED: &str = "repeat-text";
+const COUNTER: &str = "counter";
 
 #[derive(phenix_graph::ContractValue)]
 #[contract(schema = "agent.test.repeat")]
@@ -46,6 +47,15 @@ impl PluginInstance for Uppercase {
             Ok(args.text.repeat(count))
         })
         .description("Repeat text up to eight times")
+        .register(registrar)?;
+        Tool::stateful(
+            COUNTER,
+            || 0_u64,
+            |count, text: String| {
+                *count += 1;
+                Ok(format!("{text}#{count}"))
+            },
+        )
         .register(registrar)
     }
 }
@@ -69,55 +79,22 @@ fn compose(advanced: bool) -> KernelHost {
         host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
         host.plugins()
             .prepare_load(
-                &model,
-                MockModel {
-                    tool_by_prompt: [
-                        ("hello".into(), "uppercase".into()),
-                        ("repeat".into(), STRUCTURED.into()),
-                        ("wrong-type".into(), STRUCTURED.into()),
-                        ("denied".into(), "uppercase".into()),
-                        ("unknown".into(), "unavailable".into()),
-                    ]
-                    .into(),
-                    arguments_by_prompt: [(
-                        "repeat".into(),
-                        phenix_agent::ToolValue::new(&RepeatArgs {
-                            text: "ab".into(),
-                            count: 3,
-                        }),
-                    )]
-                    .into(),
-                    environment_by_prompt: [("remote".into(), "remote".into())].into(),
-                    follow_up_by_prompt: [(
-                        "remote".into(),
-                        ToolCall {
-                            name: "uppercase".into(),
-                            arguments: "hello".into(),
-                            environment: "local".into(),
-                        },
-                    )]
-                    .into(),
-                    ..Default::default()
-                },
+                &local,
+                Tool::new("lookup", |text: String| Ok(format!("lookup({text})")))
+                    .placement(mock::TOOL_PATH),
             )
-            .unwrap(),
-        host.plugins()
-            .prepare_load(&local, MockTool::default())
             .unwrap(),
         host.plugins().prepare_load(&extra, ()).unwrap(),
     ];
     // Discover only the provider snapshots chosen by the host. No tool
     // placement or extra tool offer key is repeated in the routing policy.
     let snapshots = host.plugins().candidate_snapshots(&stages).unwrap();
-    let mut providers = SelectedTool::discover(
+    let providers = SelectedTool::discover(
         snapshots
             .into_iter()
             .filter(|snapshot| [mock::TOOL_PLUGIN, EXTRA].contains(&snapshot.name())),
     )
     .unwrap();
-    // The original fixture advertises "tool"; the host selects its alias.
-    let base = providers.remove("tool").unwrap();
-    providers.insert("lookup".into(), base);
     assert_eq!(
         providers[STRUCTURED]
             .descriptor
@@ -126,26 +103,68 @@ fn compose(advanced: bool) -> KernelHost {
             .description,
         "Repeat text up to eight times"
     );
+    // Explicitly approve the component writes of the selected fixture tools.
+    // The base provider is registered through the exact same Tool API.
+    options
+        .composition
+        .remove(&Key::new(mock::TOOL_PLUGIN, "main"));
+    let allowed = options.imports.allow.as_mut().unwrap();
+    allowed.remove(&(
+        Key::new(LOOP_PLUGIN, "env-local"),
+        Key::new(mock::TOOL_PLUGIN, "tool"),
+    ));
+    allowed.insert((
+        Key::new(LOOP_PLUGIN, "env-local"),
+        providers["lookup"].offer.clone(),
+    ));
+    for tool in providers.values() {
+        let (producer, footprint) = tool.required_component();
+        options
+            .composition
+            .entry(producer)
+            .or_default()
+            .grants
+            .insert(footprint);
+    }
+    let tool_catalog = SelectedTool::catalog(&providers).unwrap();
     let selection = LocalTools::configure(&mut options, LOCAL_ROUTES, "lookup", providers).unwrap();
     stages.push(
         host.plugins()
             .prepare_load(&local_routes, selection)
             .unwrap(),
     );
-    options.composition.insert(
-        Key::new(EXTRA, EXTRA),
-        CompositionPolicy {
-            grants: [Footprint::Component(EXTRA.into())].into(),
-            ..Default::default()
-        },
-    );
-    options.composition.insert(
-        Key::new(EXTRA, STRUCTURED),
-        CompositionPolicy {
-            grants: [Footprint::Component(STRUCTURED.into())].into(),
-            ..Default::default()
-        },
-    );
+    let model_config = MockModel {
+        tool_by_prompt: [
+            ("hello".into(), EXTRA.into()),
+            ("repeat".into(), STRUCTURED.into()),
+            ("wrong-type".into(), STRUCTURED.into()),
+            ("count".into(), COUNTER.into()),
+            ("denied".into(), EXTRA.into()),
+            ("unknown".into(), "unavailable".into()),
+        ]
+        .into(),
+        arguments_by_prompt: [(
+            "repeat".into(),
+            phenix_agent::ToolValue::new(&RepeatArgs {
+                text: "ab".into(),
+                count: 3,
+            }),
+        )]
+        .into(),
+        environment_by_prompt: [("remote".into(), "remote".into())].into(),
+        follow_up_by_prompt: [(
+            "remote".into(),
+            ToolCall {
+                name: EXTRA.into(),
+                arguments: "hello".into(),
+                environment: "local".into(),
+            },
+        )]
+        .into(),
+        available_tools: tool_catalog,
+        ..Default::default()
+    };
+    stages.push(host.plugins().prepare_load(&model, model_config).unwrap());
     // P2 is composed separately. Its configuration does not mention EXTRA,
     // uppercase, LOCAL_ROUTES, or the tool's implementation.
     if advanced {
@@ -296,6 +315,31 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
                 AgentEvent::Completed,
             ]
         );
+    }
+    for host in [&p1, &p2] {
+        assert_eq!(
+            turn(host, "list-tools"),
+            [
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("counter, lookup, repeat-text, uppercase".into()),
+                AgentEvent::Completed,
+            ]
+        );
+        for count in 1..=2 {
+            assert_eq!(
+                turn(host, "count"),
+                [
+                    AgentEvent::ToolRequested(ToolCall {
+                        name: COUNTER.into(),
+                        arguments: "count".into(),
+                        environment: "local".into(),
+                    }),
+                    AgentEvent::Delta("mock: ".into()),
+                    AgentEvent::Delta(format!("count#{count}")),
+                    AgentEvent::Completed,
+                ]
+            );
+        }
     }
     // The additional P2 route is genuinely exercised before returning to
     // the unchanged P1 local tool; P1 still rejects that remote environment.

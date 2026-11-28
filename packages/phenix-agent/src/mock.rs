@@ -36,6 +36,7 @@ pub struct MockModel {
     pub environment_by_prompt: BTreeMap<String, String>,
     pub tool_by_prompt: BTreeMap<String, String>,
     pub arguments_by_prompt: BTreeMap<String, crate::ToolValue>,
+    pub available_tools: BTreeMap<String, crate::tools::ToolDescriptor>,
     /// Deterministic continuation after a successful tool result. Keys are
     /// the completed call's prompt; the value is the next model tool call.
     pub follow_up_by_prompt: BTreeMap<String, ToolCall>,
@@ -50,6 +51,7 @@ impl Default for MockModel {
             environment_by_prompt: BTreeMap::new(),
             tool_by_prompt: BTreeMap::new(),
             arguments_by_prompt: BTreeMap::new(),
+            available_tools: BTreeMap::new(),
             follow_up_by_prompt: BTreeMap::new(),
         }
     }
@@ -82,6 +84,16 @@ impl Process for ModelProcess {
             .ok_or_else(|| GraphFailure::application_message("model expected a typed input"))?;
         self.active = true;
         match input {
+            ModelInput::Prompt(prompt) if prompt == "list-tools" => {
+                let names = self
+                    .config
+                    .available_tools
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.answer(&names);
+            }
             ModelInput::Prompt(prompt) if self.config.use_tool => {
                 let call = ToolCall {
                     name: self

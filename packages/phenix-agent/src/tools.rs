@@ -99,6 +99,17 @@ impl Tool {
         name: impl Into<String>,
         execute: impl Fn(A) -> Result<R, String> + Send + Sync + 'static,
     ) -> Self {
+        Self::stateful(name, || (), move |_, args| execute(args))
+    }
+
+    /// Initialize process-private state once per spawn. Successful requests
+    /// reuse that state; cancellation/restart may reconstruct it. This helper
+    /// is synchronous and makes no durability or rollback promises.
+    pub fn stateful<A: ContractValue, R: ContractValue, S: Send + 'static>(
+        name: impl Into<String>,
+        initialize: impl Fn() -> S + Send + Sync + 'static,
+        execute: impl Fn(&mut S, A) -> Result<R, String> + Send + Sync + 'static,
+    ) -> Self {
         let name = name.into();
         let descriptor = ToolDescriptor {
             name: name.clone(),
@@ -106,24 +117,25 @@ impl Tool {
             arguments: A::schema(),
             result: R::schema(),
         };
-        let definition = ComponentDef::map(move |invocation: ToolInvocation| {
-            let result = invocation
-                .call()
-                .arguments
-                .decode::<A>()
-                .map_err(|error| error.summary().to_owned())
-                .and_then(&execute);
-            let outcome = match result {
-                Ok(output) => ToolOutcome::Succeeded {
-                    output: ToolValue::new(&output),
-                },
-                Err(reason) => ToolOutcome::Failed {
-                    output: String::new().into(),
-                    reason,
-                },
-            };
-            invocation.complete(outcome)
-        });
+        let definition =
+            ComponentDef::map_state(initialize, move |state, invocation: ToolInvocation| {
+                let result = invocation
+                    .call()
+                    .arguments
+                    .decode::<A>()
+                    .map_err(|error| error.summary().to_owned())
+                    .and_then(|args| execute(state, args));
+                let outcome = match result {
+                    Ok(output) => ToolOutcome::Succeeded {
+                        output: ToolValue::new(&output),
+                    },
+                    Err(reason) => ToolOutcome::Failed {
+                        output: String::new().into(),
+                        reason,
+                    },
+                };
+                invocation.complete(outcome)
+            });
         Self::from_component(descriptor, definition)
     }
 
@@ -186,11 +198,42 @@ pub struct LocalTools {
 /// A host-selected provider, not a claim of write authority by the tool.
 pub struct SelectedTool {
     pub offer: Key,
+    pub producer: Key,
     pub path: String,
     pub descriptor: Option<ToolDescriptor>,
 }
 
 impl SelectedTool {
+    /// Required component write for an explicitly selected tool placement.
+    /// This is a permission request, not an approval of plugin-supplied edits.
+    pub fn required_component(&self) -> (Key, Footprint) {
+        (
+            self.producer.clone(),
+            Footprint::Component(self.path.clone()),
+        )
+    }
+
+    /// Native descriptors for the host's selected set, using selected aliases.
+    /// This is not a proof of authorization; candidate construction must pass
+    /// before a model can execute with this configuration.
+    pub fn catalog(
+        selected: &BTreeMap<String, Self>,
+    ) -> Result<BTreeMap<String, ToolDescriptor>, Failure> {
+        selected
+            .iter()
+            .map(|(name, tool)| {
+                let mut descriptor = tool.descriptor.clone().ok_or_else(|| {
+                    Failure::new(
+                        Code::MissingBinding,
+                        format!("tool {name} has no descriptor"),
+                    )
+                })?;
+                descriptor.name = name.clone();
+                Ok((name.clone(), descriptor))
+            })
+            .collect()
+    }
+
     /// Discover named tools from snapshots chosen by the host. The offer's
     /// identity supplies its name; the declaration supplies its placement.
     /// Duplicate names must be resolved by the host, never by discovery order.
@@ -214,6 +257,7 @@ impl SelectedTool {
                         name.clone(),
                         Self {
                             offer: offer.offer,
+                            producer: offer.producer,
                             path: offer.path,
                             descriptor,
                         },
