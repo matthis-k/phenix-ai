@@ -7,11 +7,9 @@ use crate::{AgentEvent, CONTRACTS_PLUGIN, MODEL_CONTRACT, PROMPT_CONTRACT, capac
 use phenix_graph::{
     ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
-    network::ConnectionDef,
 };
-use phenix_kernel::{CandidateArtifacts, Contribution, Key};
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::sync::Arc;
 
 pub const PLUGIN: &str = "mock-acp";
 pub const INPUT: &str = "acp-prompt";
@@ -50,41 +48,22 @@ impl PluginInstance for MockAcp {
         Contribution::new("main", NetworkPatch::new([]))
             .import("prompt", Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT))
             .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
-            .prepare(|context| {
+            .prepare_patch(|context| {
                 let prompt = context.bind_import("prompt")?;
                 let input = prompt.input::<String>("input")?;
                 let model = context.bind_import("model")?;
                 let events = model.output::<AgentEvent>("events")?;
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new([
-                        Edit::Add {
-                            path: DECODE.into(),
-                            definition: Arc::new(ComponentDef::map(|request: PromptRequest| {
-                                request.text
-                            })),
-                        },
-                        Edit::Add {
-                            path: ENCODE.into(),
-                            definition: Arc::new(ComponentDef::map(translate)),
-                        },
-                        Edit::Connect(ConnectionDef {
-                            from: port(DECODE, "output"),
-                            to: port(prompt.path(), input.name()),
-                            capacity: capacity(),
-                        }),
-                        context.connect_bound_output(&events, port(ENCODE, "input"), capacity())?,
-                        Edit::ExposeInput {
-                            name: INPUT.into(),
-                            targets: vec![port(DECODE, "input")],
-                            capacity: capacity(),
-                        },
-                        Edit::ExposeOutput {
-                            name: OUTPUT.into(),
-                            from: port(ENCODE, "output"),
-                        },
-                    ])),
-                    ..Default::default()
-                })
+                Ok(NetworkPatch::new([
+                    Edit::add(
+                        DECODE,
+                        ComponentDef::map(|request: PromptRequest| request.text),
+                    ),
+                    Edit::add(ENCODE, ComponentDef::map(translate)),
+                    context.connect_bound_input((DECODE, "output"), &input, capacity())?,
+                    context.connect_bound_output(&events, port(ENCODE, "input"), capacity())?,
+                    Edit::expose_input(INPUT, [(DECODE, "input")], capacity()),
+                    Edit::expose_output(OUTPUT, (ENCODE, "output")),
+                ]))
             })
             .register(registrar)
     }
