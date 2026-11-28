@@ -307,6 +307,168 @@ fn one_turn_can_chain_tools_across_environments() {
 }
 
 #[test]
+fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract,
+    };
+    use phenix_graph::{
+        ComponentDef,
+        compose::{Edit, NetworkPatch},
+    };
+    use phenix_kernel::{Contribution, Key};
+    use phenix_plugin::{Failure, PluginInstance, Registrar};
+    use std::sync::{Arc, Mutex};
+
+    struct CountingTool(Arc<Mutex<Vec<String>>>);
+
+    impl PluginInstance for CountingTool {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let calls = self.0.clone();
+            let definition = ComponentDef::map(move |invocation: ToolInvocation| {
+                let prompt = &invocation.call().prompt;
+                calls.lock().unwrap().push(prompt.clone());
+                let output = format!("lookup({prompt})");
+                invocation.complete(ToolOutcome::Succeeded { output })
+            })
+            .claim(&tool_contract())
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let second = ToolCall {
+        prompt: "second".into(),
+        environment: "local".into(),
+    };
+    let host = mock::host_with_options(
+        MockModel {
+            follow_up_by_prompt: [("first".into(), second.clone())].into(),
+            ..MockModel::default()
+        },
+        CountingTool(calls.clone()),
+        mock::options(),
+    )
+    .unwrap();
+    let generation = host.active().unwrap();
+    let ingress = generation
+        .compiled()
+        .bind_ingress(PROMPT, InputKey::<String>::new(PROMPT))
+        .unwrap();
+    let capture = generation
+        .compiled()
+        .bind_capture(EVENTS, OutputKey::<AgentEvent>::new(EVENTS))
+        .unwrap();
+
+    for cancel in [false, true] {
+        calls.lock().unwrap().clear();
+        generation
+            .with_session(|session| {
+                let request = session.begin_bound_request(None).unwrap();
+                session
+                    .inject_bound_request(request, &ingress, "first".to_owned())
+                    .unwrap();
+                session.close_request(request).unwrap();
+
+                // The first event fills the capacity-one capture. The next
+                // tool request cannot be published until the frontend drains.
+                session.run_until_idle(128);
+                assert!(session.failure().is_none());
+                assert!(session.request_failure(request).unwrap().is_none());
+                assert_eq!(
+                    session.request_work(request).unwrap().capture_backpressure,
+                    1
+                );
+                assert_eq!(*calls.lock().unwrap(), ["first"]);
+                assert_eq!(session.run_until_idle(128).steps, 0);
+                assert_eq!(*calls.lock().unwrap(), ["first"]);
+
+                if cancel {
+                    session.cancel_request(request).unwrap();
+                    assert_eq!(
+                        session.request_status(request).unwrap(),
+                        RequestStatus::Cancelled
+                    );
+                    session.release_request(request).unwrap();
+                    assert_eq!(*calls.lock().unwrap(), ["first"]);
+                    return;
+                }
+
+                let mut events = Vec::new();
+                for _ in 0..128 {
+                    while let Some(packet) = session
+                        .take_bound_request_output(request, &capture)
+                        .unwrap()
+                    {
+                        session
+                            .validate_bound_capture(request, &capture, &packet)
+                            .unwrap();
+                        events.push(packet.value().borrow::<AgentEvent>().unwrap().clone());
+                    }
+                    if matches!(
+                        session.request_status(request),
+                        Ok(RequestStatus::Settled { .. })
+                    ) {
+                        session.release_request(request).unwrap();
+                        break;
+                    }
+                    session.run_until_idle(1);
+                    assert!(session.failure().is_none());
+                    assert!(session.request_failure(request).unwrap().is_none());
+                }
+                assert_eq!(
+                    events,
+                    [
+                        AgentEvent::ToolRequested(ToolCall {
+                            prompt: "first".into(),
+                            environment: "local".into(),
+                        }),
+                        AgentEvent::ToolRequested(second.clone()),
+                        AgentEvent::Delta("mock: ".into()),
+                        AgentEvent::Delta("lookup(second)".into()),
+                        AgentEvent::Completed,
+                    ]
+                );
+                assert_eq!(*calls.lock().unwrap(), ["first", "second"]);
+            })
+            .unwrap();
+
+        // Cancellation must discard the blocked emission and its continuation,
+        // but must not pretend to undo the first tool's already recorded call.
+        assert_eq!(
+            turn(&generation, "after"),
+            [
+                AgentEvent::ToolRequested(ToolCall {
+                    prompt: "after".into(),
+                    environment: "local".into(),
+                }),
+                AgentEvent::Delta("mock: ".into()),
+                AgentEvent::Delta("lookup(after)".into()),
+                AgentEvent::Completed,
+            ]
+        );
+        let expected = if cancel {
+            vec!["first", "after"]
+        } else {
+            vec!["first", "second", "after"]
+        };
+        assert_eq!(*calls.lock().unwrap(), expected);
+    }
+}
+
+#[test]
 fn suspended_remote_request_does_not_block_independent_local_request() {
     use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, tool_contract};
     use phenix_graph::{
