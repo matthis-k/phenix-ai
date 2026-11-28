@@ -64,11 +64,16 @@ fn reopen_storage_and_observe_previous_turn_in_actual_model_context() {
         };
         let mut response = String::new();
         history
-            .run_turn(&generation, "inspect restored history".into(), 256, |event| {
-                if let AgentEvent::Delta(text) = event {
-                    response.push_str(text);
-                }
-            })
+            .run_turn(
+                &generation,
+                "inspect restored history".into(),
+                256,
+                |event| {
+                    if let AgentEvent::Delta(text) = event {
+                        response.push_str(text);
+                    }
+                },
+            )
             .unwrap();
         assert_eq!(response, format!("{expected:#?}"));
         println!("[restored-model-context] {response}");

@@ -54,7 +54,12 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    pub fn new(session: Session, address: Address, max_turns: usize, max_text_bytes: usize) -> Self {
+    pub fn new(
+        session: Session,
+        address: Address,
+        max_turns: usize,
+        max_text_bytes: usize,
+    ) -> Self {
         Self {
             session,
             address,
@@ -96,7 +101,9 @@ impl Conversation {
                 .get(&self.address, &(index - 1).to_string(), &TurnCodec)?
                 .is_none()
         {
-            return Err(Error::Codec("conversation append would create a gap".into()));
+            return Err(Error::Codec(
+                "conversation append would create a gap".into(),
+            ));
         }
         self.session
             .compare_exchange(&self.address, &index.to_string(), None, turn, &TurnCodec)?;
