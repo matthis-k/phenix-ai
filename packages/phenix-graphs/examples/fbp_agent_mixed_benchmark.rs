@@ -369,7 +369,11 @@ pub(crate) fn measure(notified: bool, idle: usize, iterations: usize) -> (f64, f
     (mean, p50, p95, persisted.load(Ordering::Relaxed))
 }
 
-pub(crate) fn measure_overlapping(notified: bool, idle: usize, iterations: usize) -> (f64, f64, f64, usize) {
+pub(crate) fn measure_overlapping(
+    notified: bool,
+    idle: usize,
+    iterations: usize,
+) -> (f64, f64, f64, usize) {
     const ACTIVE: usize = 4;
     const WARMUP: usize = 12;
     let persisted = Arc::new(AtomicUsize::new(0));
