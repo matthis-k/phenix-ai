@@ -434,7 +434,10 @@ impl NetworkSession {
         for offset in 0..queues.len() {
             let queue = queues[(input.cursor + offset) % queues.len()];
             let packets = &self.transport.queues()[queue];
-            let position = if correlated && request.is_some() {
+            let position = if correlated
+                && request.is_some()
+                && self.request_queue_policy == RequestQueuePolicy::SharedFifo
+            {
                 packets
                     .packets()
                     .position(|packet| packet.metadata().and_then(|m| m.request()) == request)
@@ -503,16 +506,27 @@ impl NetworkSession {
             return vec![p.request];
         }
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
+        // In bounded lanes every queue has exactly one authenticated request
+        // owner (or is canonical/unscoped). Only shared FIFO correlation can
+        // discover another request behind a queue head.
+        let scan_depth = if policy.correlated()
+            && self.request_queue_policy == RequestQueuePolicy::SharedFifo
+        {
+            usize::MAX
+        } else {
+            1
+        };
         let correlated = policy.correlated();
         let mut candidates = RequestCandidates::default();
         for port in order {
             let input = &p.inputs[*port];
             for offset in 0..input.queues.len() {
                 let queue = input.queues[(input.cursor + offset) % input.queues.len()];
-                for (position, packet) in self.transport.queues()[queue].packets().enumerate() {
-                    if position > 0 && !correlated {
-                        break;
-                    }
+                for (position, packet) in self.transport.queues()[queue]
+                    .packets()
+                    .take(scan_depth)
+                    .enumerate()
+                {
                     let request = packet.metadata().and_then(|m| m.request());
                     // A global (unscoped) packet is never dequeued out of FIFO
                     // order, even under this explicit request correlation policy.
