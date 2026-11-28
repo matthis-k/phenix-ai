@@ -271,6 +271,15 @@ pub struct StructuralReachability {
     pub from_declared_starts: BTreeSet<String>,
 }
 
+/// First-packet reachability in the documented structural model, not a
+/// guarantee that a native callback will produce data or terminate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuralPacketProgress {
+    Reachable,
+    Blocked,
+    Unknown,
+}
+
 #[derive(Clone, Debug)]
 pub struct CompiledNetwork {
     pub(crate) interface: Arc<Interface>,
@@ -403,6 +412,122 @@ impl CompiledNetwork {
                     .into_iter()
                     .map(|index| self.processes[index].path.as_str())
                     .collect()
+            })
+            .collect()
+    }
+
+    /// Analyze whether each process can acquire its first data activation in
+    /// a monotone, packet-only model. Assume all public inputs supply data,
+    /// declared sources publish, ready known processes publish on every
+    /// output, and capacity never blocks. Exclude EOS, scoped absence, later
+    /// continuations and external wake/start paths. Correlation is ignored:
+    /// the model considers one request (or unscoped traffic).
+    ///
+    /// Only explicitly supplied Any/All/AtLeast declarations are understood.
+    /// Missing, invalid, Optional and opaque declarations are unknown; this
+    /// never calls a factory or selector to discover policy. Reachable means
+    /// the known subset supplies the required ports under these assumptions.
+    /// Blocked means even treating unknown processes as possible producers
+    /// cannot supply the required ports. Unknown is the remaining case.
+    /// None of these outcomes is a general runtime liveness guarantee.
+    pub fn structural_packet_progress(
+        &self,
+        readiness: &BTreeMap<String, crate::runtime::Readiness>,
+    ) -> BTreeMap<&str, StructuralPacketProgress> {
+        use crate::runtime::SelectionRule;
+
+        let required: Vec<_> = self
+            .processes
+            .iter()
+            .map(|process| {
+                let count = process.interface.inputs().len();
+                match readiness.get(process.path())?.declaration().rule.as_ref()? {
+                    SelectionRule::Any => Some(1),
+                    SelectionRule::All => Some(count.max(1)),
+                    SelectionRule::AtLeast(n) if n.get() <= count => Some(n.get()),
+                    _ => None,
+                }
+            })
+            .collect();
+        let mut downstream = vec![Vec::new(); self.processes.len()];
+        for connection in &self.connections {
+            downstream[connection.from.0].push((connection.to.0, connection.to.1.as_str()));
+        }
+
+        let reach = |assume_unknown: bool| {
+            let mut active = vec![false; self.processes.len()];
+            let mut supplied = vec![BTreeSet::new(); self.processes.len()];
+            let mut pending = Vec::new();
+            let activate = |index: usize, active: &mut [bool], pending: &mut Vec<usize>| {
+                if !active[index] {
+                    active[index] = true;
+                    pending.push(index);
+                }
+            };
+            fn supply<'a>(
+                index: usize,
+                port: &'a str,
+                required: &[Option<usize>],
+                supplied: &mut [BTreeSet<&'a str>],
+                active: &mut [bool],
+                pending: &mut Vec<usize>,
+            ) {
+                if !active[index]
+                    && supplied[index].insert(port)
+                    && required[index].is_some_and(|count| supplied[index].len() >= count)
+                {
+                    active[index] = true;
+                    pending.push(index);
+                }
+            }
+            for &source in &self.sources {
+                activate(source, &mut active, &mut pending);
+            }
+            if assume_unknown {
+                for (index, count) in required.iter().enumerate() {
+                    if count.is_none() {
+                        activate(index, &mut active, &mut pending);
+                    }
+                }
+            }
+            for (index, port) in self.inputs.values().flatten() {
+                supply(
+                    *index,
+                    port.as_str(),
+                    &required,
+                    &mut supplied,
+                    &mut active,
+                    &mut pending,
+                );
+            }
+            while let Some(index) = pending.pop() {
+                for &(target, port) in &downstream[index] {
+                    supply(
+                        target,
+                        port,
+                        &required,
+                        &mut supplied,
+                        &mut active,
+                        &mut pending,
+                    );
+                }
+            }
+            active
+        };
+        let known = reach(false);
+        let possible = reach(true);
+        self.processes
+            .iter()
+            .enumerate()
+            .map(|(index, process)| {
+                let outcome = if known[index] {
+                    StructuralPacketProgress::Reachable
+                } else if possible[index] {
+                    StructuralPacketProgress::Unknown
+                } else {
+                    StructuralPacketProgress::Blocked
+                };
+                (process.path(), outcome)
             })
             .collect()
     }
