@@ -61,7 +61,8 @@ impl ModelBackend for CommandBackend {
         let stdout = child.stdout.take().expect("piped stdout");
         // Write and read concurrently so the two OS pipe capacities do not
         // impose an artificial request/response ordering.
-        let writer = match thread::Builder::new().spawn(move || stdin.write_all(prompt.as_bytes())) {
+        let writer = match thread::Builder::new().spawn(move || stdin.write_all(prompt.as_bytes()))
+        {
             Ok(writer) => writer,
             Err(error) => {
                 let _ = child.kill();

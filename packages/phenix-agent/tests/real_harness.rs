@@ -155,10 +155,6 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
     let duplicate = Environment::new()
         .with_tool(Tool::new("echo", Ok::<String, String>))
         .with_tool(Tool::new("echo", Ok::<String, String>));
-    let result = harness::compose(
-        |_| MockModel::default(),
-        duplicate,
-        BTreeMap::new(),
-    );
+    let result = harness::compose(|_| MockModel::default(), duplicate, BTreeMap::new());
     assert!(result.is_err());
 }
