@@ -52,7 +52,10 @@ impl ModelSelection {
                         self.provider
                             .as_ref()
                             .is_none_or(|name| name == &profile.provider)
-                            && self.model.as_ref().is_none_or(|name| name == &profile.model)
+                            && self
+                                .model
+                                .as_ref()
+                                .is_none_or(|name| name == &profile.model)
                             && self.required_capabilities.is_subset(&profile.capabilities)
                     })
                 {
@@ -63,7 +66,10 @@ impl ModelSelection {
         }
         match candidates.len() {
             1 => Ok(candidates.pop().expect("one matching offer")),
-            0 => Err(Failure::new(Code::MissingBinding, "no matching model offer")),
+            0 => Err(Failure::new(
+                Code::MissingBinding,
+                "no matching model offer",
+            )),
             _ => Err(Failure::new(
                 Code::DescriptorInvalid,
                 "ambiguous model selection",

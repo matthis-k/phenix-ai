@@ -9,9 +9,7 @@ use crate::{
     tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
-use phenix_kernel::{
-    BuildOptions, CallbackError, Key, OfferedComponent, host::KernelHost,
-};
+use phenix_kernel::{BuildOptions, CallbackError, Key, OfferedComponent, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
