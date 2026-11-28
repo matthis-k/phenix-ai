@@ -5,8 +5,8 @@
 //! These local Rust messages are not a provider or protocol wire format.
 
 use phenix_graph::{
-    ComponentDef, Contract, Failure as GraphFailure, Interface, NetworkError, PortDef, Process,
-    ProcessContext, ProcessEmission, ProcessFactory, Step, Value,
+    ComponentDef, Contract, ContractValue, Failure as GraphFailure, Interface, NetworkError,
+    PortDef, Process, ProcessContext, ProcessEmission, ProcessFactory, Step, Value,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
     network::{ConnectionDef, PortPath},
     runtime::{PolicyDeclaration, Readiness, ReadinessPolicy, ReadinessSnapshot},
@@ -46,7 +46,8 @@ pub enum ToolOutcome {
     Failed { output: ToolValue, reason: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, ContractValue)]
+#[contract(schema = "agent.tool-call")]
 pub struct ToolCall {
     pub name: String,
     pub arguments: ToolValue,

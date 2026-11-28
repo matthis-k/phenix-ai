@@ -1,24 +1,88 @@
-//! Completed text-turn history using ordinary granted Storage datasets.
+//! Completed conversation turns using ordinary granted Storage datasets.
 //! One explicitly bound dataset per conversation. No graph storage engine,
 //! credentials, implicit filesystem path, or process-global session identity.
 
 use crate::{
-    AgentEvent,
-    frontend::run_turn,
+    AgentEvent, CONTRACTS_PLUGIN, FEEDBACK_CONTRACT, LOOP_PLUGIN, ModelInput, ToolCall,
+    ToolOutcome, ToolValue, feedback_contract,
+    frontend::run_turn_observed,
+    harness::Extension,
     model::context::{ContextSource, ModelContext},
 };
-use phenix_graph::{ContractValue, Failure};
-use phenix_kernel::{CallbackError, host::Generation};
+use phenix_graph::{
+    ContractValue, Failure, OutputKey,
+    compose::{NetworkPatch, PatchBuilder, PatchComponent},
+};
+use phenix_kernel::{CallbackError, Contribution, ImportSpec, Key, host::Generation};
+use phenix_plugin::{PluginInstance, Registrar};
 use phenix_storage::{Address, Codec, Error, Schema, Session};
+use std::cell::Cell;
 
-/// Initial durable text projection. Tool activity is marked but structured
-/// tool arguments/results are not restored by this representation.
+/// An ordered exchange at a UTF-8 byte boundary in the assistant text.
+/// The failure is absent on success. No live invocation or provider handle
+/// escapes into durable history.
 #[derive(Clone, Debug, PartialEq, Eq, ContractValue)]
-#[contract(schema = "agent.conversation.text-turn")]
+#[contract(schema = "agent.conversation.tool-exchange")]
+pub struct ToolExchange {
+    pub position: u64,
+    pub call: ToolCall,
+    pub output: ToolValue,
+    pub failure: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, ContractValue)]
+#[contract(schema = "agent.conversation.turn")]
 pub struct TurnRecord {
     pub prompt: String,
     pub assistant: String,
-    pub used_tools: bool,
+    pub tools: Vec<ToolExchange>,
+}
+
+const OBSERVER: &str = "conversation-feedback";
+const CAPTURE: &str = "conversation-feedback";
+const IMPORT: ImportSpec = ImportSpec::new("feedback", CONTRACTS_PLUGIN, FEEDBACK_CONTRACT);
+
+struct FeedbackCapture;
+
+impl PluginInstance for FeedbackCapture {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), phenix_plugin::Failure> {
+        Contribution::dynamic("main", |context| {
+            let feedback = IMPORT.bind(context)?;
+            Ok(capture_patch(feedback.path())?)
+        })
+        .require(&IMPORT)
+        .register(registrar)
+    }
+}
+
+fn capture_patch(path: &str) -> Result<NetworkPatch, phenix_graph::NetworkError> {
+    let feedback = PatchComponent::at(path, feedback_contract().required().clone());
+    let mut patch = PatchBuilder::new(crate::capacity());
+    patch.expose_output(
+        CAPTURE,
+        &feedback.output(OutputKey::<ModelInput>::new("output"))?,
+    );
+    Ok(patch.finish())
+}
+
+/// Select this ordinary extension when the frontend wants durable tool
+/// exchanges. It observes the existing checked feedback seam.
+pub fn extension() -> Extension {
+    Extension::new(OBSERVER, FeedbackCapture, |options, _| {
+        let import = Key::new(OBSERVER, "feedback");
+        let offer = Key::new(LOOP_PLUGIN, "feedback");
+        if let Some(allow) = &mut options.imports.allow {
+            allow.insert((import.clone(), offer.clone()));
+        }
+        options.imports.selections.insert(import, offer);
+        options
+            .composition
+            .entry(Key::new(OBSERVER, "main"))
+            .or_default()
+            .grants
+            .extend(capture_patch(crate::TOOL_FEEDBACK)?.footprints());
+        Ok(())
+    })
 }
 
 pub struct TurnCodec;
@@ -50,7 +114,7 @@ pub struct Conversation {
     session: Session,
     address: Address,
     max_turns: usize,
-    max_text_bytes: usize,
+    max_turn_bytes: usize,
 }
 
 impl Conversation {
@@ -58,13 +122,13 @@ impl Conversation {
         session: Session,
         address: Address,
         max_turns: usize,
-        max_text_bytes: usize,
+        max_turn_bytes: usize,
     ) -> Self {
         Self {
             session,
             address,
             max_turns,
-            max_text_bytes,
+            max_turn_bytes,
         }
     }
 
@@ -84,8 +148,17 @@ impl Conversation {
     }
 
     fn validate(&self, turn: &TurnRecord) -> phenix_storage::Result<()> {
-        if turn.prompt.len().saturating_add(turn.assistant.len()) > self.max_text_bytes {
-            return Err(Error::Codec("conversation turn exceeds text limit".into()));
+        if turn.encode().len() > self.max_turn_bytes {
+            return Err(Error::Codec("conversation turn exceeds byte limit".into()));
+        }
+        let mut previous = 0;
+        for exchange in &turn.tools {
+            let position = usize::try_from(exchange.position)
+                .map_err(|_| Error::Codec("invalid tool position".into()))?;
+            if position < previous || !turn.assistant.is_char_boundary(position) {
+                return Err(Error::Codec("invalid tool position".into()));
+            }
+            previous = position;
         }
         Ok(())
     }
@@ -134,39 +207,86 @@ impl Conversation {
         mut emit: impl FnMut(&AgentEvent),
     ) -> Result<(), CallbackError> {
         let index = self.load()?.len();
-        if index >= self.max_turns || prompt.len() > self.max_text_bytes {
+        if index >= self.max_turns || prompt.len() > self.max_turn_bytes {
             return Err(std::io::Error::other("conversation capacity exhausted").into());
         }
-        let mut record = TurnRecord {
-            prompt: prompt.clone(),
-            assistant: String::new(),
-            used_tools: false,
-        };
-        let mut overflow = false;
-        run_turn(generation, prompt, budget, |event| {
-            match event {
-                AgentEvent::Delta(text) => {
-                    if record
-                        .prompt
-                        .len()
-                        .saturating_add(record.assistant.len())
-                        .saturating_add(text.len())
-                        > self.max_text_bytes
-                    {
-                        overflow = true;
-                    }
-                    if !overflow {
-                        record.assistant.push_str(text);
-                    }
-                }
-                AgentEvent::ToolRequested(_) => record.used_tools = true,
-                _ => {}
+        let capture = generation
+            .compiled()
+            .bind_capture(CAPTURE, OutputKey::<ModelInput>::new(CAPTURE))?;
+        let mut assistant = String::new();
+        let mut requested = Vec::new();
+        let mut completed = Vec::new();
+        let bytes = Cell::new(prompt.len());
+        let overflow = Cell::new(false);
+        let account = |amount: usize| {
+            bytes.set(bytes.get().saturating_add(amount));
+            if bytes.get() > self.max_turn_bytes {
+                overflow.set(true);
             }
-            emit(event);
-        })?;
-        if overflow {
-            return Err(std::io::Error::other("conversation turn exceeds text limit").into());
+            !overflow.get()
+        };
+        run_turn_observed(
+            generation,
+            prompt.clone(),
+            budget,
+            vec![capture],
+            |event| {
+                match event {
+                    AgentEvent::Delta(text) => {
+                        if account(text.len()) {
+                            assistant.push_str(text);
+                        }
+                    }
+                    AgentEvent::ToolRequested(call) => {
+                        if account(call.encode().len()) {
+                            requested.push((assistant.len() as u64, call.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+                emit(event);
+            },
+            |_, packet| {
+                let Some(ModelInput::ToolResult(result)) = packet.value().borrow::<ModelInput>()
+                else {
+                    return Err(std::io::Error::other("expected correlated tool result").into());
+                };
+                let (output, failure) = match result.outcome() {
+                    ToolOutcome::Succeeded { output } => (output, None),
+                    ToolOutcome::Failed { output, reason } => (output, Some(reason)),
+                };
+                if account(
+                    output.encode().len().saturating_add(failure.map_or(0, String::len)),
+                ) {
+                    completed.push((
+                        result.invocation().call().clone(),
+                        output.clone(),
+                        failure.cloned(),
+                    ));
+                }
+                Ok(())
+            },
+        )?;
+        if overflow.get() || requested.len() != completed.len() {
+            return Err(std::io::Error::other("incomplete or oversized conversation turn").into());
         }
+        let mut tools = Vec::new();
+        for ((position, call), (actual, output, failure)) in requested.into_iter().zip(completed) {
+            if call != actual {
+                return Err(std::io::Error::other("conversation tool feedback mismatch").into());
+            }
+            tools.push(ToolExchange {
+                position,
+                call,
+                output,
+                failure,
+            });
+        }
+        let record = TurnRecord {
+            prompt,
+            assistant,
+            tools,
+        };
         self.append(index, &record)?;
         Ok(())
     }

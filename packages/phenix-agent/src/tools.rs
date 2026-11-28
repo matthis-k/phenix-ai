@@ -56,6 +56,71 @@ impl ToolValue {
     }
 }
 
+// Byte blobs retain their original compact representation; the generic
+// sequence codec is for individually framed typed elements.
+struct BytePayload(Vec<u8>);
+
+impl ContractValue for BytePayload {
+    fn schema() -> Schema {
+        Schema {
+            name: "agent.tool-payload".into(),
+            revision: 1,
+            structure: "bytes".into(),
+            codec: "raw-v1".into(),
+        }
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+        Ok(Self(bytes.to_vec()))
+    }
+}
+
+// A schema-bearing value is data, not graph or plugin authority. Persist the
+// complete descriptor, not just its name or a hash.
+#[derive(ContractValue)]
+#[contract(schema = "agent.tool-value")]
+struct StoredToolValue {
+    name: String,
+    revision: u32,
+    structure: String,
+    codec: String,
+    bytes: BytePayload,
+}
+
+impl ContractValue for ToolValue {
+    fn schema() -> Schema {
+        StoredToolValue::schema()
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        StoredToolValue {
+            name: self.schema.name.clone(),
+            revision: self.schema.revision,
+            structure: self.schema.structure.clone(),
+            codec: self.schema.codec.clone(),
+            bytes: BytePayload(self.bytes.clone()),
+        }
+        .encode()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, phenix_graph::Failure> {
+        let stored = StoredToolValue::decode(bytes)?;
+        Ok(Self {
+            schema: Schema {
+                name: stored.name,
+                revision: stored.revision,
+                structure: stored.structure,
+                codec: stored.codec,
+            },
+            bytes: stored.bytes.0,
+        })
+    }
+}
+
 impl From<String> for ToolValue {
     fn from(value: String) -> Self {
         Self::new(&value)

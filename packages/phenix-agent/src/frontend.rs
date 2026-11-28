@@ -1,10 +1,11 @@
-//! Native single-capture frontend. The session owns scheduling, correlation,
+//! Native frontend with explicitly selected auxiliary captures. The session owns scheduling, correlation,
 //! publication and recovery. A frontend owns admitted request lifetime and
 //! may dispatch owned jobs outside the session lease.
 
 use crate::{AgentEvent, EVENTS, PROMPT};
 use phenix_graph::{
     CaptureHandle, InputKey, OutputKey,
+    connection::Packet,
     process::{ActivationJob, CompletedStep},
     runtime::{RequestId, RequestStatus},
 };
@@ -14,6 +15,7 @@ use phenix_kernel::{CallbackError, host::Generation};
 /// A reactor can subscribe to the session's wake listener before polling.
 pub enum TurnPoll {
     Events(Vec<AgentEvent>),
+    Observation { index: usize, packet: Packet },
     Job(ActivationJob),
     Waiting,
     Complete,
@@ -26,6 +28,7 @@ pub struct Turn<'a> {
     generation: &'a Generation,
     request: RequestId,
     capture: CaptureHandle,
+    observations: Vec<CaptureHandle>,
     completed: bool,
     released: bool,
 }
@@ -43,6 +46,7 @@ impl<'a> Turn<'a> {
             generation,
             request,
             capture,
+            observations: Vec::new(),
             completed: false,
             released: false,
         };
@@ -60,6 +64,12 @@ impl<'a> Turn<'a> {
         Ok(turn)
     }
 
+    /// Register a generation-bound auxiliary capture before driving work.
+    /// The index is stable for this turn; capture validation remains in Graph.
+    pub fn observe(&mut self, capture: CaptureHandle) {
+        self.observations.push(capture);
+    }
+
     /// Poll without running a process under the session lease. A returned
     /// job belongs to the caller until it is submitted, rejected or retired.
     /// Drain events before asking the scheduler for another owned step.
@@ -69,6 +79,7 @@ impl<'a> Turn<'a> {
         }
         let request = self.request;
         let capture = &self.capture;
+        let observations = &self.observations;
         let poll = self
             .generation
             .with_session(|session| -> Result<_, CallbackError> {
@@ -91,6 +102,12 @@ impl<'a> Turn<'a> {
                 }
                 if !events.is_empty() {
                     return Ok(TurnPoll::Events(events));
+                }
+                for (index, capture) in observations.iter().enumerate() {
+                    if let Some(packet) = session.take_bound_request_output(request, capture)? {
+                        session.validate_bound_capture(request, capture, &packet)?;
+                        return Ok(TurnPoll::Observation { index, packet });
+                    }
                 }
                 match session.request_status(request)? {
                     RequestStatus::Settled { .. } => {
@@ -125,6 +142,12 @@ impl<'a> Turn<'a> {
                             .expect("typed capture")
                             .clone(),
                     ]));
+                }
+                for (index, capture) in observations.iter().enumerate() {
+                    if let Some(packet) = session.take_bound_request_output(request, capture)? {
+                        session.validate_bound_capture(request, capture, &packet)?;
+                        return Ok(TurnPoll::Observation { index, packet });
+                    }
                 }
                 if matches!(
                     session.request_status(request)?,
@@ -221,9 +244,25 @@ pub fn run_turn(
     generation: &Generation,
     prompt: String,
     budget: usize,
+    emit: impl FnMut(&AgentEvent),
+) -> Result<(), CallbackError> {
+    run_turn_observed(generation, prompt, budget, Vec::new(), emit, |_, _| Ok(()))
+}
+
+/// Drive the same lifecycle while delivering additional authorized captures.
+/// Both callbacks run outside the session lease.
+pub fn run_turn_observed(
+    generation: &Generation,
+    prompt: String,
+    budget: usize,
+    observations: Vec<CaptureHandle>,
     mut emit: impl FnMut(&AgentEvent),
+    mut observe: impl FnMut(usize, Packet) -> Result<(), CallbackError>,
 ) -> Result<(), CallbackError> {
     let mut turn = Turn::begin(generation, prompt)?;
+    for capture in observations {
+        turn.observe(capture);
+    }
     let result = (|| -> Result<(), CallbackError> {
         let mut remaining = budget;
         loop {
@@ -236,6 +275,7 @@ pub fn run_turn(
                         emit(&event);
                     }
                 }
+                TurnPoll::Observation { index, packet } => observe(index, packet)?,
                 TurnPoll::Job(job) => {
                     remaining -= 1;
                     turn.complete_job(job.run()).map_err(|(error, _)| error)?;

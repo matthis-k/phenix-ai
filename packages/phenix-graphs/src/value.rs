@@ -306,6 +306,49 @@ integer_contract!(
     u32 => "example.u32", u64 => "example.u64", u128 => "example.u128",
     f32 => "example.f32", f64 => "example.f64",
 );
+/// Ordered length-framed sequence. Every item carries its element contract
+/// through the sequence schema; even empty element encodings consume a header.
+impl<T: ContractValue> ContractValue for Vec<T> {
+    fn schema() -> Schema {
+        Schema {
+            name: "phenix.sequence".into(),
+            revision: 1,
+            structure: T::schema().canonical(),
+            codec: "phenix-sequence-le64-v1".into(),
+        }
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for item in self {
+            let item = item.encode();
+            bytes.extend_from_slice(
+                &u64::try_from(item.len()).expect("item too large").to_le_bytes(),
+            );
+            bytes.extend_from_slice(&item);
+        }
+        bytes
+    }
+
+    fn decode(mut bytes: &[u8]) -> Result<Self, Failure> {
+        let mut values = Vec::new();
+        while !bytes.is_empty() {
+            let header = bytes
+                .get(..8)
+                .ok_or_else(|| Failure::application_message("truncated sequence header"))?;
+            let length = usize::try_from(u64::from_le_bytes(header.try_into().unwrap()))
+                .map_err(|_| Failure::application_message("sequence length overflow"))?;
+            bytes = &bytes[8..];
+            let item = bytes
+                .get(..length)
+                .ok_or_else(|| Failure::application_message("truncated sequence item"))?;
+            values.push(T::decode(item)?);
+            bytes = &bytes[length..];
+        }
+        Ok(values)
+    }
+}
+
 impl ContractValue for bool {
     fn schema() -> Schema {
         Schema {
@@ -678,5 +721,22 @@ fn drop_catching<T>(value: T) -> bool {
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod sequence_codec_tests {
+    use super::*;
+
+    #[test]
+    fn sequence_roundtrip_includes_empty_elements_and_rejects_invalid_frames() {
+        let values = vec![String::new(), "hello".to_owned(), String::new()];
+        let encoded = values.encode();
+        assert_eq!(Vec::<String>::decode(&encoded).unwrap(), values);
+        assert_ne!(Vec::<String>::schema(), Vec::<i64>::schema());
+        assert_eq!(Vec::<()>::decode(&vec![(); 3].encode()).unwrap().len(), 3);
+        assert!(Vec::<String>::decode(&[1, 2, 3]).is_err());
+        assert!(Vec::<String>::decode(&u64::MAX.to_le_bytes()).is_err());
+        assert!(Vec::<String>::decode(&encoded[..encoded.len() - 1]).is_err());
     }
 }
