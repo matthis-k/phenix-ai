@@ -6,7 +6,10 @@ use phenix_agent::{
     mock::{self, MockModel, MockTool},
 };
 use phenix_graph::{InputKey, OutputKey, runtime::RequestStatus};
-use phenix_kernel::{CallbackError, host::{Generation, KernelHost}};
+use phenix_kernel::{
+    CallbackError,
+    host::{Generation, KernelHost},
+};
 
 fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
     let model = MockModel {
@@ -38,14 +41,20 @@ fn fixture(advanced: bool) -> Result<KernelHost, CallbackError> {
         mock::host_with_environments(
             model,
             [
-                ("remote".into(), MockTool {
-                    prefix: "remote".into(),
-                    path: "remote-tool".into(),
-                }),
-                ("sandbox".into(), MockTool {
-                    prefix: "sandbox".into(),
-                    path: "sandbox-tool".into(),
-                }),
+                (
+                    "remote".into(),
+                    MockTool {
+                        prefix: "remote".into(),
+                        path: "remote-tool".into(),
+                    },
+                ),
+                (
+                    "sandbox".into(),
+                    MockTool {
+                        prefix: "sandbox".into(),
+                        path: "sandbox-tool".into(),
+                    },
+                ),
             ]
             .into(),
         )
@@ -84,9 +93,18 @@ fn turn(
             let mut events = Vec::new();
             while let Some(packet) = session.take_bound_request_output(request, &capture)? {
                 session.validate_bound_capture(request, &capture, &packet)?;
-                events.push(packet.value().borrow::<AgentEvent>().expect("typed event").clone());
+                events.push(
+                    packet
+                        .value()
+                        .borrow::<AgentEvent>()
+                        .expect("typed event")
+                        .clone(),
+                );
             }
-            let settled = matches!(session.request_status(request)?, RequestStatus::Settled { .. });
+            let settled = matches!(
+                session.request_status(request)?,
+                RequestStatus::Settled { .. }
+            );
             if settled {
                 session.release_request(request)?;
             }
@@ -138,26 +156,46 @@ mod tests {
         for advanced in [false, true] {
             let host = fixture(advanced).unwrap();
             let generation = host.active().unwrap();
+            let chain_environments: &[&str] = if advanced {
+                &["local", "remote", "sandbox"]
+            } else {
+                &["local", "local", "local"]
+            };
+            let chain_output = if advanced {
+                "sandbox(third)"
+            } else {
+                "lookup(third)"
+            };
+            let unavailable = "tool failed: environment unavailable: ";
+            let remote_output = if advanced {
+                "remote(remote)"
+            } else {
+                unavailable
+            };
             for (prompt, environments, output) in [
-                ("chain", if advanced { ["local", "remote", "sandbox"].as_slice() } else { ["local", "local", "local"].as_slice() },
-                    if advanced { "sandbox(third)" } else { "lookup(third)" }),
-                ("remote", ["remote"].as_slice(),
-                    if advanced { "remote(remote)" } else { "tool failed: environment unavailable: " }),
-                ("missing", ["unconfigured"].as_slice(), "tool failed: environment unavailable: "),
-                ("again", ["local"].as_slice(), "lookup(again)"),
+                ("chain", chain_environments, chain_output),
+                ("remote", &["remote"], remote_output),
+                ("missing", &["unconfigured"], unavailable),
+                ("again", &["local"], "lookup(again)"),
             ] {
                 let mut events = Vec::new();
                 turn(&generation, prompt.into(), |event| events.push(event.clone())).unwrap();
-                let actual: Vec<_> = events.iter().filter_map(|event| match event {
-                    AgentEvent::ToolRequested(call) => Some(call.environment.as_str()),
-                    _ => None,
-                }).collect();
+                let actual: Vec<_> = events
+                    .iter()
+                    .filter_map(|event| match event {
+                        AgentEvent::ToolRequested(call) => Some(call.environment.as_str()),
+                        _ => None,
+                    })
+                    .collect();
                 assert_eq!(actual, environments);
-                assert_eq!(&events[events.len()-3..], [
-                    AgentEvent::Delta("mock: ".into()),
-                    AgentEvent::Delta(output.into()),
-                    AgentEvent::Completed,
-                ]);
+                assert_eq!(
+                    &events[events.len() - 3..],
+                    [
+                        AgentEvent::Delta("mock: ".into()),
+                        AgentEvent::Delta(output.into()),
+                        AgentEvent::Completed,
+                    ]
+                );
             }
         }
     }
