@@ -787,10 +787,7 @@ mod packet_only_selection_tests {
                     assert_eq!(
                         select_available(
                             required,
-                            order
-                                .iter()
-                                .copied()
-                                .filter(|port| mask & (1 << port) != 0),
+                            order.iter().copied().filter(|port| mask & (1 << port) != 0),
                         ),
                         expected
                     );
