@@ -10,8 +10,8 @@ use phenix_graph::{
     ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
 };
-use phenix_kernel::{BuildOptions, Contribution, Key};
-use phenix_plugin::{Code, Failure, PluginInstance, Registrar};
+use phenix_kernel::{BuildOptions, Contribution, Key, component_offers};
+use phenix_plugin::{Code, Failure, PluginInstance, PluginSnapshot, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A named synchronous tool using the current mock text argument contract.
@@ -85,6 +85,43 @@ pub struct LocalTools {
 pub struct SelectedTool {
     pub offer: Key,
     pub path: String,
+}
+
+impl SelectedTool {
+    /// Discover named tools from snapshots chosen by the host. The offer's
+    /// identity supplies its name; the declaration supplies its placement.
+    /// Duplicate names must be resolved by the host, never by discovery order.
+    /// This operation supplies metadata only, not authorization.
+    pub fn discover(
+        snapshots: impl IntoIterator<Item = PluginSnapshot>,
+    ) -> Result<BTreeMap<String, Self>, Failure> {
+        let contract = Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT);
+        let mut tools = BTreeMap::new();
+        for snapshot in snapshots {
+            for offer in component_offers(&snapshot) {
+                if offer.contract != contract {
+                    continue;
+                }
+                let name = offer.offer.id.clone();
+                if tools
+                    .insert(
+                        name.clone(),
+                        Self {
+                            offer: offer.offer,
+                            path: offer.path,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Failure::new(
+                        Code::DescriptorInvalid,
+                        format!("ambiguous tool name: {name}"),
+                    ));
+                }
+            }
+        }
+        Ok(tools)
+    }
 }
 
 impl LocalTools {
