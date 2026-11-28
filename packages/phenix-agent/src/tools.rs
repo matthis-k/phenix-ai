@@ -9,14 +9,10 @@ use crate::{
 use phenix_graph::{
     ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
-    network::ConnectionDef,
 };
-use phenix_kernel::{CandidateArtifacts, Contribution, Key};
+use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A named synchronous tool using the current mock text argument contract.
 /// Registration derives the component, claim, offer and invocation correlation.
@@ -97,7 +93,7 @@ impl PluginInstance for LocalTools {
                 contribution.import(tool_port(name), Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT));
         }
         contribution
-            .prepare(move |context| {
+            .prepare_patch(move |context| {
                 let base_tool = context.bind_import(&tool_port(&base))?;
                 let base_path = base_tool.path();
                 let base_input = base_tool.input::<ToolInvocation>("input")?;
@@ -113,24 +109,13 @@ impl PluginInstance for LocalTools {
                     },
                 )?;
                 let mut edits = vec![
-                    Edit::Add {
-                        path: ROUTER.into(),
-                        definition: Arc::new(router),
-                    },
-                    Edit::Disconnect(ConnectionKey::new(
-                        port(TOOL_ROUTER, "env-local"),
-                        port(base_path, base_input.name()),
-                    )),
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_ROUTER, "env-local"),
-                        to: port(ROUTER, "input"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, UNAVAILABLE),
-                        to: port(TOOL_FEEDBACK, "input"),
-                        capacity: capacity(),
-                    }),
+                    Edit::add(ROUTER, router),
+                    Edit::disconnect(
+                        (TOOL_ROUTER, "env-local"),
+                        (base_path, base_input.name()),
+                    ),
+                    Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
+                    Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
                 ];
                 let mut feedback = BTreeSet::from([base_path.to_owned()]);
                 for name in &names {
@@ -138,11 +123,11 @@ impl PluginInstance for LocalTools {
                     let tool = context.bind_import(&output)?;
                     let input = tool.input::<ToolInvocation>("input")?;
                     let result = tool.output::<ToolResult>("output")?;
-                    edits.push(Edit::Connect(ConnectionDef {
-                        from: port(ROUTER, &output),
-                        to: port(tool.path(), input.name()),
-                        capacity: capacity(),
-                    }));
+                    edits.push(context.connect_bound_input(
+                        (ROUTER, output.as_str()),
+                        &input,
+                        capacity(),
+                    )?);
                     if feedback.insert(tool.path().to_owned()) {
                         edits.push(context.connect_bound_output(
                             &result,
@@ -151,10 +136,7 @@ impl PluginInstance for LocalTools {
                         )?);
                     }
                 }
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new(edits)),
-                    ..Default::default()
-                })
+                Ok(NetworkPatch::new(edits))
             })
             .register(registrar)
     }
