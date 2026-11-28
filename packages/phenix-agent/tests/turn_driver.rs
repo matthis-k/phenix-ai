@@ -32,9 +32,18 @@ fn cancel_owned_work_and_reuse_generation() {
     };
     // The returned job no longer owns the session lease.
     generation.with_session(|_| ()).unwrap();
+    let ticket = job.ticket();
+    let completion = std::thread::spawn(move || job.run()).join().unwrap();
+    let (error, refused) = generation
+        .with_session(|_| turn.complete_job(completion))
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("reentrant"));
+    assert_eq!(refused.ticket(), ticket);
     turn.cancel().unwrap();
-    let (error, refused) = turn.complete_job(job.run()).unwrap_err();
+    let (error, refused) = turn.complete_job(*refused).unwrap_err();
     assert!(!error.to_string().is_empty());
+    assert_eq!(refused.ticket(), ticket);
     drop(refused);
     let mut events = Vec::new();
     run_turn(&generation, "next".into(), 128, |event| {

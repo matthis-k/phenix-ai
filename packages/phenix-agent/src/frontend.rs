@@ -109,6 +109,9 @@ impl<'a> Turn<'a> {
             if let Some(failure) = session.request_failure(request)? {
                 return Err(failure.clone().into());
             }
+            if matches!(session.request_status(request)?, RequestStatus::Cancelled) {
+                return Err(std::io::Error::other("turn cancelled").into());
+            }
             if let Some(packet) = session.take_bound_request_output(request, capture)? {
                 session.validate_bound_capture(request, capture, &packet)?;
                 return Ok(TurnPoll::Events(vec![
@@ -229,7 +232,9 @@ pub fn run_turn(
                     turn.complete_job(job.run()).map_err(|(error, _)| error)?;
                 }
                 TurnPoll::Waiting => {
-                    return Err(std::io::Error::other("turn requires an external wake or worker").into());
+                    return Err(
+                        std::io::Error::other("turn requires an external wake or worker").into(),
+                    );
                 }
                 TurnPoll::Complete => return Ok(()),
             }
