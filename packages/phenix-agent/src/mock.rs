@@ -34,6 +34,7 @@ pub struct MockModel {
     pub use_tool: bool,
     pub environment: String,
     pub environment_by_prompt: BTreeMap<String, String>,
+    pub tool_by_prompt: BTreeMap<String, String>,
     /// Deterministic continuation after a successful tool result. Keys are
     /// the completed call's prompt; the value is the next model tool call.
     pub follow_up_by_prompt: BTreeMap<String, ToolCall>,
@@ -46,6 +47,7 @@ impl Default for MockModel {
             use_tool: true,
             environment: "local".into(),
             environment_by_prompt: BTreeMap::new(),
+            tool_by_prompt: BTreeMap::new(),
             follow_up_by_prompt: BTreeMap::new(),
         }
     }
@@ -80,6 +82,12 @@ impl Process for ModelProcess {
         match input {
             ModelInput::Prompt(prompt) if self.config.use_tool => {
                 let call = ToolCall {
+                    name: self
+                        .config
+                        .tool_by_prompt
+                        .get(prompt)
+                        .cloned()
+                        .unwrap_or_else(|| "lookup".into()),
                     prompt: prompt.clone(),
                     environment: self
                         .config
