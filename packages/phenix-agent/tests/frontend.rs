@@ -115,7 +115,9 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
     let model = catalog.register(mock::MODEL_PLUGIN, Ok).unwrap();
     let tool = catalog.register(mock::TOOL_PLUGIN, Ok).unwrap();
     let frontend = catalog.register(FRONTEND, |_: ()| Ok(Frontend)).unwrap();
-    let acp_key = catalog.register(acp::PLUGIN, |_: ()| Ok(acp::MockAcp)).unwrap();
+    let acp_key = catalog
+        .register(acp::PLUGIN, |_: ()| Ok(acp::MockAcp))
+        .unwrap();
     let remote = catalog.register(REMOTE, Ok).unwrap();
     let environment = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
