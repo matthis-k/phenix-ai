@@ -241,14 +241,6 @@ impl AgentLoop {
     }
 }
 
-struct ToolRouter<T> {
-    routes: BTreeSet<String>,
-    select: fn(&ToolCall) -> &str,
-    output_port: fn(&str) -> String,
-    fallback: fn(ToolInvocation) -> T,
-    emitted: bool,
-}
-
 // The same router mechanism is usable with either a failure or a forwarding
 // fallback. The fallback port's type follows its actual behavior.
 fn tool_router<T: Send + Sync + 'static>(
@@ -269,54 +261,18 @@ fn invocation_router<T: Send + Sync + 'static>(
     output_port: fn(&str) -> String,
     fallback: fn(ToolInvocation) -> T,
 ) -> Result<ComponentDef, phenix_graph::InterfaceError> {
-    let interface = Interface::new(
-        [PortDef::local::<ToolInvocation>("input")],
+    ComponentDef::route(
         routes
-            .iter()
-            .map(|name| PortDef::local::<ToolInvocation>(output_port(name)))
-            .chain([PortDef::local::<T>(UNAVAILABLE)]),
-    )?;
-    Ok(ComponentDef::primitive(
-        Arc::new(interface),
-        Arc::new(move || ToolRouter {
-            routes: routes.clone(),
-            select,
-            output_port,
-            fallback,
-            emitted: false,
-        }),
-    ))
-}
-
-impl<T: Send + Sync + 'static> Process for ToolRouter<T> {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
-        if self.emitted {
-            self.emitted = false;
-            return Ok(Step::Complete);
-        }
-        let Some(value) = context.take("input") else {
-            return Ok(if context.is_eos("input") {
-                Step::Finished
-            } else {
-                Step::Complete
-            });
-        };
-        let invocation = value
-            .borrow::<ToolInvocation>()
-            .ok_or_else(|| GraphFailure::application_message("router expected a tool invocation"))?
-            .clone();
-        let route = (self.select)(invocation.call());
-        let (output, value) = if self.routes.contains(route) {
-            ((self.output_port)(route), Value::local(invocation))
-        } else {
-            (
-                UNAVAILABLE.into(),
-                Value::local((self.fallback)(invocation)),
-            )
-        };
-        self.emitted = true;
-        Ok(Step::Emit(ProcessEmission::new(output, value)))
-    }
+            .into_iter()
+            .map(|name| {
+                let port = output_port(&name);
+                (name, port)
+            })
+            .collect(),
+        UNAVAILABLE,
+        move |invocation: &ToolInvocation| select(invocation.call()),
+        fallback,
+    )
 }
 
 /// Match feedback against the exact invocation within the request before it

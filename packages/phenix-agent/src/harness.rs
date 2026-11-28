@@ -2,14 +2,15 @@
 //! Both profiles use the same local loop; P2 adds ordinary environment routes.
 
 use crate::{
-    AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
+    AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
     environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     loop_grants,
+    model::selection::ModelSelection,
     tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
 use phenix_kernel::{
-    BuildOptions, CallbackError, Key, OfferedComponent, component_offers, host::KernelHost,
+    BuildOptions, CallbackError, Key, OfferedComponent, host::KernelHost,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::BTreeMap, num::NonZeroUsize};
@@ -181,16 +182,7 @@ pub fn compose<M: PluginInstance + 'static>(
     let snapshot = model_stage
         .candidate()
         .ok_or_else(|| std::io::Error::other("selected model revision has no snapshot"))?;
-    let model_contract = Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT);
-    let mut offers = component_offers(&snapshot)
-        .into_iter()
-        .filter(|offer| offer.contract == model_contract);
-    let model_offer = offers
-        .next()
-        .ok_or_else(|| std::io::Error::other("selected model offers no model contract"))?;
-    if offers.next().is_some() {
-        return Err(std::io::Error::other("selected model has ambiguous offers").into());
-    }
+    let model_offer = ModelSelection::default().select([snapshot])?.component;
     let model_import = Key::new(LOOP_PLUGIN, "model");
     options
         .imports

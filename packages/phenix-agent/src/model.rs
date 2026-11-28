@@ -11,6 +11,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 pub mod command;
 pub mod fake;
+pub mod selection;
 pub mod status;
 
 use status::{ProviderReport, ProviderStatus};
