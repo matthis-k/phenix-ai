@@ -208,8 +208,9 @@ fn turn(host: &KernelHost, prompt: &str) -> Vec<AgentEvent> {
                 session.run_until_idle(1);
                 assert!(session.failure().is_none());
                 assert!(session.request_failure(request).unwrap().is_none());
-                while let Some(packet) =
-                    session.take_bound_request_output(request, &capture).unwrap()
+                while let Some(packet) = session
+                    .take_bound_request_output(request, &capture)
+                    .unwrap()
                 {
                     session
                         .validate_bound_capture(request, &capture, &packet)
