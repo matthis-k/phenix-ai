@@ -109,6 +109,7 @@ impl ComponentDef {
                             Step::Complete
                         });
                     };
+                    let mut suppressed = false;
                     let output = value.map_callback(|| {
                         let input = value
                             .borrow::<T>()
@@ -120,18 +121,18 @@ impl ComponentDef {
                                 .failure()
                             })?
                             .clone();
-                        Ok(handler(&mut state, cx, input).map(Value::local))
+                        Ok(match handler(&mut state, cx, input) {
+                            Some(output) => Value::local(output),
+                            None => {
+                                suppressed = true;
+                                Value::local(())
+                            }
+                        })
                     });
-                    // Preserve the input lease until the outcome has been
-                    // converted to an owned Value, even when suppressed.
-                    let output = match output {
-                        Ok(Some(output)) => value.finish_owned(Ok(output))?,
-                        Ok(None) => {
-                            value.finish_owned(Ok(Value::local(())))?;
-                            return Ok(Step::Complete);
-                        }
-                        Err(error) => return value.finish_owned(Err(error)).map(|_| Step::Complete),
-                    };
+                    let output = value.finish_owned(output)?;
+                    if suppressed {
+                        return Ok(Step::Complete);
+                    }
                     emitted = true;
                     Ok(Step::Emit(ProcessEmission::new("output", output)))
                 })
