@@ -310,7 +310,9 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
                         .inject_bound_request(
                             request,
                             &acp_ports.as_ref().unwrap().0,
-                            acp::PromptRequest { text: prompt.into() },
+                            acp::PromptRequest {
+                                text: prompt.into(),
+                            },
                         )
                         .unwrap(),
                 }
@@ -337,8 +339,11 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
                         while let Some(packet) =
                             session.take_bound_request_output(request, capture).unwrap()
                         {
-                            session.validate_bound_capture(request, capture, &packet).unwrap();
-                            acp_messages.push(packet.value().borrow::<acp::Message>().unwrap().clone());
+                            session
+                                .validate_bound_capture(request, capture, &packet)
+                                .unwrap();
+                            acp_messages
+                                .push(packet.value().borrow::<acp::Message>().unwrap().clone());
                         }
                     }
                     if matches!(
