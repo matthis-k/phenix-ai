@@ -3,22 +3,20 @@
 
 use phenix_agent::{
     AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, PROMPT,
-    TOOL_CONTRACT, ToolCall, ToolInvocation, ToolOutcome,
+    ToolCall,
     environment::{EnvironmentRoutes, environment_grants},
     mock::{self, MockModel, MockTool},
-    tool_contract,
-    tools::{LocalTools, local_tool_grants},
+    tools::{LocalTools, Tool, local_tool_grants},
 };
 use phenix_graph::{
-    ComponentDef, InputKey, OutputKey,
-    compose::{Edit, Footprint, NetworkPatch},
+    InputKey, OutputKey,
+    compose::Footprint,
     runtime::RequestStatus,
 };
-use phenix_kernel::{CompositionPolicy, Contribution, Key, host::KernelHost};
+use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::sync::Arc;
 
-const EXTRA: &str = "uppercase-tool";
+const EXTRA: &str = "uppercase";
 const LOCAL_ROUTES: &str = "local-tool-selection";
 const REMOTE: &str = "remote-provider";
 const ENVIRONMENT: &str = "environment-extension";
@@ -28,21 +26,7 @@ struct Uppercase;
 
 impl PluginInstance for Uppercase {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let definition = ComponentDef::map(|invocation: ToolInvocation| {
-            let output = invocation.call().prompt.to_uppercase();
-            invocation.complete(ToolOutcome::Succeeded { output })
-        })
-        .claim(&tool_contract())
-        .unwrap();
-        Contribution::new(
-            "main",
-            NetworkPatch::new([Edit::Add {
-                path: EXTRA.into(),
-                definition: Arc::new(definition),
-            }]),
-        )
-        .offer("tool", EXTRA, Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
-        .register(registrar)
+        Tool::new(EXTRA, |text| Ok(text.to_uppercase())).register(registrar)
     }
 }
 
@@ -108,11 +92,11 @@ fn compose(advanced: bool) -> KernelHost {
         ),
         (
             Key::new(LOCAL_ROUTES, "tool-uppercase"),
-            Key::new(EXTRA, "tool"),
+            Key::new(EXTRA, EXTRA),
         ),
     ]);
     options.composition.insert(
-        Key::new(EXTRA, "main"),
+        Key::new(EXTRA, EXTRA),
         CompositionPolicy {
             grants: [Footprint::Component(EXTRA.into())].into(),
             ..Default::default()
