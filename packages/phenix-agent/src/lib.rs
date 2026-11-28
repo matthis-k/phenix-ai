@@ -13,7 +13,12 @@ use phenix_graph::{
 };
 use phenix_kernel::{CandidateArtifacts, ContractDefinition, Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
-use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+    sync::Arc,
+};
+use tools::{bind_tools, declare_tools, named_edges, named_grants, named_router, tool_port};
 
 pub mod environment;
 pub mod frontend;
@@ -111,6 +116,7 @@ pub const EVENTS: &str = "events";
 const PROMPT_ADAPTER: &str = "agent-prompt";
 const TOOL_INVOCATION: &str = "agent-tool-invocation";
 const TOOL_ROUTER: &str = "agent-tool-router";
+const LOCAL_ROUTER: &str = "agent-local-tool-router";
 const TOOL_FEEDBACK: &str = "agent-tool-feedback";
 const UNAVAILABLE: &str = "unavailable";
 
@@ -196,7 +202,17 @@ impl PluginInstance for AgentContracts {
 }
 
 /// Standalone local agent loop. Additional routing is an ordinary extension.
-pub struct AgentLoop;
+pub struct AgentLoop {
+    local_tools: BTreeSet<String>,
+}
+
+impl AgentLoop {
+    pub fn new(names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            local_tools: names.into_iter().map(Into::into).collect(),
+        }
+    }
+}
 
 struct ToolRouter<T> {
     routes: BTreeSet<String>,
@@ -369,117 +385,116 @@ impl Process for ToolFeedback {
 
 impl PluginInstance for AgentLoop {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        Contribution::new("main", NetworkPatch::new([]))
-            .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
-            .import("env-local", Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT))
-            .offer(
-                "prompt",
-                PROMPT_ADAPTER,
-                Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT),
-            )
-            .prepare(|context| {
-                let model = context.bind_import("model")?;
-                let model_input = model.input::<ModelInput>("input")?;
-                let model_tool = model.output::<ToolCall>("tool")?;
-                let events = model.output::<AgentEvent>("events")?;
-                let router = tool_router(["local".into()].into(), |invocation| {
-                    invocation.complete(ToolOutcome::Failed {
-                        output: String::new().into(),
-                        reason: "environment unavailable".into(),
-                    })
-                })?;
-                let tool = context.bind_import("env-local")?;
-                let tool_input = tool.input::<ToolInvocation>("input")?;
-                let result = tool.output::<ToolResult>("output")?;
-                let edits = vec![
-                    Edit::Add {
-                        path: TOOL_INVOCATION.into(),
-                        definition: Arc::new(ComponentDef::map(ToolInvocation::new)),
-                    },
-                    context.connect_bound_output(
-                        &model_tool,
-                        port(TOOL_INVOCATION, "input"),
-                        capacity(),
-                    )?,
-                    Edit::Add {
-                        path: TOOL_ROUTER.into(),
-                        definition: Arc::new(router),
-                    },
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_INVOCATION, "output"),
-                        to: port(TOOL_ROUTER, "input"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Add {
-                        path: TOOL_FEEDBACK.into(),
-                        definition: Arc::new(ComponentDef::primitive(
-                            Arc::new(Interface::new(
-                                [
-                                    PortDef::local::<ToolInvocation>("expected"),
-                                    PortDef::local::<ToolResult>("input"),
-                                ],
-                                [PortDef::local::<ModelInput>("output")],
-                            )?),
-                            Arc::new(ToolFeedbackFactory),
-                        )),
-                    },
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_INVOCATION, "output"),
-                        to: port(TOOL_FEEDBACK, "expected"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_ROUTER, UNAVAILABLE),
-                        to: port(TOOL_FEEDBACK, "input"),
-                        capacity: capacity(),
-                    }),
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_FEEDBACK, "output"),
-                        to: port(model.path(), model_input.name()),
-                        capacity: capacity(),
-                    }),
-                    Edit::Add {
-                        path: PROMPT_ADAPTER.into(),
-                        definition: Arc::new(
-                            ComponentDef::map(ModelInput::Prompt)
-                                .claim(&prompt_contract())
-                                .expect("prompt adapter implements its declared contract"),
-                        ),
-                    },
-                    Edit::Connect(ConnectionDef {
-                        from: port(PROMPT_ADAPTER, "output"),
-                        to: port(model.path(), model_input.name()),
-                        capacity: capacity(),
-                    }),
-                    Edit::ExposeInput {
-                        name: PROMPT.into(),
-                        targets: vec![port(PROMPT_ADAPTER, "input")],
-                        capacity: capacity(),
-                    },
-                    context.expose_bound_output(EVENTS, &events)?,
-                    Edit::Connect(ConnectionDef {
-                        from: port(TOOL_ROUTER, "env-local"),
-                        to: port(tool.path(), tool_input.name()),
-                        capacity: capacity(),
-                    }),
-                    context.connect_bound_output(
-                        &result,
-                        port(TOOL_FEEDBACK, "input"),
-                        capacity(),
-                    )?,
-                ];
-                Ok(CandidateArtifacts {
-                    patch: Some(NetworkPatch::new(edits)),
-                    ..Default::default()
+        let names = self.local_tools.clone();
+        declare_tools(
+            Contribution::new("main", NetworkPatch::new([]))
+                .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT)),
+            &names,
+            tool_port,
+        )
+        .offer(
+            "prompt",
+            PROMPT_ADAPTER,
+            Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT),
+        )
+        .prepare(move |context| {
+            let model = context.bind_import("model")?;
+            let model_input = model.input::<ModelInput>("input")?;
+            let model_tool = model.output::<ToolCall>("tool")?;
+            let events = model.output::<AgentEvent>("events")?;
+            let router = tool_router(["local".into()].into(), |invocation| {
+                invocation.complete(ToolOutcome::Failed {
+                    output: String::new().into(),
+                    reason: "environment unavailable".into(),
                 })
+            })?;
+            let tools = bind_tools(context, &names, tool_port)?;
+            let mut edits = vec![
+                Edit::Add {
+                    path: TOOL_INVOCATION.into(),
+                    definition: Arc::new(ComponentDef::map(ToolInvocation::new)),
+                },
+                context.connect_bound_output(
+                    &model_tool,
+                    port(TOOL_INVOCATION, "input"),
+                    capacity(),
+                )?,
+                Edit::Add {
+                    path: TOOL_ROUTER.into(),
+                    definition: Arc::new(router),
+                },
+                Edit::Connect(ConnectionDef {
+                    from: port(TOOL_INVOCATION, "output"),
+                    to: port(TOOL_ROUTER, "input"),
+                    capacity: capacity(),
+                }),
+                Edit::Add {
+                    path: TOOL_FEEDBACK.into(),
+                    definition: Arc::new(ComponentDef::primitive(
+                        Arc::new(Interface::new(
+                            [
+                                PortDef::local::<ToolInvocation>("expected"),
+                                PortDef::local::<ToolResult>("input"),
+                            ],
+                            [PortDef::local::<ModelInput>("output")],
+                        )?),
+                        Arc::new(ToolFeedbackFactory),
+                    )),
+                },
+                Edit::Connect(ConnectionDef {
+                    from: port(TOOL_INVOCATION, "output"),
+                    to: port(TOOL_FEEDBACK, "expected"),
+                    capacity: capacity(),
+                }),
+                Edit::Connect(ConnectionDef {
+                    from: port(TOOL_ROUTER, UNAVAILABLE),
+                    to: port(TOOL_FEEDBACK, "input"),
+                    capacity: capacity(),
+                }),
+                Edit::Connect(ConnectionDef {
+                    from: port(TOOL_FEEDBACK, "output"),
+                    to: port(model.path(), model_input.name()),
+                    capacity: capacity(),
+                }),
+                Edit::Add {
+                    path: PROMPT_ADAPTER.into(),
+                    definition: Arc::new(
+                        ComponentDef::map(ModelInput::Prompt)
+                            .claim(&prompt_contract())
+                            .expect("prompt adapter implements its declared contract"),
+                    ),
+                },
+                Edit::Connect(ConnectionDef {
+                    from: port(PROMPT_ADAPTER, "output"),
+                    to: port(model.path(), model_input.name()),
+                    capacity: capacity(),
+                }),
+                Edit::ExposeInput {
+                    name: PROMPT.into(),
+                    targets: vec![port(PROMPT_ADAPTER, "input")],
+                    capacity: capacity(),
+                },
+                context.expose_bound_output(EVENTS, &events)?,
+                Edit::add(LOCAL_ROUTER, named_router(names.clone())?),
+                Edit::connect(
+                    (TOOL_ROUTER, "env-local"),
+                    (LOCAL_ROUTER, "input"),
+                    capacity(),
+                ),
+            ];
+            edits.extend(named_edges(LOCAL_ROUTER, &tools));
+            Ok(CandidateArtifacts {
+                patch: Some(NetworkPatch::new(edits)),
+                ..Default::default()
             })
-            .register(registrar)
+        })
+        .register(registrar)
     }
 }
 
 /// Exact host grants for the configured graph; names are not authority by themselves.
-pub fn loop_grants(model: &str, tool: &str) -> Vec<Footprint> {
-    vec![
+pub fn loop_grants(model: &str, tools: &BTreeMap<String, String>) -> Vec<Footprint> {
+    let mut grants = vec![
         Footprint::Component(TOOL_INVOCATION.into()),
         Footprint::Connection(ConnectionKey::new(
             port(model, "tool"),
@@ -512,13 +527,11 @@ pub fn loop_grants(model: &str, tool: &str) -> Vec<Footprint> {
         Footprint::OutputExport(EVENTS.into()),
         Footprint::Connection(ConnectionKey::new(
             port(TOOL_ROUTER, "env-local"),
-            port(tool, "input"),
+            port(LOCAL_ROUTER, "input"),
         )),
-        Footprint::Connection(ConnectionKey::new(
-            port(tool, "output"),
-            port(TOOL_FEEDBACK, "input"),
-        )),
-    ]
+    ];
+    grants.extend(named_grants(LOCAL_ROUTER, tools));
+    grants
 }
 
 /// Check the complete shape and claim when defining a provider component.

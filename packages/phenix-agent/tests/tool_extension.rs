@@ -3,9 +3,10 @@
 
 use phenix_agent::{
     AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, PROMPT, ToolCall,
-    environment::{EnvironmentRoutes, environment_grants},
+    environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
+    loop_grants,
     mock::{self, MockModel, MockTool},
-    tools::{LocalTools, SelectedTool, Tool},
+    tools::{SelectedTool, Tool, select_tools, tool_port},
 };
 use phenix_graph::{InputKey, OutputKey, compose::Footprint, runtime::RequestStatus};
 use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
@@ -22,7 +23,6 @@ struct RepeatArgs {
     count: i64,
 }
 
-const LOCAL_ROUTES: &str = "local-tool-selection";
 const REMOTE: &str = "remote-provider";
 const ENVIRONMENT: &str = "environment-extension";
 
@@ -69,14 +69,12 @@ fn compose(advanced: bool) -> KernelHost {
     let model = catalog.register(mock::MODEL_PLUGIN, Ok).unwrap();
     let local = catalog.register(mock::TOOL_PLUGIN, Ok).unwrap();
     let extra = catalog.register(EXTRA, |_: ()| Ok(Uppercase)).unwrap();
-    let local_routes = catalog.register(LOCAL_ROUTES, Ok).unwrap();
     let remote = catalog.register(REMOTE, Ok).unwrap();
     let environment = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let mut options = mock::options();
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
-        host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
         host.plugins()
             .prepare_load(
                 &local,
@@ -108,15 +106,22 @@ fn compose(advanced: bool) -> KernelHost {
     options
         .composition
         .remove(&Key::new(mock::TOOL_PLUGIN, "main"));
-    let allowed = options.imports.allow.as_mut().unwrap();
-    allowed.remove(&(
-        Key::new(LOOP_PLUGIN, "env-local"),
+    options.imports.allow.as_mut().unwrap().remove(&(
+        Key::new(LOOP_PLUGIN, "tool-lookup"),
         Key::new(mock::TOOL_PLUGIN, "tool"),
     ));
-    allowed.insert((
-        Key::new(LOOP_PLUGIN, "env-local"),
-        providers["lookup"].offer.clone(),
-    ));
+    select_tools(&mut options, LOOP_PLUGIN, &providers, tool_port);
+    let placements = providers
+        .iter()
+        .map(|(name, tool)| (name.clone(), tool.path.clone()))
+        .collect();
+    options
+        .composition
+        .entry(Key::new(LOOP_PLUGIN, "main"))
+        .or_default()
+        .grants = loop_grants(mock::MODEL_PATH, &placements)
+        .into_iter()
+        .collect();
     for tool in providers.values() {
         let (producer, footprint) = tool.required_component();
         options
@@ -127,10 +132,9 @@ fn compose(advanced: bool) -> KernelHost {
             .insert(footprint);
     }
     let tool_catalog = SelectedTool::catalog(&providers).unwrap();
-    let selection = LocalTools::configure(&mut options, LOCAL_ROUTES, "lookup", providers).unwrap();
     stages.push(
         host.plugins()
-            .prepare_load(&local_routes, selection)
+            .prepare_load(&agent, AgentLoop::new(providers.keys().cloned()))
             .unwrap(),
     );
     let model_config = MockModel {
@@ -166,7 +170,7 @@ fn compose(advanced: bool) -> KernelHost {
     };
     stages.push(host.plugins().prepare_load(&model, model_config).unwrap());
     // P2 is composed separately. Its configuration does not mention EXTRA,
-    // uppercase, LOCAL_ROUTES, or the tool's implementation.
+    // uppercase, or the tool's implementation.
     if advanced {
         stages.push(
             host.plugins()
@@ -184,13 +188,13 @@ fn compose(advanced: bool) -> KernelHost {
                 .prepare_load(
                     &environment,
                     EnvironmentRoutes {
-                        environments: ["remote".into()].into(),
+                        environments: [("remote".into(), ["lookup".into()].into())].into(),
                     },
                 )
                 .unwrap(),
         );
         options.imports.allow.as_mut().unwrap().insert((
-            Key::new(ENVIRONMENT, "env-remote"),
+            Key::new(ENVIRONMENT, environment_tool_import("remote", "lookup")),
             Key::new(REMOTE, "tool"),
         ));
         options.composition.insert(
@@ -203,9 +207,15 @@ fn compose(advanced: bool) -> KernelHost {
         options.composition.insert(
             Key::new(ENVIRONMENT, "main"),
             CompositionPolicy {
-                grants: environment_grants(&[("remote".into(), "remote-tool".into())].into())
-                    .into_iter()
-                    .collect(),
+                grants: environment_grants(
+                    &[(
+                        "remote".into(),
+                        [("lookup".into(), "remote-tool".into())].into(),
+                    )]
+                    .into(),
+                )
+                .into_iter()
+                .collect(),
                 ..Default::default()
             },
         );

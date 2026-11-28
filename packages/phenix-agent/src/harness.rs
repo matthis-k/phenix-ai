@@ -1,111 +1,174 @@
-//! Host composition for the first real single-tool-per-environment slice.
-//! The model remains an independently supplied plugin. Both profiles use
-//! the same agent loop; extra environments are ordinary graph contributions.
+//! Host composition of explicitly selected tools, resources and a model.
+//! Both profiles use the same local loop; P2 adds ordinary environment routes.
 
 use crate::{
     AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
-    environment::{EnvironmentRoutes, environment_grants},
+    environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     loop_grants,
-    tools::Tool,
+    tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
 use phenix_kernel::{BuildOptions, CallbackError, Key, host::KernelHost};
-use phenix_plugin::{PluginCatalog, PluginInstance};
+use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
 const MODEL: &str = "harness-model";
-const LOCAL: &str = "harness-local";
 const ROUTES: &str = "harness-environments";
 
-/// Host-selected tool and capabilities; no tool may choose its own grants.
+/// A native model catalog of the host's selected tools, grouped by environment.
+pub type ToolCatalog = BTreeMap<String, BTreeMap<String, ToolDescriptor>>;
+
+/// Host-selected tool declarations and grants. Tool code cannot select its
+/// own capabilities. Empty environments reject every named call.
+#[derive(Default)]
 pub struct Environment {
-    pub tool: Tool,
-    pub resources: ValidatedResourceSet,
+    tools: Vec<(Tool, ValidatedResourceSet)>,
 }
 
-/// The first real harness accepts one explicitly selected tool per environment.
-/// Additional named tools can still be composed with LocalTools. This helper
-/// intentionally does not infer trust from arbitrary plugin discovery.
-/// The caller supplies a model offering the model contract from "main"/"model".
-pub fn compose(
-    model: impl PluginInstance + 'static,
+impl Environment {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_tool(self, tool: Tool) -> Self {
+        self.with_resources(tool, ValidatedResourceSet::default())
+    }
+
+    pub fn with_resources(mut self, tool: Tool, resources: ValidatedResourceSet) -> Self {
+        self.tools.push((tool, resources));
+        self
+    }
+}
+
+struct ToolGroup(Vec<Tool>);
+
+impl PluginInstance for ToolGroup {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        for tool in &self.0 {
+            tool.clone().register(registrar)?;
+        }
+        Ok(())
+    }
+}
+
+/// Compose the explicitly selected tools and supply their native metadata to
+/// the selected model factory. No model or tool is privileged. The model must
+/// offer the model contract from contribution "main", offer "model".
+/// Provider-specific JSON schema and transport remain the model plugin's job.
+pub fn compose<M: PluginInstance + 'static>(
+    make_model: impl FnOnce(&ToolCatalog) -> M,
     model_path: &str,
     local: Environment,
-    additional: BTreeMap<String, Environment>,
+    mut additional: BTreeMap<String, Environment>,
 ) -> Result<KernelHost, CallbackError> {
     if additional.contains_key("local") {
         return Err(std::io::Error::other("local environment is already selected").into());
     }
+    additional.insert("local".into(), local);
     let mut catalog = PluginCatalog::new();
     let contracts = catalog.register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))?;
     let agent = catalog.register(LOOP_PLUGIN, Ok)?;
     let model_key = catalog.register(MODEL, Ok)?;
-    let local_key = catalog.register(LOCAL, Ok)?;
     let routes_key = catalog.register(ROUTES, Ok)?;
     let mut options = BuildOptions::default();
     options.execution.max_requests = NonZeroUsize::new(1).unwrap();
     options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
     options.execution.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     options.imports.allow = Some(Default::default());
-    let local_path = local.tool.path().to_owned();
-    select(
-        &mut options,
-        Key::new(LOOP_PLUGIN, "model"),
-        Key::new(MODEL, "model"),
-        Key::new(MODEL, "main"),
-        model_path,
-    );
-    select(
-        &mut options,
-        Key::new(LOOP_PLUGIN, "env-local"),
-        Key::new(LOCAL, local.tool.name()),
-        Key::new(LOCAL, local.tool.name()),
-        &local_path,
-    );
+    let model_import = Key::new(LOOP_PLUGIN, "model");
+    let model_offer = Key::new(MODEL, "model");
     options
-        .execution
-        .resources
-        .insert(local_path.clone(), local.resources);
+        .imports
+        .allow
+        .as_mut()
+        .expect("explicit host policy")
+        .insert((model_import.clone(), model_offer.clone()));
+    options.imports.selections.insert(model_import, model_offer);
+    options
+        .composition
+        .entry(Key::new(MODEL, "main"))
+        .or_default()
+        .grants
+        .insert(Footprint::Component(model_path.into()));
+
+    let mut providers = Vec::new();
+    let mut placements = BTreeMap::new();
+    let mut tool_catalog = ToolCatalog::new();
+    for (environment, configured) in additional {
+        let owner = format!("harness-env-{environment}");
+        let key = catalog.register(&owner, Ok)?;
+        let mut selected = BTreeMap::new();
+        let mut group = Vec::new();
+        for (tool, resources) in configured.tools {
+            let name = tool.name().to_owned();
+            // A tool's placement is relative to the host's environment.
+            let path = format!("tool-{}-{environment}-{}", environment.len(), tool.path());
+            let tool = tool.placement(&path);
+            let offer = Key::new(&owner, &name);
+            let selection = SelectedTool {
+                offer: offer.clone(),
+                producer: offer,
+                path: path.clone(),
+                descriptor: Some(tool.descriptor().clone()),
+            };
+            if selected.insert(name, selection).is_some() {
+                return Err(std::io::Error::other("duplicate tool name in environment").into());
+            }
+            if options
+                .execution
+                .resources
+                .insert(path, resources)
+                .is_some()
+            {
+                return Err(std::io::Error::other("duplicate tool placement").into());
+            }
+            group.push(tool);
+        }
+        for tool in selected.values() {
+            let (producer, footprint) = tool.required_component();
+            options
+                .composition
+                .entry(producer)
+                .or_default()
+                .grants
+                .insert(footprint);
+        }
+        if environment == "local" {
+            select_tools(&mut options, LOOP_PLUGIN, &selected, tool_port);
+        } else {
+            select_tools(&mut options, ROUTES, &selected, |name| {
+                environment_tool_import(&environment, name)
+            });
+        }
+        tool_catalog.insert(environment.clone(), SelectedTool::catalog(&selected)?);
+        placements.insert(
+            environment,
+            selected
+                .into_iter()
+                .map(|(name, tool)| (name, tool.path))
+                .collect::<BTreeMap<_, _>>(),
+        );
+        providers.push((key, ToolGroup(group)));
+    }
+    let local = placements
+        .remove("local")
+        .expect("local environment inserted");
     options
         .composition
         .entry(Key::new(LOOP_PLUGIN, "main"))
         .or_default()
         .grants
-        .extend(loop_grants(model_path, &local_path));
-
-    let mut providers = Vec::new();
-    let mut placements = BTreeMap::new();
-    for (environment, provider) in additional {
-        let owner = format!("harness-env-{environment}");
-        let key = catalog.register(&owner, Ok)?;
-        let path = provider.tool.path().to_owned();
-        select(
-            &mut options,
-            Key::new(ROUTES, format!("env-{environment}")),
-            Key::new(&owner, provider.tool.name()),
-            Key::new(&owner, provider.tool.name()),
-            &path,
-        );
-        if options
-            .execution
-            .resources
-            .insert(path.clone(), provider.resources)
-            .is_some()
-        {
-            return Err(std::io::Error::other("duplicate environment placement").into());
-        }
-        placements.insert(environment, path);
-        providers.push((key, provider.tool));
-    }
+        .extend(loop_grants(model_path, &local));
+    let model = make_model(&tool_catalog);
     let mut host = KernelHost::new(catalog.instance());
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ())?,
-        host.plugins().prepare_load(&agent, AgentLoop)?,
+        host.plugins()
+            .prepare_load(&agent, AgentLoop::new(local.into_keys()))?,
         host.plugins().prepare_load(&model_key, model)?,
-        host.plugins().prepare_load(&local_key, local.tool)?,
     ];
-    for (key, tool) in providers {
-        stages.push(host.plugins().prepare_load(&key, tool)?);
+    for (key, group) in providers {
+        stages.push(host.plugins().prepare_load(&key, group)?);
     }
     if !placements.is_empty() {
         options
@@ -114,30 +177,19 @@ pub fn compose(
             .or_default()
             .grants
             .extend(environment_grants(&placements));
-        stages.push(host.plugins().prepare_load(
-            &routes_key,
-            EnvironmentRoutes {
-                environments: placements.into_keys().collect(),
-            },
-        )?);
+        stages.push(
+            host.plugins().prepare_load(
+                &routes_key,
+                EnvironmentRoutes {
+                    environments: placements
+                        .into_iter()
+                        .map(|(environment, tools)| (environment, tools.into_keys().collect()))
+                        .collect(),
+                },
+            )?,
+        );
     }
     let candidate = host.prepare(stages, options, "agent-harness", |_| Ok(()))?;
     host.publish(candidate)?;
     Ok(host)
-}
-
-fn select(options: &mut BuildOptions, import: Key, offer: Key, producer: Key, path: &str) {
-    options
-        .imports
-        .allow
-        .as_mut()
-        .expect("explicit host selection policy")
-        .insert((import.clone(), offer.clone()));
-    options.imports.selections.insert(import, offer);
-    options
-        .composition
-        .entry(producer)
-        .or_default()
-        .grants
-        .insert(Footprint::Component(path.into()));
 }

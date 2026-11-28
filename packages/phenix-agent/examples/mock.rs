@@ -104,12 +104,19 @@ mod tests {
             "agent-prompt",
             "agent-tool-invocation",
             "agent-tool-router",
+            "agent-local-tool-router",
             "agent-tool-feedback",
             "model",
             "tool",
         ]);
         if advanced {
-            expected.extend(["agent-environment-router", "remote-tool", "sandbox-tool"]);
+            expected.extend([
+                "agent-environment-router",
+                "agent-env-remote-tools",
+                "agent-env-sandbox-tools",
+                "remote-tool",
+                "sandbox-tool",
+            ]);
         }
         let actual: std::collections::BTreeSet<_> = compiled
             .processes()

@@ -262,7 +262,7 @@ pub fn options() -> BuildOptions {
                 Key::new(MODEL_PLUGIN, "model"),
             ),
             (
-                Key::new(LOOP_PLUGIN, "env-local"),
+                Key::new(LOOP_PLUGIN, "tool-lookup"),
                 Key::new(TOOL_PLUGIN, "tool"),
             ),
         ]
@@ -280,7 +280,9 @@ pub fn options() -> BuildOptions {
     options.composition.insert(
         Key::new(LOOP_PLUGIN, "main"),
         CompositionPolicy {
-            grants: loop_grants(MODEL_PATH, TOOL_PATH).into_iter().collect(),
+            grants: loop_grants(MODEL_PATH, &[("lookup".into(), TOOL_PATH.into())].into())
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
     );
@@ -317,7 +319,7 @@ fn compose_mock(
     mut options: BuildOptions,
     environments: BTreeMap<String, MockTool>,
 ) -> Result<KernelHost, CallbackError> {
-    use crate::environment::{EnvironmentRoutes, environment_grants};
+    use crate::environment::{EnvironmentRoutes, environment_grants, environment_tool_import};
 
     const ROUTES_PLUGIN: &str = "mock-environment-routes";
     let mut catalog = PluginCatalog::new();
@@ -339,7 +341,10 @@ fn compose_mock(
             .as_mut()
             .expect("mock import policy")
             .insert((
-                Key::new(ROUTES_PLUGIN, format!("env-{environment}")),
+                Key::new(
+                    ROUTES_PLUGIN,
+                    environment_tool_import(&environment, "lookup"),
+                ),
                 Key::new(&owner, "tool"),
             ));
         options.composition.insert(
@@ -349,7 +354,10 @@ fn compose_mock(
                 ..Default::default()
             },
         );
-        placements.insert(environment, provider.path.clone());
+        placements.insert(
+            environment,
+            BTreeMap::from([("lookup".into(), provider.path.clone())]),
+        );
         providers.push((key, provider));
     }
     let routes_key = if placements.is_empty() {
@@ -360,7 +368,8 @@ fn compose_mock(
     let mut host = KernelHost::new(catalog.instance());
     let mut stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
-        host.plugins().prepare_load(&loop_key, AgentLoop)?,
+        host.plugins()
+            .prepare_load(&loop_key, AgentLoop::new(["lookup"]))?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
@@ -375,12 +384,17 @@ fn compose_mock(
                 ..Default::default()
             },
         );
-        stages.push(host.plugins().prepare_load(
-            &key,
-            EnvironmentRoutes {
-                environments: placements.into_keys().collect(),
-            },
-        )?);
+        stages.push(
+            host.plugins().prepare_load(
+                &key,
+                EnvironmentRoutes {
+                    environments: placements
+                        .into_iter()
+                        .map(|(environment, tools)| (environment, tools.into_keys().collect()))
+                        .collect(),
+                },
+            )?,
+        );
     }
     let candidate = host.prepare(stages, options, "mock-agent", |_| Ok(()))?;
     host.publish(candidate)?;
