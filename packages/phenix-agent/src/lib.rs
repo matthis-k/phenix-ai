@@ -25,6 +25,7 @@ pub mod frontend;
 pub mod harness;
 pub mod local;
 pub mod mock;
+pub mod model;
 pub mod tools;
 pub use tools::ToolValue;
 

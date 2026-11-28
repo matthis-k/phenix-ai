@@ -2,12 +2,13 @@
 //! No network, credentials, shell, external effects, or durable history.
 
 use crate::{
-    AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
-    ModelInput, TOOL_CONTRACT, ToolCall, ToolInvocation, ToolOutcome, loop_grants, model_contract,
+    AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, ModelInput, TOOL_CONTRACT, ToolCall,
+    ToolInvocation, ToolOutcome, loop_grants,
+    model::{Model, ModelBackend, ModelOutput, ModelStream},
     tool_contract,
 };
 use phenix_graph::{
-    ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step, Value,
+    ComponentDef, Failure as GraphFailure,
     compose::{Edit, Footprint, NetworkPatch},
     runtime::RequestFailurePolicy,
 };
@@ -15,11 +16,7 @@ use phenix_kernel::{
     BuildOptions, CallbackError, CompositionPolicy, Contribution, Key, host::KernelHost,
 };
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::{
-    collections::{BTreeMap, VecDeque},
-    num::NonZeroUsize,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
 
 pub mod acp;
 
@@ -57,67 +54,39 @@ impl Default for MockModel {
     }
 }
 
-struct ModelProcess {
-    config: MockModel,
-    pending: VecDeque<ProcessEmission>,
-    active: bool,
-}
-
-impl Process for ModelProcess {
-    fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
-        if let Some(emission) = self.pending.pop_front() {
-            return Ok(Step::Emit(emission));
-        }
-        if self.active {
-            self.active = false;
-            return Ok(Step::Complete);
-        }
-        let Some(value) = context.take("input") else {
-            return Ok(if context.is_eos("input") {
-                Step::Finished
-            } else {
-                Step::Complete
-            });
-        };
-        let input = value
-            .borrow::<ModelInput>()
-            .ok_or_else(|| GraphFailure::application_message("model expected a typed input"))?;
-        self.active = true;
-        match input {
+impl ModelBackend for MockModel {
+    fn respond(&mut self, input: ModelInput) -> Result<ModelStream, GraphFailure> {
+        let response = match input {
             ModelInput::Prompt(prompt) if prompt == "list-tools" => {
                 let names = self
-                    .config
                     .available_tools
                     .keys()
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ");
-                self.answer(&names);
+                self.answer(&names)
             }
-            ModelInput::Prompt(prompt) if self.config.use_tool => {
+            ModelInput::Prompt(prompt) if self.use_tool => {
                 let call = ToolCall {
                     name: self
-                        .config
                         .tool_by_prompt
-                        .get(prompt)
+                        .get(&prompt)
                         .cloned()
                         .unwrap_or_else(|| "lookup".into()),
                     arguments: self
-                        .config
                         .arguments_by_prompt
-                        .get(prompt)
+                        .get(&prompt)
                         .cloned()
                         .unwrap_or_else(|| prompt.clone().into()),
                     environment: self
-                        .config
                         .environment_by_prompt
-                        .get(prompt)
-                        .unwrap_or(&self.config.environment)
+                        .get(&prompt)
+                        .unwrap_or(&self.environment)
                         .clone(),
                 };
-                self.call_tool(call);
+                outputs([ModelOutput::Tool(call)])
             }
-            ModelInput::Prompt(prompt) => self.answer(prompt),
+            ModelInput::Prompt(prompt) => self.answer(&prompt),
             ModelInput::ToolResult(result) => match result.outcome() {
                 ToolOutcome::Succeeded { output } => {
                     let next = result
@@ -125,77 +94,42 @@ impl Process for ModelProcess {
                         .call()
                         .arguments
                         .as_text()
-                        .and_then(|text| self.config.follow_up_by_prompt.get(text))
+                        .and_then(|text| self.follow_up_by_prompt.get(text))
                         .cloned();
                     if let Some(next) = next {
-                        self.call_tool(next);
+                        outputs([ModelOutput::Tool(next)])
                     } else {
-                        self.answer(output.as_text().unwrap_or("structured tool result"));
+                        self.answer(output.as_text().unwrap_or("structured tool result"))
                     }
                 }
-                ToolOutcome::Failed { output, reason } => {
-                    self.answer(&format!(
-                        "tool failed: {reason}: {}",
-                        output.as_text().unwrap_or("structured tool result")
-                    ));
-                }
+                ToolOutcome::Failed { output, reason } => self.answer(&format!(
+                    "tool failed: {reason}: {}",
+                    output.as_text().unwrap_or("structured tool result")
+                )),
             },
-        }
-        Ok(Step::Emit(
-            self.pending.pop_front().expect("one or more emissions"),
-        ))
+        };
+        Ok(response)
     }
 }
 
-impl ModelProcess {
-    fn call_tool(&mut self, call: ToolCall) {
-        self.pending.push_back(ProcessEmission::new(
-            "events",
-            Value::local(AgentEvent::ToolRequested(call.clone())),
-        ));
-        self.pending
-            .push_back(ProcessEmission::new("tool", Value::local(call)));
-    }
+fn outputs<const N: usize>(items: [ModelOutput; N]) -> ModelStream {
+    Box::new(items.into_iter().map(Ok))
+}
 
-    fn answer(&mut self, text: &str) {
-        for event in [
-            AgentEvent::Delta(format!("{}: ", self.config.label)),
-            AgentEvent::Delta(text.into()),
-            AgentEvent::Completed,
-        ] {
-            self.pending
-                .push_back(ProcessEmission::new("events", Value::local(event)));
-        }
+impl MockModel {
+    fn answer(&self, text: &str) -> ModelStream {
+        outputs([
+            ModelOutput::Delta(format!("{}: ", self.label)),
+            ModelOutput::Delta(text.into()),
+            ModelOutput::Complete,
+        ])
     }
 }
 
 impl PluginInstance for MockModel {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        let contract = model_contract();
         let config = self.clone();
-        let definition = ComponentDef::primitive(
-            contract.required().clone(),
-            Arc::new(move || ModelProcess {
-                config: config.clone(),
-                pending: VecDeque::new(),
-                active: false,
-            }),
-        )
-        .claim(&contract)
-        .expect("mock model uses the canonical interface");
-        Contribution::new(
-            "main",
-            NetworkPatch::new([Edit::Add {
-                path: MODEL_PATH.into(),
-                definition: Arc::new(definition),
-            }]),
-        )
-        .offer(
-            "model",
-            MODEL_PATH,
-            Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT),
-        )
-        .register(registrar)
+        Model::new(MODEL_PATH, move || config.clone()).contribute(registrar)
     }
 }
 

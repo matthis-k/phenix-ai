@@ -6,7 +6,7 @@ use phenix_agent::{
     frontend::run_turn,
     harness::{self, Environment},
     local::{FILES, READ_TEXT, ReadableFiles, read_text},
-    mock::{MODEL_PATH, MockModel},
+    mock::MockModel,
     tools::Tool,
 };
 use phenix_graph::{ResourceGrant, ValidatedResourceSet};
@@ -78,7 +78,7 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
             ..Default::default()
         }
     };
-    harness::compose(model, MODEL_PATH, local, additional).unwrap()
+    harness::compose(model, local, additional).unwrap()
 }
 
 fn turn(host: &KernelHost, prompt: &str) -> Vec<AgentEvent> {
@@ -143,7 +143,6 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
             assert!(catalog["local"].is_empty());
             MockModel::default()
         },
-        MODEL_PATH,
         Environment::new(),
         BTreeMap::new(),
     )
@@ -156,11 +155,6 @@ fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
     let duplicate = Environment::new()
         .with_tool(Tool::new("echo", Ok::<String, String>))
         .with_tool(Tool::new("echo", Ok::<String, String>));
-    let result = harness::compose(
-        |_| MockModel::default(),
-        MODEL_PATH,
-        duplicate,
-        BTreeMap::new(),
-    );
+    let result = harness::compose(|_| MockModel::default(), duplicate, BTreeMap::new());
     assert!(result.is_err());
 }
