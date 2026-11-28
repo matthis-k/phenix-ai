@@ -157,10 +157,23 @@ jobs:
                       for scope in ("single", "overlap4")
                       for idle in (0, 16, 64, 128)}
           assert set(cases) == expected, cases.keys()
+          # Calibrated from #1436 exact head
+          # 3ee996c6198ebff961a776395f0491e442aa1848 (seven samples
+          # per case). Both readiness modes fit the same rounded ceilings.
+          # Requested heap includes setup and teardown; it excludes allocator
+          # overhead and is not a portable process-memory SLO.
+          ceilings = {
+              "single": {0: 80000, 16: 185000, 64: 480000, 128: 900000},
+              "overlap4": {0: 130000, 16: 270000, 64: 690000, 128: 1270000},
+          }
           for name, rows in sorted(cases.items()):
               assert [row["sample"] for row in rows] == list(range(7)), name
+              _, _, scope, idle = name.split("_")
+              limit = ceilings[scope][int(idle)]
               peaks = [row["peak_live_requested_bytes"] for row in rows]
-              print(f"{name}: peak_requested_bytes={max(peaks)} residual=0")
+              assert max(peaks) <= limit, (name, peaks, limit)
+              print(f"{name}: peak_requested_bytes={max(peaks)} "
+                    f"limit={limit} residual=0")
           PY
       - name: Upload raw counts, environment and source provenance
         if: always()
