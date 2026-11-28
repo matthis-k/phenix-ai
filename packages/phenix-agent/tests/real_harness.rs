@@ -92,6 +92,7 @@ fn missing_capability_is_a_domain_failure_and_budget_cleanup_allows_reuse() {
     let host = fixture(false, false);
     let generation = host.active().unwrap();
     assert!(run_turn(&generation, "source".into(), 0, |_| {}).is_err());
+    assert!(run_turn(&generation, "source".into(), 1, |_| {}).is_err());
     assert!(turn(&host, "source").contains(&AgentEvent::Delta(
         include_str!("../Cargo.toml").into()
     )));

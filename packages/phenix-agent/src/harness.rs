@@ -62,7 +62,10 @@ pub fn compose(
         Key::new(LOCAL, local.tool.name()),
         &local_path,
     );
-    options.execution.resources.insert(local_path.clone(), local.resources);
+    options
+        .execution
+        .resources
+        .insert(local_path.clone(), local.resources);
     options
         .composition
         .entry(Key::new(LOOP_PLUGIN, "main"))
@@ -83,7 +86,12 @@ pub fn compose(
             Key::new(&owner, provider.tool.name()),
             &path,
         );
-        if options.execution.resources.insert(path.clone(), provider.resources).is_some() {
+        if options
+            .execution
+            .resources
+            .insert(path.clone(), provider.resources)
+            .is_some()
+        {
             return Err(std::io::Error::other("duplicate environment placement").into());
         }
         placements.insert(environment, path);
@@ -118,13 +126,7 @@ pub fn compose(
     Ok(host)
 }
 
-fn select(
-    options: &mut BuildOptions,
-    import: Key,
-    offer: Key,
-    producer: Key,
-    path: &str,
-) {
+fn select(options: &mut BuildOptions, import: Key, offer: Key, producer: Key, path: &str) {
     options
         .imports
         .allow

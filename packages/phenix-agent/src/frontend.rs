@@ -58,7 +58,9 @@ pub fn run_turn(
                         return Err(std::io::Error::other(failure.summary()).into());
                     }
                     let mut events = Vec::new();
-                    while let Some(packet) = session.take_bound_request_output(request, &capture)? {
+                    while let Some(packet) =
+                        session.take_bound_request_output(request, &capture)?
+                    {
                         session.validate_bound_capture(request, &capture, &packet)?;
                         events.push(
                             packet
@@ -95,14 +97,14 @@ pub fn run_turn(
         }
         Err(std::io::Error::other("turn step budget exhausted").into())
     })();
-    if result.is_err() && !released {
-        if let Err(error) = cleanup(generation, request) {
-            return Err(std::io::Error::other(format!(
-                "{}; request cleanup failed: {error}",
-                result.unwrap_err()
+    match result {
+        Err(error) if !released => match cleanup(generation, request) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(std::io::Error::other(format!(
+                "{error}; request cleanup failed: {cleanup_error}"
             ))
-            .into());
-        }
+            .into()),
+        },
+        result => result,
     }
-    result
 }
