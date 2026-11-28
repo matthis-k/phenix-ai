@@ -5,7 +5,7 @@
 
 use crate::{AgentEvent, CONTRACTS_PLUGIN, MODEL_CONTRACT, PROMPT_CONTRACT, capacity, port};
 use phenix_graph::{
-    ComponentDef,
+    ComponentDef, InputKey, OutputKey,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
 };
 use phenix_kernel::{Contribution, Key};
@@ -49,10 +49,9 @@ impl PluginInstance for MockAcp {
             .import("prompt", Key::new(CONTRACTS_PLUGIN, PROMPT_CONTRACT))
             .import("model", Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT))
             .prepare_patch(|context| {
-                let prompt = context.bind_import("prompt")?;
-                let input = prompt.input::<String>("input")?;
-                let model = context.bind_import("model")?;
-                let events = model.output::<AgentEvent>("events")?;
+                let input = context.import_input("prompt", InputKey::<String>::new("input"))?;
+                let events =
+                    context.import_output("model", OutputKey::<AgentEvent>::new("events"))?;
                 Ok(NetworkPatch::new([
                     Edit::add(
                         DECODE,
@@ -60,7 +59,7 @@ impl PluginInstance for MockAcp {
                     ),
                     Edit::add(ENCODE, ComponentDef::map(translate)),
                     context.connect_bound_input((DECODE, "output"), &input, capacity())?,
-                    context.connect_bound_output(&events, port(ENCODE, "input"), capacity())?,
+                    context.connect_bound_output(&events, (ENCODE, "input"), capacity())?,
                     Edit::expose_input(INPUT, [(DECODE, "input")], capacity()),
                     Edit::expose_output(OUTPUT, (ENCODE, "output")),
                 ]))
