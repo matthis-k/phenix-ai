@@ -150,6 +150,7 @@ fn independent_tool_failure_returns_typed_feedback_without_failing_the_graph() {
 
 fn environment_host(
     model: MockModel,
+    local: impl phenix_plugin::PluginInstance + 'static,
     remote: impl phenix_plugin::PluginInstance + 'static,
     mut options: phenix_kernel::BuildOptions,
 ) -> phenix_kernel::host::KernelHost {
@@ -185,9 +186,7 @@ fn environment_host(
             )
             .unwrap(),
         host.plugins().prepare_load(&model_key, model).unwrap(),
-        host.plugins()
-            .prepare_load(&local_key, MockTool::default())
-            .unwrap(),
+        host.plugins().prepare_load(&local_key, local).unwrap(),
         host.plugins().prepare_load(&remote_key, remote).unwrap(),
     ];
     options.imports.allow.as_mut().unwrap().insert((
@@ -230,6 +229,7 @@ fn independent_environment_extension_rewires_the_basic_loop() {
             .into(),
             ..MockModel::default()
         },
+        MockTool::default(),
         MockTool {
             path: TEST_REMOTE_PATH.into(),
             prefix: "remote".into(),
@@ -281,6 +281,7 @@ fn one_turn_can_chain_tools_across_environments() {
             .into(),
             ..MockModel::default()
         },
+        MockTool::default(),
         MockTool {
             path: TEST_REMOTE_PATH.into(),
             prefix: "remote".into(),
@@ -469,10 +470,12 @@ fn stalled_capture_does_not_replay_tool_effects_and_can_resume_or_cancel() {
 }
 
 #[test]
-fn suspended_remote_request_does_not_block_independent_local_request() {
-    use phenix_agent::{CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, tool_contract};
+fn suspended_remote_request_does_not_block_or_reset_independent_local_provider() {
+    use phenix_agent::{
+        CONTRACTS_PLUGIN, TOOL_CONTRACT, ToolInvocation, ToolOutcome, tool_contract,
+    };
     use phenix_graph::{
-        ComponentDef, Failure as GraphFailure, Process, ProcessContext, Step,
+        ComponentDef, Failure as GraphFailure, Process, ProcessContext, ProcessEmission, Step,
         compose::{Edit, NetworkPatch},
         runtime::RequestQueuePolicy,
     };
@@ -518,6 +521,62 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
         }
     }
 
+    #[derive(Default)]
+    struct StatefulLocal {
+        calls: usize,
+        emitted: bool,
+    }
+
+    impl Process for StatefulLocal {
+        fn step(&mut self, context: &mut ProcessContext) -> Result<Step, GraphFailure> {
+            if self.emitted {
+                self.emitted = false;
+                return Ok(Step::Complete);
+            }
+            let Some(value) = context.take("input") else {
+                return Ok(if context.is_eos("input") {
+                    Step::Finished
+                } else {
+                    Step::Complete
+                });
+            };
+            let invocation = value.borrow::<ToolInvocation>().unwrap().clone();
+            self.calls += 1;
+            let output = format!("lookup({})#{}", invocation.call().prompt, self.calls);
+            self.emitted = true;
+            Ok(Step::Emit(ProcessEmission::new(
+                "output",
+                Value::local(invocation.complete(ToolOutcome::Succeeded { output })),
+            )))
+        }
+    }
+
+    struct Local;
+    impl PluginInstance for Local {
+        fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+            let contract = tool_contract();
+            let definition = ComponentDef::primitive(
+                contract.required().clone(),
+                Arc::new(StatefulLocal::default),
+            )
+            .claim(&contract)
+            .unwrap();
+            Contribution::new(
+                "main",
+                NetworkPatch::new([Edit::Add {
+                    path: mock::TOOL_PATH.into(),
+                    definition: Arc::new(definition),
+                }]),
+            )
+            .offer(
+                "tool",
+                mock::TOOL_PATH,
+                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            )
+            .register(registrar)
+        }
+    }
+
     let mut options = mock::options();
     options.execution.max_requests = NonZeroUsize::new(2).unwrap();
     options.execution.request_queue_policy = RequestQueuePolicy::BoundedLanes;
@@ -526,6 +585,7 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
             environment_by_prompt: [("slow".into(), "remote".into())].into(),
             ..MockModel::default()
         },
+        Local,
         Remote,
         options,
     );
@@ -598,7 +658,7 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
                         environment: "local".into(),
                     }),
                     AgentEvent::Delta("mock: ".into()),
-                    AgentEvent::Delta("lookup(fast)".into()),
+                    AgentEvent::Delta("lookup(fast)#1".into()),
                     AgentEvent::Completed,
                 ]
             );
@@ -622,8 +682,16 @@ fn suspended_remote_request_does_not_block_independent_local_request() {
         })
         .unwrap();
     assert_eq!(
-        turn(&generation, "after").last(),
-        Some(&AgentEvent::Completed)
+        turn(&generation, "after"),
+        [
+            AgentEvent::ToolRequested(ToolCall {
+                prompt: "after".into(),
+                environment: "local".into(),
+            }),
+            AgentEvent::Delta("mock: ".into()),
+            AgentEvent::Delta("lookup(after)#2".into()),
+            AgentEvent::Completed,
+        ]
     );
 }
 
