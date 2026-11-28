@@ -295,43 +295,40 @@ impl Readiness {
 
     /// Both execution and passive inspection evaluate the same rule.
     fn passive_selection(&self, snapshot: &ReadinessSnapshot) -> Option<Vec<String>> {
-        Some(match self.declaration.rule.as_ref()? {
-            SelectionRule::Any => snapshot
-                .heads
-                .iter()
-                .filter(|head| head.available)
-                .take(1)
-                .map(|head| head.port.clone())
-                .collect(),
-            SelectionRule::All => {
-                if snapshot.heads.iter().all(|head| head.available) {
-                    snapshot
-                        .heads
-                        .iter()
-                        .map(|head| head.port.clone())
-                        .collect()
-                } else {
-                    vec![]
-                }
-            }
-            SelectionRule::AtLeast(n) => {
-                let selected: Vec<_> = snapshot
-                    .heads
-                    .iter()
-                    .filter(|head| head.available)
-                    .take(n.get())
-                    .map(|head| head.port.clone())
-                    .collect();
-                if selected.len() == n.get() {
-                    selected
-                } else {
-                    vec![]
-                }
-            }
+        let rule = self.declaration.rule.as_ref()?;
+        Some(match rule {
             SelectionRule::Optional { required, optional } => {
                 select_optional(required, optional, snapshot)
             }
+            rule => select_available(
+                packet_requirement(rule, snapshot.heads.len()).expect("data-only rule"),
+                snapshot
+                    .heads
+                    .iter()
+                    .filter(|head| head.available)
+                    .map(|head| head.port.clone()),
+            ),
         })
+    }
+}
+
+// The data-only rules require the first N available ports in selection order.
+// Keep the rule independent of whether a caller needs names or queue indices.
+fn packet_requirement(rule: &SelectionRule, port_count: usize) -> Option<usize> {
+    match rule {
+        SelectionRule::Any => Some(1),
+        SelectionRule::All => Some(port_count),
+        SelectionRule::AtLeast(n) => Some(n.get()),
+        SelectionRule::Optional { .. } => None,
+    }
+}
+
+fn select_available<T>(required: usize, available: impl Iterator<Item = T>) -> Vec<T> {
+    let selected: Vec<_> = available.take(required).collect();
+    if selected.len() == required {
+        selected
+    } else {
+        vec![]
     }
 }
 
@@ -541,16 +538,6 @@ impl NetworkSession {
         order: &[usize],
         request: Option<RequestId>,
     ) -> ReadinessSnapshot {
-        self.snapshot_with_closure(index, order, request, true)
-    }
-
-    fn snapshot_with_closure(
-        &self,
-        index: usize,
-        order: &[usize],
-        request: Option<RequestId>,
-        include_closure: bool,
-    ) -> ReadinessSnapshot {
         let p = &self.processes[index];
         let correlated = p.waiting_policy.as_ref().unwrap_or(&p.policy).correlated();
         ReadinessSnapshot {
@@ -561,7 +548,7 @@ impl NetworkSession {
                 .map(|port| InputHead {
                     port: p.inputs[*port].name.clone(),
                     available: self.packet_for(index, *port, request, correlated).is_some(),
-                    closed: include_closure && self.input_closed_for(index, *port, request),
+                    closed: self.input_closed_for(index, *port, request),
                 })
                 .collect(),
         }
@@ -649,21 +636,34 @@ impl NetworkSession {
         }
         let order = self.selection_order(index);
         let policy = p.waiting_policy.as_ref().unwrap_or(&p.policy);
-        // Idle Any/All/AtLeast select only available packets. Scoped closure
-        // proofs cannot affect that decision; global EOS is handled below.
-        // Keep complete snapshots for staged waits, Optional, opaque policies
-        // and passive diagnostics, where closure is observable.
-        let include_closure = p.handoff.state() == HandoffState::WaitingInput
-            || !matches!(
-                policy.declaration().rule.as_ref(),
-                Some(SelectionRule::Any | SelectionRule::All | SelectionRule::AtLeast(_))
-            );
+        // Idle data-only rules need neither named snapshots nor closure
+        // proofs. Reserve actual queue positions using the same rule as
+        // passive selection. Staged, optional and opaque policies still
+        // receive full snapshots, including closure and correlation.
+        let required = if p.handoff.state() == HandoffState::WaitingInput {
+            None
+        } else {
+            policy
+                .declaration()
+                .rule
+                .as_ref()
+                .and_then(|rule| packet_requirement(rule, order.len()))
+        };
         for request in self.selection_candidates(index, &order) {
-            let mut snapshot = if include_closure {
-                self.selection_snapshot(index, &order, request)
-            } else {
-                self.snapshot_with_closure(index, &order, request, false)
-            };
+            if let Some(required) = required {
+                let ports = select_available(
+                    required,
+                    order.iter().filter_map(|&port| {
+                        self.packet_for(index, port, request, policy.correlated())
+                            .map(|queue| (port, Some(queue)))
+                    }),
+                );
+                if !ports.is_empty() {
+                    return Ok(Reservation { ports, request });
+                }
+                continue;
+            }
+            let mut snapshot = self.selection_snapshot(index, &order, request);
             if let Some(error) = self.staged_selection_error(index, &snapshot) {
                 return Err(error);
             }
@@ -767,6 +767,45 @@ pub(crate) fn validate_policy<'a>(
 #[cfg(test)]
 mod packet_only_selection_tests {
     use super::*;
+
+    #[test]
+    fn data_only_selection_preserves_rotated_order_and_threshold() {
+        for cursor in 0..4 {
+            let order: Vec<_> = (0..4).map(|offset| (cursor + offset) % 4).collect();
+            for mask in 0..16 {
+                let available: Vec<_> = order
+                    .iter()
+                    .copied()
+                    .filter(|port| mask & (1 << port) != 0)
+                    .collect();
+                for required in 0..=4 {
+                    let expected = if available.len() >= required {
+                        available[..required].to_vec()
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(
+                        select_available(
+                            required,
+                            order
+                                .iter()
+                                .copied()
+                                .filter(|port| mask & (1 << port) != 0),
+                        ),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn any_stops_after_first_available_port() {
+        let available = std::iter::once(7).chain(std::iter::from_fn(|| {
+            panic!("Any must not inspect a later available port")
+        }));
+        assert_eq!(select_available(1, available), vec![7]);
+    }
 
     #[test]
     fn data_only_rules_ignore_closure_for_every_three_port_snapshot() {
