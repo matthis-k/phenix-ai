@@ -3,8 +3,8 @@
 //! not need to know the names, implementations or grants of local tools.
 
 use crate::{
-    CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_ROUTER, ToolOutcome,
-    ToolInvocation, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
+    CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_ROUTER, ToolInvocation,
+    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
 };
 use phenix_graph::{
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
@@ -39,10 +39,8 @@ impl PluginInstance for LocalTools {
         let mut contribution =
             Contribution::new("main", NetworkPatch::new([])).after([Key::new(LOOP_PLUGIN, "main")]);
         for name in &names {
-            contribution = contribution.import(
-                tool_port(name),
-                Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
-            );
+            contribution =
+                contribution.import(tool_port(name), Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT));
         }
         contribution
             .prepare(move |context| {
