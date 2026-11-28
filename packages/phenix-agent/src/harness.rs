@@ -5,25 +5,35 @@ use crate::{
     AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
     environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     loop_grants,
-    model::selection::ModelSelection,
-    tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
+    model::{
+        context::{ModelContext, Skill},
+        selection::ModelSelection,
+    },
+    tools::{SelectedTool, Tool, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
 use phenix_kernel::{BuildOptions, CallbackError, Key, OfferedComponent, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
-use std::{collections::BTreeMap, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
 
 const MODEL: &str = "harness-model";
 const ROUTES: &str = "harness-environments";
-
-/// A native model catalog of the host's selected tools, grouped by environment.
-pub type ToolCatalog = BTreeMap<String, BTreeMap<String, ToolDescriptor>>;
 
 /// Host-selected tool declarations and grants. Tool code cannot select its
 /// own capabilities. Empty environments reject every named call.
 #[derive(Default)]
 pub struct Environment {
     tools: Vec<(Tool, ValidatedResourceSet)>,
+    plugins: Vec<ToolPlugin>,
+}
+
+struct ToolPlugin {
+    owner: String,
+    instance: Box<dyn PluginInstance>,
+    selected: BTreeMap<String, ValidatedResourceSet>,
 }
 
 impl Environment {
@@ -39,16 +49,23 @@ impl Environment {
         self.tools.push((tool, resources));
         self
     }
-}
 
-struct ToolGroup(Vec<Tool>);
-
-impl PluginInstance for ToolGroup {
-    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        for tool in &self.0 {
-            tool.clone().register(registrar)?;
-        }
-        Ok(())
+    /// Select ordinary named tool offers from an independent plugin.
+    /// Preserve the original owner and placement; only selected components
+    /// get write/resource grants. Other graph contributions need their own
+    /// explicit policy and are not silently authorized.
+    pub fn with_plugin(
+        mut self,
+        owner: impl Into<String>,
+        instance: impl PluginInstance + 'static,
+        selected: BTreeMap<String, ValidatedResourceSet>,
+    ) -> Self {
+        self.plugins.push(ToolPlugin {
+            owner: owner.into(),
+            instance: Box::new(instance),
+            selected,
+        });
+        self
     }
 }
 
@@ -62,6 +79,7 @@ pub struct Extension {
     owner: String,
     instance: Box<dyn PluginInstance>,
     policy: ExtensionPolicy,
+    skills: BTreeSet<String>,
 }
 
 impl Extension {
@@ -74,7 +92,14 @@ impl Extension {
             owner: owner.into(),
             instance: Box::new(instance),
             policy: Box::new(policy),
+            skills: BTreeSet::new(),
         }
+    }
+
+    /// Expose only this named skill from the staged plugin to the model.
+    pub fn with_skill(mut self, id: impl Into<String>) -> Self {
+        self.skills.insert(id.into());
+        self
     }
 }
 
@@ -91,7 +116,7 @@ impl PluginInstance for ExtensionInstance {
 /// single model offer from the selected revision; ambiguity is an error.
 /// Provider-specific JSON schema and transport remain the model plugin's job.
 pub fn compose<M: PluginInstance + 'static>(
-    make_model: impl FnOnce(&ToolCatalog) -> M,
+    make_model: impl FnOnce(&ModelContext) -> M,
     local: Environment,
     mut additional: BTreeMap<String, Environment>,
     extensions: Vec<Extension>,
@@ -108,7 +133,12 @@ pub fn compose<M: PluginInstance + 'static>(
     let mut extension_stages = Vec::new();
     for extension in extensions {
         let key = catalog.register(&extension.owner, Ok)?;
-        extension_stages.push((key, ExtensionInstance(extension.instance), extension.policy));
+        extension_stages.push((
+            key,
+            ExtensionInstance(extension.instance),
+            extension.policy,
+            extension.skills,
+        ));
     }
     let mut options = BuildOptions::default();
     options.execution.max_requests = NonZeroUsize::new(1).unwrap();
@@ -117,25 +147,48 @@ pub fn compose<M: PluginInstance + 'static>(
     options.imports.allow = Some(Default::default());
     let mut providers = Vec::new();
     let mut placements = BTreeMap::new();
-    let mut tool_catalog = ToolCatalog::new();
-    for (environment, configured) in additional {
-        let owner = format!("harness-env-{environment}");
-        let key = catalog.register(&owner, Ok)?;
-        let mut selected = BTreeMap::new();
-        let mut group = Vec::new();
+    for (environment, mut configured) in additional {
+        // Inline declarations are ordinary plugins too, not a second
+        // registration path or a group that erases independent provenance.
         for (tool, resources) in configured.tools {
             let name = tool.name().to_owned();
-            // A tool's placement is relative to the host's environment.
             let path = format!("tool-{}-{environment}-{}", environment.len(), tool.path());
-            let tool = tool.placement(&path);
-            let offer = Key::new(&owner, &name);
-            let selection = SelectedTool {
-                offer: offer.clone(),
-                producer: offer,
-                path: path.clone(),
-                descriptor: Some(tool.descriptor().clone()),
-            };
-            if selected.insert(name, selection).is_some() {
+            let owner = format!("inline-{}-{environment}-{name}", environment.len());
+            configured.plugins.push(ToolPlugin {
+                owner,
+                instance: Box::new(tool.placement(path)),
+                selected: BTreeMap::from([(name, resources)]),
+            });
+        }
+        placements.insert(environment.clone(), BTreeMap::new());
+        for plugin in configured.plugins {
+            let key = catalog.register(&plugin.owner, Ok)?;
+            providers.push((
+                environment.clone(),
+                key,
+                ExtensionInstance(plugin.instance),
+                plugin.selected,
+            ));
+        }
+    }
+    let mut host = KernelHost::new(catalog.instance());
+    let mut stages = vec![host.plugins().prepare_load(&contracts, ())?];
+    let mut context = ModelContext::default();
+    for (environment, key, instance, grants) in providers {
+        let stage = host.plugins().prepare_load(&key, instance)?;
+        let snapshot = stage
+            .candidate()
+            .ok_or_else(|| std::io::Error::other("selected tool plugin has no snapshot"))?;
+        let mut discovered = SelectedTool::discover([snapshot])?;
+        let selected = placements
+            .get_mut(&environment)
+            .expect("configured environment");
+        for (name, resources) in grants {
+            let tool = discovered.remove(&name).ok_or_else(|| {
+                std::io::Error::other(format!("selected tool offer missing: {name}"))
+            })?;
+            let path = tool.path.clone();
+            if selected.insert(name, tool).is_some() {
                 return Err(std::io::Error::other("duplicate tool name in environment").into());
             }
             if options
@@ -146,8 +199,11 @@ pub fn compose<M: PluginInstance + 'static>(
             {
                 return Err(std::io::Error::other("duplicate tool placement").into());
             }
-            group.push(tool);
         }
+        stages.push(stage);
+    }
+    let mut tool_placements = BTreeMap::new();
+    for (environment, selected) in placements {
         for tool in selected.values() {
             let (producer, footprint) = tool.required_component();
             options
@@ -164,18 +220,38 @@ pub fn compose<M: PluginInstance + 'static>(
                 environment_tool_import(&environment, name)
             });
         }
-        tool_catalog.insert(environment.clone(), SelectedTool::catalog(&selected)?);
-        placements.insert(
+        context
+            .tools
+            .insert(environment.clone(), SelectedTool::catalog(&selected)?);
+        tool_placements.insert(
             environment,
             selected
                 .into_iter()
                 .map(|(name, tool)| (name, tool.path))
                 .collect::<BTreeMap<_, _>>(),
         );
-        providers.push((key, ToolGroup(group)));
     }
-    let model = make_model(&tool_catalog);
-    let mut host = KernelHost::new(catalog.instance());
+
+    // Read only explicitly selected skill contributions from staged revisions.
+    // Stage before constructing the model so it receives the complete context.
+    let mut extension_policies = Vec::new();
+    for (key, instance, policy, skills) in extension_stages {
+        let stage = host.plugins().prepare_load(&key, instance)?;
+        let snapshot = stage
+            .candidate()
+            .ok_or_else(|| std::io::Error::other("selected extension has no snapshot"))?;
+        for id in skills {
+            let skill = snapshot
+                .get::<Skill>(&id)
+                .ok_or_else(|| std::io::Error::other(format!("selected skill missing: {id}")))?;
+            context
+                .skills
+                .insert(Key::new(snapshot.name(), id), (*skill).clone());
+        }
+        stages.push(stage);
+        extension_policies.push(policy);
+    }
+    let model = make_model(&context);
     let model_stage = host.plugins().prepare_load(&model_key, model)?;
     let snapshot = model_stage
         .candidate()
@@ -199,7 +275,7 @@ pub fn compose<M: PluginInstance + 'static>(
         .grants
         .insert(Footprint::Component(model_offer.path.clone()));
 
-    let local = placements
+    let local = tool_placements
         .remove("local")
         .expect("local environment inserted");
     options
@@ -208,27 +284,23 @@ pub fn compose<M: PluginInstance + 'static>(
         .or_default()
         .grants
         .extend(loop_grants(&model_offer.path, &local));
-    let mut stages = vec![
-        host.plugins().prepare_load(&contracts, ())?,
+    stages.push(
         host.plugins()
             .prepare_load(&agent, AgentLoop::new(local.into_keys()))?,
-        model_stage,
-    ];
-    for (key, group) in providers {
-        stages.push(host.plugins().prepare_load(&key, group)?);
-    }
-    if !placements.is_empty() {
+    );
+    stages.push(model_stage);
+    if !tool_placements.is_empty() {
         options
             .composition
             .entry(Key::new(ROUTES, "main"))
             .or_default()
             .grants
-            .extend(environment_grants(&placements));
+            .extend(environment_grants(&tool_placements));
         stages.push(
             host.plugins().prepare_load(
                 &routes_key,
                 EnvironmentRoutes {
-                    environments: placements
+                    environments: tool_placements
                         .into_iter()
                         .map(|(environment, tools)| (environment, tools.into_keys().collect()))
                         .collect(),
@@ -236,9 +308,8 @@ pub fn compose<M: PluginInstance + 'static>(
             )?,
         );
     }
-    for (key, instance, policy) in extension_stages {
+    for policy in extension_policies {
         policy(&mut options, &model_offer)?;
-        stages.push(host.plugins().prepare_load(&key, instance)?);
     }
     let candidate = host.prepare(stages, options, "agent-harness", |_| Ok(()))?;
     host.publish(candidate)?;
