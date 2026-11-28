@@ -159,10 +159,7 @@ impl PluginInstance for LocalTools {
                 )?;
                 let mut edits = vec![
                     Edit::add(ROUTER, router),
-                    Edit::disconnect(
-                        (TOOL_ROUTER, "env-local"),
-                        (base_path, base_input.name()),
-                    ),
+                    Edit::disconnect((TOOL_ROUTER, "env-local"), (base_path, base_input.name())),
                     Edit::connect((TOOL_ROUTER, "env-local"), (ROUTER, "input"), capacity()),
                     Edit::connect((ROUTER, UNAVAILABLE), (TOOL_FEEDBACK, "input"), capacity()),
                 ];
