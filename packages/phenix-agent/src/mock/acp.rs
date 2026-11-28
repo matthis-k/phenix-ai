@@ -72,11 +72,7 @@ impl PluginInstance for MockAcp {
                             to: port(prompt.path(), input.name()),
                             capacity: capacity(),
                         }),
-                        context.connect_bound_output(
-                            &events,
-                            port(ENCODE, "input"),
-                            capacity(),
-                        )?,
+                        context.connect_bound_output(&events, port(ENCODE, "input"), capacity())?,
                         Edit::ExposeInput {
                             name: INPUT.into(),
                             targets: vec![port(DECODE, "input")],
