@@ -2,13 +2,13 @@
 //! Both profiles use the same local loop; P2 adds ordinary environment routes.
 
 use crate::{
-    AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
+    AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, MODEL_CONTRACT,
     environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     loop_grants,
     tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
-use phenix_kernel::{BuildOptions, CallbackError, Key, host::KernelHost};
+use phenix_kernel::{BuildOptions, CallbackError, Key, component_offers, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
@@ -52,12 +52,11 @@ impl PluginInstance for ToolGroup {
 }
 
 /// Compose the explicitly selected tools and supply their native metadata to
-/// the selected model factory. No model or tool is privileged. The model must
-/// offer the model contract from contribution "main", offer "model".
+/// the selected model factory. No model or tool is privileged. Resolve the
+/// single model offer from the selected revision; ambiguity is an error.
 /// Provider-specific JSON schema and transport remain the model plugin's job.
 pub fn compose<M: PluginInstance + 'static>(
     make_model: impl FnOnce(&ToolCatalog) -> M,
-    model_path: &str,
     local: Environment,
     mut additional: BTreeMap<String, Environment>,
 ) -> Result<KernelHost, CallbackError> {
@@ -75,22 +74,6 @@ pub fn compose<M: PluginInstance + 'static>(
     options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
     options.execution.request_failure_policy = RequestFailurePolicy::RestartAffectedProcess;
     options.imports.allow = Some(Default::default());
-    let model_import = Key::new(LOOP_PLUGIN, "model");
-    let model_offer = Key::new(MODEL, "model");
-    options
-        .imports
-        .allow
-        .as_mut()
-        .expect("explicit host policy")
-        .insert((model_import.clone(), model_offer.clone()));
-    options.imports.selections.insert(model_import, model_offer);
-    options
-        .composition
-        .entry(Key::new(MODEL, "main"))
-        .or_default()
-        .grants
-        .insert(Footprint::Component(model_path.into()));
-
     let mut providers = Vec::new();
     let mut placements = BTreeMap::new();
     let mut tool_catalog = ToolCatalog::new();
@@ -150,6 +133,40 @@ pub fn compose<M: PluginInstance + 'static>(
         );
         providers.push((key, ToolGroup(group)));
     }
+    let model = make_model(&tool_catalog);
+    let mut host = KernelHost::new(catalog.instance());
+    let model_stage = host.plugins().prepare_load(&model_key, model)?;
+    let snapshot = model_stage
+        .candidate()
+        .ok_or_else(|| std::io::Error::other("selected model revision has no snapshot"))?;
+    let model_contract = Key::new(CONTRACTS_PLUGIN, MODEL_CONTRACT);
+    let mut offers = component_offers(&snapshot)
+        .into_iter()
+        .filter(|offer| offer.contract == model_contract);
+    let model_offer = offers
+        .next()
+        .ok_or_else(|| std::io::Error::other("selected model offers no model contract"))?;
+    if offers.next().is_some() {
+        return Err(std::io::Error::other("selected model has ambiguous offers").into());
+    }
+    let model_import = Key::new(LOOP_PLUGIN, "model");
+    options
+        .imports
+        .allow
+        .as_mut()
+        .expect("explicit host policy")
+        .insert((model_import.clone(), model_offer.offer.clone()));
+    options
+        .imports
+        .selections
+        .insert(model_import, model_offer.offer);
+    options
+        .composition
+        .entry(model_offer.producer)
+        .or_default()
+        .grants
+        .insert(Footprint::Component(model_offer.path.clone()));
+
     let local = placements
         .remove("local")
         .expect("local environment inserted");
@@ -158,14 +175,12 @@ pub fn compose<M: PluginInstance + 'static>(
         .entry(Key::new(LOOP_PLUGIN, "main"))
         .or_default()
         .grants
-        .extend(loop_grants(model_path, &local));
-    let model = make_model(&tool_catalog);
-    let mut host = KernelHost::new(catalog.instance());
+        .extend(loop_grants(&model_offer.path, &local));
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ())?,
         host.plugins()
             .prepare_load(&agent, AgentLoop::new(local.into_keys()))?,
-        host.plugins().prepare_load(&model_key, model)?,
+        model_stage,
     ];
     for (key, group) in providers {
         stages.push(host.plugins().prepare_load(&key, group)?);
