@@ -46,29 +46,6 @@ fn compose(advanced: bool) -> KernelHost {
     let environment = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let mut options = mock::options();
-    let selection = LocalTools::configure(
-        &mut options,
-        LOCAL_ROUTES,
-        "lookup",
-        [
-            (
-                "lookup".into(),
-                SelectedTool {
-                    offer: Key::new(mock::TOOL_PLUGIN, "tool"),
-                    path: mock::TOOL_PATH.into(),
-                },
-            ),
-            (
-                EXTRA.into(),
-                SelectedTool {
-                    offer: Key::new(EXTRA, EXTRA),
-                    path: EXTRA.into(),
-                },
-            ),
-        ]
-        .into(),
-    )
-    .unwrap();
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
         host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
@@ -100,10 +77,25 @@ fn compose(advanced: bool) -> KernelHost {
             .prepare_load(&local, MockTool::default())
             .unwrap(),
         host.plugins().prepare_load(&extra, ()).unwrap(),
+    ];
+    // Discover only the provider snapshots chosen by the host. No tool
+    // placement or extra tool offer key is repeated in the routing policy.
+    let snapshots = host.plugins().candidate_snapshots(&stages).unwrap();
+    let mut providers = SelectedTool::discover(
+        snapshots
+            .into_iter()
+            .filter(|snapshot| [mock::TOOL_PLUGIN, EXTRA].contains(&snapshot.name())),
+    )
+    .unwrap();
+    // The original fixture advertises "tool"; the host selects its alias.
+    let base = providers.remove("tool").unwrap();
+    providers.insert("lookup".into(), base);
+    let selection = LocalTools::configure(&mut options, LOCAL_ROUTES, "lookup", providers).unwrap();
+    stages.push(
         host.plugins()
             .prepare_load(&local_routes, selection)
             .unwrap(),
-    ];
+    );
     options.composition.insert(
         Key::new(EXTRA, EXTRA),
         CompositionPolicy {
