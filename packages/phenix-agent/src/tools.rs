@@ -7,6 +7,7 @@ use crate::{
     ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router, port,
 };
 use phenix_graph::{
+    ComponentDef,
     compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
     network::ConnectionDef,
 };
@@ -16,6 +17,59 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+
+/// A named synchronous tool using the current mock text argument contract.
+/// Registration derives the component, claim, offer and invocation correlation.
+/// A domain error is returned as tool feedback rather than a scheduler failure.
+/// Complex tools can register their own component under the same contract.
+pub struct Tool {
+    name: String,
+    definition: ComponentDef,
+}
+
+impl Tool {
+    pub fn new(
+        name: impl Into<String>,
+        execute: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            definition: ComponentDef::map(move |invocation: ToolInvocation| {
+                let outcome = match execute(&invocation.call().prompt) {
+                    Ok(output) => ToolOutcome::Succeeded { output },
+                    Err(reason) => ToolOutcome::Failed {
+                        output: String::new(),
+                        reason,
+                    },
+                };
+                invocation.complete(outcome)
+            }),
+        }
+    }
+
+    /// Advanced tools can supply an ordinary graph component instead.
+    /// The same checked offer and host authorization apply.
+    pub fn from_component(name: impl Into<String>, definition: ComponentDef) -> Self {
+        Self {
+            name: name.into(),
+            definition,
+        }
+    }
+
+    /// Use the tool's name as its contribution, placement and offer identity.
+    /// Selecting and granting this contribution is a separate host decision.
+    pub fn register(self, registrar: &mut Registrar) -> Result<(), Failure> {
+        Contribution::offered_component(
+            &self.name,
+            &self.name,
+            &self.name,
+            Key::new(CONTRACTS_PLUGIN, TOOL_CONTRACT),
+            &crate::tool_contract(),
+            self.definition,
+        )?
+        .register(registrar)
+    }
+}
 
 const ROUTER: &str = "agent-local-tool-router";
 
