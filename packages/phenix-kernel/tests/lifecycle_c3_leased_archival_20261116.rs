@@ -246,3 +246,105 @@ fn archival_requests_cloned_sessions_and_jobs_keep_authority_only_in_their_owner
         assert!(application_lease.upgrade().is_none());
     }
 }
+
+#[test]
+fn publication_and_successor_execution_do_not_wait_for_an_archival_session_lease() {
+    use std::{sync::mpsc, time::Duration};
+
+    let drops = Arc::new(AtomicUsize::new(0));
+    let mut catalog = PluginCatalog::new();
+    let key = catalog
+        .register("native", |plugin: Revision| Ok(plugin))
+        .unwrap();
+    let mut host = KernelHost::new(catalog.instance());
+    let options = || {
+        let mut options = BuildOptions::default();
+        support::grant(
+            &mut options,
+            Key::new("native", "worker"),
+            [
+                Footprint::Component("worker".into()),
+                Footprint::InputExport("input".into()),
+                Footprint::OutputExport("output".into()),
+            ],
+        );
+        options.with_dispatcher(Arc::new(LocalProcessDispatcher))
+    };
+    let first = host
+        .plugins()
+        .prepare_load(
+            &key,
+            Revision {
+                increment: 10,
+                drops: drops.clone(),
+            },
+        )
+        .unwrap();
+    let candidate = host
+        .prepare(vec![first], options(), "old", |_| Ok(()))
+        .unwrap();
+    let old = host.publish(candidate).unwrap();
+    let second = host
+        .plugins()
+        .prepare_reload(
+            &key,
+            Revision {
+                increment: 100,
+                drops: drops.clone(),
+            },
+        )
+        .unwrap();
+    let candidate = host
+        .prepare(vec![second], options(), "new", |_| Ok(()))
+        .unwrap();
+
+    let (entered, entry) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let reader = old.clone();
+    let worker = std::thread::spawn(move || {
+        reader
+            .with_session(|session| {
+                session.inject_local("input", 1_i64).unwrap();
+                entered.send(()).unwrap();
+                released.recv().unwrap();
+                session.run_until_idle(16);
+                session.take_output("output").unwrap().unwrap()
+            })
+            .unwrap()
+    });
+    entry.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(old.with_session(|_| ()).is_err());
+
+    let (published, publication) = mpsc::channel();
+    let publisher = std::thread::spawn(move || {
+        let current = host.publish(candidate).unwrap();
+        current.inject("input", Value::local(2_i64)).unwrap();
+        current.run_steps(16).unwrap();
+        let packet = current
+            .with_session(|session| session.take_output("output").unwrap().unwrap())
+            .unwrap();
+        published.send(packet).unwrap();
+        (host, current)
+    });
+
+    // Always release the old owner before joining, including on timeout:
+    // a regression should fail the test rather than hang the CI runner.
+    let successor = publication.recv_timeout(Duration::from_secs(5));
+    release.send(()).unwrap();
+    let previous = worker.join().unwrap();
+    let (host, current) = publisher.join().unwrap();
+    let successor = successor.expect("publication waited for the old session lease");
+    assert_eq!(previous.value().borrow::<i64>(), Some(&11));
+    assert_eq!(successor.value().borrow::<i64>(), Some(&102));
+    assert_ne!(
+        previous.metadata().unwrap().session(),
+        successor.metadata().unwrap().session()
+    );
+    assert_eq!((old.epoch(), current.epoch()), (1, 2));
+    assert!(old.drain(1).unwrap().is_empty());
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    drop((previous, old));
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    drop((successor, host, current));
+    assert_eq!(drops.load(Ordering::SeqCst), 2);
+}
