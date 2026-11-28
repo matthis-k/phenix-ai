@@ -5,10 +5,10 @@ use phenix_agent::{
     AgentEvent,
     diagnostics::{Diagnostics, TraceRecord},
     frontend::run_turn,
-    harness::{self, Environment, Extension},
+    harness::{self, Composition, Environment, Extension},
     model::{
         ModelProfile,
-        fake::{FakeArguments, provider},
+        fake::{FakeArguments, tool_roundtrip},
     },
     tools::Tool,
 };
@@ -52,10 +52,13 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
     };
     let environment = if advanced { "reference" } else { "local" };
     let host = harness::compose(
-        |catalog| provider(catalog.clone(), environment),
+        |context| tool_roundtrip(context.clone(), environment),
         tools(),
         additional,
-        extension,
+        Composition {
+            extensions: extension,
+            ..Default::default()
+        },
     )
     .unwrap();
     let generation = host.active().unwrap();

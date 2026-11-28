@@ -4,9 +4,10 @@
 
 use super::{
     Model, ModelBackend, ModelOutput, ModelProfile, ModelStream,
+    context::ModelContext,
     status::{ProviderStatus, QuotaWindow, Usage},
 };
-use crate::{ModelInput, ToolCall, ToolOutcome, ToolValue, harness::ToolCatalog};
+use crate::{ModelInput, ToolCall, ToolOutcome, ToolValue};
 use phenix_graph::{ContractValue, Failure};
 
 #[derive(ContractValue)]
@@ -18,15 +19,22 @@ pub struct FakeArguments {
 
 #[derive(Clone)]
 struct FakeBackend {
-    catalog: ToolCatalog,
-    environment: String,
+    environment: Option<String>,
     expected: ModelProfile,
     responses: u64,
 }
 
-/// Select a known tool from the actual catalog. The profile is declared once
-/// and supplied by the normal adapter on every response.
-pub fn provider(catalog: ToolCatalog, environment: impl Into<String>) -> Model {
+/// Dump the full provider-visible context without assuming any tools or skills.
+pub fn provider(context: ModelContext) -> Model {
+    build(context, None)
+}
+
+/// Separate exercise of the structured call and feedback path.
+pub fn tool_roundtrip(context: ModelContext, environment: impl Into<String>) -> Model {
+    build(context, Some(environment.into()))
+}
+
+fn build(context: ModelContext, environment: Option<String>) -> Model {
     let profile = ModelProfile::new("fake-provider", "fake-capability-model")
         .capability("text")
         .capability("streaming")
@@ -37,12 +45,11 @@ pub fn provider(catalog: ToolCatalog, environment: impl Into<String>) -> Model {
         .capability("quota-status")
         .context_tokens(32_768);
     let backend = FakeBackend {
-        catalog,
-        environment: environment.into(),
+        environment,
         expected: profile.clone(),
         responses: 0,
     };
-    Model::new("fake-model", profile, move || backend.clone())
+    Model::new("fake-model", profile, context, move || backend.clone())
 }
 
 impl ModelBackend for FakeBackend {
@@ -50,6 +57,7 @@ impl ModelBackend for FakeBackend {
         &mut self,
         input: ModelInput,
         profile: &ModelProfile,
+        context: &ModelContext,
     ) -> Result<ModelStream, Failure> {
         if profile != &self.expected {
             return Err(Failure::application_message(
@@ -59,10 +67,17 @@ impl ModelBackend for FakeBackend {
         self.responses = self.responses.saturating_add(1);
         let report = ModelOutput::Status(fake_status(self.responses));
         let outputs = match input {
+            ModelInput::Prompt(_) if self.environment.is_none() => vec![
+                ModelOutput::Info,
+                ModelOutput::Delta(format!("{context:#?}")),
+                report,
+                ModelOutput::Complete,
+            ],
             ModelInput::Prompt(text) => {
-                let tool = self
-                    .catalog
-                    .get(&self.environment)
+                let environment = self.environment.as_ref().expect("roundtrip mode");
+                let tool = context
+                    .tools
+                    .get(environment)
                     .and_then(|tools| tools.get("repeat"))
                     .ok_or_else(|| {
                         Failure::application_message("selected tool absent from model catalog")
@@ -78,7 +93,7 @@ impl ModelBackend for FakeBackend {
                     report,
                     ModelOutput::Tool(ToolCall {
                         name: tool.name.clone(),
-                        environment: self.environment.clone(),
+                        environment: environment.clone(),
                         arguments: ToolValue::new(&FakeArguments { text, count: 2 }),
                     }),
                 ]
