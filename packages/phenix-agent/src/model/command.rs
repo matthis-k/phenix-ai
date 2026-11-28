@@ -39,11 +39,7 @@ impl CommandBackend {
 }
 
 impl ModelBackend for CommandBackend {
-    fn respond(
-        &mut self,
-        input: ModelInput,
-        _: &ModelProfile,
-    ) -> Result<ModelStream, Failure> {
+    fn respond(&mut self, input: ModelInput, _: &ModelProfile) -> Result<ModelStream, Failure> {
         let ModelInput::Prompt(prompt) = input else {
             return Err(failure("command text model does not support tool feedback"));
         };

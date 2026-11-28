@@ -70,7 +70,7 @@ fn adapter_patch(prompt: &str, model: &str) -> Result<NetworkPatch, NetworkError
     let encode = patch.add(ENCODE, ComponentDef::filter_map(translate));
     patch.connect(&decode.output, &prompt.input(InputKey::new("input"))?)?;
     patch.connect(
-        &model.output(OutputKey::new("events"))?,
+        &model.output(OutputKey::<AgentEvent>::new("events"))?,
         &encode.input(InputKey::new("input"))?,
     )?;
     patch.expose_input(INPUT, &decode.input);

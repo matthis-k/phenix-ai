@@ -69,8 +69,7 @@ impl Extension {
     pub fn new(
         owner: impl Into<String>,
         instance: impl PluginInstance + 'static,
-        policy: impl FnOnce(&mut BuildOptions, &OfferedComponent) -> Result<(), CallbackError>
-        + 'static,
+        policy: impl FnOnce(&mut BuildOptions, &OfferedComponent) -> Result<(), CallbackError> + 'static,
     ) -> Self {
         Self {
             owner: owner.into(),

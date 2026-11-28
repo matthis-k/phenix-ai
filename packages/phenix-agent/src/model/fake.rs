@@ -45,7 +45,9 @@ impl ModelBackend for FakeBackend {
         profile: &ModelProfile,
     ) -> Result<ModelStream, Failure> {
         if profile != &self.expected {
-            return Err(Failure::application_message("incorrect runtime model profile"));
+            return Err(Failure::application_message(
+                "incorrect runtime model profile",
+            ));
         }
         let outputs = match input {
             ModelInput::Prompt(text) => {
@@ -53,9 +55,13 @@ impl ModelBackend for FakeBackend {
                     .catalog
                     .get(&self.environment)
                     .and_then(|tools| tools.get("repeat"))
-                    .ok_or_else(|| Failure::application_message("selected tool absent from model catalog"))?;
+                    .ok_or_else(|| {
+                        Failure::application_message("selected tool absent from model catalog")
+                    })?;
                 if tool.arguments != FakeArguments::schema() || tool.result != String::schema() {
-                    return Err(Failure::application_message("incorrect tool catalog schemas"));
+                    return Err(Failure::application_message(
+                        "incorrect tool catalog schemas",
+                    ));
                 }
                 vec![
                     ModelOutput::Info,

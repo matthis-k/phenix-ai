@@ -6,7 +6,10 @@ use phenix_agent::{
     diagnostics::{Diagnostics, TraceRecord},
     frontend::run_turn,
     harness::{self, Environment, Extension},
-    model::{ModelProfile, fake::{FakeArguments, provider}},
+    model::{
+        ModelProfile,
+        fake::{FakeArguments, provider},
+    },
     tools::Tool,
 };
 use phenix_graph::ContractValue;
@@ -56,9 +59,11 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
     )
     .unwrap();
     let generation = host.active().unwrap();
-    let snapshot = host.plugins().snapshots().find(|snapshot| {
-        snapshot.get::<ModelProfile>("model").is_some()
-    }).unwrap();
+    let snapshot = host
+        .plugins()
+        .snapshots()
+        .find(|snapshot| snapshot.get::<ModelProfile>("model").is_some())
+        .unwrap();
     let expected = snapshot.get::<ModelProfile>("model").unwrap();
     assert_eq!(expected.provider, "fake-provider");
     assert_eq!(expected.model, "fake-capability-model");
@@ -84,8 +89,16 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
 
     let trace = records.lock().unwrap().clone();
     if logging {
-        assert_eq!(trace.iter().filter(|r| matches!(r, TraceRecord::Model(p) if p == &*expected)).count(), 2);
-        assert!(trace.contains(&TraceRecord::Prompt { bytes: "secret-test-payload".len() }));
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|r| matches!(r, TraceRecord::Model(p) if p == &*expected))
+                .count(),
+            2
+        );
+        assert!(trace.contains(&TraceRecord::Prompt {
+            bytes: "secret-test-payload".len()
+        }));
         assert!(trace.contains(&TraceRecord::Requested {
             name: "repeat".into(),
             environment: environment.into(),

@@ -9,7 +9,7 @@ use crate::{
 };
 use phenix_graph::{
     ComponentDef,
-    compose::{Edit, Footprint, NetworkPatch},
+    compose::{Edit, NetworkPatch},
 };
 use phenix_kernel::{BuildOptions, Contribution, ImportSpec, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
@@ -23,9 +23,14 @@ const FEEDBACK: ImportSpec = ImportSpec::new("feedback", CONTRACTS_PLUGIN, FEEDB
 /// deliberately absent; names and schemas are provider/tool metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TraceRecord {
-    Prompt { bytes: usize },
+    Prompt {
+        bytes: usize,
+    },
     Model(ModelProfile),
-    Requested { name: String, environment: String },
+    Requested {
+        name: String,
+        environment: String,
+    },
     Dispatch {
         name: String,
         environment: String,
@@ -37,7 +42,9 @@ pub enum TraceRecord {
         succeeded: bool,
         result_schema: String,
     },
-    Delta { bytes: usize },
+    Delta {
+        bytes: usize,
+    },
     Completed,
 }
 
@@ -150,7 +157,10 @@ impl Diagnostics {
             .entry(Key::new(owner, "main"))
             .or_default()
             .grants
-            .extend(self.patch(crate::PROMPT_ADAPTER, model_path, crate::TOOL_FEEDBACK).footprints());
+            .extend(
+                self.patch(crate::PROMPT_ADAPTER, model_path, crate::TOOL_FEEDBACK)
+                    .footprints(),
+            );
     }
 }
 
