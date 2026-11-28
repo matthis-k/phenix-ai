@@ -258,6 +258,26 @@ fn correlated_candidate_and_packet_selection_match_full_scans() {
 }
 
 #[test]
+fn reachability_registers_each_root_and_handles_cycles_and_diamonds() {
+    let edges = [(0, 1), (0, 2), (1, 3), (2, 3), (3, 0), (4, 2)];
+    let mut s = network(6, &edges).start();
+    let request = s.begin_request(None).unwrap();
+    s.note_request_root(request, 0);
+    assert_eq!(s.requests[&request].reachable, BTreeSet::from([0, 1, 2, 3]));
+    for root in [3, 1, 0, 2] {
+        s.note_request_root(request, root);
+        assert_eq!(s.requests[&request].reachable, BTreeSet::from([0, 1, 2, 3]));
+    }
+    s.note_request_root(request, 4);
+    assert_eq!(
+        s.requests[&request].reachable,
+        BTreeSet::from([0, 1, 2, 3, 4])
+    );
+    s.note_request_root(request, 5);
+    assert_eq!(s.requests[&request].reachable.len(), 6);
+}
+
+#[test]
 fn exhaustive_small_topologies_match_original_and_own_lane_oracles() {
     let possible = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)];
     for topology in 0..64 {
