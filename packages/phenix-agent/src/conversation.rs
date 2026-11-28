@@ -54,12 +54,7 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    pub fn new(
-        session: Session,
-        address: Address,
-        max_turns: usize,
-        max_text_bytes: usize,
-    ) -> Self {
+    pub fn new(session: Session, address: Address, max_turns: usize, max_text_bytes: usize) -> Self {
         Self {
             session,
             address,
@@ -71,9 +66,9 @@ impl Conversation {
     pub fn load(&self) -> phenix_storage::Result<Vec<TurnRecord>> {
         let mut turns = Vec::new();
         for index in 0..self.max_turns {
-            let Some(turn) =
-                self.session
-                    .get(&self.address, &index.to_string(), &TurnCodec)?
+            let Some(turn) = self
+                .session
+                .get(&self.address, &index.to_string(), &TurnCodec)?
             else {
                 break;
             };
@@ -95,13 +90,16 @@ impl Conversation {
         if index >= self.max_turns {
             return Err(Error::Codec("conversation capacity exhausted".into()));
         }
-        self.session.compare_exchange(
-            &self.address,
-            &index.to_string(),
-            None,
-            turn,
-            &TurnCodec,
-        )?;
+        if index > 0
+            && self
+                .session
+                .get(&self.address, &(index - 1).to_string(), &TurnCodec)?
+                .is_none()
+        {
+            return Err(Error::Codec("conversation append would create a gap".into()));
+        }
+        self.session
+            .compare_exchange(&self.address, &index.to_string(), None, turn, &TurnCodec)?;
         Ok(())
     }
 

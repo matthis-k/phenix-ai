@@ -27,8 +27,8 @@ impl Contribution for Skill {
     }
 }
 
-/// A generation-local view. Empty environment entries are meaningful.
-/// Future conversation/history assembly belongs at the model boundary,
+/// A model-visible turn snapshot. Empty environment entries are meaningful.
+/// Selected metadata and prior history belong at the model boundary,
 /// not in the graph or plugin registries.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModelContext {
@@ -43,9 +43,7 @@ pub struct ModelContext {
 pub struct ContextSource(Arc<dyn Fn() -> Result<ModelContext, Failure> + Send + Sync>);
 
 impl ContextSource {
-    pub fn new(
-        load: impl Fn() -> Result<ModelContext, Failure> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn new(load: impl Fn() -> Result<ModelContext, Failure> + Send + Sync + 'static) -> Self {
         Self(Arc::new(load))
     }
 

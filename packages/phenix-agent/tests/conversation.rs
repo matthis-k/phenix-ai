@@ -42,6 +42,7 @@ fn reopen_storage_and_observe_previous_turn_in_actual_model_context() {
     };
     {
         let history = provision(&path);
+        assert!(history.append(1, &first).is_err());
         history.append(0, &first).unwrap();
         assert!(history.append(0, &first).is_err());
     }
@@ -80,6 +81,42 @@ fn reopen_storage_and_observe_previous_turn_in_actual_model_context() {
                 .is_err()
         );
         assert_eq!(history.load().unwrap(), turns);
+        let mut next_response = String::new();
+        history
+            .run_turn(&generation, "inspect latest history".into(), 256, |event| {
+                if let AgentEvent::Delta(text) = event {
+                    next_response.push_str(text);
+                }
+            })
+            .unwrap();
+        let latest = ModelContext {
+            history: turns,
+            ..expected
+        };
+        assert_eq!(next_response, format!("{latest:#?}"));
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn read_only_grant_does_not_allow_appending_history() {
+    let registry = Registry::new();
+    registry.mount_memory("conversation").unwrap();
+    let address = Address::parse("store://conversation/turns").unwrap();
+    registry.register(&address, TurnCodec.schema()).unwrap();
+    let session = registry.session([Grant::new(
+        Scope::Dataset(address.clone()),
+        [Operation::Read],
+    )]);
+    let history = Conversation::new(session, address, 8, 1024);
+    assert!(history.load().unwrap().is_empty());
+    let record = TurnRecord {
+        prompt: "question".into(),
+        assistant: "answer".into(),
+        used_tools: false,
+    };
+    assert!(matches!(
+        history.append(0, &record),
+        Err(phenix_storage::Error::Denied)
+    ));
 }
