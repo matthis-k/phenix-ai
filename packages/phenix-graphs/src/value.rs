@@ -723,3 +723,20 @@ fn drop_catching<T>(value: T) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod sequence_codec_tests {
+    use super::*;
+
+    #[test]
+    fn sequence_roundtrip_includes_empty_elements_and_rejects_invalid_frames() {
+        let values = vec![String::new(), "hello".to_owned(), String::new()];
+        let encoded = values.encode();
+        assert_eq!(Vec::<String>::decode(&encoded).unwrap(), values);
+        assert_ne!(Vec::<String>::schema(), Vec::<i64>::schema());
+        assert_eq!(Vec::<()>::decode(&vec![(); 3].encode()).unwrap().len(), 3);
+        assert!(Vec::<String>::decode(&[1, 2, 3]).is_err());
+        assert!(Vec::<String>::decode(&u64::MAX.to_le_bytes()).is_err());
+        assert!(Vec::<String>::decode(&encoded[..encoded.len() - 1]).is_err());
+    }
+}

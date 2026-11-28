@@ -16,6 +16,7 @@ use phenix_graph::{
 use phenix_kernel::{CallbackError, Contribution, ImportSpec, Key, host::Generation};
 use phenix_plugin::{PluginInstance, Registrar};
 use phenix_storage::{Address, Codec, Error, Schema, Session};
+use std::cell::Cell;
 
 /// An ordered exchange at a UTF-8 byte boundary in the assistant text.
 /// The failure is absent on success. No live invocation or provider handle
@@ -113,7 +114,7 @@ pub struct Conversation {
     session: Session,
     address: Address,
     max_turns: usize,
-    max_text_bytes: usize,
+    max_turn_bytes: usize,
 }
 
 impl Conversation {
@@ -121,13 +122,13 @@ impl Conversation {
         session: Session,
         address: Address,
         max_turns: usize,
-        max_text_bytes: usize,
+        max_turn_bytes: usize,
     ) -> Self {
         Self {
             session,
             address,
             max_turns,
-            max_text_bytes,
+            max_turn_bytes,
         }
     }
 
@@ -147,7 +148,7 @@ impl Conversation {
     }
 
     fn validate(&self, turn: &TurnRecord) -> phenix_storage::Result<()> {
-        if turn.encode().len() > self.max_text_bytes {
+        if turn.encode().len() > self.max_turn_bytes {
             return Err(Error::Codec("conversation turn exceeds byte limit".into()));
         }
         let mut previous = 0;
@@ -206,7 +207,7 @@ impl Conversation {
         mut emit: impl FnMut(&AgentEvent),
     ) -> Result<(), CallbackError> {
         let index = self.load()?.len();
-        if index >= self.max_turns || prompt.len() > self.max_text_bytes {
+        if index >= self.max_turns || prompt.len() > self.max_turn_bytes {
             return Err(std::io::Error::other("conversation capacity exhausted").into());
         }
         let capture = generation
@@ -215,7 +216,15 @@ impl Conversation {
         let mut assistant = String::new();
         let mut requested = Vec::new();
         let mut completed = Vec::new();
-        let mut overflow = false;
+        let bytes = Cell::new(prompt.len());
+        let overflow = Cell::new(false);
+        let account = |amount: usize| {
+            bytes.set(bytes.get().saturating_add(amount));
+            if bytes.get() > self.max_turn_bytes {
+                overflow.set(true);
+            }
+            !overflow.get()
+        };
         run_turn_observed(
             generation,
             prompt.clone(),
@@ -224,15 +233,14 @@ impl Conversation {
             |event| {
                 match event {
                     AgentEvent::Delta(text) => {
-                        if assistant.len().saturating_add(text.len()) > self.max_text_bytes {
-                            overflow = true;
-                        }
-                        if !overflow {
+                        if account(text.len()) {
                             assistant.push_str(text);
                         }
                     }
                     AgentEvent::ToolRequested(call) => {
-                        requested.push((assistant.len() as u64, call.clone()));
+                        if account(call.encode().len()) {
+                            requested.push((assistant.len() as u64, call.clone()));
+                        }
                     }
                     _ => {}
                 }
@@ -244,16 +252,22 @@ impl Conversation {
                     return Err(std::io::Error::other("expected correlated tool result").into());
                 };
                 let (output, failure) = match result.outcome() {
-                    ToolOutcome::Succeeded { output } => (output.clone(), None),
-                    ToolOutcome::Failed { output, reason } => {
-                        (output.clone(), Some(reason.clone()))
-                    }
+                    ToolOutcome::Succeeded { output } => (output, None),
+                    ToolOutcome::Failed { output, reason } => (output, Some(reason)),
                 };
-                completed.push((result.invocation().call().clone(), output, failure));
+                if account(
+                    output.encode().len().saturating_add(failure.map_or(0, String::len)),
+                ) {
+                    completed.push((
+                        result.invocation().call().clone(),
+                        output.clone(),
+                        failure.cloned(),
+                    ));
+                }
                 Ok(())
             },
         )?;
-        if overflow || requested.len() != completed.len() {
+        if overflow.get() || requested.len() != completed.len() {
             return Err(std::io::Error::other("incomplete or oversized conversation turn").into());
         }
         let mut tools = Vec::new();
