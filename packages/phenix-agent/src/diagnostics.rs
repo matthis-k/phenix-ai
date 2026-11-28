@@ -27,6 +27,7 @@ pub enum TraceRecord {
         bytes: usize,
     },
     Model(ModelProfile),
+    ProviderStatus(crate::model::status::ProviderReport),
     Requested {
         name: String,
         environment: String,
@@ -89,6 +90,9 @@ impl Diagnostics {
                 ComponentDef::sink(move |event: &AgentEvent| {
                     observe_model(match event {
                         AgentEvent::ModelInfo(profile) => TraceRecord::Model(profile.clone()),
+                        AgentEvent::ProviderStatus(report) => {
+                            TraceRecord::ProviderStatus(report.clone())
+                        }
                         AgentEvent::ToolRequested(call) => TraceRecord::Requested {
                             name: call.name.clone(),
                             environment: call.environment.clone(),

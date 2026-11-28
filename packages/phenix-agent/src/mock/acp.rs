@@ -37,7 +37,7 @@ pub enum Message {
 
 fn translate(event: AgentEvent) -> Option<Message> {
     Some(match event {
-        AgentEvent::ModelInfo(_) => return None,
+        AgentEvent::ModelInfo(_) | AgentEvent::ProviderStatus(_) => return None,
         AgentEvent::Delta(text) => Message::AgentMessageChunk(text),
         AgentEvent::ToolRequested(call) => Message::ToolCall {
             title: call.arguments.as_text().unwrap_or(&call.name).to_owned(),

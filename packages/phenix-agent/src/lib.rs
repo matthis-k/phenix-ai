@@ -104,6 +104,7 @@ impl ToolResult {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
     ModelInfo(model::ModelProfile),
+    ProviderStatus(model::status::ProviderReport),
     ToolRequested(ToolCall),
     Delta(String),
     Completed,
