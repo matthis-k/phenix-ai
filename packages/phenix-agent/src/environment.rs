@@ -2,7 +2,8 @@
 //! dispatch as the local loop. The extension never edits local tool selection.
 
 use super::{
-    LOOP_PLUGIN, TOOL_INVOCATION, TOOL_ROUTER, UNAVAILABLE, capacity, environment_port, tool_router,
+    LOOP_PLUGIN, TOOL_INVOCATION, TOOL_ROUTER, UNAVAILABLE, capacity, environment_port,
+    tool_router,
     tools::{bind_tools, declare_tools, named_edges, named_grants, named_router},
 };
 use phenix_graph::compose::{Edit, Footprint, NetworkPatch};
@@ -83,7 +84,9 @@ fn route_edges<'a>(environments: impl Iterator<Item = &'a String>) -> Vec<Edit> 
 }
 
 /// Exact required writes for the host's selected environments and placements.
-pub fn environment_grants(environments: &BTreeMap<String, BTreeMap<String, String>>) -> Vec<Footprint> {
+pub fn environment_grants(
+    environments: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Vec<Footprint> {
     let mut grants = vec![Footprint::Component(ROUTER.into())];
     grants.extend(NetworkPatch::new(route_edges(environments.keys())).footprints());
     for (environment, tools) in environments {

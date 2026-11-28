@@ -1,8 +1,8 @@
 //! Typed tool registration and shared named dispatch for each environment.
 
 use crate::{
-    CONTRACTS_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, ToolInvocation,
-    ToolOutcome, ToolResult, UNAVAILABLE, capacity, invocation_router,
+    CONTRACTS_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, ToolInvocation, ToolOutcome, ToolResult,
+    UNAVAILABLE, capacity, invocation_router,
 };
 use phenix_graph::{
     ComponentDef, ContractValue, Schema,
