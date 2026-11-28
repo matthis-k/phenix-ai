@@ -252,18 +252,90 @@ pub fn host_with_options(
     tool: impl PluginInstance + 'static,
     options: BuildOptions,
 ) -> Result<KernelHost, CallbackError> {
+    compose_mock(model, tool, options, BTreeMap::new())
+}
+
+/// Compose a mock loop with additional independently selected tool environments.
+/// The local provider, model and base loop are unchanged. The fixture supplies
+/// exact grants for these configured mock placements, not for arbitrary plugins.
+pub fn host_with_environments(
+    model: MockModel,
+    environments: BTreeMap<String, MockTool>,
+) -> Result<KernelHost, CallbackError> {
+    compose_mock(model, MockTool::default(), options(), environments)
+}
+
+fn compose_mock(
+    model: impl PluginInstance + 'static,
+    tool: impl PluginInstance + 'static,
+    mut options: BuildOptions,
+    environments: BTreeMap<String, MockTool>,
+) -> Result<KernelHost, CallbackError> {
+    use crate::environment::{EnvironmentRoutes, environment_grants};
+
+    const ROUTES_PLUGIN: &str = "mock-environment-routes";
     let mut catalog = PluginCatalog::new();
     let contracts_key = catalog.register(CONTRACTS_PLUGIN, |_: ()| Ok(AgentContracts))?;
     let loop_key = catalog.register(LOOP_PLUGIN, Ok)?;
     let model_key = catalog.register(MODEL_PLUGIN, Ok)?;
     let tool_key = catalog.register(TOOL_PLUGIN, Ok)?;
+    let mut providers = Vec::new();
+    let mut placements = BTreeMap::new();
+    for (environment, provider) in environments {
+        if environment == "local" {
+            return Err(std::io::Error::other("local is already provided by the base loop").into());
+        }
+        let owner = format!("mock-env-{environment}");
+        let key = catalog.register(&owner, Ok)?;
+        options
+            .imports
+            .allow
+            .as_mut()
+            .expect("mock import policy")
+            .insert((
+                Key::new(ROUTES_PLUGIN, format!("env-{environment}")),
+                Key::new(&owner, "tool"),
+            ));
+        options.composition.insert(
+            Key::new(&owner, "main"),
+            CompositionPolicy {
+                grants: [Footprint::Component(provider.path.clone())].into(),
+                ..Default::default()
+            },
+        );
+        placements.insert(environment, provider.path.clone());
+        providers.push((key, provider));
+    }
+    let routes_key = if placements.is_empty() {
+        None
+    } else {
+        Some(catalog.register(ROUTES_PLUGIN, Ok)?)
+    };
     let mut host = KernelHost::new(catalog.instance());
-    let stages = vec![
+    let mut stages = vec![
         host.plugins().prepare_load(&contracts_key, ())?,
         host.plugins().prepare_load(&loop_key, AgentLoop)?,
         host.plugins().prepare_load(&model_key, model)?,
         host.plugins().prepare_load(&tool_key, tool)?,
     ];
+    for (key, provider) in providers {
+        stages.push(host.plugins().prepare_load(&key, provider)?);
+    }
+    if let Some(key) = routes_key {
+        options.composition.insert(
+            Key::new(ROUTES_PLUGIN, "main"),
+            CompositionPolicy {
+                grants: environment_grants(&placements).into_iter().collect(),
+                ..Default::default()
+            },
+        );
+        stages.push(host.plugins().prepare_load(
+            &key,
+            EnvironmentRoutes {
+                environments: placements.into_keys().collect(),
+            },
+        )?);
+    }
     let candidate = host.prepare(stages, options, "mock-agent", |_| Ok(()))?;
     host.publish(candidate)?;
     Ok(host)

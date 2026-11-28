@@ -194,6 +194,13 @@
           '';
         };
         kernel = test "kernel" [ "phenix-kernel" ] "--all-targets";
+        agent-construction = mkRust {
+          name = "agent-construction";
+          packages = [ "phenix-agent" ];
+          command = ''
+            cargo test --locked --offline -p phenix-agent --example mock -- --nocapture
+          '';
+        };
         derived = test "derived" [ "phenix-storage-graph" ] "--test derived --test derived_plugins";
         no-default = mkRust {
           name = "no-default";
