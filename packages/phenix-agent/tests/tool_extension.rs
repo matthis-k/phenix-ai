@@ -2,17 +2,12 @@
 //! and local dispatch contribution run with and without P2's wrapper.
 
 use phenix_agent::{
-    AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, PROMPT,
-    ToolCall,
+    AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, PROMPT, ToolCall,
     environment::{EnvironmentRoutes, environment_grants},
     mock::{self, MockModel, MockTool},
-    tools::{LocalTools, Tool, local_tool_grants},
+    tools::{LocalTools, SelectedTool, Tool},
 };
-use phenix_graph::{
-    InputKey, OutputKey,
-    compose::Footprint,
-    runtime::RequestStatus,
-};
+use phenix_graph::{InputKey, OutputKey, compose::Footprint, runtime::RequestStatus};
 use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 
@@ -26,7 +21,14 @@ struct Uppercase;
 
 impl PluginInstance for Uppercase {
     fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
-        Tool::new(EXTRA, |text| Ok(text.to_uppercase())).register(registrar)
+        Tool::new(EXTRA, |text| {
+            if text == "denied" {
+                Err("denied".into())
+            } else {
+                Ok(text.to_uppercase())
+            }
+        })
+        .register(registrar)
     }
 }
 
@@ -44,6 +46,29 @@ fn compose(advanced: bool) -> KernelHost {
     let environment = catalog.register(ENVIRONMENT, Ok).unwrap();
     let mut host = KernelHost::new(catalog.instance());
     let mut options = mock::options();
+    let selection = LocalTools::configure(
+        &mut options,
+        LOCAL_ROUTES,
+        "lookup",
+        [
+            (
+                "lookup".into(),
+                SelectedTool {
+                    offer: Key::new(mock::TOOL_PLUGIN, "tool"),
+                    path: mock::TOOL_PATH.into(),
+                },
+            ),
+            (
+                EXTRA.into(),
+                SelectedTool {
+                    offer: Key::new(EXTRA, EXTRA),
+                    path: EXTRA.into(),
+                },
+            ),
+        ]
+        .into(),
+    )
+    .unwrap();
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
         host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
@@ -53,6 +78,7 @@ fn compose(advanced: bool) -> KernelHost {
                 MockModel {
                     tool_by_prompt: [
                         ("hello".into(), "uppercase".into()),
+                        ("denied".into(), "uppercase".into()),
                         ("unknown".into(), "unavailable".into()),
                     ]
                     .into(),
@@ -75,46 +101,13 @@ fn compose(advanced: bool) -> KernelHost {
             .unwrap(),
         host.plugins().prepare_load(&extra, ()).unwrap(),
         host.plugins()
-            .prepare_load(
-                &local_routes,
-                LocalTools {
-                    base: "lookup".into(),
-                    additional: ["uppercase".into()].into(),
-                },
-            )
+            .prepare_load(&local_routes, selection)
             .unwrap(),
     ];
-    // Identical host approvals for the P1 tool extension in both profiles.
-    options.imports.allow.as_mut().unwrap().extend([
-        (
-            Key::new(LOCAL_ROUTES, "tool-lookup"),
-            Key::new(mock::TOOL_PLUGIN, "tool"),
-        ),
-        (
-            Key::new(LOCAL_ROUTES, "tool-uppercase"),
-            Key::new(EXTRA, EXTRA),
-        ),
-    ]);
     options.composition.insert(
         Key::new(EXTRA, EXTRA),
         CompositionPolicy {
             grants: [Footprint::Component(EXTRA.into())].into(),
-            ..Default::default()
-        },
-    );
-    options.composition.insert(
-        Key::new(LOCAL_ROUTES, "main"),
-        CompositionPolicy {
-            grants: local_tool_grants(
-                mock::TOOL_PATH,
-                &[
-                    ("lookup".into(), mock::TOOL_PATH.into()),
-                    ("uppercase".into(), EXTRA.into()),
-                ]
-                .into(),
-            )
-            .into_iter()
-            .collect(),
             ..Default::default()
         },
     );
@@ -221,6 +214,7 @@ fn p2_preserves_the_same_p1_tool_extension_without_adapter_changes() {
     for (prompt, name, answer) in [
         ("hello", "uppercase", "HELLO"),
         ("ordinary", "lookup", "lookup(ordinary)"),
+        ("denied", "uppercase", "tool failed: denied: "),
         ("unknown", "unavailable", "tool failed: tool unavailable: "),
         ("hello", "uppercase", "HELLO"),
     ] {
