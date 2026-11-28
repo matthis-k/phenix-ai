@@ -8,7 +8,7 @@ use phenix_agent::{
     harness::{self, Environment, Extension},
     model::{
         ModelProfile,
-        fake::{FakeArguments, provider},
+        fake::{FakeArguments, tool_roundtrip},
     },
     tools::Tool,
 };
@@ -52,7 +52,7 @@ fn scenario(advanced: bool, logging: bool) -> (Vec<AgentEvent>, Vec<TraceRecord>
     };
     let environment = if advanced { "reference" } else { "local" };
     let host = harness::compose(
-        |catalog| provider(catalog.clone(), environment),
+        |context| tool_roundtrip(context.clone(), environment),
         tools(),
         additional,
         extension,

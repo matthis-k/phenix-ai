@@ -10,10 +10,12 @@ use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::{collections::BTreeSet, sync::Arc};
 
 pub mod command;
+pub mod context;
 pub mod fake;
 pub mod selection;
 pub mod status;
 
+use context::ModelContext;
 use status::{ProviderReport, ProviderStatus};
 
 /// Advertised metadata, not authorization. Capability names are open;
@@ -76,6 +78,7 @@ pub trait ModelBackend: Send + 'static {
         &mut self,
         input: ModelInput,
         profile: &ModelProfile,
+        context: &ModelContext,
     ) -> Result<ModelStream, GraphFailure>;
 }
 
@@ -91,14 +94,17 @@ impl Model {
     pub fn new<B: ModelBackend>(
         path: impl Into<String>,
         profile: ModelProfile,
+        context: ModelContext,
         factory: impl Fn() -> B + Send + Sync + 'static,
     ) -> Self {
         let runtime_profile = profile.clone();
+        let context = Arc::new(context);
         let definition = ComponentDef::primitive(
             model_contract().required().clone(),
             Arc::new(move || ModelProcess {
                 backend: factory(),
                 profile: runtime_profile.clone(),
+                context: context.clone(),
                 state: State::Idle,
             }),
         );
@@ -137,6 +143,7 @@ enum State {
 struct ModelProcess<B> {
     backend: B,
     profile: ModelProfile,
+    context: Arc<ModelContext>,
     state: State,
 }
 
@@ -154,7 +161,7 @@ impl<B: ModelBackend> Process for ModelProcess<B> {
                 .borrow::<ModelInput>()
                 .ok_or_else(|| GraphFailure::application_message("model expected typed input"))?
                 .clone();
-            self.state = State::Streaming(self.backend.respond(input, &self.profile)?);
+            self.state = State::Streaming(self.backend.respond(input, &self.profile, &self.context)?);
         }
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Idle => unreachable!("initialized above"),

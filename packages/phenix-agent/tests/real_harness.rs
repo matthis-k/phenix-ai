@@ -7,6 +7,7 @@ use phenix_agent::{
     harness::{self, Environment},
     local::{FILES, READ_TEXT, ReadableFiles, read_text},
     mock::MockModel,
+    model::context::ModelContext,
     tools::Tool,
 };
 use phenix_graph::{ResourceGrant, ValidatedResourceSet};
@@ -42,7 +43,8 @@ fn fixture(advanced: bool, denied: bool) -> KernelHost {
     } else {
         BTreeMap::new()
     };
-    let model = |catalog: &harness::ToolCatalog| {
+    let model = |context: &ModelContext| {
+        let catalog = &context.tools;
         assert_eq!(catalog["local"].len(), 2);
         assert!(catalog["local"].contains_key(READ_TEXT));
         assert!(catalog["local"].contains_key("uppercase"));
@@ -139,8 +141,8 @@ fn missing_capability_is_a_domain_failure_and_budget_cleanup_allows_reuse() {
 #[test]
 fn empty_and_duplicate_tool_sets_have_explicit_behavior() {
     let host = harness::compose(
-        |catalog| {
-            assert!(catalog["local"].is_empty());
+        |context| {
+            assert!(context.tools["local"].is_empty());
             MockModel::default()
         },
         Environment::new(),

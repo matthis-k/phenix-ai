@@ -4,7 +4,7 @@
 use crate::{
     AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN, ModelInput, TOOL_CONTRACT, ToolCall,
     ToolInvocation, ToolOutcome, loop_grants,
-    model::{Model, ModelBackend, ModelOutput, ModelProfile, ModelStream},
+    model::{Model, ModelBackend, ModelOutput, ModelProfile, ModelStream, context::ModelContext},
     tool_contract,
 };
 use phenix_graph::{
@@ -59,6 +59,7 @@ impl ModelBackend for MockModel {
         &mut self,
         input: ModelInput,
         _: &ModelProfile,
+        _: &ModelContext,
     ) -> Result<ModelStream, GraphFailure> {
         let response = match input {
             ModelInput::Prompt(prompt) if prompt == "list-tools" => {
@@ -138,6 +139,7 @@ impl PluginInstance for MockModel {
             ModelProfile::new("mock", &self.label)
                 .capability("text")
                 .capability("tools"),
+            ModelContext::default(),
             move || config.clone(),
         )
         .contribute(registrar)

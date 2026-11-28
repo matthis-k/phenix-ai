@@ -17,10 +17,11 @@ fn fixture(advanced: bool, response_limit: usize) -> phenix_kernel::host::Kernel
         BTreeMap::new()
     };
     harness::compose(
-        |_| {
+        |context| {
             Model::new(
                 "command-provider",
                 ModelProfile::new("command", "cat").capability("text"),
+                context.clone(),
                 move || backend.clone(),
             )
         },
