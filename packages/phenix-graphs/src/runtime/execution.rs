@@ -379,10 +379,17 @@ impl NetworkSession {
                 }
             }
             Ok(Step::WaitInputs(policy)) => {
-                // Custom or group-closure readiness may progress without a
-                // physical packet; keep this process polled on every drive.
-                self.always_poll.insert(index);
+                // The declaration and input interface are immutable for the
+                // lifetime of this wait. Validate once, before polling.
+                let validation = self.validate_policy(index, &policy);
                 self.processes[index].waiting_policy = Some(policy);
+                if let Err(error) = validation {
+                    self.fail_process(index, error);
+                } else {
+                    // Custom or group-closure readiness may progress without a
+                    // physical packet; keep this process polled on every drive.
+                    self.always_poll.insert(index);
+                }
             }
             Ok(Step::WaitWake) => {}
             Ok(Step::Finished) => self.finish(index),
