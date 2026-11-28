@@ -493,6 +493,86 @@ fn compose_dense_equal_priority_conflict<const N: usize>() {
     black_box(composer.current());
 }
 
+/// Separate end-to-end incremental publication from canonical compilation of
+/// the resulting declaration. Neither sample includes setup or validation.
+fn q2_recomposition(leaves: usize) {
+    let definition = Arc::new(ComponentDef::map(|n: i64| n));
+    let mut nested = NetworkBuilder::new();
+    for index in 0..leaves {
+        nested
+            .add(format!("leaf{index:04}"), definition.clone())
+            .unwrap();
+    }
+    let mut base = NetworkBuilder::new();
+    base.add(
+        "nested",
+        Arc::new(ComponentDef::composite(nested.build().unwrap())),
+    )
+    .unwrap();
+    let worker = base.add("worker", definition).unwrap();
+    base.expose_input("in", worker.input::<i64>("input").unwrap(), one())
+        .unwrap();
+    base.expose_output("out", worker.output::<i64>("output").unwrap())
+        .unwrap();
+    let base = base.build().unwrap();
+    let mut publication_us = Vec::new();
+    let mut canonical_us = Vec::new();
+    for iteration in 0..9 {
+        let mut composer = Composer::new(base.clone()).unwrap();
+        let registration = Registration::new(
+            "replacement",
+            [],
+            0,
+            GraphOrigin::default(),
+            [Footprint::Component("worker".into())],
+            NetworkPatch::new([Edit::Replace {
+                path: "worker".into(),
+                definition: Arc::new(ComponentDef::map(|n: i64| n + 1)),
+            }]),
+        );
+        let start = Instant::now();
+        composer.register([registration]).unwrap();
+        let publication = start.elapsed().as_micros();
+        let start = Instant::now();
+        let canonical = composer.current().network().compile().unwrap();
+        let compilation = start.elapsed().as_micros();
+        let incremental = composer.current().compiled();
+        assert_eq!(incremental.processes().len(), leaves + 1);
+        assert_eq!(incremental.connections(), canonical.connections());
+        assert_eq!(incremental.inputs(), canonical.inputs());
+        assert_eq!(incremental.outputs(), canonical.outputs());
+        for (actual, expected) in incremental.processes().iter().zip(canonical.processes()) {
+            assert_eq!(actual.path(), expected.path());
+            assert_eq!(actual.interface(), expected.interface());
+            assert_eq!(actual.origin(), expected.origin());
+        }
+        for compiled in [incremental.clone(), canonical] {
+            let mut session = compiled.start();
+            session.inject("in", Value::local(1_i64)).unwrap();
+            // Unconnected nested processes can each consume EOS before the
+            // worker gets its turn. Allow their finite cleanup in validation.
+            let report = session.run_until_idle(leaves * 4 + 32);
+            assert!(!report.budget_exhausted);
+            assert!(session.failure().is_none());
+            assert_eq!(
+                session
+                    .take_output("out")
+                    .unwrap()
+                    .unwrap()
+                    .value()
+                    .borrow::<i64>(),
+                Some(&2)
+            );
+        }
+        if iteration >= 2 {
+            publication_us.push(publication);
+            canonical_us.push(compilation);
+        }
+    }
+    println!("q2_root_replace{leaves}: incremental_publication_us={publication_us:?}");
+    println!("q2_root_replace{leaves}: canonical_compile_only_us={canonical_us:?}");
+}
+
 fn main() {
     let filter = std::env::args()
         .skip(1)
@@ -501,6 +581,11 @@ fn main() {
     println!(
         "native_fbp: warmup=2 samples=7; elapsed includes setup, validation and teardown; no allocation instrumentation"
     );
+    for leaves in [64, 256, 1024] {
+        if format!("q2_root_replace{leaves}").contains(&filter) {
+            q2_recomposition(leaves);
+        }
+    }
     for (name, run) in [
         ("source_map_sink_1000", pipeline as fn()),
         ("capacity1_fanout_1000_retry8", fanout_retry),
