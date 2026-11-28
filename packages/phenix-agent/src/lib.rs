@@ -17,6 +17,7 @@ use std::{collections::BTreeSet, num::NonZeroUsize, sync::Arc};
 
 pub mod environment;
 pub mod mock;
+pub mod tools;
 
 /// A turn starts with a prompt and can continue with tool feedback.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +36,7 @@ pub enum ToolOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolCall {
+    pub name: String,
     pub prompt: String,
     pub environment: String,
 }
@@ -193,7 +195,9 @@ impl PluginInstance for AgentContracts {
 pub struct AgentLoop;
 
 struct ToolRouter<T> {
-    environments: BTreeSet<String>,
+    routes: BTreeSet<String>,
+    select: fn(&ToolCall) -> &str,
+    output_port: fn(&str) -> String,
     fallback: fn(ToolInvocation) -> T,
     emitted: bool,
 }
@@ -204,17 +208,33 @@ fn tool_router<T: Send + Sync + 'static>(
     environments: BTreeSet<String>,
     fallback: fn(ToolInvocation) -> T,
 ) -> Result<ComponentDef, phenix_graph::InterfaceError> {
+    invocation_router(
+        environments,
+        |call| &call.environment,
+        environment_port,
+        fallback,
+    )
+}
+
+fn invocation_router<T: Send + Sync + 'static>(
+    routes: BTreeSet<String>,
+    select: fn(&ToolCall) -> &str,
+    output_port: fn(&str) -> String,
+    fallback: fn(ToolInvocation) -> T,
+) -> Result<ComponentDef, phenix_graph::InterfaceError> {
     let interface = Interface::new(
         [PortDef::local::<ToolInvocation>("input")],
-        environments
+        routes
             .iter()
-            .map(|name| PortDef::local::<ToolInvocation>(environment_port(name)))
+            .map(|name| PortDef::local::<ToolInvocation>(output_port(name)))
             .chain([PortDef::local::<T>(UNAVAILABLE)]),
     )?;
     Ok(ComponentDef::primitive(
         Arc::new(interface),
         Arc::new(move || ToolRouter {
-            environments: environments.clone(),
+            routes: routes.clone(),
+            select,
+            output_port,
             fallback,
             emitted: false,
         }),
@@ -238,9 +258,9 @@ impl<T: Send + Sync + 'static> Process for ToolRouter<T> {
             .borrow::<ToolInvocation>()
             .ok_or_else(|| GraphFailure::application_message("router expected a tool invocation"))?
             .clone();
-        let environment = &invocation.call().environment;
-        let (output, value) = if self.environments.contains(environment) {
-            (environment_port(environment), Value::local(invocation))
+        let route = (self.select)(invocation.call());
+        let (output, value) = if self.routes.contains(route) {
+            ((self.output_port)(route), Value::local(invocation))
         } else {
             (
                 UNAVAILABLE.into(),
