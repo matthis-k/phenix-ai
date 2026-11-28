@@ -8,7 +8,9 @@ use crate::{
     tools::{SelectedTool, Tool, ToolDescriptor, select_tools, tool_port},
 };
 use phenix_graph::{ValidatedResourceSet, compose::Footprint, runtime::RequestFailurePolicy};
-use phenix_kernel::{BuildOptions, CallbackError, Key, component_offers, host::KernelHost};
+use phenix_kernel::{
+    BuildOptions, CallbackError, Key, OfferedComponent, component_offers, host::KernelHost,
+};
 use phenix_plugin::{Failure, PluginCatalog, PluginInstance, Registrar};
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
@@ -51,6 +53,41 @@ impl PluginInstance for ToolGroup {
     }
 }
 
+/// Explicit host selection of an independent plugin and its trusted policy.
+/// The policy callback receives selected model metadata, not a runtime handle.
+/// Candidate validation still enforces every exact import and edit grant.
+type ExtensionPolicy =
+    Box<dyn FnOnce(&mut BuildOptions, &OfferedComponent) -> Result<(), CallbackError>>;
+
+pub struct Extension {
+    owner: String,
+    instance: Box<dyn PluginInstance>,
+    policy: ExtensionPolicy,
+}
+
+impl Extension {
+    pub fn new(
+        owner: impl Into<String>,
+        instance: impl PluginInstance + 'static,
+        policy: impl FnOnce(&mut BuildOptions, &OfferedComponent) -> Result<(), CallbackError>
+        + 'static,
+    ) -> Self {
+        Self {
+            owner: owner.into(),
+            instance: Box::new(instance),
+            policy: Box::new(policy),
+        }
+    }
+}
+
+struct ExtensionInstance(Box<dyn PluginInstance>);
+
+impl PluginInstance for ExtensionInstance {
+    fn contribute(&self, registrar: &mut Registrar) -> Result<(), Failure> {
+        self.0.contribute(registrar)
+    }
+}
+
 /// Compose the explicitly selected tools and supply their native metadata to
 /// the selected model factory. No model or tool is privileged. Resolve the
 /// single model offer from the selected revision; ambiguity is an error.
@@ -59,6 +96,7 @@ pub fn compose<M: PluginInstance + 'static>(
     make_model: impl FnOnce(&ToolCatalog) -> M,
     local: Environment,
     mut additional: BTreeMap<String, Environment>,
+    extensions: Vec<Extension>,
 ) -> Result<KernelHost, CallbackError> {
     if additional.contains_key("local") {
         return Err(std::io::Error::other("local environment is already selected").into());
@@ -69,6 +107,11 @@ pub fn compose<M: PluginInstance + 'static>(
     let agent = catalog.register(LOOP_PLUGIN, Ok)?;
     let model_key = catalog.register(MODEL, Ok)?;
     let routes_key = catalog.register(ROUTES, Ok)?;
+    let mut extension_stages = Vec::new();
+    for extension in extensions {
+        let key = catalog.register(&extension.owner, Ok)?;
+        extension_stages.push((key, ExtensionInstance(extension.instance), extension.policy));
+    }
     let mut options = BuildOptions::default();
     options.execution.max_requests = NonZeroUsize::new(1).unwrap();
     options.execution.capture_capacity = NonZeroUsize::new(1).unwrap();
@@ -159,10 +202,10 @@ pub fn compose<M: PluginInstance + 'static>(
     options
         .imports
         .selections
-        .insert(model_import, model_offer.offer);
+        .insert(model_import, model_offer.offer.clone());
     options
         .composition
-        .entry(model_offer.producer)
+        .entry(model_offer.producer.clone())
         .or_default()
         .grants
         .insert(Footprint::Component(model_offer.path.clone()));
@@ -203,6 +246,10 @@ pub fn compose<M: PluginInstance + 'static>(
                 },
             )?,
         );
+    }
+    for (key, instance, policy) in extension_stages {
+        policy(&mut options, &model_offer)?;
+        stages.push(host.plugins().prepare_load(&key, instance)?);
     }
     let candidate = host.prepare(stages, options, "agent-harness", |_| Ok(()))?;
     host.publish(candidate)?;

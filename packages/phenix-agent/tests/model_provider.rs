@@ -26,6 +26,7 @@ fn fixture(advanced: bool, response_limit: usize) -> phenix_kernel::host::Kernel
         },
         Environment::new(),
         additional,
+        Vec::new(),
     )
     .unwrap()
 }
