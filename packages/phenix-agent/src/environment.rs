@@ -5,9 +5,7 @@ use super::{
     CONTRACTS_PLUGIN, LOOP_PLUGIN, TOOL_CONTRACT, TOOL_FEEDBACK, TOOL_INVOCATION, TOOL_ROUTER,
     ToolInvocation, ToolResult, UNAVAILABLE, capacity, environment_port, port, tool_router,
 };
-use phenix_graph::{
-    compose::{ConnectionKey, Edit, Footprint, NetworkPatch},
-};
+use phenix_graph::compose::{ConnectionKey, Edit, Footprint, NetworkPatch};
 use phenix_kernel::{Contribution, Key};
 use phenix_plugin::{Failure, PluginInstance, Registrar};
 use std::collections::{BTreeMap, BTreeSet};
