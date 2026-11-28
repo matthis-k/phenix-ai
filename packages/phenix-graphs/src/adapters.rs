@@ -337,20 +337,17 @@ mod route_tests {
 
     #[test]
     fn named_routes_are_validated_before_execution() {
-        fn select(text: &String) -> &str {
-            text.as_str()
-        }
         let invalid = ComponentDef::route(
             [("a".into(), "otherwise".into())].into(),
             "otherwise",
-            select,
+            |text: &String| text.as_str(),
             |text: String| text.len(),
         );
         assert!(invalid.is_err());
         let definition = ComponentDef::route(
             [("a".into(), "selected".into())].into(),
             "otherwise",
-            select,
+            |text: &String| text.as_str(),
             |text: String| text.len(),
         )
         .unwrap();

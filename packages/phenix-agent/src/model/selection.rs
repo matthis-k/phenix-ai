@@ -71,3 +71,62 @@ impl ModelSelection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::MockModel;
+    use phenix_plugin::PluginCatalog;
+
+    #[test]
+    fn select_across_independent_provider_revisions_without_implicit_priority() {
+        let mut catalog = PluginCatalog::new();
+        let a = catalog.register("provider-a", Ok).unwrap();
+        let b = catalog.register("provider-b", Ok).unwrap();
+        let plugins = catalog.instance();
+        let first = plugins
+            .prepare_load(
+                &a,
+                MockModel {
+                    label: "small".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let second = plugins
+            .prepare_load(
+                &b,
+                MockModel {
+                    label: "large".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let snapshots = plugins.candidate_snapshots(&[first, second]).unwrap();
+        assert!(ModelSelection::default().select(snapshots.clone()).is_err());
+        let selection = ModelSelection {
+            model: Some("large".into()),
+            required_capabilities: ["tools".into()].into(),
+            ..Default::default()
+        };
+        let selected = selection.select(snapshots.clone()).unwrap();
+        assert_eq!(selected.component.offer, Key::new("provider-b", "model"));
+        assert_eq!(selected.profile.unwrap().model, "large");
+
+        let selection = ModelSelection {
+            offer: Some(Key::new("provider-a", "model")),
+            required_capabilities: ["tools".into()].into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            selection.select(snapshots.clone()).unwrap().component.offer,
+            Key::new("provider-a", "model")
+        );
+
+        let unavailable = ModelSelection {
+            required_capabilities: ["vision".into()].into(),
+            ..Default::default()
+        };
+        assert!(unavailable.select(snapshots).is_err());
+    }
+}
