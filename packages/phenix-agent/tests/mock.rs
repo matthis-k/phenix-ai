@@ -158,7 +158,7 @@ fn environment_host(
 ) -> phenix_kernel::host::KernelHost {
     use phenix_agent::{
         AgentContracts, AgentLoop, CONTRACTS_PLUGIN, LOOP_PLUGIN,
-        environment::{EnvironmentRoutes, environment_grants},
+        environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     };
     use phenix_graph::compose::Footprint;
     use phenix_kernel::{CompositionPolicy, Key, host::KernelHost};
@@ -178,12 +178,14 @@ fn environment_host(
     let mut host = KernelHost::new(catalog.instance());
     let stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
-        host.plugins().prepare_load(&loop_key, AgentLoop).unwrap(),
+        host.plugins()
+            .prepare_load(&loop_key, AgentLoop::new(["lookup"]))
+            .unwrap(),
         host.plugins()
             .prepare_load(
                 &environment_key,
                 EnvironmentRoutes {
-                    environments: ["remote".into()].into(),
+                    environments: [("remote".into(), ["lookup".into()].into())].into(),
                 },
             )
             .unwrap(),
@@ -192,7 +194,7 @@ fn environment_host(
         host.plugins().prepare_load(&remote_key, remote).unwrap(),
     ];
     options.imports.allow.as_mut().unwrap().insert((
-        Key::new(ENVIRONMENT, "env-remote"),
+        Key::new(ENVIRONMENT, environment_tool_import("remote", "lookup")),
         Key::new(REMOTE, "tool"),
     ));
     options.composition.insert(
@@ -205,7 +207,9 @@ fn environment_host(
     options.composition.insert(
         Key::new(ENVIRONMENT, "main"),
         CompositionPolicy {
-            grants: environment_grants(&[("remote".into(), TEST_REMOTE_PATH.into())].into())
+            grants: environment_grants(
+                &[("remote".into(), [("lookup".into(), TEST_REMOTE_PATH.into())].into())].into(),
+            )
                 .into_iter()
                 .collect(),
             ..Default::default()

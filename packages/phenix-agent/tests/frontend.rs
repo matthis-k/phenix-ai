@@ -3,7 +3,7 @@
 use phenix_agent::{
     AgentContracts, AgentEvent, AgentLoop, CONTRACTS_PLUGIN, EVENTS, LOOP_PLUGIN, MODEL_CONTRACT,
     PROMPT, PROMPT_CONTRACT,
-    environment::{EnvironmentRoutes, environment_grants},
+    environment::{EnvironmentRoutes, environment_grants, environment_tool_import},
     mock::{self, MockModel, MockTool, acp},
 };
 use phenix_graph::{
@@ -123,7 +123,9 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
     let mut host = KernelHost::new(catalog.instance());
     let mut stages = vec![
         host.plugins().prepare_load(&contracts, ()).unwrap(),
-        host.plugins().prepare_load(&agent, AgentLoop).unwrap(),
+        host.plugins()
+            .prepare_load(&agent, AgentLoop::new(["lookup"]))
+            .unwrap(),
         host.plugins()
             .prepare_load(
                 &model,
@@ -202,7 +204,7 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
                 .prepare_load(
                     &environment,
                     EnvironmentRoutes {
-                        environments: ["remote".into()].into(),
+                        environments: [("remote".into(), ["lookup".into()].into())].into(),
                     },
                 )
                 .unwrap(),
@@ -219,7 +221,7 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
                 .unwrap(),
         );
         options.imports.allow.as_mut().unwrap().insert((
-            Key::new(ENVIRONMENT, "env-remote"),
+            Key::new(ENVIRONMENT, environment_tool_import("remote", "lookup")),
             Key::new(REMOTE, "tool"),
         ));
         options.composition.insert(
@@ -232,7 +234,9 @@ fn exercise_frontend(extended: bool, with_acp: bool) {
         options.composition.insert(
             Key::new(ENVIRONMENT, "main"),
             CompositionPolicy {
-                grants: environment_grants(&[("remote".into(), REMOTE_PATH.into())].into())
+                grants: environment_grants(
+                    &[("remote".into(), [("lookup".into(), REMOTE_PATH.into())].into())].into(),
+                )
                     .into_iter()
                     .collect(),
                 ..Default::default()
